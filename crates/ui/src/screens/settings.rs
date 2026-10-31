@@ -263,8 +263,12 @@ pub mod workspace {
     }
 }
 
+#[path = "settings/appshots.rs"]
+mod appshots;
 #[path = "settings/debug.rs"]
 pub mod debug;
+#[path = "settings/file_type_handlers.rs"]
+pub mod file_type_handlers;
 #[path = "settings/notifications.rs"]
 pub mod notifications;
 #[path = "settings_subtrees.rs"]
@@ -404,6 +408,7 @@ const NAV: &[(&str, &[(&str, &str)])] = &[
         "Integrations",
         &[
             ("Plugins", "settings-plugins"),
+            ("File type handlers", "context-file-default"),
             ("Passwords", "settings-passwords"),
             ("Computer use", "settings-computer-use"),
             ("Computer history", "settings-computer-history"),
@@ -885,6 +890,8 @@ pub struct SettingsPane {
     /// ChatGPT notification menus by category, with the channels each was built for.
     channel_selects:
         std::collections::HashMap<String, (Vec<String>, Entity<crate::settings_kit::MultiSelect>)>,
+    /// File type handlers menus by preference key.
+    file_selects: std::collections::HashMap<String, Entity<crate::settings_kit::Select>>,
     git_fields: Vec<(&'static str, Entity<Composer>)>,
     storage: Entity<storage::StoragePage>,
     git_saved_until: std::collections::HashMap<&'static str, std::time::Instant>,
@@ -927,6 +934,7 @@ impl SettingsPane {
             layer: Layer::default(),
             selects: std::collections::HashMap::new(),
             channel_selects: std::collections::HashMap::new(),
+            file_selects: std::collections::HashMap::new(),
             git_fields: Vec::new(),
             git_saved_until: Default::default(),
             appearance: Default::default(),
@@ -1460,6 +1468,8 @@ impl Render for SettingsPane {
             "General" => self.general(&t, window, cx),
             "Notifications" => self.notifications_page(&t, window, cx),
             "Debug" => self.debug_page(&t, window, cx),
+            "File type handlers" => self.file_type_handlers_page(&t, window, cx),
+            "Appshots" => self.appshots_page(&t, window, cx),
             _ => Vec::new(),
         };
         let card_border = over(t.border, t.background_panel);

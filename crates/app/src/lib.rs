@@ -6194,7 +6194,9 @@ impl Root {
                     settings_configuration::ENABLED_EFFORTS => {
                         "Could not save reasoning effort preferences"
                     }
+                    "appshotDestination" => "Could not save Appshot destination",
                     "notifications-sound" => "Couldn't change the notification sound. Try again",
+                    "preferred-file-viewers" => "Could not save your file handler preference",
                     key if key.starts_with("notifications-") => {
                         "Could not save notification preference"
                     }
@@ -6208,6 +6210,16 @@ impl Root {
                 }
                 if matches!(key, "reduced-motion-preference" | "dock-icon-preference") {
                     host_settings::apply(cx);
+                }
+                #[cfg(target_os = "macos")]
+                if key == screenshot::appshot::HOTKEY
+                    && let Err(error) = screenshot::appshot::register(cx)
+                {
+                    self.toast(
+                        Toast::danger("Failed to update appshot hotkey")
+                            .description(error.to_string()),
+                        cx,
+                    );
                 }
                 self.git_setting_saved(key, cx);
                 if key == settings_configuration::ENABLED_EFFORTS {
