@@ -2838,7 +2838,12 @@ impl Root {
         if self.host_id() == "local" {
             let recents: Vec<_> = threads
                 .iter()
-                .map(|thread| (thread.id.clone(), ui::screens::sidebar::title(thread).to_string()))
+                .map(|thread| {
+                    (
+                        thread.id.clone(),
+                        ui::screens::sidebar::title(thread).to_string(),
+                    )
+                })
                 .collect();
             tray::set_recents(&recents, cx);
         }
