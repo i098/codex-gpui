@@ -215,6 +215,8 @@ pub enum SidePanel {
     SideChat(usize),
     /// Thread summary ▸ `Plan`: the latest plan, editable.
     Plan,
+    /// Thread summary ▸ `Subagents`: the thread's subagents ([`Root::subagents`]).
+    Subagents,
     /// `⌘T` and a link's `Open in` ▸ `New tab`: the browser tab with this key
     /// ([`Root::browser_tab`]).
     Browser(usize),
@@ -447,6 +449,8 @@ pub struct Root {
     file: Option<Entity<FileView>>,
     /// The plan of [`SidePanel::Plan`]; cleared with the thread.
     plan: Option<Entity<ui::screens::plan::PlanView>>,
+    /// The view of [`SidePanel::Subagents`]; cleared with the thread.
+    subagents: Option<Entity<ui::screens::subagents::SubagentsView>>,
     /// The open thread in the main shell, with its side panel if any.
     split: Option<Entity<SplitScreen>>,
     terminal: terminal::Terminals,
@@ -912,6 +916,7 @@ impl Root {
             diff_watch: None,
             file: None,
             plan: None,
+            subagents: None,
             split: None,
             terminal: terminal::Terminals::default(),
             tabs: Vec::new(),
@@ -3000,6 +3005,7 @@ impl Root {
         side_chats: &[SideChat],
         browsers: &[(usize, Entity<BrowserTab>)],
         console: bool,
+        subagents: bool,
         cx: &App,
     ) -> Option<Tab> {
         match side {
@@ -3047,6 +3053,11 @@ impl Root {
                 label: plan?.read(cx).title(),
                 preview: false,
             }),
+            SidePanel::Subagents => subagents.then(|| Tab {
+                icon: "side-chat",
+                label: "Subagents".into(),
+                preview: false,
+            }),
             SidePanel::Browser(key) => {
                 let (_, tab) = browsers.iter().find(|(k, _)| *k == key)?;
                 Some(Tab {
@@ -3070,6 +3081,7 @@ impl Root {
         let chats = &self.side_chats;
         let browsers = &self.browser_tabs;
         let console = self.terminal_panel().is_some();
+        let subagents = self.subagents.is_some();
         let tab = |side: &SidePanel| {
             Self::side_tab(
                 *side,
@@ -3079,6 +3091,7 @@ impl Root {
                 chats,
                 browsers,
                 console,
+                subagents,
                 cx,
             )
         };
@@ -3097,6 +3110,7 @@ impl Root {
             SidePanel::File => self.file.as_ref()?.clone().into(),
             SidePanel::SideChat(key) => self.chat(key)?.view.clone().into(),
             SidePanel::Plan => self.plan.as_ref()?.clone().into(),
+            SidePanel::Subagents => self.subagents.as_ref()?.clone().into(),
             SidePanel::Browser(key) => self.browser_tab(key)?.clone().into(),
         };
         Some((view, tabs, active))
@@ -4354,6 +4368,7 @@ impl Root {
         self.diff = Some(diff);
         self.file = None;
         self.plan = None;
+        self.subagents = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         view.update(cx, |view, cx| {
             view.set_git_phase(self.git_busy, cx);

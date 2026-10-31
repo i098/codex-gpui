@@ -1514,6 +1514,26 @@ impl ThreadView {
                     ),
             );
         }
+        let agents = crate::screens::subagents::subagents(&self.turns);
+        if !agents.is_empty() {
+            sections.push(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(header("Subagents".into()))
+                    .children(agents.into_iter().enumerate().map(|(ix, agent)| {
+                        let label = format!("{} · {}", agent.name, agent.status.label());
+                        row("side-chat", label.clone(), 16., ix, window)
+                            .mx(px(12.))
+                            .px(px(8.))
+                            .rounded(Theme::RADIUS_SM)
+                            .hover(move |style| style.bg(row_hover))
+                            .aria_label(label)
+                            .on_click(crate::dispatch::<crate::OpenSubagentsPanel>)
+                    })),
+            );
+        }
         let n = sections.len();
         // A fixed popover: its own composited layer, whose rect (and tile grid) starts at the
         // widest shadow's ink, 1.5 blur = 30 px out.
@@ -2690,6 +2710,7 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::FileChange { id, .. }
         | ThreadItem::McpToolCall { id, .. }
         | ThreadItem::ContextCompaction { id } => Some(id),
+        ThreadItem::CollabAgentToolCall { id, .. } => Some(id),
         ThreadItem::Other => None,
     }
 }

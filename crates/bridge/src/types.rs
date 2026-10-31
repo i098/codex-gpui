@@ -157,6 +157,22 @@ pub enum ThreadItem {
     ContextCompaction {
         id: String,
     },
+    /// A subagent tool call (`spawnAgent` | `sendInput` | `resumeAgent` | `wait` |
+    /// `closeAgent`) from `senderThreadId` to the `receiverThreadIds` subagent threads.
+    CollabAgentToolCall {
+        id: String,
+        tool: String,
+        /// `inProgress` | `completed` | `failed`
+        status: String,
+        #[serde(default)]
+        receiver_thread_ids: Vec<String>,
+        /// Per receiver thread: `{status, message}`, `status` one of `pendingInit` |
+        /// `running` | `completed` | `interrupted` | `shutdown` | `errored` | `notFound`.
+        #[serde(default)]
+        agents_states: serde_json::Map<String, Value>,
+        prompt: Option<String>,
+        model: Option<String>,
+    },
     #[serde(other)]
     Other,
 }
