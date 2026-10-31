@@ -121,6 +121,18 @@ fn find_in_workspace(root: &mut Root, window: &mut Window, cx: &mut Context<Root
     }
 }
 
+/// Runs `f` on the selected browser tab; without one the key goes on to other handlers.
+fn on_active_browser(
+    root: &mut Root,
+    cx: &mut Context<Root>,
+    f: impl FnOnce(&mut ui::browser::BrowserTab, &mut Context<ui::browser::BrowserTab>),
+) {
+    match root.active_browser_tab() {
+        Some(tab) => tab.update(cx, f),
+        None => cx.propagate(),
+    }
+}
+
 pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     root.on_action(cx.listener(|this, _: &FindInThread, window, cx| {
         find_in_workspace(this, window, cx);
@@ -131,6 +143,29 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             this.open_browser_tab(url, window, cx);
         }),
     )
+    .on_action(cx.listener(|this, _: &ui::browser::BrowserBack, _, cx| {
+        on_active_browser(this, cx, |tab, cx| tab.go_back(cx));
+    }))
+    .on_action(cx.listener(|this, _: &ui::browser::BrowserForward, _, cx| {
+        on_active_browser(this, cx, |tab, cx| tab.go_forward(cx));
+    }))
+    .on_action(
+        cx.listener(|this, _: &ui::browser::ReloadBrowserPage, _, cx| {
+            on_active_browser(this, cx, |tab, cx| tab.reload(false, cx));
+        }),
+    )
+    .on_action(
+        cx.listener(|this, _: &ui::browser::HardReloadBrowserPage, _, cx| {
+            on_active_browser(this, cx, |tab, cx| tab.reload(true, cx));
+        }),
+    )
+    .on_action(cx.listener(
+        |this, _: &ui::browser::FocusBrowserAddressBar, window, cx| match this.active_browser_tab()
+        {
+            Some(tab) => tab.update(cx, |tab, cx| tab.focus_address(window, cx)),
+            None => cx.propagate(),
+        },
+    ))
     .on_action(cx.listener(Root::find_in_chat))
     .on_action(cx.listener(Root::find_in_diff))
     .on_action(cx.listener(|this, _: &FindNext, _, cx| this.next_search_result(false, cx)))
