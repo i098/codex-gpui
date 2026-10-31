@@ -666,7 +666,7 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                         true => p.to_owned(),
                         false => format!("{cwd}/{p}"),
                     })
-                    .filter(|p| skill_definition(p))
+                    .filter(|p| skill_name(p, cwd).is_some())
                     .collect();
                 // The server's parse: all `read` / `search` / `list_files` is exploration.
                 let exploration = !command_actions.is_empty()
@@ -696,7 +696,24 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                         .collect::<Vec<_>>()
                         .join("; "),
                 };
-                rows.push(if names.is_empty() {
+                // A skill's `SKILL.md` read names the skill (`toolSummaryForCmd.readSkillDefinition`).
+                let skill = match command_actions.as_slice() {
+                    [a] if a.kind == "read" => a
+                        .path
+                        .as_deref()
+                        .or(a.name.as_deref())
+                        .and_then(|p| skill_name(p, cwd)),
+                    _ => None,
+                };
+                rows.push(if let Some(skill) = skill {
+                    GroupRow {
+                        icon: "thread-wrench",
+                        verb: format!("Read {skill} skill"),
+                        file: None,
+                        stats: None,
+                        shell: None,
+                    }
+                } else if names.is_empty() {
                     // ponytail: `Stopped` (an interrupted turn) is not told apart from a failure.
                     let footer = match (status.as_str(), exit_code) {
                         ("inProgress", _) => String::new(),
@@ -774,12 +791,16 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
     })
 }
 
-/// Whether `path` is a skill's `SKILL.md`, as the original's skill path parse tells it:
-/// `.codex|.agents/skills/[_import|.system/]<id>/SKILL.md`, or under `plugins/` either
-/// `[cache/<marketplace>/]<plugin>/[<version>/]…/skills/<id>/SKILL.md` or a plugin's own
-/// `SKILL.md`. Segments match case-insensitively.
-fn skill_definition(path: &str) -> bool {
+/// The display name of the skill whose `SKILL.md` `path` (relative to `cwd`) reads, as the
+/// original's skill path parse tells it: `.codex|.agents/skills/[_import|.system/]<id>/SKILL.md`,
+/// or under `plugins/` either `[cache/<marketplace>/]<plugin>/[<version>/]…/skills/<id>/SKILL.md`
+/// or a plugin's own `SKILL.md` (named by the plugin). Segments match case-insensitively.
+fn skill_name(path: &str, cwd: &str) -> Option<String> {
     let path = path.trim().replace('\\', "/");
+    let path = match path.starts_with('/') {
+        true => path,
+        false => format!("{cwd}/{path}"),
+    };
     let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     let is = |i: usize, s: &str| segs.get(i).is_some_and(|x| x.eq_ignore_ascii_case(s));
     let definition = |rest: &[&str]| matches!(rest, [f] if f.eq_ignore_ascii_case("skill.md"));
@@ -787,7 +808,7 @@ fn skill_definition(path: &str) -> bool {
         if (is(i, ".codex") || is(i, ".agents")) && is(i + 1, "skills") {
             let id = i + 2 + usize::from(is(i + 2, "_import") || is(i + 2, ".system"));
             if id < segs.len() {
-                return definition(&segs[id + 1..]);
+                return definition(&segs[id + 1..]).then(|| humanize(segs[id]));
             }
         }
     }
@@ -802,13 +823,71 @@ fn skill_definition(path: &str) -> bool {
         }
         let root = plugin + usize::from(cache);
         match (root + 1..segs.len()).find(|&t| is(t, "skills")) {
-            Some(s) if s + 1 < segs.len() => return definition(&segs[s + 2..]),
+            Some(s) if s + 1 < segs.len() => {
+                return definition(&segs[s + 2..]).then(|| humanize(segs[s + 1]));
+            }
             Some(_) => {}
-            None if definition(segs.get(root + 1..).unwrap_or_default()) => return true,
+            None if definition(segs.get(root + 1..).unwrap_or_default()) => {
+                return Some(humanize(segs[plugin]));
+            }
             None => {}
         }
     }
-    false
+    None
+}
+
+/// A skill or plugin id in title case, as the original's humanizer (`gh-fix_ci:openai` →
+/// `GH Fix CI: OpenAI`).
+fn humanize(id: &str) -> String {
+    const ACRONYMS: [&str; 16] = [
+        "GH", "IA", "MCP", "API", "CI", "CLI", "LLM", "PDF", "PR", "RCS", "UI", "URL", "SQL", "TW",
+        "GPU", "CPU",
+    ];
+    const BRANDS: [(&str, &str); 10] = [
+        ("openai", "OpenAI"),
+        ("openaideveloperdocs", "OpenAI Developer Docs"),
+        ("openapi", "OpenAPI"),
+        ("github", "GitHub"),
+        ("imessage", "iMessage"),
+        ("pagerduty", "PagerDuty"),
+        ("datadog", "DataDog"),
+        ("sharepoint", "SharePoint"),
+        ("sqlite", "SQLite"),
+        ("fastapi", "FastAPI"),
+    ];
+    let word = |i: usize, w: &str| {
+        let upper = w.to_uppercase();
+        if ACRONYMS.contains(&upper.as_str()) {
+            return upper;
+        }
+        if let Some(stem) = upper.strip_suffix('S')
+            && ACRONYMS.contains(&stem)
+        {
+            return format!("{stem}s");
+        }
+        let lower = w.to_lowercase();
+        if let Some((_, brand)) = BRANDS.iter().find(|(id, _)| *id == lower) {
+            return (*brand).to_owned();
+        }
+        if i > 0 && ["and", "or", "to", "up", "with"].contains(&lower.as_str()) {
+            return lower;
+        }
+        let mut chars = lower.chars();
+        chars
+            .next()
+            .map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
+    };
+    id.split(':')
+        .map(|part| {
+            part.split(|c: char| c == '-' || c == '_' || c.is_whitespace())
+                .filter(|w| !w.is_empty())
+                .enumerate()
+                .map(|(i, w)| word(i, w))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect::<Vec<_>>()
+        .join(": ")
 }
 
 /// A turn's items without a final answer: agent messages, running command rows and activity
@@ -827,9 +906,10 @@ pub(super) fn activity(
     let fades = &view.stream_fades;
     let images = &view.mcp_images;
     let text60 = t.text_alpha_60;
-    // Exact-width 14 px text, styled before it is boxed (see [`measured`]).
+    // Exact-width 14 px text, styled before it is boxed (see [`measured`]). The box rounds the
+    // width up, or its `truncate` cuts a run that fits (`Read math.…`).
     let label = |s: String, color: Hsla| {
-        let w = width(window, &s, 14., 430., None);
+        let w = fit_width(window, &s, 14., 430., None);
         (text(s, 14., 21., 430., color), w)
     };
     // The label is exactly as wide as its text, and shrinks with an ellipsis (`truncate`) in a
@@ -1319,15 +1399,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn skill_definition_follows_the_original_parse() {
-        for path in [
-            "/Users/a/.codex/skills/operating-rules/SKILL.md",
-            "/Users/a/.codex/skills/.system/plan/skill.md",
-            "/repo/.agents/skills/lint/SKILL.md",
-            "/Users/a/.codex/plugins/cache/mkt/github/1.0/skills/review/SKILL.md",
-            "/Users/a/.codex/plugins/github/SKILL.md",
+    fn skill_name_follows_the_original_parse() {
+        for (path, name) in [
+            (
+                "/Users/a/.codex/skills/operating-rules/SKILL.md",
+                "Operating Rules",
+            ),
+            ("/Users/a/.codex/skills/.system/plan/skill.md", "Plan"),
+            (
+                "/Users/a/.codex/skills/_import/pdf_tools-and-apis/SKILL.md",
+                "PDF Tools and APIs",
+            ),
+            ("/repo/.agents/skills/lint/SKILL.md", "Lint"),
+            (".agents/skills/to-do/SKILL.md", "To Do"),
+            (
+                "/Users/a/.codex/plugins/cache/mkt/github/1.0/skills/gh-fix-ci/SKILL.md",
+                "GH Fix CI",
+            ),
+            ("/Users/a/.codex/plugins/github/SKILL.md", "GitHub"),
         ] {
-            assert!(skill_definition(path), "{path}");
+            assert_eq!(skill_name(path, "/repo").as_deref(), Some(name), "{path}");
         }
         for path in [
             "/Users/a/.codex/skills/operating-rules/scripts/run.md",
@@ -1335,7 +1426,7 @@ mod tests {
             "/repo/skills/lint/SKILL.md",
             "/repo/README.md",
         ] {
-            assert!(!skill_definition(path), "{path}");
+            assert_eq!(skill_name(path, "/repo"), None, "{path}");
         }
     }
 
@@ -1358,6 +1449,13 @@ mod tests {
         assert_eq!(
             summary(std::slice::from_ref(&one)),
             ("Loaded a tool".into(), "thread-wrench")
+        );
+        let Some(Activity::Group { rows, .. }) = group_entry(&[&one]) else {
+            unreachable!()
+        };
+        assert_eq!(
+            (rows[0].icon, rows[0].verb.as_str(), &rows[0].file),
+            ("thread-wrench", "Read Rules skill", &None)
         );
         let items = [
             one.clone(),

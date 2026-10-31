@@ -450,6 +450,7 @@ mod tests {
             default_reasoning_effort: "high".into(),
             supported_reasoning_efforts: vec![json!({"reasoningEffort":"high"})],
             is_default: true,
+            input_modalities: None,
         }];
         let mut execution = Execution::new(None);
         assert_eq!(
@@ -486,6 +487,7 @@ mod tests {
                 .map(|value| json!({"reasoningEffort":value}))
                 .collect(),
             is_default: default,
+            input_modalities: None,
         };
         let models = [
             model("gpt-6.1-sol", true, "low"),

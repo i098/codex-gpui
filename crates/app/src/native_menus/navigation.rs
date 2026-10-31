@@ -1,5 +1,11 @@
 use crate::*;
-use ui::screens::diff::panel::FileTreeRequest;
+use ui::screens::diff::panel::{FileTreeRequest, GitBlame};
+
+/// A Files tab read: text lines, or an image or PDF's bytes and MIME type.
+enum FileRead {
+    Text(String),
+    Media(std::sync::Arc<Vec<u8>>, Option<String>),
+}
 
 pub(crate) fn available(root: &Root, cx: &App) -> bool {
     super::active_thread(root, cx).is_some()
@@ -90,15 +96,33 @@ impl Root {
             file
         };
         let revision = file.read(cx).file_revision();
+        self.load_blame(&file, cx);
         let host = self.host.clone();
-        let request = host::Request::post("read-file", Some(json!({ "cwd": cwd, "path": path })));
+        let media = FileView::previews(&path);
+        let endpoint = if media {
+            "read-file-binary"
+        } else {
+            "read-file"
+        };
+        let request = host::Request::post(endpoint, Some(json!({ "cwd": cwd, "path": path })));
         let read = cx.background_spawn(async move {
             host.fetch(&request)
                 .and_then(|response| host::json_body(&response))
                 .and_then(|body| {
+                    if media {
+                        let bytes = body["contentsBase64"]
+                            .as_str()
+                            .context("file response has no binary contents")?;
+                        let bytes = base64::Engine::decode(
+                            &base64::engine::general_purpose::STANDARD,
+                            bytes,
+                        )?;
+                        let mime = body["mimeType"].as_str().map(str::to_owned);
+                        return Ok(FileRead::Media(std::sync::Arc::new(bytes), mime));
+                    }
                     body["contents"]
                         .as_str()
-                        .map(str::to_owned)
+                        .map(|text| FileRead::Text(text.to_owned()))
                         .context("file response has no text contents")
                 })
                 .map_err(|error| format!("{error:#}"))
@@ -108,8 +132,12 @@ impl Root {
             let contents = read.await;
             let failed = contents.is_err();
             if target
-                .update(cx, |file, cx| {
-                    file.set_file_contents(revision, contents, cx)
+                .update(cx, |file, cx| match contents {
+                    Ok(FileRead::Media(bytes, mime)) => {
+                        file.set_file_media(revision, Ok((bytes, mime)), cx)
+                    }
+                    Ok(FileRead::Text(text)) => file.set_file_contents(revision, Ok(text), cx),
+                    Err(error) => file.set_file_contents(revision, Err(error), cx),
                 })
                 .ok()
                 != Some(true)
@@ -132,6 +160,41 @@ impl Root {
         } else {
             self.set_side(SidePanel::File, window, cx);
         }
+    }
+
+    /// `git.toggleBlame`: flips the active-line blame and loads it for the open file.
+    pub(crate) fn toggle_git_blame(&mut self, cx: &mut Context<Self>) {
+        cx.set_global(GitBlame(!GitBlame::enabled(cx)));
+        if let Some(file) = self.file.clone() {
+            self.load_blame(&file, cx);
+            file.update(cx, |_, cx| cx.notify());
+        }
+    }
+
+    /// The host's `git-blame-file` for the open file, while blame is on.
+    fn load_blame(&self, file: &Entity<FileView>, cx: &mut Context<Self>) {
+        if !GitBlame::enabled(cx) {
+            return;
+        }
+        let file_view = file.read(cx);
+        let revision = file_view.file_revision();
+        let request = host::Request::post(
+            "git-blame-file",
+            Some(json!({ "cwd": file_view.workspace_root(), "path": file_view.path })),
+        );
+        let host = self.host.clone();
+        let task = cx.background_spawn(async move {
+            host.fetch(&request)
+                .and_then(|response| host::json_body(&response))
+                .map_err(|error| format!("{error:#}"))
+        });
+        let file = file.downgrade();
+        cx.spawn(async move |_, cx| {
+            let result = task.await;
+            file.update(cx, |file, cx| file.set_blame(revision, result, cx))
+                .ok();
+        })
+        .detach();
     }
 
     fn navigate_file_tree(
