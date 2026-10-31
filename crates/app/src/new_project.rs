@@ -98,6 +98,7 @@ impl Root {
         .detach();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_project(
         &mut self,
         dialog: Entity<Dialog>,
@@ -201,10 +202,10 @@ impl Root {
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = async {
-                if let Some(answer) = answer {
-                    if answer.await != Ok(1) {
-                        return Ok(None);
-                    }
+                if let Some(answer) = answer
+                    && answer.await != Ok(1)
+                {
+                    return Ok(None);
                 }
                 match command.as_str() {
                     "edit" => {
