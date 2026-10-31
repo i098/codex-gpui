@@ -868,7 +868,7 @@ impl Root {
             );
             (result, projects)
         });
-        cx.spawn(async move |root, cx| {
+        let progress_task = cx.spawn(async move |root, cx| {
             while let Ok(progress) = progress_receiver.recv().await {
                 root.update(cx, |_, cx| {
                     cx.update_global::<ImportState, _>(|state, _| state.progress = Some(progress));
@@ -876,10 +876,10 @@ impl Root {
                 })
                 .ok();
             }
-        })
-        .detach();
+        });
         cx.spawn(async move |root, cx| {
             let outcome = run.await;
+            progress_task.await;
             root.update(cx, |root, cx| root.finish_import(outcome, automatic, cx))
                 .ok();
         })
