@@ -689,14 +689,16 @@ mod tests {
         })
         .expect("dispatch NewWindow");
 
-        let windows = cx.windows();
-        assert_eq!(windows.len(), 2);
-        for handle in windows {
-            let root = handle.downcast::<Root>().expect("primary root");
-            let route = cx
-                .read_window(&root, |root, _| root.route().clone())
-                .expect("read primary route");
-            assert!(matches!(route, Route::Home));
-        }
+        let windows_are_home = cx.update(|cx| {
+            let windows = cx.windows();
+            assert_eq!(windows.len(), 2);
+            windows.into_iter().all(|handle| {
+                handle.downcast::<Root>().is_some_and(|root| {
+                    root.read(cx)
+                        .is_ok_and(|root| matches!(root.route(), Route::Home))
+                })
+            })
+        });
+        assert!(windows_are_home);
     }
 }
