@@ -97,6 +97,15 @@ fn main() {
             });
         return;
     }
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    let receiver = match app::single_instance::start(std::env::args().skip(1).collect()) {
+        Ok(Some(receiver)) => receiver,
+        Ok(None) => return,
+        Err(error) => {
+            eprintln!("codex-gpui: cannot initialize single-instance forwarding: {error:#}");
+            std::process::exit(1);
+        }
+    };
     // Project new threads start in: `$CODEX_GPUI_CWD`, else the launch directory.
     let cwd = std::env::var_os("CODEX_GPUI_CWD")
         .map(PathBuf::from)
@@ -146,6 +155,28 @@ fn main() {
                 root.open_deep_link(&link, window, cx)
             });
         }
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        cx.spawn(async move |cx| {
+            while let Ok(arguments) = receiver.recv().await {
+                cx.update(|cx| {
+                    if let Some(url) = arguments
+                        .iter()
+                        .rev()
+                        .find(|argument| app::deep_link::parse(argument).is_some())
+                    {
+                        app::deep_link::open(url, cx);
+                    } else if !arguments
+                        .iter()
+                        .rev()
+                        .any(|path| app::deep_link::open_path(path, cx))
+                        && let Err(error) = app::windows::reopen(cx)
+                    {
+                        eprintln!("codex-gpui: cannot focus the primary window: {error:#}");
+                    }
+                });
+            }
+        })
+        .detach();
         app::screenshot::register(cx);
         app::qa::monitor(handle, cx);
         if let Some(path) = std::env::args()
