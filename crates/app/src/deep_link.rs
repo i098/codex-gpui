@@ -57,7 +57,7 @@ pub fn parse(value: &str) -> Option<Link> {
     let params = Params(url.query_pairs().collect());
     match destination {
         "plugins" => Some(Link::Plugins(plugin_route(&sub)?)),
-        "mcp-app" => Some(Link::Plugins("/plugins".into())),
+        "mcp-app" if sub.is_empty() => Some(Link::Plugins("/plugins".into())),
         "skills" if sub.is_empty() => Some(Link::Plugins("/skills".into())),
         "pets" if sub.as_slice() == ["install"] => Some(Link::PetInstall),
         "threads" if sub.as_slice() == ["new"] => new_thread(&params, false),
