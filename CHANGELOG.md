@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Show the original's Worktrees save toasts: worktree root, upstream refresh, automatic deletion and auto-delete limit saves or failures, `Failed to delete worktree`, and the pinned-chat delete notice.
 - Open the latest plan from Thread summary ▸ `Plan` in an editable `Plan` side panel tab that saves to `$CODEX_HOME/plans/<thread>/<plan item>/PLAN.md`.
 - Open the Maps page from the Explore menu: the ChatGPT backend `/local/home` prompt suggestions and map, with loading, error with Try again, and empty states.
 - Store app state, host settings, notification sounds and the QA profile in the per-OS user data directory (`%APPDATA%` on Windows, XDG config on Linux).

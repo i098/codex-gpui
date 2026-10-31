@@ -114,26 +114,32 @@ impl Root {
         let remove = cx.background_spawn(async move {
             let threads = threads(&bridge).await?;
             let owners: Vec<_> = threads.iter().filter(|thread| in_worktree(thread, &path)).collect();
-            ensure!(!owners.iter().any(|thread| pinned(thread)), "Unpin the chats in this worktree before deleting it");
+            if owners.iter().any(|thread| pinned(thread)) {
+                return Ok(false);
+            }
             for thread in owners {
                 bridge.request::<_, Value>("thread/archive", json!({"threadId": thread["id"]})).await?;
             }
             host::json_body(&host.fetch(&host::Request::post("worktree-delete", Some(json!({"hostId": "local", "worktree": path, "reason": "settings-delete-targeted"}))))?)?;
-            Ok::<_, anyhow::Error>(())
+            Ok::<_, anyhow::Error>(true)
         });
         cx.spawn(async move |this, cx| {
             let result = remove.await;
             let _ = this.update(cx, |this, cx| {
                 cx.update_global::<worktrees::State, _>(|state, _| state.pending_delete = None);
                 match result {
-                    Ok(()) => {
-                        this.toast(Toast::info("Worktree deleted"), cx);
+                    Ok(true) => {
+                        this.toast(Toast::success("Worktree deleted"), cx);
                         this.refresh_threads(cx);
                         this.load_worktrees(cx);
                     }
+                    Ok(false) => this.toast(
+                        Toast::info("Unpin the chats in this worktree before deleting it"),
+                        cx,
+                    ),
                     Err(error) => {
                         eprintln!("codex-gpui: delete worktree: {error:#}");
-                        this.toast(Toast::danger(error.to_string()), cx);
+                        this.toast(Toast::danger("Failed to delete worktree"), cx);
                     }
                 }
             });
