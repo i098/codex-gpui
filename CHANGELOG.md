@@ -8,6 +8,16 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Add the Settings ▸ Trusted contact page (also `codex://settings/trusted-contact`): invite a contact with the ChatGPT backend's `/trusted_contact` service, see Pending or Active, resend the invitation, and remove the contact.
+- Drag existing files from the Changes file list and workspace file tree to other apps with their native file icon.
+- Show the New Window, Full view, Browser, and Send Feedback actions in the native menu.
+- Add a `newWindow` action that opens a new primary window on Home.
+- Run `environmentAction1` through `environmentAction9` in the active terminal.
+- Open the failed recording from a dictation failure notice in Settings ▸ Voice, with `Retry`, `Download audio` and `Show all recordings`, and show a voice or dictation shortcut capture failure under its row, with the original's conflict and fallback messages.
+- Open the Images page from the Explore menu: a grid of the account's Library images (`/files/library/nodes`, `categories=image`) with thumbnails, and loading, error with Try again, and empty states.
+- Open the GPTs page from the Explore menu: `My GPTs` (`/gizmos/bootstrap`) and the `GPT catalog` (`/public-api/gizmos/discovery`); a row opens the GPT's page (`/gizmos/{id}`) with its author, description and conversation starters.
+- Add Settings ▸ `Debug` (debug builds, or `CODEX_GPUI_DEBUG_MENU=1`): the `GPU Tearing Debug` switches turn scroll fade masks, backdrop blur, motion or squircle corners off for the session.
+- Add Settings ▸ `File type handlers`: one row per file extension an installed plugin's MCP tool declares as a `file` entrypoint, with a `Built-in` or plugin viewer menu saved in the `preferred-file-viewers` host setting, plus loading, `Couldn’t load file handlers` with Retry, and empty states.
+- Add Settings ▸ `Appshots` on macOS: press both ⌘, ⌥ or ⇧ keys to capture the frontmost window into the current chat, a new chat or a visible Mini, with destination and sound settings.
 - Show an image or PDF in the Files tab as a preview (PDFs with page arrows), not as text lines that fail with `Could not open file`.
 - Open the latest plan from Thread summary ▸ `Plan` in an editable `Plan` side panel tab that saves to `$CODEX_HOME/plans/<thread>/<plan item>/PLAN.md`.
 - Open the Maps page from the Explore menu: the ChatGPT backend `/local/home` prompt suggestions and map, with loading, error with Try again, and empty states.
