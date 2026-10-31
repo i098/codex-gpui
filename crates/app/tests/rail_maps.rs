@@ -10,9 +10,9 @@ use common::{BACK, Fx};
 use std::sync::Arc;
 use ui::screens::maps::Load;
 
-/// The rail's Explore `…` item, then the menu's first row, `Maps`.
+/// The rail's Explore `…` item, then the menu's second row, `Maps`.
 const RAIL_EXPLORE: (f32, f32) = (26., 246.);
-const EXPLORE_MAPS: (f32, f32) = (100., 242.);
+const EXPLORE_MAPS: (f32, f32) = (100., 274.);
 
 fn load(fx: &Fx) -> Option<Load> {
     fx.read(|root, cx| root.maps_page().map(|page| page.read(cx).load.clone()))
