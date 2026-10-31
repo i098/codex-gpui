@@ -202,8 +202,7 @@ pub fn suspend_global_bindings(cx: &mut App) {
 }
 
 fn sync_keyboard(cx: &mut App) {
-    if crate::qa::ENABLED || !cfg!(target_os = "macos") || cx.global::<Runtime>().primary.is_none()
-    {
+    if crate::qa::ENABLED || cx.global::<Runtime>().primary.is_none() {
         return;
     }
     let Some(state) = cx
