@@ -786,8 +786,8 @@ impl LocalHost {
             #[cfg(target_os = "macos")]
             app_tools: Mutex::new(None),
             opener: "/usr/bin/open".into(),
-            host_settings_path: PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                .join("Library/Application Support/codex-gpui/host-settings.json"),
+            host_settings_path: crate::user_data::user_data_dir("codex-gpui")
+                .join("host-settings.json"),
             settings: None,
             context_files: context_files::ContextFiles::default(),
         }
@@ -2032,7 +2032,7 @@ impl Host for LocalHost {
             "git-root" | "git-changes" | "git-stage" | "git-unstage" | "git-revert"
             | "git-init-repo" | "git-commit-status" | "git-commit-diff" | "git-commit"
             | "git-push" | "git-checkout" | "git-cat-file" | "git-review-patch"
-            | "git-file-url" => git::fetch(endpoint, &params)?,
+            | "git-file-url" | "git-blame-file" => git::fetch(endpoint, &params)?,
             "gh-cli-status" | "gh-current-user" | "gh-pr-search" | "gh-pr-detail"
             | "gh-pr-patch" | "gh-pr-media" => {
                 github_pull_requests::fetch(self, endpoint, &params)?

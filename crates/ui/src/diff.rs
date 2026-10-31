@@ -13,11 +13,11 @@ use bridge::{
 };
 use gpui::{
     Action, AnimationExt as _, AnyView, App, AppContext as _, ClickEvent, ClipboardItem, Context,
-    Corners, CursorStyle, Div, Entity, FocusHandle, Font, FontFeatures, FontWeight, Global,
-    HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Render, ScrollHandle, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black, combine_highlights,
-    deferred, div, font, prelude::FluentBuilder as _, px, rgb,
+    Corners, CursorStyle, Div, Entity, ExternalDragPayload, FileDragPaths, FocusHandle, Font,
+    FontFeatures, FontWeight, Global, HighlightStyle, Hsla, InteractiveElement, IntoElement,
+    KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Render, ScrollHandle,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black,
+    combine_highlights, deferred, div, font, prelude::FluentBuilder as _, px, rgb,
 };
 use shapes::Decoration;
 use std::{
@@ -86,10 +86,13 @@ pub use content::{
 #[path = "diff/word.rs"]
 pub mod word;
 
+#[path = "diff/blame.rs"]
+mod blame;
 #[path = "diff/file_tree.rs"]
 mod file_tree;
 #[path = "diff/patch.rs"]
 pub mod patch;
+pub use blame::{BlameLine, GitBlame};
 pub use file_tree::FileTreeRequest;
 
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`, a width ratio) before
@@ -2064,6 +2067,16 @@ impl SplitScreen {
         }
     }
 
+    /// A browser tab's page title changed: its strip label follows.
+    pub fn set_tab_label(&mut self, index: usize, label: SharedString, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get_mut(index)
+            && tab.label != label
+        {
+            tab.label = label;
+            cx.notify();
+        }
+    }
+
     /// Titlebar row over a side panel (`Task tabs`): tabs use slots up to 240 px wide (the
     /// selected one on its surface, the others `text-tertiary`, surface and `×` on hover),
     /// `New tab`, and the `Enter full view` / `Hide tabs` buttons. The caller places it from
@@ -2833,9 +2846,12 @@ pub struct FileView {
     go_to_line: Option<controls::TextField>,
     line_count: u32,
     syntax: Vec<Vec<syntax::Mark>>,
+    blame: Vec<BlameLine>,
     tree: file_tree::WorkspaceTree,
     revision: u64,
     preview: bool,
+    /// An image or PDF ([`Self::previews`]) shown instead of text lines.
+    media: Option<preview::FileMedia>,
 }
 
 impl FileView {
@@ -2855,9 +2871,11 @@ impl FileView {
             go_to_line: None,
             line_count: 0,
             syntax: Vec::new(),
+            blame: Vec::new(),
             tree,
             revision: 0,
             preview: true,
+            media: None,
         }
     }
 
@@ -3021,7 +3039,12 @@ impl FileView {
             )
     }
 
-    fn file_content(&self, t: &Theme) -> gpui::AnyElement {
+    fn file_content(
+        &self,
+        t: &Theme,
+        blame: Option<String>,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
         match &self.contents {
             None => div().flex_1().into_any_element(),
             Some(Err(_)) => div()
@@ -3060,11 +3083,8 @@ impl FileView {
                     .pr(px(16.))
                     .children(lines.into_iter().enumerate().map(|(i, line)| {
                         let number = i as u32 + 1;
-                        let bg = if Some(number) == self.line {
-                            cited
-                        } else {
-                            t.surface
-                        };
+                        let active = Some(number) == self.line;
+                        let bg = if active { cited } else { t.surface };
                         let text: SharedString = line.to_owned().into();
                         let content = StyledText::new(text).with_highlights(
                             self.syntax
@@ -3074,9 +3094,18 @@ impl FileView {
                                 .map(|(range, token)| (range.clone(), token.style(t))),
                         );
                         div()
+                            .id(i)
                             .h(px(FILE_LINE_HEIGHT))
                             .flex()
                             .bg(bg)
+                            // The clicked line becomes the active line that blame describes.
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |view, _, _, cx| {
+                                    view.line = Some(number);
+                                    cx.notify();
+                                }),
+                            )
                             .child(
                                 div()
                                     .w(gutter)
@@ -3094,7 +3123,15 @@ impl FileView {
                                     .pl(px(CH))
                                     .pr(px(CH))
                                     .whitespace_nowrap()
-                                    .child(content),
+                                    .child(content)
+                                    .when_some(blame.clone().filter(|_| active), |row, blame| {
+                                        row.flex().child(
+                                            div()
+                                                .ml(px(CH))
+                                                .text_color(t.text_tertiary)
+                                                .child(blame),
+                                        )
+                                    }),
                             )
                     }))
                     .into_any_element()
@@ -3107,7 +3144,12 @@ impl Render for FileView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
-        let body = self.file_content(&t);
+        let blame = self.active_blame(cx);
+        self.request_media(window, cx);
+        let body = match self.media_view(window, cx) {
+            Some(media) => media,
+            None => self.file_content(&t, blame, cx),
+        };
         div()
             .id("file-view")
             .relative()
@@ -3247,6 +3289,17 @@ pub fn stats(added: usize, removed: usize, size: f32, t: &Theme) -> Div {
         .child(tracked(removed, '-', t.git_deleted))
 }
 
+pub(super) fn file_drag_payload(path: &str) -> Option<ExternalDragPayload> {
+    let path = std::path::PathBuf::from(path);
+    path.is_file()
+        .then(|| ExternalDragPayload::Files(FileDragPaths::new([(path, false)])))
+}
+
+pub(super) fn draggable_file_row(row: Stateful<Div>, path: String) -> Stateful<Div> {
+    row.on_drag(path, |_, _, _, cx| cx.new(|_| crate::EmptyMain))
+        .external_drag_payload(|path: &String, _, _| file_drag_payload(path))
+}
+
 fn file_header(
     i: usize,
     file: &FileDiff,
@@ -3255,10 +3308,13 @@ fn file_header(
     cx: &Context<DiffPanel>,
 ) -> Stateful<Div> {
     if panel.standalone {
-        return panel.standalone_file_header(i, file, t, cx);
+        return draggable_file_row(
+            panel.standalone_file_header(i, file, t, cx),
+            file.path_key.clone(),
+        );
     }
     let small = |name| round_icon(name, 20., t);
-    div()
+    let header = div()
         .id(("diff-file", i))
         .flex_none()
         .h(px(38.))
@@ -3368,7 +3424,8 @@ fn file_header(
                             },
                         )),
                 ),
-        )
+        );
+    draggable_file_row(header, file.path_key.clone())
 }
 
 fn line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
@@ -4072,6 +4129,29 @@ fn relative(base: &str, path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_drag_payload_offers_only_existing_files() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let file = directory.path().join("dragged.txt");
+        std::fs::write(&file, "drag me").expect("create drag file");
+
+        assert_eq!(
+            file_drag_payload(file.to_str().expect("UTF-8 path")),
+            Some(ExternalDragPayload::Files(FileDragPaths::new([(
+                file.clone(),
+                false,
+            )])))
+        );
+        assert_eq!(
+            file_drag_payload(directory.path().to_str().expect("UTF-8 path")),
+            None
+        );
+        assert_eq!(
+            file_drag_payload(directory.path().join("missing").to_str().unwrap()),
+            None
+        );
+    }
 
     #[test]
     fn aggregate_changes_do_not_allow_staging() {
