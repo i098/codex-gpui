@@ -5,8 +5,8 @@
 mod common;
 
 use anyhow::{Context as _, Result, ensure};
-use common::*;
 use bridge::Event;
+use common::*;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use ui::screens::plugins::{Action, Page, Plugin, Resource};
@@ -254,7 +254,10 @@ fn remote_plugin_skill_preview_reads_server_content() -> Result<()> {
 fn a_connected_app_reconciles_remote_plugin_suggestions() -> Result<()> {
     let skills: Value = ui::fixture::response("readback.jsonl", "skills/list", 0);
     let mut lines = script(None, |_| {})?;
-    lines.extend(exchange("app/list", json!({"data": [], "nextCursor": null})));
+    lines.extend(exchange(
+        "app/list",
+        json!({"data": [], "nextCursor": null}),
+    ));
     lines.extend(exchange(
         "app/list",
         json!({
