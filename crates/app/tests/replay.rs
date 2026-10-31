@@ -435,6 +435,7 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
                     format!("cloud-environments/{config_id}/setup")
                 }
                 Route::Scheduled => "scheduled".to_owned(),
+                Route::Space => "space".to_owned(),
                 Route::Automation(id) => format!("scheduled?automationId={id}"),
                 Route::Mobile => "mobile".to_owned(),
                 Route::Security => "security".to_owned(),
@@ -444,6 +445,10 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
                 Route::Plugins(path) => path,
                 Route::Onboarding(page) => page.path().trim_start_matches('/').to_owned(),
                 Route::Sites => "sites".to_owned(),
+                Route::Maps => "maps".to_owned(),
+                Route::Images => "images".to_owned(),
+                Route::Gpts(None) => "gpts".to_owned(),
+                Route::Gpts(Some(id)) => format!("g/{id}"),
             }
             .into(),
             "selectedRail" => fx.shell(|s| s.selected_rail).into(),
