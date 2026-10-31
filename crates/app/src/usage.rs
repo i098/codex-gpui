@@ -151,6 +151,63 @@ pub(crate) fn http(
     url: &str,
     body: Option<Value>,
 ) -> Result<Value> {
+    let response = fetch(host, identity, method, url, body)?;
+    if host::response_wire(&response)["status"] == 204 {
+        return Ok(Value::Null);
+    }
+    host::json_body(&response)
+}
+
+/// Like [`http`], but hands back the HTTP status and parsed body for callers that map
+/// error codes; only a transport failure is an `Err`.
+pub(crate) fn send(
+    host: &dyn Host,
+    identity: &Identity,
+    method: &str,
+    url: &str,
+    body: Option<Value>,
+) -> Result<(u64, Value)> {
+    let response = fetch(host, identity, method, url, body)?;
+    let wire = host::response_wire(&response);
+    let status = wire["status"]
+        .as_u64()
+        .or(wire["responseStatus"].as_u64())
+        .context("missing host status")?;
+    let body = wire
+        .get("bodyJsonString")
+        .or_else(|| wire.get("body"))
+        .and_then(Value::as_str)
+        .and_then(|body| serde_json::from_str(body).ok())
+        .or_else(|| {
+            wire["error"]
+                .as_str()
+                .and_then(|body| serde_json::from_str(body).ok())
+        })
+        .unwrap_or(Value::Null);
+    Ok((status, body))
+}
+
+/// The backend error code: `detail.code`, else a top-level `code`.
+pub(crate) fn error_code(body: &Value) -> Option<&str> {
+    body["detail"]["code"].as_str().or(body["code"].as_str())
+}
+
+/// The account's Statsig gates (`/wham/statsig/bootstrap`); `Null` when unavailable.
+pub(crate) fn statsig(host: &dyn Host, identity: &Identity) -> Value {
+    http(host, identity, "POST", "/wham/statsig/bootstrap", Some(json!({
+        "app_session_id": host::device_id(), "app_version": "26.1007.30912", "brand_name": "chatgpt",
+        "build_flavor": "prod", "locale": "en-US", "stable_id": identity.device_id,
+        "system_name": std::env::consts::OS, "window_type": "electron",
+    }))).and_then(payload_gates).unwrap_or(Value::Null)
+}
+
+fn fetch(
+    host: &dyn Host,
+    identity: &Identity,
+    method: &str,
+    url: &str,
+    body: Option<Value>,
+) -> Result<Value> {
     let mut request = json!({
         "url": url, "method": method,
         "headers": {
@@ -164,16 +221,7 @@ pub(crate) fn http(
     if let Some(body) = body {
         request["body"] = body.to_string().into();
     }
-    let response = host.fetch(&Request::Http(request))?;
-    let wire = response.get("value").unwrap_or(&response);
-    if wire
-        .pointer("/response/__response/status")
-        .and_then(Value::as_u64)
-        == Some(204)
-    {
-        return Ok(Value::Null);
-    }
-    host::json_body(&response)
+    host.fetch(&Request::Http(request))
 }
 
 fn read_reload(host: &dyn Host, identity: &Identity) -> Result<Reload> {
@@ -383,11 +431,7 @@ async fn snapshot(
     if let Some(plan) = current.and_then(|account| account["plan_type"].as_str()) {
         state.plan = plan.into();
     }
-    let gates = http(host.as_ref(), &identity, "POST", "/wham/statsig/bootstrap", Some(json!({
-        "app_session_id": host::device_id(), "app_version": "26.1007.30912", "brand_name": "chatgpt",
-        "build_flavor": "prod", "locale": "en-US", "stable_id": identity.device_id,
-        "system_name": std::env::consts::OS, "window_type": "electron",
-    }))).and_then(payload_gates).unwrap_or(Value::Null);
+    let gates = statsig(host.as_ref(), &identity);
     state.access = access(&state.plan, current, &gates, has_balance);
     if state.access.app_limits {
         state.app_limits = load(read_app_limits(host.as_ref(), &identity));
