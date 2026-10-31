@@ -1532,7 +1532,7 @@ impl Page {
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(12.))
+                            .gap(px(8.))
                             .child(metadata)
                             .when(item.has_diff_stats, |d| {
                                 d.child(

@@ -104,7 +104,14 @@ fn main() {
         .unwrap_or_default()
         .to_string_lossy()
         .into_owned();
-    let application = gpui_platform::application().with_assets(theme::Assets);
+    let application = gpui_platform::application()
+        .with_assets(theme::Assets)
+        .with_http_client(std::sync::Arc::new(ImageHttpClient(
+            ureq::Agent::config_builder()
+                .timeout_global(Some(std::time::Duration::from_secs(30)))
+                .build()
+                .into(),
+        )));
     // `codex://` deep links (SH-151..155): the OS-delivered URLs navigate the primary
     // window like the original host's queued deep-link flush.
     application.on_open_urls(|urls, cx| {
@@ -156,4 +163,44 @@ fn main() {
             cx.activate(true);
         }
     });
+}
+
+/// Fetches GPUI `img(url)` sources: link favicons and account avatars, as the original's
+/// `<img src>` does.
+struct ImageHttpClient(ureq::Agent);
+
+impl http_client::HttpClient for ImageHttpClient {
+    fn user_agent(&self) -> Option<&http_client::http::HeaderValue> {
+        None
+    }
+
+    fn proxy(&self) -> Option<&http_client::Url> {
+        None
+    }
+
+    fn send(
+        &self,
+        request: http_client::Request<http_client::AsyncBody>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn Future<Output = anyhow::Result<http_client::Response<http_client::AsyncBody>>>
+                + Send,
+        >,
+    > {
+        // shortcut: GET only, the request body is dropped; upgrade when a caller sends one.
+        let agent = self.0.clone();
+        let uri = request.uri().to_string();
+        let (sender, receiver) = async_channel::bounded(1);
+        std::thread::spawn(move || {
+            let result = (|| -> anyhow::Result<_> {
+                let mut response = agent.get(&uri).call()?;
+                let body = response.body_mut().read_to_vec()?;
+                Ok(http_client::Response::builder()
+                    .status(response.status().as_u16())
+                    .body(body.into())?)
+            })();
+            let _ = sender.send_blocking(result);
+        });
+        Box::pin(async move { receiver.recv().await? })
+    }
 }

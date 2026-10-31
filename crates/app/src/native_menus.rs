@@ -17,6 +17,7 @@ actions!(
     native_menus,
     [
         ShowAbout,
+        ShowFeedback,
         CheckForUpdates,
         OpenDocumentation,
         OpenChangelog,
@@ -30,6 +31,7 @@ actions!(
         TextReplacement,
         TogglePinnedSummary,
         ToggleNavigationPanel,
+        ToggleBrowserPanel,
     ]
 );
 
@@ -76,6 +78,27 @@ pub(crate) fn actions(root: Div, owner: &crate::Root, cx: &mut Context<crate::Ro
     } else {
         root
     };
+    let root = root.on_action(cx.listener(|this, _: &ShowFeedback, window, cx| {
+        this.open_feedback(window, cx);
+    }));
+    let root = root.on_action(cx.listener(|this, _: &ToggleBrowserPanel, window, cx| {
+        if !matches!(this.state.route, crate::Route::Thread(_)) {
+            return;
+        }
+        if let Some((key, _)) = this.browser_tabs.last() {
+            let side = crate::SidePanel::Browser(*key);
+            if this.side_visible(side) {
+                this.tabs
+                    .retain(|tab| !matches!(tab, crate::SidePanel::Browser(_)));
+                this.side = this.tabs.last().copied();
+                this.sync(window, cx);
+            } else {
+                this.set_side(side, window, cx);
+            }
+        } else {
+            this.open_browser_tab(None, window, cx);
+        }
+    }));
     if ui::native_text::is_speaking(cx) {
         root.on_action(|_: &ui::StopSpeaking, _, cx| ui::native_text::stop_speaking(cx))
     } else {
@@ -110,17 +133,26 @@ fn bring_all_to_front(cx: &mut App) {
     let _ = cx;
 }
 
-struct NativeMenuState(bool);
+struct NativeMenuState {
+    sidebar_collapsible: bool,
+    browser_available: bool,
+}
 impl gpui::Global for NativeMenuState {}
 
 pub(crate) fn refresh_menus(cx: &mut App) {
-    let sidebar_collapsible = cx
+    let (sidebar_collapsible, browser_available) = cx
         .try_global::<NativeMenuState>()
-        .is_none_or(|state| state.0);
+        .map_or((true, false), |state| {
+            (state.sidebar_collapsible, state.browser_available)
+        });
     let updates = cx
         .try_global::<ui::updater::Updates>()
         .is_some_and(|updates| updates.available && !updates.managed);
-    cx.set_menus(menus_for_route(sidebar_collapsible, updates));
+    cx.set_menus(menus_for_route(
+        sidebar_collapsible,
+        updates,
+        browser_available,
+    ));
 }
 
 impl crate::Root {
@@ -130,23 +162,33 @@ impl crate::Root {
             return;
         }
         let sidebar_collapsible = self.state.route != crate::Route::Settings;
-        if cx
-            .try_global::<NativeMenuState>()
-            .is_some_and(|state| state.0 == sidebar_collapsible)
-        {
+        let browser_available = matches!(self.state.route, crate::Route::Thread(_));
+        if cx.try_global::<NativeMenuState>().is_some_and(|state| {
+            state.sidebar_collapsible == sidebar_collapsible
+                && state.browser_available == browser_available
+        }) {
             return;
         }
-        cx.set_global(NativeMenuState(sidebar_collapsible));
+        cx.set_global(NativeMenuState {
+            sidebar_collapsible,
+            browser_available,
+        });
         refresh_menus(cx);
     }
 }
 
 /// Builds the native menu items backed by the app's registered actions.
 pub(crate) fn menus() -> Vec<Menu> {
-    menus_for_route(true, false)
+    menus_for_route(true, false, false)
 }
 
-fn menus_for_route(sidebar_collapsible: bool, updates: bool) -> Vec<Menu> {
+fn menus_for_route(sidebar_collapsible: bool, updates: bool, browser_available: bool) -> Vec<Menu> {
+    let browser = browser_available.then(|| {
+        MenuItem::submenu(
+            Menu::new("Browser")
+                .items([MenuItem::action("Toggle browser panel", ToggleBrowserPanel)]),
+        )
+    });
     vec![
         Menu::new("Codex").items([
             MenuItem::action("About Codex", ShowAbout),
@@ -164,14 +206,14 @@ fn menus_for_route(sidebar_collapsible: bool, updates: bool) -> Vec<Menu> {
             MenuItem::action("Quit Codex", Quit),
         ]),
         Menu::new("File").items([
+            MenuItem::action("New Window", crate::windows::NewWindow),
             MenuItem::action("New Chat", NewChat),
             MenuItem::action("New Temporary Chat", features::shortcuts::NewTemporaryChat),
             MenuItem::action("New Project…", ui::screens::new_project::NewProject),
             MenuItem::action(
                 "New standalone chat",
                 features::shortcuts::NewStandaloneChat,
-            )
-            .hidden(true),
+            ),
             MenuItem::separator(),
             MenuItem::action("Open Folder…", OpenFolder),
             MenuItem::separator(),
@@ -210,31 +252,38 @@ fn menus_for_route(sidebar_collapsible: bool, updates: bool) -> Vec<Menu> {
                 MenuItem::action("Stop Speaking", ui::StopSpeaking),
             ])),
         ]),
-        Menu::new("View").items([
-            MenuItem::action("Toggle Sidebar", ToggleSidebar).hidden(!sidebar_collapsible),
-            MenuItem::action(
-                "Toggle Bottom Panel",
-                features::shortcuts::ToggleBottomPanel,
-            ),
-            MenuItem::action("Toggle Pinned Summary", TogglePinnedSummary),
-            MenuItem::action(
-                "Open Terminal",
-                features::shortcuts::OpenInteractiveTerminal,
-            ),
-            MenuItem::action("Toggle navigation panel", ToggleNavigationPanel),
-            MenuItem::action("Toggle Changes Panel", ToggleChangesPanel),
-            MenuItem::separator(),
-            MenuItem::action("Find", FindInThread),
-            MenuItem::separator(),
-            MenuItem::action("Previous Chat", PreviousChat),
-            MenuItem::action("Next Chat", NextChat),
-            MenuItem::action("Back", GoBack),
-            MenuItem::action("Forward", GoForward),
-            MenuItem::separator(),
-            MenuItem::action("Zoom In", features::shortcuts::ZoomIn),
-            MenuItem::action("Zoom Out", features::shortcuts::ZoomOut),
-            MenuItem::action("Actual Size", features::shortcuts::ActualSize),
-        ]),
+        Menu::new("View").items(
+            [
+                MenuItem::action("Toggle Sidebar", ToggleSidebar).hidden(!sidebar_collapsible),
+                MenuItem::action(
+                    "Toggle Bottom Panel",
+                    features::shortcuts::ToggleBottomPanel,
+                ),
+                MenuItem::action("Toggle Pinned Summary", TogglePinnedSummary),
+                MenuItem::action(
+                    "Open Terminal",
+                    features::shortcuts::OpenInteractiveTerminal,
+                ),
+                MenuItem::action("Toggle navigation panel", ToggleNavigationPanel),
+                MenuItem::action("Full view", ui::ShowWorkspaceTabView),
+                MenuItem::action("Toggle Changes Panel", ToggleChangesPanel),
+            ]
+            .into_iter()
+            .chain(browser)
+            .chain([
+                MenuItem::separator(),
+                MenuItem::action("Find", FindInThread),
+                MenuItem::separator(),
+                MenuItem::action("Previous Chat", PreviousChat),
+                MenuItem::action("Next Chat", NextChat),
+                MenuItem::action("Back", GoBack),
+                MenuItem::action("Forward", GoForward),
+                MenuItem::separator(),
+                MenuItem::action("Zoom In", features::shortcuts::ZoomIn),
+                MenuItem::action("Zoom Out", features::shortcuts::ZoomOut),
+                MenuItem::action("Actual Size", features::shortcuts::ActualSize),
+            ]),
+        ),
         Menu::new("Window").items([
             MenuItem::action("Minimize", Minimize),
             MenuItem::action("Zoom", Zoom),
@@ -248,6 +297,27 @@ fn menus_for_route(sidebar_collapsible: bool, updates: bool) -> Vec<Menu> {
             MenuItem::separator(),
             MenuItem::action("Troubleshooting", OpenTroubleshooting),
             MenuItem::action("System Status", OpenSystemStatus),
+            MenuItem::action("Send Feedback", ShowFeedback),
         ]),
     ]
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn browser_menu_is_available_only_on_thread_routes() {
+        let has_browser_menu = |browser_available| {
+            menus_for_route(true, false, browser_available)
+                .into_iter()
+                .find(|menu| menu.name == "View")
+                .unwrap()
+                .items
+                .iter()
+                .any(|item| matches!(item, MenuItem::Submenu(menu) if menu.name == "Browser"))
+        };
+
+        assert!(!has_browser_menu(false));
+        assert!(has_browser_menu(true));
+    }
 }
