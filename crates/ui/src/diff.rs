@@ -2067,6 +2067,16 @@ impl SplitScreen {
         }
     }
 
+    /// A browser tab's page title changed: its strip label follows.
+    pub fn set_tab_label(&mut self, index: usize, label: SharedString, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get_mut(index)
+            && tab.label != label
+        {
+            tab.label = label;
+            cx.notify();
+        }
+    }
+
     /// Titlebar row over a side panel (`Task tabs`): tabs use slots up to 240 px wide (the
     /// selected one on its surface, the others `text-tertiary`, surface and `×` on hover),
     /// `New tab`, and the `Enter full view` / `Hide tabs` buttons. The caller places it from
