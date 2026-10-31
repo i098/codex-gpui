@@ -199,6 +199,7 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "toggleBottomPanel" => Box::new(shortcuts::ToggleBottomPanel),
         "toggleTerminal" => Box::new(shortcuts::OpenInteractiveTerminal),
         "openReviewTab" => Box::new(OpenChangesPanel),
+        "openBrowserTab" => Box::new(ui::browser::OpenBrowserTab::default()),
         "toggleSidePanel" => Box::new(ToggleChangesPanel),
         "toggleFileTreePanel" => Box::new(crate::native_menus::ToggleNavigationPanel),
         "showWorkspaceTabView" => Box::new(ui::ShowWorkspaceTabView),

@@ -1500,6 +1500,7 @@ impl Root {
                         if let Some(chronicle) = read.config["features"]["chronicle"].as_bool() {
                             this.config["features"]["chronicle"] = chronicle.into();
                         }
+                        this.refresh_config_globals(cx);
                         read.settings
                     })
                     .map_err(|error| error.to_string());
