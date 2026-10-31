@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Settings ▸ `Filter settings by host`: while a remote host is connected, a dropdown beside the Settings title picks the host whose `config.toml` the Configuration page reads and writes.
 - Show an image or PDF in the Files tab as a preview (PDFs with page arrows), not as text lines that fail with `Could not open file`.
 - Open the latest plan from Thread summary ▸ `Plan` in an editable `Plan` side panel tab that saves to `$CODEX_HOME/plans/<thread>/<plan item>/PLAN.md`.
 - Open the Maps page from the Explore menu: the ChatGPT backend `/local/home` prompt suggestions and map, with loading, error with Try again, and empty states.
