@@ -386,57 +386,16 @@ impl DiffPanel {
         let available = preview.content_width(width);
         let render_side = |side: usize| {
             let value = &preview.sides[side];
-            let label = if value.loading {
-                if value.page > 1 {
-                    "Loading page…"
-                } else {
-                    "Loading preview…"
-                }
-            } else if preview.pdf && value.error {
-                "Unable to render PDF preview"
-            } else if preview.pdf {
-                "No PDF preview"
-            } else {
-                "No image"
-            };
-            let body = if let (false, Some(content)) = (value.loading, value.content.as_ref()) {
-                let original = content.pixels.dimensions();
-                let image_width = if preview.pdf || preview.svg {
-                    available
-                } else {
-                    available.min(px(original.0 as f32))
-                };
-                let canvas_width = if preview.pdf {
-                    image_width.floor()
-                } else {
-                    image_width
-                };
-                let padding = if preview.svg { 24. } else { 0. };
-                let image_height = px((f32::from(canvas_width) - padding).max(1.)
-                    * original.1 as f32
-                    / original.0.max(1) as f32
-                    + padding);
-                let image_height = if preview.pdf {
-                    image_height.floor()
-                } else {
-                    image_height
-                };
-                let picture = if content.image.frame_count() > 1 {
-                    gpui::img(content.image.clone())
-                        .w(image_width)
-                        .h(image_height)
-                        .into_any_element()
-                } else {
-                    picture(content, value.raster.clone(), t.surface, preview)
-                        .w(image_width)
-                        .h(image_height)
-                        .into_any_element()
-                };
-                // `artifact-annotation`: only the current (after) side takes annotations.
-                let layer = (side == 1)
-                    .then(|| self.file_path(index))
-                    .flatten()
-                    .map(|path| {
+            // `artifact-annotation`: only the current (after) side takes annotations.
+            let path = (side == 1).then(|| self.file_path(index)).flatten();
+            let body = side_body(
+                preview,
+                value,
+                available,
+                format!("diff-preview-{index}-{side}").into(),
+                t,
+                |content, image_width| {
+                    path.map(|path| {
                         let page = artifact_annotations::Page {
                             path,
                             title: file.name.to_string(),
@@ -444,37 +403,16 @@ impl DiffPanel {
                             number: value.page,
                             count: content.pages,
                             size: comments::PageSize {
-                                width: original.0 as f32,
-                                height: original.1 as f32,
+                                width: content.pixels.dimensions().0 as f32,
+                                height: content.pixels.dimensions().1 as f32,
                             },
                             bounds: Default::default(),
                         };
                         self.artifact_layer(page, image_width, cx)
                     })
-                    .unwrap_or_default();
-                div()
-                    .id(SharedString::from(format!("diff-preview-{index}-{side}")))
-                    .role(gpui::Role::Image)
-                    .aria_label(if preview.pdf {
-                        "PDF preview"
-                    } else {
-                        "Image preview"
-                    })
-                    .relative()
-                    .child(shapes::decoration(frame(None)))
-                    .child(picture)
-                    .children(layer)
-                    .into_any_element()
-            } else {
-                text(
-                    label,
-                    if value.loading { 12. } else { 14. },
-                    20.,
-                    400.,
-                    t.text_secondary,
-                )
-                .into_any_element()
-            };
+                    .unwrap_or_default()
+                },
+            );
             let pages = value.content.as_ref().map_or(0, |content| content.pages);
             div()
                 .group("diff-pdf-preview")
@@ -611,6 +549,310 @@ impl DiffPanel {
             return;
         };
         self.show_preview_page(index, side, page, width, window, cx);
+    }
+}
+
+/// One side's picture at its fitted size, else its loading or failure label.
+fn side_body(
+    preview: &Preview,
+    value: &Side,
+    available: Pixels,
+    id: SharedString,
+    t: &Theme,
+    layer: impl FnOnce(&PreviewContent, Pixels) -> Vec<gpui::AnyElement>,
+) -> gpui::AnyElement {
+    let Some(content) = value.content.as_ref().filter(|_| !value.loading) else {
+        let label = if value.loading {
+            if value.page > 1 {
+                "Loading page…"
+            } else {
+                "Loading preview…"
+            }
+        } else if preview.pdf && value.error {
+            "Unable to render PDF preview"
+        } else if preview.pdf {
+            "No PDF preview"
+        } else {
+            "No image"
+        };
+        return text(
+            label,
+            if value.loading { 12. } else { 14. },
+            20.,
+            400.,
+            t.text_secondary,
+        )
+        .into_any_element();
+    };
+    let original = content.pixels.dimensions();
+    let image_width = if preview.pdf || preview.svg {
+        available
+    } else {
+        available.min(px(original.0 as f32))
+    };
+    let canvas_width = if preview.pdf {
+        image_width.floor()
+    } else {
+        image_width
+    };
+    let padding = if preview.svg { 24. } else { 0. };
+    let image_height = px(
+        (f32::from(canvas_width) - padding).max(1.) * original.1 as f32 / original.0.max(1) as f32
+            + padding,
+    );
+    let image_height = if preview.pdf {
+        image_height.floor()
+    } else {
+        image_height
+    };
+    let picture = if content.image.frame_count() > 1 {
+        gpui::img(content.image.clone())
+            .w(image_width)
+            .h(image_height)
+            .into_any_element()
+    } else {
+        picture(content, value.raster.clone(), t.surface, preview)
+            .w(image_width)
+            .h(image_height)
+            .into_any_element()
+    };
+    div()
+        .id(id)
+        .role(gpui::Role::Image)
+        .aria_label(if preview.pdf {
+            "PDF preview"
+        } else {
+            "Image preview"
+        })
+        .relative()
+        .child(shapes::decoration(frame(None)))
+        .child(picture)
+        .children(layer(content, image_width))
+        .into_any_element()
+}
+
+/// The Files tab's image or PDF: the bytes read once, decoded per page and raster width as a
+/// Changes preview's after side is.
+pub(super) struct FileMedia {
+    bytes: Arc<Vec<u8>>,
+    mime: Option<String>,
+    preview: Preview,
+    /// The `(page, raster width)` decoded or decoding; a raster image ignores the width.
+    requested: Option<(usize, u32)>,
+}
+
+impl FileView {
+    /// Whether the Files tab shows `path` as an image or PDF preview instead of text.
+    pub fn previews(path: &str) -> bool {
+        enabled(path, true)
+    }
+
+    /// The host's `read-file-binary` answer for a [`Self::previews`] path: `(bytes, mime)`.
+    /// False when the viewer moved to another file meanwhile.
+    pub fn set_file_media(
+        &mut self,
+        revision: u64,
+        media: Result<(Arc<Vec<u8>>, Option<String>), String>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.revision != revision {
+            return false;
+        }
+        match media {
+            Ok((bytes, mime)) => {
+                let source = PreviewSource::Worktree {
+                    cwd: self.workspace_root().to_owned(),
+                    path: self.path.clone(),
+                };
+                self.media = Some(FileMedia {
+                    bytes,
+                    mime,
+                    preview: Preview {
+                        sides: [Side::new(None), Side::new(Some(source))],
+                        after_only: true,
+                        pdf: is_pdf(&self.path),
+                        svg: image_format(&self.path) == Some(ImageFormat::Svg),
+                        pager_focus: None,
+                    },
+                    requested: None,
+                });
+            }
+            Err(error) => self.contents = Some(Err(error)),
+        }
+        cx.notify();
+        true
+    }
+
+    /// Whether an image or PDF page is decoded and shown.
+    pub fn media_loaded(&self) -> bool {
+        self.media
+            .as_ref()
+            .is_some_and(|media| media.preview.sides[1].content.is_some())
+    }
+
+    /// The body's width: the panel less the open file tree (`w-[250px] max-w-[60%]`).
+    // shortcut: the stored split width, so a PDF in full view rasterizes at the split width;
+    // measure the body when that blurs a page.
+    fn media_width(&self, window: &Window, cx: &App) -> Pixels {
+        let panel = panel_width(window, cx);
+        if self.tree.open {
+            panel - (panel * 0.6).min(px(251.))
+        } else {
+            panel
+        }
+    }
+
+    /// Decodes the shown page off the main thread when the page or a PDF's raster width
+    /// changed.
+    pub(super) fn request_media(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let width = self.media_width(window, cx);
+        let scale = window.scale_factor();
+        let revision = self.revision;
+        let Some(media) = self.media.as_mut() else {
+            return;
+        };
+        let pdf = media.preview.pdf;
+        let raster = if pdf {
+            media.preview.raster_width(width, scale)
+        } else {
+            0
+        };
+        let side = &mut media.preview.sides[1];
+        let key = (side.page, raster);
+        if media.requested == Some(key) {
+            return;
+        }
+        media.requested = Some(key);
+        side.loading = true;
+        let Some(source) = side.source.clone() else {
+            return;
+        };
+        let request = PreviewRequest {
+            index: 0,
+            side: 1,
+            generation: revision,
+            source,
+            page: key.0,
+            width: key.1,
+            scale,
+            pdf,
+            data: None,
+        };
+        let (bytes, mime, svg) = (media.bytes.clone(), media.mime.clone(), cx.svg_renderer());
+        let decode = cx.background_spawn(async move {
+            PreviewContent::decode(bytes, mime.as_deref(), &request, svg)
+        });
+        cx.spawn(async move |view, cx| {
+            let result = decode.await;
+            if let Err(error) = &result {
+                eprintln!("codex-gpui: cannot preview file: {error:#}");
+            }
+            view.update(cx, |view, cx| {
+                let Some(media) = view
+                    .media
+                    .as_mut()
+                    .filter(|media| view.revision == revision && media.requested == Some(key))
+                else {
+                    return;
+                };
+                let side = &mut media.preview.sides[1];
+                side.loading = false;
+                side.error = result.is_err();
+                side.content = result.ok();
+                *side.raster.borrow_mut() = None;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn turn_media_page(&mut self, step: isize, cx: &mut Context<Self>) {
+        let Some(media) = self.media.as_mut() else {
+            return;
+        };
+        let side = &mut media.preview.sides[1];
+        let pages = side.content.as_ref().map_or(0, |content| content.pages);
+        if let Some(page) = side
+            .page
+            .checked_add_signed(step)
+            .filter(|page| (1..=pages).contains(page))
+        {
+            side.page = page;
+            cx.notify();
+        }
+    }
+
+    /// The image or PDF page, fitted to the body, with a PDF's page controls.
+    pub(super) fn media_view(
+        &self,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        let media = self.media.as_ref()?;
+        let t = cx.theme();
+        let preview = &media.preview;
+        let value = &preview.sides[1];
+        let available = preview.content_width(self.media_width(window, cx));
+        let pages = value.content.as_ref().map_or(0, |content| content.pages);
+        let button = |step: isize, label: &'static str, name: &'static str| {
+            let enabled = if step < 0 {
+                value.page > 1
+            } else {
+                value.page < pages
+            };
+            round_icon(name, 24., t)
+                .id(SharedString::from(format!("file-pdf-page{step}")))
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .aria_disabled(!enabled)
+                .when(enabled, |d| d.cursor_pointer())
+                .on_click(cx.listener(move |view, _, _, cx| view.turn_media_page(step, cx)))
+        };
+        Some(
+            div()
+                .id("file-preview")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .relative()
+                .flex()
+                .flex_col()
+                .items_center()
+                .p(px(12.))
+                .child(side_body(
+                    preview,
+                    value,
+                    available,
+                    "file-preview-image".into(),
+                    t,
+                    |_, _| Vec::new(),
+                ))
+                .when(preview.pdf && pages > 1, |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .right(px(14.))
+                            .top(px(14.))
+                            .flex()
+                            .items_center()
+                            .rounded_full()
+                            .bg(t.surface)
+                            .p(px(2.))
+                            .gap(px(2.))
+                            .child(button(-1, "Previous page", "request-chevron-left"))
+                            .child(text(
+                                format!("{}/{pages}", value.page),
+                                14.,
+                                20.,
+                                400.,
+                                t.text_secondary,
+                            ))
+                            .child(button(1, "Next page", "request-chevron-right")),
+                    )
+                })
+                .into_any_element(),
+        )
     }
 }
 
