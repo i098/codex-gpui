@@ -188,6 +188,9 @@ pub struct CommandAction {
     pub command: String,
     /// File name of a `read`.
     pub name: Option<String>,
+    /// Path of a `read` (as the command names it, maybe relative to the item's `cwd`), or the
+    /// directory of a `search` / `list_files`.
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -234,6 +237,9 @@ pub struct Model {
     pub default_reasoning_effort: String,
     pub supported_reasoning_efforts: Vec<Value>,
     pub is_default: bool,
+    /// `inputModalities`; absent means the server default, text and image.
+    #[serde(default)]
+    pub input_modalities: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

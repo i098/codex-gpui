@@ -44,12 +44,23 @@ url_types=""
 if [[ -n $url_scheme ]]; then
     url_types="<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>$identifier</string><key>CFBundleURLSchemes</key><array><string>$url_scheme</string></array></dict></array>"
 fi
-cargo build --locked --release -p app
+binary=$CARGO_TARGET_DIR/release/codex-gpui
+if [[ ${CODEX_GPUI_UNIVERSAL:-} == 1 ]]; then
+    # One fat binary (arm64 + x86_64) keeps a single zip and a single appcast item.
+    for triple in aarch64-apple-darwin x86_64-apple-darwin; do
+        cargo build --locked --release -p app --target "$triple"
+    done
+    mkdir -p "$out"
+    binary=$(mktemp "$out/codex-gpui.XXXXXX")
+    lipo -create -output "$binary" "$CARGO_TARGET_DIR"/{aarch64,x86_64}-apple-darwin/release/codex-gpui
+else
+    cargo build --locked --release -p app
+fi
 mkdir -p "$out"
 stage=$(mktemp -d "$out/stage.XXXXXX")
 app="$stage/$name.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp "$CARGO_TARGET_DIR/release/codex-gpui" "$app/Contents/MacOS/"
+cp "$binary" "$app/Contents/MacOS/codex-gpui"
 cp assets/app/AppIcon.icns "$app/Contents/Resources/"
 python3 tools/third-party-notices.py "$app/Contents/Resources/THIRD_PARTY_NOTICES.txt"
 cat >"$app/Contents/Info.plist" <<PLIST
@@ -107,6 +118,11 @@ plutil -lint "$app/Contents/Info.plist"
 codesign "${sign_args[@]}" "$app"
 codesign --verify --strict --verbose=2 "$app"
 "$app/Contents/MacOS/codex-gpui" --qa-build-info
+if [[ ${CODEX_GPUI_UNIVERSAL:-} == 1 ]]; then
+    archs=$(lipo -archs "$app/Contents/MacOS/codex-gpui")
+    [[ $archs == *arm64* && $archs == *x86_64* ]] || { echo "binary is not universal: $archs" >&2; exit 1; }
+    rm -f -- "$binary"
+fi
 if [[ ${5:-} == archive ]]; then
     (cd "$stage" && ditto -c -k --keepParent "$name.app" "$out/bundle.zip")
     rm -rf -- "$stage"

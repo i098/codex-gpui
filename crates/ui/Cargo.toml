@@ -46,6 +46,9 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = ["s
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFData"] }
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGDataProvider", "CGPDFArray", "CGPDFDictionary", "CGPDFDocument", "CGPDFObject", "CGPDFPage", "CGPDFStream"] }
 raw-window-handle = "0.6"
+objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-app-kit", "WKWebView"] }
+# The in-app browser's page: a WKWebView child of the window's view.
+wry = { version = "0.57", default-features = false }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
