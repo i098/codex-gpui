@@ -650,7 +650,7 @@ mod tests {
         }
     }
     #[test]
-    fn new_primary_window_opens_the_home_route() {
+    fn new_window_action_opens_an_additional_home_window() {
         use gpui::{AppContext as _, HeadlessAppContext};
         use std::sync::Arc;
 
@@ -668,9 +668,21 @@ mod tests {
                 )
             })
             .expect("open primary window");
-        let route = cx
-            .read_window(&window, |root, _| root.route().clone())
-            .expect("read primary window");
-        assert!(matches!(route, Route::Home));
+        cx.test_window(window.into())
+            .simulate_scale_factor_change(1.);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.dispatch_action(Box::new(NewWindow), cx);
+        })
+        .expect("dispatch NewWindow");
+
+        let windows = cx.windows();
+        assert_eq!(windows.len(), 2);
+        for handle in windows {
+            let root = handle.downcast::<Root>().expect("primary root");
+            let route = cx
+                .read_window(&root, |root, _| root.route().clone())
+                .expect("read primary route");
+            assert!(matches!(route, Route::Home));
+        }
     }
 }
