@@ -17,6 +17,7 @@ mod command_destinations;
 mod copy_directory;
 pub(crate) mod feedback;
 mod keymap;
+pub(crate) mod memories;
 pub(crate) mod shortcuts;
 mod thread_menu;
 mod workspace;

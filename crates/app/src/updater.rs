@@ -1,28 +1,37 @@
 #[cfg(target_os = "macos")]
 use crate::native_menus::CheckForUpdates;
 use bridge::Bridge;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use gpui::Global;
 use gpui::{App, Task};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
-use ui::updater::Updates;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use ui::updater::InstallUpdate;
 #[cfg(target_os = "macos")]
-use ui::updater::{InstallUpdate, ToggleAutomaticChecks};
+use ui::updater::ToggleAutomaticChecks;
+use ui::updater::Updates;
 
 #[cfg(target_os = "macos")]
 mod native;
+#[cfg(target_os = "linux")]
+#[path = "updater/linux.rs"]
+mod native;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod package;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 struct Runtime {
     _events: Task<()>,
+    #[cfg(target_os = "macos")]
     _settings: gpui::Subscription,
     backend: native::Backend,
+    #[cfg(target_os = "macos")]
     installation: String,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 impl Global for Runtime {}
 
 /// The signed-in ChatGPT plan that the appcast URL carries.
@@ -214,6 +223,14 @@ pub fn init(cx: &mut App) {
             }
         });
     }
+    #[cfg(target_os = "linux")]
+    cx.on_action(|_: &InstallUpdate, cx| {
+        if !cx.global::<Updates>().managed
+            && let Some(runtime) = cx.try_global::<Runtime>()
+        {
+            runtime.backend.install();
+        }
+    });
 }
 
 pub fn poll_policy(bridge: Arc<Bridge>, cx: &mut App) -> Option<Task<()>> {
@@ -234,7 +251,7 @@ pub fn poll_policy(bridge: Arc<Bridge>, cx: &mut App) -> Option<Task<()>> {
                     if first || old.0 != managed {
                         first = false;
                         cx.global_mut::<Updates>().managed = managed;
-                        #[cfg(target_os = "macos")]
+                        #[cfg(any(target_os = "macos", target_os = "linux"))]
                         configure(managed, cx);
                         let new = (
                             cx.global::<Updates>().managed,
@@ -290,6 +307,41 @@ fn configure(managed: bool, cx: &mut App) {
                     _settings: settings,
                     backend,
                     installation,
+                });
+            }
+            Ok(None) => {}
+            Err(error) => eprintln!("codex-gpui: cannot start updater: {error:#}"),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn configure(managed: bool, cx: &mut App) {
+    if let Some(runtime) = cx.try_global::<Runtime>() {
+        runtime.backend.set_managed(managed);
+        cx.global_mut::<Updates>().available = !managed;
+        if managed {
+            cx.global_mut::<Updates>().status = ui::updater::Status::Idle;
+        }
+        return;
+    }
+    if !managed {
+        match native::start() {
+            Ok(Some((backend, events))) => {
+                cx.global_mut::<Updates>().available = true;
+                let events = cx.spawn(async move |cx| {
+                    while let Ok(status) = events.recv().await {
+                        cx.update(|cx| {
+                            if !cx.global::<Updates>().managed {
+                                cx.global_mut::<Updates>().status = status;
+                                cx.refresh_windows();
+                            }
+                        });
+                    }
+                });
+                cx.set_global(Runtime {
+                    _events: events,
+                    backend,
                 });
             }
             Ok(None) => {}
