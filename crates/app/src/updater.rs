@@ -1,27 +1,138 @@
 #[cfg(target_os = "macos")]
 use crate::native_menus::CheckForUpdates;
 use bridge::Bridge;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use gpui::Global;
 use gpui::{App, Task};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
-use ui::updater::Updates;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use ui::updater::InstallUpdate;
 #[cfg(target_os = "macos")]
-use ui::updater::{InstallUpdate, ToggleAutomaticChecks};
+use ui::updater::ToggleAutomaticChecks;
+use ui::updater::Updates;
 
 #[cfg(target_os = "macos")]
 mod native;
+#[cfg(target_os = "linux")]
+#[path = "updater/linux.rs"]
+mod native;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod package;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 struct Runtime {
     _events: Task<()>,
+    #[cfg(target_os = "macos")]
+    _settings: gpui::Subscription,
     backend: native::Backend,
+    #[cfg(target_os = "macos")]
+    installation: String,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl Global for Runtime {}
+
+/// The signed-in ChatGPT plan that the appcast URL carries.
+struct Plan(String);
+
+impl gpui::Global for Plan {}
+
+/// The original's production appcast URL (`hn({beta, installationId, planType})`):
+/// `None` on an architecture that has no build.
+#[cfg(any(target_os = "macos", test))]
+fn feed_url(
+    base: &str,
+    installation: &str,
+    arch: &str,
+    version: &str,
+    beta: bool,
+    os_version: &str,
+    plan: &str,
+) -> Option<String> {
+    let arch = match arch {
+        "aarch64" => "arm64",
+        "x86_64" => "x64",
+        _ => return None,
+    };
+    let mut url = url::Url::parse(base).ok()?;
+    url.query_pairs_mut()
+        .append_pair("installation_id", installation)
+        .append_pair("arch", arch)
+        .append_pair("app_version", version)
+        .append_pair("beta", if beta { "true" } else { "false" })
+        .append_pair("os-version", os_version)
+        .append_pair("plan_type", plan);
+    Some(url.into())
+}
+
+/// Stores the account plan for the appcast URL.
+pub fn set_plan(plan: Option<&str>, cx: &mut App) {
+    let plan = plan.filter(|plan| !plan.is_empty()).unwrap_or("unknown");
+    if cx.try_global::<Plan>().is_some_and(|old| old.0 == plan) {
+        return;
+    }
+    cx.set_global(Plan(plan.to_owned()));
+    #[cfg(target_os = "macos")]
+    apply_preferences(cx);
 }
 
 #[cfg(target_os = "macos")]
-impl Global for Runtime {}
+fn host_flag(cx: &App, key: &str, default: bool) -> bool {
+    cx.try_global::<crate::host_settings::Settings>()
+        .and_then(|settings| settings.read_all().get(key).and_then(Value::as_bool))
+        .unwrap_or(default)
+}
+
+/// The beta setting and the account plan.
+#[cfg(target_os = "macos")]
+fn preferences(cx: &App) -> (bool, String) {
+    let plan = cx
+        .try_global::<Plan>()
+        .map_or("unknown", |plan| plan.0.as_str());
+    (host_flag(cx, "update-beta", false), plan.to_owned())
+}
+
+/// Applies the current preferences to a running Sparkle updater.
+#[cfg(target_os = "macos")]
+fn apply_preferences(cx: &mut App) {
+    let (beta, plan) = preferences(cx);
+    if let Some(runtime) = cx.try_global::<Runtime>() {
+        runtime
+            .backend
+            .configure(beta, &plan, &runtime.installation);
+    }
+}
+
+/// A new lowercase random UUID, as the original's `randomUUID()`.
+#[cfg(target_os = "macos")]
+fn new_uuid() -> String {
+    objc2_foundation::NSUUID::new()
+        .UUIDString()
+        .to_string()
+        .to_lowercase()
+}
+
+/// The stored installation id, created and saved on first use.
+#[cfg(target_os = "macos")]
+fn installation_id(cx: &mut App) -> String {
+    const KEY: &str = "update-installation-id";
+    let Some(settings) = cx.try_global::<crate::host_settings::Settings>() else {
+        return new_uuid();
+    };
+    if let Some(id) = settings.read_all().get(KEY).and_then(Value::as_str) {
+        return id.to_owned();
+    }
+    let id = new_uuid();
+    if let Err(error) = cx
+        .global_mut::<crate::host_settings::Settings>()
+        .write(KEY, Value::String(id.clone()))
+    {
+        eprintln!("codex-gpui: cannot save update installation id: {error:#}");
+    }
+    id
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,6 +223,14 @@ pub fn init(cx: &mut App) {
             }
         });
     }
+    #[cfg(target_os = "linux")]
+    cx.on_action(|_: &InstallUpdate, cx| {
+        if !cx.global::<Updates>().managed
+            && let Some(runtime) = cx.try_global::<Runtime>()
+        {
+            runtime.backend.install();
+        }
+    });
 }
 
 pub fn poll_policy(bridge: Arc<Bridge>, cx: &mut App) -> Option<Task<()>> {
@@ -132,7 +251,7 @@ pub fn poll_policy(bridge: Arc<Bridge>, cx: &mut App) -> Option<Task<()>> {
                     if first || old.0 != managed {
                         first = false;
                         cx.global_mut::<Updates>().managed = managed;
-                        #[cfg(target_os = "macos")]
+                        #[cfg(any(target_os = "macos", target_os = "linux"))]
                         configure(managed, cx);
                         let new = (
                             cx.global::<Updates>().managed,
@@ -164,10 +283,52 @@ fn configure(managed: bool, cx: &mut App) {
         return;
     }
     if !managed {
+        let installation = installation_id(cx);
+        let (beta, plan) = preferences(cx);
+        match native::start(beta, &plan, &installation) {
+            Ok(Some((backend, events))) => {
+                cx.global_mut::<Updates>().available = true;
+                backend.check_at_start();
+                cx.global_mut::<Updates>().automatic = backend.automatic();
+                let events = cx.spawn(async move |cx| {
+                    while let Ok(status) = events.recv().await {
+                        cx.update(|cx| {
+                            if !cx.global::<Updates>().managed {
+                                cx.global_mut::<Updates>().status = status;
+                                cx.refresh_windows();
+                            }
+                        });
+                    }
+                });
+                let settings =
+                    cx.observe_global::<crate::host_settings::Settings>(apply_preferences);
+                cx.set_global(Runtime {
+                    _events: events,
+                    _settings: settings,
+                    backend,
+                    installation,
+                });
+            }
+            Ok(None) => {}
+            Err(error) => eprintln!("codex-gpui: cannot start updater: {error:#}"),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn configure(managed: bool, cx: &mut App) {
+    if let Some(runtime) = cx.try_global::<Runtime>() {
+        runtime.backend.set_managed(managed);
+        cx.global_mut::<Updates>().available = !managed;
+        if managed {
+            cx.global_mut::<Updates>().status = ui::updater::Status::Idle;
+        }
+        return;
+    }
+    if !managed {
         match native::start() {
             Ok(Some((backend, events))) => {
                 cx.global_mut::<Updates>().available = true;
-                cx.global_mut::<Updates>().automatic = backend.automatic();
                 let events = cx.spawn(async move |cx| {
                     while let Ok(status) = events.recv().await {
                         cx.update(|cx| {
@@ -191,8 +352,42 @@ fn configure(managed: bool, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Features, managed, validate};
+    use super::{Features, feed_url, managed, validate};
     use serde_json::json;
+
+    #[test]
+    fn feed_url_carries_the_original_appcast_parameters() {
+        let url = feed_url(
+            "https://updates.example/appcast.xml?channel=a",
+            "id 1",
+            "aarch64",
+            "26.1.0",
+            true,
+            "15.1.0",
+            "plus",
+        );
+        assert_eq!(
+            url.as_deref(),
+            Some(
+                "https://updates.example/appcast.xml?channel=a&installation_id=id+1&arch=arm64\
+                 &app_version=26.1.0&beta=true&os-version=15.1.0&plan_type=plus"
+            )
+        );
+        let intel = feed_url(
+            "https://u.example/f",
+            "i",
+            "x86_64",
+            "1.0.0",
+            false,
+            "14",
+            "free",
+        );
+        assert!(intel.is_some_and(|url| url.contains("arch=x64") && url.contains("beta=false")));
+        assert_eq!(
+            feed_url("https://u.example/f", "i", "riscv64", "1", false, "1", "x"),
+            None
+        );
+    }
 
     #[test]
     fn updater_rejects_untrusted_feed_configuration() {
