@@ -41,6 +41,7 @@ pub mod qa;
 mod routes;
 pub mod terminal;
 mod thread_patch;
+pub mod user_data;
 pub use routes::Route;
 mod plugins;
 pub mod screenshot;
@@ -276,11 +277,10 @@ impl Default for State {
 }
 
 impl State {
-    /// `~/Library/Application Support/codex-gpui/state.json`, saved back on every change.
+    /// `codex-gpui/state.json` in the per-OS user data directory, saved back on every change.
     /// Like the original, a launch opens Home; only an unfinished onboarding page is kept.
     pub fn load() -> Self {
-        let path = PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-            .join("Library/Application Support/codex-gpui/state.json");
+        let path = user_data::user_data_dir("codex-gpui").join("state.json");
         let mut state: Self = fs::read(&path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
