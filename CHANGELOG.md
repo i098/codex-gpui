@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Open the GPTs page from the Explore menu: `My GPTs` (`/gizmos/bootstrap`) and the `GPT catalog` (`/public-api/gizmos/discovery`); a row opens the GPT's page (`/gizmos/{id}`) with its author, description and conversation starters.
+- Add Settings ▸ `Appshots` on macOS: press both ⌘, ⌥ or ⇧ keys to capture the frontmost window into the current chat, a new chat or a visible Mini, with destination and sound settings.
 - Show an image or PDF in the Files tab as a preview (PDFs with page arrows), not as text lines that fail with `Could not open file`.
 - Open the latest plan from Thread summary ▸ `Plan` in an editable `Plan` side panel tab that saves to `$CODEX_HOME/plans/<thread>/<plan item>/PLAN.md`.
 - Open the Maps page from the Explore menu: the ChatGPT backend `/local/home` prompt suggestions and map, with loading, error with Try again, and empty states.
