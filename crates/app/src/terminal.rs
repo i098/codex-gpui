@@ -300,6 +300,52 @@ impl Root {
         }
     }
 
+    pub(crate) fn run_environment_action(
+        &mut self,
+        number: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !(1..=9).contains(&number) {
+            return;
+        }
+        let ui::screens::computer_use::Load::Ready(config) = &cx
+            .global::<ui::screens::settings::environments::State>()
+            .selected
+        else {
+            return;
+        };
+        let Some(action) = config["environment"]["environment"]["actions"]
+            .as_array()
+            .and_then(|actions| actions.get(number - 1))
+            .filter(|action| {
+                action["platform"].as_str().is_none_or(|platform| {
+                    platform
+                        == if cfg!(target_os = "macos") {
+                            "darwin"
+                        } else if cfg!(windows) {
+                            "win32"
+                        } else {
+                            "linux"
+                        }
+                })
+            })
+        else {
+            return;
+        };
+        let Some(command) = action["command"].as_str() else {
+            return;
+        };
+        let command = format!("{command}\r").into_bytes();
+        self.show_terminal(false, window, cx);
+        if let Some(panel) = self.terminal_panel().cloned() {
+            panel.update(cx, |panel, _| {
+                let active = panel.active;
+                panel.write(active, command);
+            });
+        }
+    }
+
     pub(crate) fn toggle_bottom_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.terminal.visible
             && self
