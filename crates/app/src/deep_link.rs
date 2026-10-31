@@ -23,6 +23,8 @@ pub enum Link {
         host_id: Option<String>,
         shared: bool,
     },
+    Plugins(String),
+    PetInstall,
     Settings(Option<&'static str>),
     Connections(Tab),
     AddSsh {
@@ -54,6 +56,10 @@ pub fn parse(value: &str) -> Option<Link> {
     let sub: Vec<_> = url.path().split('/').filter(|s| !s.is_empty()).collect();
     let params = Params(url.query_pairs().collect());
     match destination {
+        "plugins" => Some(Link::Plugins(plugin_route(&sub)?)),
+        "mcp-app" => Some(Link::Plugins("/plugins".into())),
+        "skills" if sub.is_empty() => Some(Link::Plugins("/skills".into())),
+        "pets" if sub.as_slice() == ["install"] => Some(Link::PetInstall),
         "threads" if sub.as_slice() == ["new"] => new_thread(&params, false),
         "threads" => thread(sub.first()?, &params),
         "new" if sub.is_empty() => new_thread(&params, true),
@@ -62,6 +68,18 @@ pub fn parse(value: &str) -> Option<Link> {
         "automations" if sub.len() == 1 => automation(sub[0], &params),
         "connector" if sub.as_slice() == ["oauth_callback"] => Some(Link::OAuth(value.to_owned())),
         "launch" if sub.is_empty() => Some(Link::Launch),
+        _ => None,
+    }
+}
+
+fn plugin_route(sub: &[&str]) -> Option<String> {
+    match sub {
+        [] => Some("/plugins".into()),
+        [id] if *id != "install" => {
+            let id = component(id)?;
+            (!id.contains('/')).then(|| format!("/plugins/{id}"))
+        }
+        ["install", _] => Some("/plugins".into()),
         _ => None,
     }
 }
@@ -291,6 +309,14 @@ impl Root {
                 self.navigate(Route::Thread(id.clone()), window, cx);
                 prompt = prefill.clone();
             }
+            Link::Plugins(path) => {
+                self.open_plugins(path, window, cx);
+                return;
+            }
+            Link::PetInstall => {
+                self.open_settings_section("Mini & Pets", window, cx);
+                return;
+            }
             Link::Settings(None) => self.navigate(Route::Settings, window, cx),
             Link::Settings(Some(label)) => self.open_settings_section(label, window, cx),
             Link::Connections(tab) => self.open_connections(*tab, window, cx),
@@ -410,6 +436,36 @@ mod tests {
     }
 
     #[test]
+    fn routes_plugin_skill_mcp_app_and_pet_links() {
+        assert_eq!(
+            parse("codex://plugins"),
+            Some(Link::Plugins("/plugins".into()))
+        );
+        assert_eq!(
+            parse("codex://plugins/code-review%40openai-bundled"),
+            Some(Link::Plugins("/plugins/code-review@openai-bundled".into()))
+        );
+        assert_eq!(
+            parse("codex://plugins/install/my-plugin?marketplace=public"),
+            Some(Link::Plugins("/plugins".into()))
+        );
+        assert_eq!(
+            parse("codex://mcp-app?appId=calendar"),
+            Some(Link::Plugins("/plugins".into()))
+        );
+        assert_eq!(
+            parse("codex://skills"),
+            Some(Link::Plugins("/skills".into()))
+        );
+        assert_eq!(
+            parse("codex://pets/install?name=Mini"),
+            Some(Link::PetInstall)
+        );
+        assert!(parse("codex://plugins/a%2Fb").is_none());
+        assert!(parse("codex://plugins/install").is_none());
+    }
+
+    #[test]
     fn preserves_automation_source_and_edit() {
         assert_eq!(
             parse("codex://automations/a%2Fb?edit=true"),
@@ -497,6 +553,9 @@ mod tests {
                     assert_eq!(url, expected["fullRedirectUrl"].as_str().unwrap())
                 }
                 Some(Link::Scheduled) => assert_eq!(expected["kind"], "automations", "{value}"),
+                Some(Link::Plugins(_) | Link::PetInstall) => {
+                    assert!(!expected.is_null(), "{value}")
+                }
                 Some(Link::Settings(_) | Link::Connections(_) | Link::AddSsh { .. }) => {
                     assert_eq!(expected["kind"], "settings", "{value}")
                 }
@@ -504,8 +563,6 @@ mod tests {
             }
         }
         for value in [
-            "codex://plugins",
-            "codex://skills",
             "codex://space",
             "codex://sites/edit",
             "codex://shared-thread/cx_0123456789abcdef0123456789abcdef",
