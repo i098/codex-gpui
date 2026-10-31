@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Show the original's `Restart to apply workspace settings` prompt when the polled org policy (`in_app_updates`) flips under a running app; `Restart` re-execs the app in place.
 - Show an image or PDF in the Files tab as a preview (PDFs with page arrows), not as text lines that fail with `Could not open file`.
 - Open the latest plan from Thread summary ▸ `Plan` in an editable `Plan` side panel tab that saves to `$CODEX_HOME/plans/<thread>/<plan item>/PLAN.md`.
 - Open the Maps page from the Explore menu: the ChatGPT backend `/local/home` prompt suggestions and map, with loading, error with Try again, and empty states.

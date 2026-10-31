@@ -3,10 +3,20 @@ use crate::native_menus::CheckForUpdates;
 use bridge::Bridge;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use gpui::Global;
-use gpui::{App, Task};
+use gpui::{
+    App, AppContext as _, Bounds, Context, FocusHandle, Focusable, InteractiveElement as _,
+    IntoElement, ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Task,
+    TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, actions, div, px, size,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use std::os::unix::process::CommandExt as _;
 use std::{sync::Arc, time::Duration};
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use theme::ActiveTheme as _;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use ui::text;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use ui::updater::InstallUpdate;
 #[cfg(target_os = "macos")]
@@ -231,6 +241,8 @@ pub fn init(cx: &mut App) {
             runtime.backend.install();
         }
     });
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    init_restart_action(cx);
 }
 
 pub fn poll_policy(bridge: Arc<Bridge>, cx: &mut App) -> Option<Task<()>> {
@@ -249,6 +261,7 @@ pub fn poll_policy(bridge: Arc<Bridge>, cx: &mut App) -> Option<Task<()>> {
                         cx.global::<Updates>().available,
                     );
                     if first || old.0 != managed {
+                        let changed = !first && old.0 != managed;
                         first = false;
                         cx.global_mut::<Updates>().managed = managed;
                         #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -261,6 +274,12 @@ pub fn poll_policy(bridge: Arc<Bridge>, cx: &mut App) -> Option<Task<()>> {
                             crate::native_menus::refresh_menus(cx);
                             cx.refresh_windows();
                         }
+                        // The original prompts a restart when the workspace policy changes under
+                        // a running app; our polled org-policy signal is `in_app_updates`.
+                        #[cfg(any(target_os = "macos", target_os = "linux"))]
+                        if changed {
+                            prompt_restart(cx);
+                        }
                     }
                 }
                 Err(error) => eprintln!("codex-gpui: cannot read update policy: {error:#}"),
@@ -270,6 +289,141 @@ pub fn poll_policy(bridge: Arc<Bridge>, cx: &mut App) -> Option<Task<()>> {
                 .await;
         }
     }))
+}
+
+/// The workspace-policy restart prompt (`desktop.workspacePolicyRestart`), shown once per
+/// policy flip while the app runs.
+#[derive(Default)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+struct RestartPrompt(Option<WindowHandle<RestartWindow>>);
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl Global for RestartPrompt {}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn prompt_restart(cx: &mut App) {
+    if let Some(handle) = cx.try_global::<RestartPrompt>().and_then(|state| state.0)
+        && handle
+            .update(cx, |_, window, _| window.activate_window())
+            .is_ok()
+    {
+        return;
+    }
+    let bounds = Bounds::centered(None, size(px(420.), px(180.)), cx);
+    match cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Restart to apply workspace settings".into()),
+                ..Default::default()
+            }),
+            is_resizable: false,
+            ..Default::default()
+        },
+        |window, cx| {
+            let panel = cx.new(|cx| RestartWindow {
+                focus: cx.focus_handle(),
+            });
+            let focus = panel.read(cx).focus.clone();
+            window.focus(&focus, cx);
+            panel
+        },
+    ) {
+        Ok(handle) => cx.default_global::<RestartPrompt>().0 = Some(handle),
+        Err(error) => eprintln!("codex-gpui: cannot open restart prompt: {error:#}"),
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+struct RestartWindow {
+    focus: FocusHandle,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl Focusable for RestartWindow {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl Render for RestartWindow {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
+        let button_color = if t.appearance == theme::Appearance::Dark {
+            gpui::rgb(0x2d2d2d).into()
+        } else {
+            t.text_inverse
+        };
+        div()
+            .id("restart-window")
+            .track_focus(&self.focus)
+            .size_full()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .p(px(20.))
+            .bg(t.menu_background)
+            .text_color(t.text)
+            .child(
+                text("Restart to apply workspace settings", 20., 28., 600., t.text)
+                    .whitespace_normal(),
+            )
+            .child(
+                text(
+                    "Restart Codex to apply your workspace settings. Active local chats will be interrupted.",
+                    14.,
+                    20.,
+                    400.,
+                    t.text_secondary,
+                )
+                .whitespace_normal(),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .child(
+                        div()
+                            .id("restart-confirm")
+                            .role(gpui::Role::Button)
+                            .aria_label("Restart")
+                            .h(px(32.))
+                            .px(px(17.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(12.5))
+                            .bg(t.button_primary_solid)
+                            .hover(|s| s.opacity(0.85))
+                            .child(text("Restart", 14., 18., 430., button_color))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(RestartApp), cx);
+                                cx.stop_propagation();
+                            }),
+                    ),
+            )
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+actions!(updater, [RestartApp]);
+
+/// `Restart`: the original `app.relaunch()` + quit; here one exec in place.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn relaunch() -> std::io::Error {
+    let exe = std::env::current_exe().expect("running binary path");
+    std::process::Command::new(exe)
+        .args(std::env::args_os().skip(1))
+        .exec()
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn init_restart_action(cx: &mut App) {
+    cx.on_action(|_: &RestartApp, _| {
+        eprintln!("codex-gpui: restarting for the workspace policy");
+        let error = relaunch();
+        eprintln!("codex-gpui: cannot relaunch: {error:#}");
+    });
 }
 
 #[cfg(target_os = "macos")]
