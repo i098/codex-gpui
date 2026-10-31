@@ -166,7 +166,7 @@ fn https_link(url: &Url) -> Option<Link> {
         .filter(|part| !part.is_empty())
         .collect();
     match sub.as_slice() {
-        ["share", _] => Some(Link::Browser(url.clone())),
+        ["share", _] | ["share", "e", _] => chatgpt_link(url, &sub),
         ["cloud-environments", "new"] if url.query().is_none() && url.fragment().is_none() => {
             Some(Link::CloudEnvironmentCreate)
         }
@@ -447,7 +447,7 @@ impl Root {
                 return;
             }
             Link::Browser(url) => {
-                self.open_browser_tab(Some(url.clone()), window, cx);
+                self.open_browser_tab(Some(url), window, cx);
                 return;
             }
             Link::Space => {
@@ -649,6 +649,20 @@ mod tests {
                 Url::parse("https://chatgpt.com/share/abc%3Fdef").unwrap()
             ))
         );
+        assert_eq!(
+            parse("https://chatgpt.com/share/abc123"),
+            Some(Link::Browser(
+                Url::parse("https://chatgpt.com/share/abc123").unwrap()
+            ))
+        );
+        assert_eq!(
+            parse("https://chatgpt.com/share/e/abc123"),
+            Some(Link::Browser(
+                Url::parse("https://chatgpt.com/share/abc123").unwrap()
+            ))
+        );
+        assert!(parse("https://chatgpt.com/share/abc123?tracking=1").is_none());
+        assert!(parse("https://chatgpt.com/share/abc123#fragment").is_none());
         assert!(parse("codex://chatgpt/abc123").is_none());
         assert!(parse("codex://chatgpt/share/abc123?extra=1").is_none());
         assert!(parse("codex://browser?browserUrl=javascript%3Aalert(1)").is_none());
