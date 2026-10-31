@@ -11,6 +11,7 @@ pub mod dictation;
 pub mod diff;
 pub mod home;
 pub mod hotkey;
+pub mod images;
 pub mod maps;
 pub mod mini;
 pub mod mobile;

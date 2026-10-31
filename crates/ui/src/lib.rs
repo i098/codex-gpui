@@ -68,6 +68,8 @@ actions!(
         OpenSites,
         /// Explore ▸ `Maps` (`/maps`).
         OpenMaps,
+        /// Explore ▸ `Images` (`/images`).
+        OpenImages,
         /// Home beacon `Start Voice` and the composer's `Start new voice chat`.
         StartVoiceChat,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
@@ -1346,7 +1348,8 @@ impl Shell {
     }
 
     /// The Explore `…` menu (`sidebarCustomization.moreMenu`), right of the rail item: the
-    /// secondary destinations the port has (`Maps`, then `Security` when available).
+    /// secondary destinations the port has, in the original's order (`Images`, `Maps`), then
+    /// `Security` when available.
     /// `Customize sidebar` and MCP destinations need the sidebar-customization store, which the
     /// port lacks.
     fn explore_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1376,7 +1379,8 @@ impl Shell {
                 }
             }))
             .child(composer::popover(t, 220., |d| {
-                d.child(menu_item("explore-maps", "Maps", Box::new(OpenMaps)))
+                d.child(menu_item("explore-images", "Images", Box::new(OpenImages)))
+                    .child(menu_item("explore-maps", "Maps", Box::new(OpenMaps)))
                     .when(self.security_available, |d| {
                         d.child(menu_item(
                             "explore-security",
