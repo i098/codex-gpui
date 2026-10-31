@@ -6195,6 +6195,7 @@ impl Root {
                         "Could not save reasoning effort preferences"
                     }
                     "notifications-sound" => "Couldn't change the notification sound. Try again",
+                    "preferred-file-viewers" => "Could not save your file handler preference",
                     key if key.starts_with("notifications-") => {
                         "Could not save notification preference"
                     }
