@@ -7,7 +7,10 @@ use super::{SettingsPane, button, settings_row_content};
 use crate::screens::computer_use::Load;
 use crate::settings_kit::{Choice, Select, Selected};
 use crate::text;
-use gpui::{AnyElement, AppContext as _, Context, Div, InteractiveElement, IntoElement, Window};
+use gpui::{
+    AnyElement, AppContext as _, Context, Div, InteractiveElement, IntoElement,
+    StatefulInteractiveElement as _, Window,
+};
 use serde_json::{Value, json};
 use theme::Theme;
 
