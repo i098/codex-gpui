@@ -12,6 +12,8 @@ if (surface === "sidebar" && state === "rest") {
   await capture(surface, theme, w, h, output);
 } else if (surface === "thread" && ["worked", "tools"].includes(state)) {
   await capture(`thread-${state}`, theme, w, h, output);
+} else if (surface === "thread" && state === "code") {
+  await capture("thread-code", theme, w, h, output);
 } else if (surface === "composer" && ["rest", "typed"].includes(state)) {
   await capture(`composer-${state}`, theme, w, h, output);
 } else if (surface === "mobile" && state === "get-started") {

@@ -14,6 +14,9 @@ use theme::{ActiveTheme as _, Theme};
 
 pub struct Selected(pub SharedString);
 
+/// An option's leading icon, given its value and size: 20 px in the trigger, 24 px in the menu.
+type Icons = fn(&str, &Theme, f32) -> Option<gpui::AnyElement>;
+
 pub struct Select {
     value: SharedString,
     choices: Vec<Choice>,
@@ -31,14 +34,18 @@ pub struct Select {
     query: String,
     search_labels: Vec<String>,
     has_aliases: bool,
-    icons: Option<fn(&str, &Theme) -> Option<gpui::AnyElement>>,
+    icons: Option<Icons>,
     details: std::collections::HashMap<&'static str, &'static str>,
     width: f32,
     /// The trigger label's font weight.
     weight: f32,
-    /// A flattened submenu's title over the options after a pinned default.
-    heading: Option<&'static str>,
     trigger_style: TriggerStyle,
+    /// A flyout submenu (`FlyoutSubmenuItem`) holding the options after a pinned default: its
+    /// trigger's title and icon (given the current value).
+    submenu: Option<(&'static str, Icons)>,
+    submenu_trigger: FocusHandle,
+    submenu_open: bool,
+    submenu_hovered: bool,
 }
 
 impl EventEmitter<Selected> for Select {}
@@ -91,12 +98,15 @@ impl Select {
             details: std::collections::HashMap::new(),
             width: 240.,
             weight: 430.,
-            heading: None,
             trigger_style: TriggerStyle::default(),
+            submenu: None,
+            submenu_trigger: cx.focus_handle(),
+            submenu_open: false,
+            submenu_hovered: false,
         }
     }
 
-    pub fn with_icons(mut self, icons: fn(&str, &Theme) -> Option<gpui::AnyElement>) -> Self {
+    pub fn with_icons(mut self, icons: Icons) -> Self {
         self.icons = Some(icons);
         self
     }
@@ -126,9 +136,9 @@ impl Select {
         self
     }
 
-    /// Shows the options after the pinned default under `heading`, as a flattened submenu.
-    pub fn with_heading(mut self, heading: &'static str) -> Self {
-        self.heading = Some(heading);
+    /// Moves the options after the pinned default into a flyout submenu titled `title`.
+    pub fn with_submenu(mut self, title: &'static str, icon: Icons) -> Self {
+        self.submenu = Some((title, icon));
         self
     }
 
@@ -143,6 +153,9 @@ impl Select {
     }
 
     fn activate_focused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.submenu_trigger.is_focused(window) {
+            return self.open_submenu(window, cx);
+        }
         let focused = self.items.iter().position(|item| item.is_focused(window));
         if let Some(index) = self.highlighted.or(focused).or_else(|| self.first_match()) {
             self.choose(index, window, cx);
@@ -213,17 +226,36 @@ impl Select {
         self.default_action && index == 0 || self.search_labels[index].contains(&self.query)
     }
 
+    /// Whether arrows and Enter reach option `index`: enabled, matching the query, and in the
+    /// open list (a submenu holds every option but the pinned default).
+    fn navigable(&self, index: usize) -> bool {
+        !self.choices[index].disabled
+            && self.matches(index)
+            && (self.submenu.is_none() || (index == 0) != self.submenu_open)
+    }
+
     fn first_match(&self) -> Option<usize> {
-        (0..self.choices.len()).find(|&index| {
-            !(self.default_action && index == 0)
-                && !self.choices[index].disabled
-                && self.matches(index)
-        })
+        (0..self.choices.len())
+            .find(|&index| !(self.default_action && index == 0) && self.navigable(index))
+    }
+
+    /// Opens the submenu with its first option focused.
+    fn open_submenu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.submenu_open = true;
+        self.highlighted = None;
+        self.move_focus(true, window, cx);
+        cx.notify();
+    }
+
+    fn close_submenu(&mut self) {
+        self.submenu_open = false;
+        self.submenu_hovered = false;
     }
 
     fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = false;
         self.menu_hovered = false;
+        self.close_submenu();
         self.highlighted = None;
         self.trigger.focus(window, cx);
         if let Some(search) = &self.search {
@@ -245,16 +277,30 @@ impl Select {
     }
 
     fn move_focus(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.submenu.is_some() && !self.submenu_open {
+            // The root menu holds two rows: the pinned default, then the submenu trigger.
+            let on_row = self.highlighted == Some(0)
+                || self.items[0].is_focused(window)
+                || self.submenu_trigger.is_focused(window);
+            self.highlighted = None;
+            if forward == on_row {
+                self.submenu_trigger.focus(window, cx);
+            } else {
+                self.items[0].focus(window, cx);
+            }
+            cx.notify();
+            return;
+        }
         let current = self
             .highlighted
             .or_else(|| self.items.iter().position(|item| item.is_focused(window)));
         let next = if forward {
             (current.map_or(0, |index| index + 1)..self.items.len())
-                .find(|&index| !self.choices[index].disabled && self.matches(index))
+                .find(|&index| self.navigable(index))
         } else {
             (0..current.unwrap_or(self.items.len()))
                 .rev()
-                .find(|&index| !self.choices[index].disabled && self.matches(index))
+                .find(|&index| self.navigable(index))
         };
         if let Some(index) = next {
             self.highlighted = Some(index);
@@ -319,6 +365,13 @@ impl Select {
                 self.highlighted = None;
                 self.move_focus(key.key == "home", window, cx);
             }
+            "right" if self.submenu_trigger.is_focused(window) => self.open_submenu(window, cx),
+            "left" if self.submenu_open => {
+                self.close_submenu();
+                self.highlighted = None;
+                self.submenu_trigger.focus(window, cx);
+                cx.notify();
+            }
             "enter" => self.activate_focused(window, cx),
             "space"
                 if self
@@ -335,7 +388,9 @@ impl Select {
     }
 
     fn choose_focused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(index) = self.items.iter().position(|item| item.is_focused(window)) {
+        if self.submenu_trigger.is_focused(window) {
+            self.open_submenu(window, cx);
+        } else if let Some(index) = self.items.iter().position(|item| item.is_focused(window)) {
             self.choose(index, window, cx);
         }
     }
@@ -358,7 +413,7 @@ impl Select {
         cx: &Context<Self>,
     ) -> gpui::AnyElement {
         let detail = self.details.get(choice.value.as_ref()).copied();
-        let mut leading = self.icons.and_then(|icon| icon(&choice.value, t));
+        let mut leading = self.icons.and_then(|icon| icon(&choice.value, t, 24.));
         let inline_icon = if detail.is_some() {
             leading.take()
         } else {
@@ -383,7 +438,10 @@ impl Select {
             .items_center()
             .gap(px(6.))
             .when(choice.disabled, |d| d.opacity(0.5))
-            .when(self.default_action && index == 0, |row| row.opacity(0.75))
+            .when(
+                self.default_action && index == 0 && self.submenu.is_none(),
+                |row| row.opacity(0.75),
+            )
             .when(!choice.disabled, |d| d.hover(|s| s.bg(t.menu_item_hover)))
             .when(highlighted, |d| d.bg(t.menu_item_hover))
             .children(leading)
@@ -424,6 +482,10 @@ impl Select {
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _, window, cx| this.choose(index, window, cx)))
             .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                if index == 0 && this.submenu_open {
+                    this.close_submenu();
+                    cx.notify();
+                }
                 if this
                     .choices
                     .get(index)
@@ -440,6 +502,82 @@ impl Select {
             row.into_any_element()
         }
     }
+
+    /// The scrolling option list (`max-h-80`).
+    fn options_list(scroll: &ScrollHandle, rows: Vec<gpui::AnyElement>) -> impl IntoElement {
+        div()
+            .id("settings-select-options")
+            .max_h(px(320.))
+            .overflow_y_scroll()
+            .track_scroll(scroll)
+            .children(rows)
+    }
+
+    /// The flyout trigger row (`FlyoutSubmenuItem`): icon, title and a right chevron. Hovering
+    /// or activating it opens `rows` in a menu 9 px left of this row, its box 4 px above it.
+    fn submenu_row(
+        &self,
+        title: &'static str,
+        icon: Icons,
+        rows: Vec<gpui::AnyElement>,
+        t: &Theme,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
+        let highlighted = self.submenu_open || self.submenu_trigger.is_focused(window);
+        div()
+            .id("select-submenu")
+            .role(gpui::Role::MenuItem)
+            .aria_label(title)
+            .aria_expanded(self.submenu_open)
+            .track_focus(&self.submenu_trigger)
+            .relative()
+            .px(px(8.))
+            .py(px(5.))
+            .rounded(px(15.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .hover(|s| s.bg(t.menu_item_hover))
+            .when(highlighted, |d| d.bg(t.menu_item_hover))
+            .children(icon(&self.value, t, 24.))
+            .child(
+                text(title, 13., 18.571_428, 430., t.text)
+                    .flex_1()
+                    .min_w_0()
+                    .truncate(),
+            )
+            .child(crate::icon::icon("chevron-right", 16., t.text_tertiary))
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|this, _, window, cx| this.open_submenu(window, cx)))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if *hovered && !this.submenu_open {
+                    this.submenu_open = true;
+                    this.highlighted = None;
+                    cx.notify();
+                }
+            }))
+            .when(self.submenu_open, |d| {
+                d.child(
+                    deferred(
+                        div()
+                            .id("settings-select-submenu")
+                            .absolute()
+                            .top(px(-4.))
+                            .right_full()
+                            .pr(px(9.))
+                            .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                                this.submenu_hovered = *hovered
+                            }))
+                            .child(popover(t, self.width, |d| {
+                                d.child(Self::options_list(&self.scroll, rows))
+                            })),
+                    )
+                    .with_priority(2),
+                )
+            })
+            .into_any_element()
+    }
 }
 
 impl Render for Select {
@@ -451,7 +589,7 @@ impl Render for Select {
             .find(|choice| choice.value == self.value)
             .map(|choice| choice.label.clone())
             .unwrap_or_else(|| self.value.clone());
-        let leading = self.icons.and_then(|icon| icon(&self.value, &t));
+        let leading = self.icons.and_then(|icon| icon(&self.value, &t, 20.));
         let control = crate::screens::settings::select_with(
             label,
             self.weight,
@@ -480,7 +618,7 @@ impl Render for Select {
             }
         }))
         .on_mouse_down_out(cx.listener(|this, _, window, cx| {
-            if this.open && !this.menu_hovered {
+            if this.open && !this.menu_hovered && !this.submenu_hovered {
                 this.close(window, cx);
             }
         }));
@@ -495,7 +633,14 @@ impl Render for Select {
             .map(|(index, choice)| self.option(index, choice, window, &t, cx))
             .collect::<Vec<_>>();
         let default = (self.default_action && !rows.is_empty()).then(|| rows.remove(0));
-        let empty = rows.is_empty();
+        let (rows, submenu) = match self.submenu {
+            Some((title, icon)) => (
+                Vec::new(),
+                Some(self.submenu_row(title, icon, rows, &t, window, cx)),
+            ),
+            None => (rows, None),
+        };
+        let empty = rows.is_empty() && submenu.is_none();
         control.child(deferred(
             div().absolute().top(px(-2.)).right(px(1.)).child(
                 anchored()
@@ -545,23 +690,10 @@ impl Render for Select {
                                         .child(div().flex_1().min_w_0().child(search))
                                 }))
                                 .children(default)
-                                .children(self.heading.filter(|_| !empty).map(|heading| {
-                                    div().px(px(8.)).py(px(5.)).child(text(
-                                        heading,
-                                        12.,
-                                        16.,
-                                        500.,
-                                        t.text_tertiary,
-                                    ))
-                                }))
-                                .child(
-                                    div()
-                                        .id("settings-select-options")
-                                        .max_h(px(320.))
-                                        .overflow_y_scroll()
-                                        .track_scroll(&self.scroll)
-                                        .children(rows),
-                                )
+                                .children(submenu)
+                                .when(!rows.is_empty(), |d| {
+                                    d.child(Self::options_list(&self.scroll, rows))
+                                })
                                 .when(self.loading, |d| {
                                     d.child(text("Loading…", 14., 20., 430., t.text_secondary))
                                 })

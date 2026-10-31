@@ -75,6 +75,14 @@ const STATES = {
     // The rows grow open; shoot after the motion ends, as the port's 400 ms advance does.
     await d.sleep(800);
   },
+  // The greeting chat after s008's bridge step: its final answer becomes a Python code block.
+  "thread-code": async (d) => {
+    await d.click(row("Change the greeting"));
+    await d.waitFor(`document.body.innerText.includes("Edited hello.py")`, "greeting thread");
+    const data = JSON.parse(read("../../refs/interactions/s008.json")).steps[1].message;
+    await d.evaluate(`window.dispatchEvent(new MessageEvent("message", { data: ${JSON.stringify(data)} }))`);
+    await d.waitFor(`!!document.querySelector('[data-markdown-copy="code-block"]')`, "code block");
+  },
   // The Home composer with its focus, empty and with a typed draft.
   "composer-rest": async (d) => {
     await d.click(`document.querySelector(".ProseMirror")`, "composer");
