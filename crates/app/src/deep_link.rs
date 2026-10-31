@@ -163,6 +163,7 @@ fn settings(sub: &[&str], params: &Params<'_>) -> Link {
         }
         ["connections", "ssh"] => Link::Connections(Tab::Ssh),
         ["browser-use"] => Link::Settings(Some("Browser")),
+        ["trusted-contact"] => Link::Settings(Some("Trusted contact")),
         _ => Link::Settings(None),
     }
 }
