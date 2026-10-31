@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Drag existing files from the Changes file list and workspace file tree to other apps with their native file icon.
+- Run `environmentAction1` through `environmentAction9` in the active terminal.
 - Open the failed recording from a dictation failure notice in Settings ▸ Voice, with `Retry`, `Download audio` and `Show all recordings`, and show a voice or dictation shortcut capture failure under its row, with the original's conflict and fallback messages.
 - Open the Images page from the Explore menu: a grid of the account's Library images (`/files/library/nodes`, `categories=image`) with thumbnails, and loading, error with Try again, and empty states.
 - Open the GPTs page from the Explore menu: `My GPTs` (`/gizmos/bootstrap`) and the `GPT catalog` (`/public-api/gizmos/discovery`); a row opens the GPT's page (`/gizmos/{id}`) with its author, description and conversation starters.
