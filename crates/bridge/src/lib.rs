@@ -414,6 +414,11 @@ impl Bridge {
         self.write(json!({ "id": id, "result": serde_json::to_value(result)? }))
     }
 
+    /// Answers a server request with a JSON-RPC error so the server does not wait for it.
+    pub fn respond_error(&self, id: Value, code: i64, message: String) -> Result<()> {
+        self.write(json!({ "id": id, "error": { "code": code, "message": message } }))
+    }
+
     fn write(&self, msg: Value) -> Result<()> {
         self.backend.lock().send(msg)
     }

@@ -397,7 +397,12 @@ impl Voice {
                 }))
                 .into_any_element()
         };
-        row(label, Some(detail), control, &t).when(kind == Hotkey::Hold, |d| {
+        let error = state
+            .hotkey_error
+            .as_ref()
+            .filter(|(failed, _)| *failed == kind)
+            .map(|(_, error)| error.clone());
+        let base = row(label, Some(detail), control, &t).when(kind == Hotkey::Hold, |d| {
             d.child(
                 div()
                     .id("voice-advanced")
@@ -409,7 +414,16 @@ impl Voice {
                         cx.notify();
                     })),
             )
-        })
+        });
+        match error {
+            Some(error) => div().relative().flex().flex_col().child(base).child(
+                div()
+                    .px(px(16.))
+                    .pb(px(12.))
+                    .child(text(error, 12., 16., 430., t.text_error)),
+            ),
+            None => base,
+        }
     }
 
     pub(super) fn recordings(
@@ -419,12 +433,72 @@ impl Voice {
         cx: &mut Context<Self>,
     ) -> Vec<Div> {
         let t = cx.theme().clone();
+        let date = |item: &super::Recording| {
+            chrono::DateTime::from_timestamp_millis(item.created_at_ms)
+                .map(|d| d.format("%b %-d, %-I:%M %p").to_string())
+                .unwrap_or_default()
+        };
+        let focused = match &state.data.recordings {
+            Load::Ready(items) => state
+                .recording
+                .as_ref()
+                .and_then(|id| items.iter().find(|item| &item.id == id)),
+            _ => None,
+        };
+        // A failure notice opens one recording; `Show all recordings` returns to the list.
+        let header = match focused {
+            Some(_) => button("Show all recordings", t.text_alpha_5, None, &t)
+                .id("voice-all-recordings")
+                .role(gpui::Role::Button)
+                .aria_label("Show all recordings")
+                .on_click(|_, _, cx| {
+                    if let Some(state) = cx.try_global::<VoiceState>() {
+                        let state = VoiceState {
+                            recording: None,
+                            ..state.clone()
+                        };
+                        cx.set_global(state);
+                    }
+                })
+                .into_any_element(),
+            None => div().into_any_element(),
+        };
         let mut rows = vec![row(
             "Recent recordings",
             Some("Your last 20 recordings are saved on this device"),
-            div().into_any_element(),
+            header,
             &t,
         )];
+        if let Some(item) = focused {
+            let mut controls = div().flex().items_center().gap(px(8.));
+            if item.can_retry(state.data.policy.dictation) {
+                controls = controls.child(self.action(
+                    format!("retry-{}", item.id),
+                    "Retry",
+                    VoiceAction::TranscribeRecording(item.id.clone()),
+                    state,
+                    window,
+                    cx,
+                ));
+            }
+            if item.size_bytes > 0 {
+                controls = controls.child(self.action(
+                    format!("download-{}", item.id),
+                    "Download audio",
+                    VoiceAction::DownloadRecording(item.id.clone()),
+                    state,
+                    window,
+                    cx,
+                ));
+            }
+            rows.push(row(
+                item.label().to_owned(),
+                Some(&date(item)),
+                controls.into_any_element(),
+                &t,
+            ));
+            return rows;
+        }
         match &state.data.recordings {
             Load::Loading => rows.push(row("Loading…", None, div().into_any_element(), &t)),
             Load::Failed(error) => rows.push(row(
@@ -442,9 +516,7 @@ impl Voice {
             )),
             Load::Ready(items) => {
                 for item in items.iter().take(20) {
-                    let date = chrono::DateTime::from_timestamp_millis(item.created_at_ms)
-                        .map(|d| d.format("%b %-d, %-I:%M %p").to_string())
-                        .unwrap_or_default();
+                    let date = date(item);
                     let mut controls = div().flex().items_center().gap(px(8.));
                     if !item.text.is_empty() {
                         let text = item.text.clone();
