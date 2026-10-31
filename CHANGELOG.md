@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Open the Images page from the Explore menu: a grid of the account's Library images (`/files/library/nodes`, `categories=image`) with thumbnails, and loading, error with Try again, and empty states.
 - Open the GPTs page from the Explore menu: `My GPTs` (`/gizmos/bootstrap`) and the `GPT catalog` (`/public-api/gizmos/discovery`); a row opens the GPT's page (`/gizmos/{id}`) with its author, description and conversation starters.
 - Add Settings ▸ `Debug` (debug builds, or `CODEX_GPUI_DEBUG_MENU=1`): the `GPU Tearing Debug` switches turn scroll fade masks, backdrop blur, motion or squircle corners off for the session.
 - Add Settings ▸ `File type handlers`: one row per file extension an installed plugin's MCP tool declares as a `file` entrypoint, with a `Built-in` or plugin viewer menu saved in the `preferred-file-viewers` host setting, plus loading, `Couldn’t load file handlers` with Retry, and empty states.
