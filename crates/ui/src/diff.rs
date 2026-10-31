@@ -2067,6 +2067,16 @@ impl SplitScreen {
         }
     }
 
+    /// A browser tab's page title changed: its strip label follows.
+    pub fn set_tab_label(&mut self, index: usize, label: SharedString, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get_mut(index)
+            && tab.label != label
+        {
+            tab.label = label;
+            cx.notify();
+        }
+    }
+
     /// Titlebar row over a side panel (`Task tabs`): tabs use slots up to 240 px wide (the
     /// selected one on its surface, the others `text-tertiary`, surface and `×` on hover),
     /// `New tab`, and the `Enter full view` / `Hide tabs` buttons. The caller places it from
@@ -2840,6 +2850,8 @@ pub struct FileView {
     tree: file_tree::WorkspaceTree,
     revision: u64,
     preview: bool,
+    /// An image or PDF ([`Self::previews`]) shown instead of text lines.
+    media: Option<preview::FileMedia>,
 }
 
 impl FileView {
@@ -2863,6 +2875,7 @@ impl FileView {
             tree,
             revision: 0,
             preview: true,
+            media: None,
         }
     }
 
@@ -3132,7 +3145,11 @@ impl Render for FileView {
         let t = cx.theme().clone();
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let blame = self.active_blame(cx);
-        let body = self.file_content(&t, blame, cx);
+        self.request_media(window, cx);
+        let body = match self.media_view(window, cx) {
+            Some(media) => media,
+            None => self.file_content(&t, blame, cx),
+        };
         div()
             .id("file-view")
             .relative()

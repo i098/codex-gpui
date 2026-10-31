@@ -167,6 +167,8 @@ struct Entry {
 struct Windows {
     entries: HashMap<WindowId, Entry>,
     last_primary: Option<WindowId>,
+    #[cfg(target_os = "macos")]
+    primary_active_at: Option<std::time::Instant>,
 }
 impl Global for Windows {}
 
@@ -250,6 +252,9 @@ pub fn open<V: Render + 'static>(
         } else {
             gpui::WindowBackgroundAppearance::Opaque
         },
+        // Chromium animates visible unfocused windows at the display rate; GPUI's default
+        // caps them at 30 fps, and passive panels (Mini, overlays) never take focus.
+        inactive_frame_interval: None,
         ..Default::default()
     };
     let kind = spec.kind;
@@ -261,12 +266,18 @@ pub fn open<V: Render + 'static>(
         let view = build(window, cx);
         view.update(cx, |_, cx| {
             cx.observe_window_activation(window, |_, window, cx| {
-                if window.is_window_active() {
-                    let id = window.window_handle().window_id();
-                    if let Some(entry) = cx.global::<Windows>().entries.get(&id)
-                        && entry.kind == Kind::Primary
+                let id = window.window_handle().window_id();
+                if let Some(entry) = cx.global::<Windows>().entries.get(&id)
+                    && entry.kind == Kind::Primary
+                {
+                    let windows = cx.global_mut::<Windows>();
+                    // Set on activation and on deactivation: the last moment it was active.
+                    #[cfg(target_os = "macos")]
                     {
-                        cx.global_mut::<Windows>().last_primary = Some(id);
+                        windows.primary_active_at = Some(std::time::Instant::now());
+                    }
+                    if window.is_window_active() {
+                        windows.last_primary = Some(id);
                     }
                 }
             })
@@ -442,6 +453,22 @@ pub fn primary(cx: &App) -> Option<AnyWindowHandle> {
             })
             .map(|entry| entry.handle)
     })
+}
+
+/// Whether a primary window is active, or was within `within`: the original's
+/// `wasPrimaryWindowFocusedWithin`.
+#[cfg(target_os = "macos")]
+pub(crate) fn primary_active_within(within: std::time::Duration, cx: &mut App) -> bool {
+    let recent = cx
+        .try_global::<Windows>()
+        .and_then(|windows| windows.primary_active_at)
+        .is_some_and(|at| at.elapsed() <= within);
+    recent
+        || primary(cx).is_some_and(|handle| {
+            handle
+                .update(cx, |_, window, _| window.is_window_active())
+                .unwrap_or(false)
+        })
 }
 
 /// `primary` as a typed root, opening a hidden primary when none exists: the
