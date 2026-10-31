@@ -226,6 +226,7 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "markThreadUnread" => Box::new(shortcuts::MarkOpenChatUnread),
         "manageTasks" => Box::new(OpenScheduled),
         "openThreadInNewWindow" => Box::new(super::OpenThreadInNewWindow),
+        "newWindow" => Box::new(crate::windows::NewWindow),
         "closeTab" => Box::new(CloseWindow),
         "closeWindow" => Box::new(shortcuts::CloseWholeWindow),
         "closeOtherTabs" => Box::new(shortcuts::CloseOtherSideTabs),
