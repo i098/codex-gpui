@@ -667,6 +667,7 @@ mod tests {
     fn new_window_action_opens_an_additional_home_window() {
         use gpui::HeadlessAppContext;
         use std::sync::Arc;
+        use std::time::Duration;
 
         let mut cx = HeadlessAppContext::with_platform(
             textsys::text_system(),
@@ -686,12 +687,22 @@ mod tests {
                 )
             })
             .expect("open primary window");
-        cx.test_window(window.into())
-            .simulate_scale_factor_change(1.);
-        cx.update_window(window.into(), |_, window, cx| {
+        let window: gpui::AnyWindowHandle = window.into();
+        cx.test_window(window).simulate_scale_factor_change(1.);
+        // Root registers its action handlers during render: draw one frame first.
+        cx.advance_clock(Duration::ZERO);
+        cx.test_window(window)
+            .simulate_frame_request(gpui::RequestFrameOptions {
+                require_presentation: true,
+                ..Default::default()
+            });
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
             window.dispatch_action(Box::new(NewWindow), cx);
         })
         .expect("dispatch NewWindow");
+        // The dispatch is deferred; let it run and open the second window.
+        cx.run_until_parked();
 
         let windows_are_home = cx.update(|cx| {
             let windows = cx.windows();
