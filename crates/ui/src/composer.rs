@@ -3690,7 +3690,8 @@ mod tests {
                     id: id.into(),
                     label: id.into(),
                     efforts: vec!["medium".into()],
-                })
+                    efforts: vec!["medium".into()],
+                    images: true,
                 .into();
             composer.set_text("Keep the draft", cx);
             composer
