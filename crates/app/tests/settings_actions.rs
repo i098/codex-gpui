@@ -572,7 +572,7 @@ fn the_host_filter_reads_and_writes_the_chosen_hosts_config() -> Result<()> {
     page.update(&mut fx.cx, |page, cx| {
         page.set("sandbox_mode", json!("read-only"), cx)
     });
-    fx.wait("remote write", |fx| {
+    fx.wait("remote write", |_| {
         proxy_sent(&bridge, &log)
             .is_ok_and(|sent| sent.iter().any(|m| m["method"] == "config/value/write"))
     })?;
