@@ -4598,10 +4598,7 @@ mod tests {
                 "Feedback",
                 "Codex Micro setup",
             ] {
-                assert!(
-                    labels.iter().any(|candidate| candidate == label),
-                    "{label}"
-                );
+                assert!(labels.iter().any(|candidate| candidate == label), "{label}");
             }
         });
     }
