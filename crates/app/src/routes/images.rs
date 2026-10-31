@@ -1,4 +1,4 @@
-use crate::host::{Identity, Request};
+use crate::host::{Host, Identity, Request};
 use crate::*;
 use anyhow::Context as _;
 use gpui::Div;
@@ -70,7 +70,10 @@ impl Root {
         let host = self.host.clone();
         cx.spawn(async move |_, cx| {
             let result = read.await;
-            let list = result.as_ref().map(|(_, list)| list.clone());
+            let list = result
+                .as_ref()
+                .map(|(_, list)| list.clone())
+                .map_err(Clone::clone);
             let current = page.update(cx, |page, cx| {
                 let current = page.generation == generation;
                 if current {
@@ -90,7 +93,7 @@ impl Root {
                             let thumbnail = thumbnail(host.as_ref(), &identity, &image.id).ok()?;
                             Some((image.id.clone(), thumbnail))
                         })
-                        .collect()
+                        .collect::<HashMap<_, _>>()
                 })
                 .await;
             page.update(cx, |page, cx| {
