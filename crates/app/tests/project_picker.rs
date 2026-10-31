@@ -175,7 +175,7 @@ fn project_menu_pins_edits_and_removes_without_touching_files_or_other_projects(
             .is_err()
     );
     assert!(
-        host.update_project("gone", "x", &[alpha.clone()], None)
+        host.update_project("gone", "x", std::slice::from_ref(&alpha), None)
             .is_err()
     );
     assert_eq!(fs::read(&file)?, saved);
