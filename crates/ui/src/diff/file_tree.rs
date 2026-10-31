@@ -215,6 +215,7 @@ impl FileView {
         self.path = path;
         self.line = line;
         self.contents = None;
+        self.media = None;
         self.blame.clear();
         self.go_to_line = None;
         self.line_count = 0;
