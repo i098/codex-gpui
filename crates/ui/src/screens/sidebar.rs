@@ -783,6 +783,10 @@ impl HomeSidebar {
         cx.notify();
     }
 
+    pub fn any_running(&self) -> bool {
+        !self.running.is_empty()
+    }
+
     pub fn is_running(&self, id: &str) -> bool {
         self.running.contains_key(id)
     }
