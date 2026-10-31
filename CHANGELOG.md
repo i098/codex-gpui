@@ -18,6 +18,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Release the macOS bundle as one universal (arm64 and Intel) zip.
 - Build the Linux app with the Wayland and X11 window backends, and smoke-open the primary window in CI.
 - Publish a signed Sparkle `appcast.xml` and SHA-256 checksum with each release, and add an Automatically check for updates switch to General settings.
+- Install newer macOS releases in the background after the feed check, verify the checksum and app signature, keep the previous app, and relaunch without focus.
 - Add `/memories` and its `Chat memories` dialog while the `memories` feature is on: `Generate memories` sets the open chat's memory mode with `thread/memoryMode/set`, and on Home both switches apply to the next chat.
 - Show `$…$` and `$$…$$` math in agent answers as Unicode math text, with display math centered on its own line; copying a selection keeps the TeX source.
 - Self-update the Linux AppImage from a signed `latest.json` release manifest: check every 6 hours, verify SHA-256 and Ed25519, then swap the file and relaunch on install.
