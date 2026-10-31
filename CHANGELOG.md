@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Add Settings ▸ `Debug` (debug builds, or `CODEX_GPUI_DEBUG_MENU=1`): the `GPU Tearing Debug` switches turn scroll fade masks, backdrop blur, motion or squircle corners off for the session.
 - Add Settings ▸ `File type handlers`: one row per file extension an installed plugin's MCP tool declares as a `file` entrypoint, with a `Built-in` or plugin viewer menu saved in the `preferred-file-viewers` host setting, plus loading, `Couldn’t load file handlers` with Retry, and empty states.
 - Add Settings ▸ `Appshots` on macOS: press both ⌘, ⌥ or ⇧ keys to capture the frontmost window into the current chat, a new chat or a visible Mini, with destination and sound settings.
 - Show an image or PDF in the Files tab as a preview (PDFs with page arrows), not as text lines that fail with `Could not open file`.
