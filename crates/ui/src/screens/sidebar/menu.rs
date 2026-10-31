@@ -9,16 +9,16 @@ use gpui::{Anchor, ElementId, FocusHandle, KeyDownEvent, Point, Role, anchored, 
 
 #[cfg(target_os = "macos")]
 #[path = "menu/native.rs"]
-mod native;
+pub(crate) mod native;
 
 /// One item as the original passes it to `showContextMenu`: id, label, Electron accelerator,
 /// 16 px icon (its svg) and submenu. A separator has an empty label.
-pub(super) struct Item {
-    id: &'static str,
-    label: &'static str,
-    accelerator: Option<&'static str>,
-    icon: Option<&'static [u8]>,
-    submenu: &'static [Item],
+pub(crate) struct Item {
+    pub(crate) id: &'static str,
+    pub(crate) label: &'static str,
+    pub(crate) accelerator: Option<&'static str>,
+    pub(crate) icon: Option<&'static [u8]>,
+    pub(crate) submenu: &'static [Item],
 }
 
 const ROW: f32 = 28.5625;

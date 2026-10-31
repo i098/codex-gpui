@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Add Back, Next and Reload to the in-app browser toolbar with `⌘←`, `⌘→`, `⌘R`, `⌘⇧R` and `⌘L`, a load indicator, and the original's `This site can't be reached` error page with Reload.
+- Right-click a page in the in-app browser for the original's context menu: `Open in new tab`, `Open in external browser` and `Copy link address` on a link, then `Back`, `Forward` and `Reload`. Editable text and selections keep the system menu.
 - Show an image or PDF in the Files tab as a preview (PDFs with page arrows), not as text lines that fail with `Could not open file`.
 - Open the latest plan from Thread summary ▸ `Plan` in an editable `Plan` side panel tab that saves to `$CODEX_HOME/plans/<thread>/<plan item>/PLAN.md`.
 - Open the Maps page from the Explore menu: the ChatGPT backend `/local/home` prompt suggestions and map, with loading, error with Try again, and empty states.

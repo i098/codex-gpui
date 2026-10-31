@@ -28,7 +28,7 @@ use std::{
 use theme::{ActiveTheme as _, Appearance, Theme};
 
 #[path = "sidebar/menu.rs"]
-mod menu;
+pub(crate) mod menu;
 use menu::ThreadMenu;
 mod chatgpt;
 mod mode;
