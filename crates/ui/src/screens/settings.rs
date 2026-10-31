@@ -343,6 +343,46 @@ pub fn section(label: &str) -> Option<&'static str> {
         .find(|&l| l == label && l != EXTERNAL)
 }
 
+/// The nav item a `/settings/<slug>` route opens (the original's `lQa` section slugs and
+/// the `work-settings` and usage-tab redirects). A trailing `?query` is ignored. Slugs
+/// with no native page open General, as the original does for unknown slugs.
+pub fn slug_section(slug: &str) -> &'static str {
+    match slug.split('?').next().unwrap_or_default() {
+        "notifications" => "Notifications",
+        "import" => "Import",
+        "account" => "Account",
+        "appearance" => "Appearance",
+        "archived-chats" => "Archived chats",
+        "parental-controls" => "Parental controls",
+        "trusted-contact" => "Trusted contact",
+        "voice" => "Voice",
+        "storage" => "Storage",
+        "agent" | "work-settings" => "Configuration",
+        "personalization" => "Personalization",
+        "pets" => "Mini & Pets",
+        "keyboard-shortcuts" => "Keyboard shortcuts",
+        "usage" | "billing" | "analytics" | "consumer-view" | "usage-code-review" => {
+            "Usage & billing"
+        }
+        "data-controls" => "Data controls",
+        "plugins-settings" | "skills-settings" => "Plugins",
+        "mcp-settings" => "MCP servers",
+        "passwords" => "Passwords",
+        "computer-use" => "Computer use",
+        "chronicle" => "Computer history",
+        "appshots" => "Appshots",
+        "browser-use" => "Browser",
+        "cloud-computer" => "Cloud computer",
+        "hooks-settings" => "Hooks",
+        "connections" => "Connections",
+        "codex-cloud" | "cloud-environments" | "environments" => "Codex Cloud",
+        "code-review" => "Code Review",
+        "git-settings" => "Git",
+        "worktrees" | "local-environments" => "Worktrees",
+        _ => "General",
+    }
+}
+
 /// The Settings route's shell for a `config/read` config and `skills/list` result: settings
 /// nav in the sidebar panel, the page in the main panel, open at the nav item `section`
 /// (`General` if `None`). The page emits [`SettingChanged`].

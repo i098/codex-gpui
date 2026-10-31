@@ -162,8 +162,8 @@ fn settings(sub: &[&str], params: &Params<'_>) -> Link {
             }
         }
         ["connections", "ssh"] => Link::Connections(Tab::Ssh),
-        ["browser-use"] => Link::Settings(Some("Browser")),
-        _ => Link::Settings(None),
+        [] => Link::Settings(None),
+        [slug, ..] => Link::Settings(Some(ui::screens::settings::slug_section(slug))),
     }
 }
 
@@ -443,6 +443,22 @@ mod tests {
         );
         let callback = "codex://connector/oauth_callback?state=s&code=a%2Bb&returnTo=%2Fsettings";
         assert_eq!(parse(callback), Some(Link::OAuth(callback.into())));
+    }
+
+    #[test]
+    fn settings_slugs_open_their_section() {
+        for (url, section) in [
+            ("codex://settings/git-settings", "Git"),
+            ("codex://settings/mcp-settings/servers", "MCP servers"),
+            ("codex://settings/work-settings", "Configuration"),
+            ("codex://settings/usage?tab=analytics", "Usage & billing"),
+            ("codex://settings/analytics", "Usage & billing"),
+            ("codex://settings/local-environments", "Worktrees"),
+            ("codex://settings/no-such-slug", "General"),
+        ] {
+            assert_eq!(parse(url), Some(Link::Settings(Some(section))), "{url}");
+        }
+        assert_eq!(parse("codex://settings"), Some(Link::Settings(None)));
     }
 
     #[test]
