@@ -592,7 +592,7 @@ pub(crate) fn bind_root(window: &mut Window, cx: &mut Context<Root>) {
 
 pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     root.on_action(cx.listener(|this, _: &NewWindow, _, cx| {
-        if let Err(error) = open_primary(State::load(), this.cwd.clone(), cx) {
+        if let Err(error) = open_primary(new_window_state(State::load()), this.cwd.clone(), cx) {
             this.toast(
                 ui::toast::Toast::danger("Could not open the window")
                     .description(format!("{error:#}")),
@@ -626,6 +626,11 @@ pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     }))
 }
 
+fn new_window_state(mut state: State) -> State {
+    state.route = Route::Home;
+    state
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -649,6 +654,15 @@ mod tests {
             assert_eq!(small.intersect(&bounds), bounds);
         }
     }
+    #[test]
+    fn new_window_state_always_starts_on_home() {
+        let state = new_window_state(State {
+            route: Route::Thread("thread".into()),
+            ..State::default()
+        });
+        assert!(matches!(state.route, Route::Home));
+    }
+
     #[test]
     fn new_window_action_opens_an_additional_home_window() {
         use gpui::{AppContext as _, HeadlessAppContext};
