@@ -55,6 +55,7 @@ It preserves the existing route1 and Root capture clocks and fixtures.
 | `thread` | `rest` | Existing route1 `thread` capture: open Add a subtract | `common::Fx` startup, click Add a subtract, wait for the thread |
 | `thread` | `worked` | The same, then click `Worked for 17s` | The same, then click `Worked for`, 400 ms of motion |
 | `thread` | `tools` | The same, then click `Edited a file, read files, ran commands` and wait 800 ms | The same, then click that summary row, 400 ms of motion |
+| `thread` | `code` | Greeting chat after s008's bridge step: its final answer becomes a Python code block | The same answer replaced in the fixture's thread read, click Change the greeting |
 | `settings` | `configuration` | Profile menu, Settings, Configuration | Settings shortcut, Configuration navigation item |
 | `mobile` | `get-started` | Profile menu, Help, Set up mobile | Profile menu, Set up mobile |
 | `mobile` | `continuation` | The same, then Get started; offline mode answers both MFA reads from `refs/interactions/mobile-mfa.json` | The same, then Get started; the fixture host answers both MFA reads from that recording |
