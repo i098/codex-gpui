@@ -578,7 +578,7 @@ fn remember_bounds(window: &Window, cx: &mut App) {
     }
 }
 
-actions!(windows, [OpenThreadWindow]);
+actions!(windows, [OpenThreadWindow, NewWindow]);
 
 pub(crate) fn bind_root(window: &mut Window, cx: &mut Context<Root>) {
     cx.observe_window_activation(window, |root, window, cx| {
@@ -591,7 +591,16 @@ pub(crate) fn bind_root(window: &mut Window, cx: &mut Context<Root>) {
 }
 
 pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
-    root.on_action(cx.listener(|this, _: &OpenThreadWindow, _, cx| {
+    root.on_action(cx.listener(|this, _: &NewWindow, _, cx| {
+        if let Err(error) = open_primary(State::load(), this.cwd.clone(), cx) {
+            this.toast(
+                ui::toast::Toast::danger("Could not open the window")
+                    .description(format!("{error:#}")),
+                cx,
+            );
+        }
+    }))
+    .on_action(cx.listener(|this, _: &OpenThreadWindow, _, cx| {
         if !matches!(this.route(), Route::Thread(_)) {
             return;
         }
