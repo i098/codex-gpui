@@ -226,6 +226,17 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "renameThread" => Box::new(shortcuts::RenameOpenChat),
         "findInThread" => Box::new(FindInThread),
         "copyDeeplink" => Box::new(shortcuts::CopyDeeplink),
+        "openSideChat" => Box::new(crate::OpenCurrentSideChat),
+        "copyLastCodeBlock" => Box::new(crate::CopyLastCodeBlock),
+        "copyPageLink" => Box::new(crate::CopyPageLink),
+        "forkThread" => Box::new(crate::ForkCurrentThread),
+        "deleteChat" => Box::new(crate::DeleteCurrentChat),
+        "copyConversationMarkdown" => Box::new(crate::CopyConversationMarkdown),
+        "searchChats" => Box::new(OpenCommandMenu),
+        "focusMainChat" => Box::new(crate::FocusMainChat),
+        "focusSideChat" => Box::new(crate::FocusSideChat),
+        "toggleMaximizeSidePanel" => Box::new(ui::ShowWorkspaceTabView),
+        "toggleReviewTab" => Box::new(ToggleChangesPanel),
         "copyWorkingDirectory" | "copyConversationPath" => {
             Box::new(super::copy_directory::CopyWorkingDirectory)
         }
