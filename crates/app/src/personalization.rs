@@ -65,6 +65,46 @@ fn read_unified_instructions(host: &dyn Host) -> Result<bool> {
         .unwrap_or(false))
 }
 
+/// `settings.response_presentation.mode`; anything but `standard` is the `rich` default.
+fn layout_mode(settings: &Value) -> &'static str {
+    if settings["settings"]["response_presentation"]["mode"] == "standard" {
+        "standard"
+    } else {
+        "rich"
+    }
+}
+
+/// The `Layout and visuals` mode, or `None` when the Statsig gate (`890187595`) is off.
+fn read_layout(host: &dyn Host) -> Result<Option<&'static str>> {
+    let identity = host
+        .identity()
+        .context("Layout and visuals require a ChatGPT account")?;
+    if crate::usage::statsig(host, &identity)["feature_gates"]["890187595"]["value"] != true {
+        return Ok(None);
+    }
+    let settings = crate::usage::http(host, &identity, "GET", "/settings/user", None)?;
+    Ok(Some(layout_mode(&settings)))
+}
+
+fn write_layout(host: &dyn Host, mode: &'static str) -> Result<&'static str> {
+    let identity = host
+        .identity()
+        .context("Layout and visuals require a ChatGPT account")?;
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("feature", "response_presentation")
+        .append_pair("value", &json!({ "mode": mode }).to_string())
+        .finish();
+    let settings = crate::usage::http(
+        host,
+        &identity,
+        "PATCH",
+        &format!("/settings/account_user_setting?{query}"),
+        None,
+    )?;
+    // The PATCH answers with the bare settings map (`ge({settings: r})` in the original).
+    Ok(layout_mode(&json!({ "settings": settings })))
+}
+
 pub fn read_memory(bridge: &Bridge) -> Result<MemoryRead> {
     let mut response = request(bridge, "config/read", json!({"includeLayers": true}))?;
     let file_path = response["layers"]
@@ -1278,6 +1318,48 @@ impl Root {
                 this.apply_writing_write(&view, enabled, result, window, cx)
             })
             .ok();
+        })
+        .detach();
+    }
+
+    pub(super) fn refresh_layout(&mut self, cx: &mut Context<Self>) {
+        let Some(page) = &self.settings_page else {
+            return;
+        };
+        let view = page.read(cx).personalization.clone();
+        if !self.chatgpt_account {
+            view.update(cx, |view, cx| view.layout_loaded(Ok(None), cx));
+            return;
+        }
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move { read_layout(host.as_ref()) });
+        cx.spawn(async move |_, cx| {
+            let result = read.await.map_err(|error| error.to_string());
+            view.update(cx, |view, cx| view.layout_loaded(result, cx));
+        })
+        .detach();
+    }
+
+    pub(super) fn change_layout(&mut self, mode: &'static str, cx: &mut Context<Self>) {
+        let Some(page) = &self.settings_page else {
+            return;
+        };
+        let view = page.read(cx).personalization.clone();
+        let host = self.host.clone();
+        let write = cx.background_spawn(async move { write_layout(host.as_ref(), mode) });
+        cx.spawn(async move |this, cx| {
+            let result = write.await.map_err(|error| error.to_string());
+            if let Err(error) = &result {
+                eprintln!("codex-gpui: response_presentation: {error}");
+                this.update(cx, |this, cx| {
+                    this.toast(
+                        Toast::danger("Couldn't update visual answers. Please try again."),
+                        cx,
+                    )
+                })
+                .ok();
+            }
+            view.update(cx, |view, cx| view.layout_changed(result, cx));
         })
         .detach();
     }
