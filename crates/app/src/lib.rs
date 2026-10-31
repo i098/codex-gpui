@@ -4066,7 +4066,7 @@ impl Root {
                 "Import from other AI apps" => {
                     window.dispatch_action(Box::new(ImportExternalAgent), cx)
                 }
-                "MCP" => window.dispatch_action(Box::new(McpSettings), cx),
+                "MCP servers" => window.dispatch_action(Box::new(McpSettings), cx),
                 "Personalization" => window.dispatch_action(Box::new(PersonalitySettings), cx),
                 "Feedback" => window.dispatch_action(Box::new(OpenFeedback), cx),
                 "Codex Micro setup" => {
