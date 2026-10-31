@@ -2851,6 +2851,8 @@ pub struct FileView {
     revision: u64,
     preview: bool,
     local_controls: bool,
+    /// An image or PDF ([`Self::previews`]) shown instead of text lines.
+    media: Option<preview::FileMedia>,
 }
 
 impl FileView {
@@ -2875,6 +2877,7 @@ impl FileView {
             revision: 0,
             preview: true,
             local_controls: true,
+            media: None,
         }
     }
 
@@ -3152,7 +3155,11 @@ impl Render for FileView {
         let t = cx.theme().clone();
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let blame = self.active_blame(cx);
-        let body = self.file_content(&t, blame, cx);
+        self.request_media(window, cx);
+        let body = match self.media_view(window, cx) {
+            Some(media) => media,
+            None => self.file_content(&t, blame, cx),
+        };
         div()
             .id("file-view")
             .relative()
