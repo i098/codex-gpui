@@ -206,6 +206,7 @@ fn menus_for_route(sidebar_collapsible: bool, updates: bool, browser_available: 
             MenuItem::action("Quit Codex", Quit),
         ]),
         Menu::new("File").items([
+            MenuItem::action("New Window", crate::windows::NewWindow),
             MenuItem::action("New Chat", NewChat),
             MenuItem::action("New Temporary Chat", features::shortcuts::NewTemporaryChat),
             MenuItem::action("New Project…", ui::screens::new_project::NewProject),
