@@ -665,7 +665,7 @@ mod tests {
 
     #[test]
     fn new_window_action_opens_an_additional_home_window() {
-        use gpui::{AppContext as _, HeadlessAppContext};
+        use gpui::HeadlessAppContext;
         use std::sync::Arc;
 
         let mut cx = HeadlessAppContext::with_platform(
