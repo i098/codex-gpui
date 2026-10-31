@@ -5,6 +5,7 @@ mod archive;
 mod automations;
 mod gpts;
 mod home;
+mod images;
 mod maps;
 mod mobile;
 mod plugins;
@@ -50,6 +51,8 @@ pub enum Route {
     Sites,
     /// Explore ▸ `Maps` (`/maps`).
     Maps,
+    /// Explore ▸ `Images` (`/images`).
+    Images,
     /// Explore ▸ `GPTs` (`/gpts`), or one GPT's page (`/g/:gizmoId`).
     Gpts(Option<String>),
 }
@@ -67,6 +70,7 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = crate::pull_requests::actions(root, cx);
     root = sites::actions(root, cx);
     root = maps::actions(root, cx);
+    root = images::actions(root, cx);
     root = gpts::actions(root, cx);
     root
 }
@@ -194,6 +198,7 @@ impl Root {
         self.sites_page = None;
         self.space_page = None;
         self.maps_page = None;
+        self.images_page = None;
         self.gpts_page = None;
         self.onboarding_page = None;
         self.cloud_modal = None;
@@ -223,6 +228,7 @@ impl Root {
             Route::Plugins(path) => Some(self.plugins_shell(path, window, cx)),
             Route::Sites => Some(sites::page(self, cx)),
             Route::Maps => Some(maps::page(self, cx)),
+            Route::Images => Some(images::page(self, cx)),
             Route::Gpts(id) => Some(gpts::page(self, id, window, cx)),
             Route::Onboarding(page) => {
                 self.open_onboarding(page, window, cx);
