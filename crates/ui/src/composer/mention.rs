@@ -24,7 +24,7 @@ const ACTIONS: &[Action] = &[
         id: "files-and-folders",
         title: "Files and folders",
         description: "",
-        icon: "folder",
+        icon: "mention-paperclip",
         home_only: false,
     },
     Action {
@@ -38,28 +38,28 @@ const ACTIONS: &[Action] = &[
         id: "project",
         title: "Work in a project",
         description: "Choose project for new chats",
-        icon: "folder",
+        icon: "mention-project",
         home_only: true,
     },
     Action {
         id: "goal",
         title: "Goal",
         description: "Set a goal to keep pursuing",
-        icon: "thread-summary",
+        icon: "mention-goal",
         home_only: false,
     },
     Action {
         id: "plan-mode",
         title: "Plan mode",
         description: "Turn plan mode on",
-        icon: "settings-personalization",
+        icon: "mention-plan",
         home_only: true,
     },
     Action {
         id: "sketch",
         title: "Sketch",
         description: "Draw a sketch",
-        icon: "pencil",
+        icon: "mention-scribble",
         home_only: false,
     },
 ];
@@ -86,6 +86,14 @@ struct FileHit {
     path: String,
 }
 
+/// An installed, enabled plugin of `plugin/list`: the chip shows `title`, the prompt sends
+/// `[@title](plugin://id)` and the turn a `mention` input, like the original.
+struct PluginHit {
+    title: String,
+    description: String,
+    id: String,
+}
+
 /// One row of [`Composer::sections`]: a ranked item `(selected, index)`, a disabled item,
 /// or a note.
 enum Row {
@@ -102,6 +110,10 @@ pub(super) struct Search {
     query: String,
     files: Vec<FileHit>,
     searching: bool,
+    plugins: Vec<PluginHit>,
+    plugins_loading: bool,
+    /// The `@` token (its start) whose list fetched the plugins.
+    plugins_token: Option<usize>,
 }
 
 /// How well `query` (lowercase) matches `label`: 3 prefix, 2 word start, 1 inside, 0 none.
@@ -144,6 +156,20 @@ fn request(
         .detach();
 }
 
+/// The mentionable plugins of a `plugin/list` result.
+fn plugin_hits(value: &Value) -> Vec<PluginHit> {
+    crate::screens::plugins::marketplaces(value)
+        .into_iter()
+        .flat_map(|marketplace| marketplace.plugins)
+        .filter(|plugin| plugin.visible() && plugin.installed() && plugin.enabled())
+        .map(|plugin| PluginHit {
+            title: plugin.title().to_owned(),
+            description: plugin.description().to_owned(),
+            id: plugin.id().to_owned(),
+        })
+        .collect()
+}
+
 impl Composer {
     pub(super) fn toggle_add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if std::mem::take(&mut self.slash.add_mouse_open) || (self.slash.open && self.slash.mention)
@@ -179,8 +205,13 @@ impl Composer {
         let actions = ACTIONS.iter().enumerate().filter(move |(_, a)| {
             !(a.home_only && docked) && a.id != "appshot" && (plan || a.id != "plan-mode")
         });
+        if self.slash.search.plugins_token != Some(self.slash.range.start) {
+            self.slash.search.plugins_token = Some(self.slash.range.start);
+            self.load_plugins(cx);
+        }
         if query.is_empty() {
-            self.slash.matches = actions.map(|(i, _)| i).collect();
+            let plugins = self.plugins_start()..self.files_start();
+            self.slash.matches = actions.map(|(i, _)| i).chain(plugins).collect();
             self.end_search(cx);
             return;
         }
@@ -194,9 +225,17 @@ impl Composer {
                 s.title.as_str(),
             )
         });
+        let plugins = self.slash.search.plugins.iter().enumerate().map(|(i, p)| {
+            (
+                self.plugins_start() + i,
+                2,
+                degree(&p.title, &lower),
+                p.title.as_str(),
+            )
+        });
         let files = self.slash.search.files.iter().enumerate().map(|(i, f)| {
             (
-                ACTIONS.len() + self.slash.skills.len() + i,
+                self.files_start() + i,
                 3,
                 degree(&f.name, &lower).max(degree(&f.path, &lower)),
                 f.name.as_str(),
@@ -205,6 +244,7 @@ impl Composer {
         let mut ranked: Vec<_> = actions
             .map(|(i, a)| (i, 2, degree(a.title, &lower), a.title))
             .chain(skills)
+            .chain(plugins)
             .chain(files)
             .filter(|&(_, _, degree, _)| degree > 0)
             .collect();
@@ -214,6 +254,45 @@ impl Composer {
         });
         // `oYc` caps the ranked rows at 8.
         self.slash.matches = ranked.iter().take(8).map(|r| r.0).collect();
+    }
+
+    /// Row indices: [`ACTIONS`], then skills, then plugins, then files.
+    fn plugins_start(&self) -> usize {
+        ACTIONS.len() + self.slash.skills.len()
+    }
+
+    fn files_start(&self) -> usize {
+        self.plugins_start() + self.slash.search.plugins.len()
+    }
+
+    /// `plugin/list` once per `@` token, so installs since the last list show; the listed
+    /// plugins stay while it loads.
+    fn load_plugins(&mut self, cx: &mut Context<Self>) {
+        let Some(bridge) = self.bridge.clone() else {
+            return;
+        };
+        if std::mem::replace(&mut self.slash.search.plugins_loading, true) {
+            return;
+        }
+        let params = json!({ "cwds": self.slash.search.roots });
+        cx.spawn(async move |this, cx| {
+            let result = bridge.request::<_, Value>("plugin/list", params).await;
+            this.update(cx, |this, cx| {
+                this.slash.search.plugins_loading = false;
+                match result {
+                    Ok(value) => this.slash.search.plugins = plugin_hits(&value),
+                    Err(error) => eprintln!("plugin/list: {error:#}"),
+                }
+                if this.slash.open && this.slash.mention {
+                    let selected = this.slash.selected;
+                    this.refresh_slash(cx);
+                    this.slash.selected = selected.min(this.slash.matches.len().saturating_sub(1));
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// `sessionStart` on the first query of a token, then one `sessionUpdate` per query.
@@ -302,8 +381,11 @@ impl Composer {
             (action.title, description, action.icon)
         } else if let Some(skill) = self.slash.skills.get(index - ACTIONS.len()) {
             (&skill.title, &skill.description, "sidebar-cmd-create-page")
+        } else if index < self.files_start() {
+            let plugin = &self.slash.search.plugins[index - self.plugins_start()];
+            (&plugin.title, &plugin.description, "plugins")
         } else {
-            let file = &self.slash.search.files[index - ACTIONS.len() - self.slash.skills.len()];
+            let file = &self.slash.search.files[index - self.files_start()];
             // The directory part shows after the name (`src`).
             let dir = file.path.rsplit_once('/').map_or("", |(dir, _)| dir);
             (&file.name, dir, "diff-jump-to-file")
@@ -318,7 +400,8 @@ impl Composer {
     /// skill or a file becomes a chip followed by a space, the list closes; `Plan mode` toggles
     /// plan mode. ponytail: the other actions (goal, sketch, project) belong to their own rows.
     pub(super) fn activate_mention(&mut self, index: usize, cx: &mut Context<Self>) {
-        let files = ACTIONS.len() + self.slash.skills.len();
+        let plugins = self.plugins_start();
+        let files = self.files_start();
         let (label, link, icon) = match ACTIONS.get(index) {
             Some(action) if action.id == "files-and-folders" => {
                 self.cancel_dictation(cx);
@@ -342,10 +425,15 @@ impl Composer {
                 return;
             }
             Some(_) => return,
-            None if index < files => {
+            None if index < plugins => {
                 let skill = &self.slash.skills[index - ACTIONS.len()];
                 let link = format!("[${}]({})", skill.name, skill.path);
                 (skill.title.clone(), link, "sidebar-cmd-create-page")
+            }
+            None if index < files => {
+                let plugin = &self.slash.search.plugins[index - plugins];
+                let link = format!("[@{}](plugin://{})", plugin.title, plugin.id);
+                (plugin.title.clone(), link, "plugins")
             }
             None => {
                 let file = &self.slash.search.files[index - files];
@@ -450,8 +538,8 @@ impl Composer {
             .collect()
     }
 
-    /// The list's sections: `Add` and `Files` for an empty query, else the ranked rows or
-    /// one note (`Searching…`, `No results`).
+    /// The list's sections: `Add`, `Plugins` and `Files` for an empty query, else the ranked
+    /// rows or one note (`Searching…`, `No results`).
     fn sections(&self) -> Vec<(Option<&'static str>, Vec<Row>)> {
         let start = self.slash.range.start + usize::from(self.slash.add.is_none());
         if self.content[start..self.slash.range.end].is_empty() {
@@ -467,6 +555,18 @@ impl Composer {
                 )
                 .collect();
             let mut sections = vec![(Some("Add"), add)];
+            let plugins = self.plugins_start()..self.files_start();
+            if !plugins.is_empty() {
+                let rows = plugins
+                    .filter_map(|i| {
+                        let selected = self.slash.matches.iter().position(|&m| m == i)?;
+                        Some(Row::Item(selected, i))
+                    })
+                    .collect();
+                sections.push((Some("Plugins"), rows));
+            } else if self.slash.search.plugins_loading {
+                sections.push((Some("Plugins"), vec![Row::Note("Loading plugins...")]));
+            }
             if !self.slash.search.roots.is_empty() {
                 sections.push((Some("Files"), vec![Row::Note("Type to search for files")]));
             }

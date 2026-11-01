@@ -41,6 +41,7 @@ pub mod qa;
 mod routes;
 pub mod terminal;
 mod thread_patch;
+pub mod user_data;
 pub use routes::Route;
 mod plugins;
 pub mod screenshot;
@@ -81,6 +82,7 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 use theme::Theme;
+use ui::browser::{BrowserEvent, BrowserTab};
 use ui::composer::{Approval, Composer, Permission, QueueAction, Submission};
 use ui::dialog::{
     CommitRepository, CommitStep, Dialog, Kind as DialogKind, Outcome as DialogOutcome, Selection,
@@ -213,6 +215,9 @@ pub enum SidePanel {
     SideChat(usize),
     /// Thread summary ▸ `Plan`: the latest plan, editable.
     Plan,
+    /// `⌘T` and a link's `Open in` ▸ `New tab`: the browser tab with this key
+    /// ([`Root::browser_tab`]).
+    Browser(usize),
 }
 
 /// Settings ▸ Appearance ▸ Theme (the original's `appearanceTheme`): follow the system, or
@@ -272,11 +277,10 @@ impl Default for State {
 }
 
 impl State {
-    /// `~/Library/Application Support/codex-gpui/state.json`, saved back on every change.
+    /// `codex-gpui/state.json` in the per-OS user data directory, saved back on every change.
     /// Like the original, a launch opens Home; only an unfinished onboarding page is kept.
     pub fn load() -> Self {
-        let path = PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-            .join("Library/Application Support/codex-gpui/state.json");
+        let path = user_data::user_data_dir("codex-gpui").join("state.json");
         let mut state: Self = fs::read(&path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
@@ -431,6 +435,10 @@ pub struct Root {
     side_chats: Vec<SideChat>,
     /// The [`SideChat::key`] of the next side chat.
     next_side_chat: usize,
+    /// In-app browser tabs, each a [`SidePanel::Browser`] tab, with their keys.
+    browser_tabs: Vec<(usize, Entity<BrowserTab>)>,
+    /// The [`SidePanel::Browser`] key of the next browser tab.
+    next_browser_tab: usize,
     /// Chats archived in this session: no side chat for them.
     archived: HashSet<String>,
     diff: Option<Entity<DiffPanel>>,
@@ -459,6 +467,9 @@ pub struct Root {
     pull_requests_page: Option<Entity<ui::screens::pull_requests::Page>>,
     plugins_page: Option<Entity<ui::screens::plugins::Page>>,
     sites_page: Option<Entity<ui::screens::sites::Page>>,
+    maps_page: Option<Entity<ui::screens::maps::Page>>,
+    images_page: Option<Entity<ui::screens::images::Page>>,
+    gpts_page: Option<Entity<ui::screens::gpts::Page>>,
     cloud_modal: Option<Entity<ui::screens::cloud::CloudModal>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
@@ -483,6 +494,10 @@ pub struct Root {
     new_project: Option<Entity<ui::screens::new_project::Dialog>>,
     /// The open dialog came from the composer: its close returns focus there.
     dialog_to_composer: bool,
+    /// `/memories` switches for the chat the Home composer starts next.
+    new_chat_memory: Option<features::memories::MemoryPrefs>,
+    /// `/memories` switches set on open chats this session.
+    thread_memory: HashMap<String, features::memories::MemoryPrefs>,
     /// Signed out: replaces the whole window.
     login: Option<Entity<Login>>,
     logout_pending: bool,
@@ -730,6 +745,7 @@ impl Root {
                     ui::composer::SlashCommand::Feedback => this.open_feedback(window, cx),
                     ui::composer::SlashCommand::Export => this.export_transcript(window, cx),
                     ui::composer::SlashCommand::Recap => this.recap(window, cx),
+                    ui::composer::SlashCommand::Memories => this.open_memories(window, cx),
                     ui::composer::SlashCommand::Rename => {
                         if let Route::Thread(id) = this.state.route.clone() {
                             this.open_rename(id, true, window, cx);
@@ -891,6 +907,8 @@ impl Root {
             history: None,
             side_chats: Vec::new(),
             next_side_chat: 1,
+            browser_tabs: Vec::new(),
+            next_browser_tab: 1,
             archived: HashSet::new(),
             diff: None,
             diff_watch: None,
@@ -910,6 +928,9 @@ impl Root {
             pull_requests_page: None,
             plugins_page: None,
             sites_page: None,
+            maps_page: None,
+            images_page: None,
+            gpts_page: None,
             cloud_modal: None,
             settings_section: None,
             settings_page: None,
@@ -931,6 +952,8 @@ impl Root {
             automation_editor: None,
             new_project: None,
             dialog_to_composer: false,
+            new_chat_memory: None,
+            thread_memory: HashMap::new(),
             login: None,
             logout_pending: false,
             account_email: None,
@@ -1345,6 +1368,18 @@ impl Root {
         self.space_page.as_ref()
     }
 
+    pub fn maps_page(&self) -> Option<&Entity<ui::screens::maps::Page>> {
+        self.maps_page.as_ref()
+    }
+
+    pub fn images_page(&self) -> Option<&Entity<ui::screens::images::Page>> {
+        self.images_page.as_ref()
+    }
+
+    pub fn gpts_page(&self) -> Option<&Entity<ui::screens::gpts::Page>> {
+        self.gpts_page.as_ref()
+    }
+
     /// The Home route's main panel.
     pub fn home(&self) -> &Entity<HomeMain> {
         &self.home
@@ -1483,6 +1518,15 @@ impl Root {
         }
         if let Some(page) = self.sites_page.clone() {
             self.load_sites(page, cx);
+        }
+        if let Some(page) = self.maps_page.clone() {
+            self.load_maps(page, cx);
+        }
+        if let Some(page) = self.images_page.clone() {
+            self.load_images(page, cx);
+        }
+        if let Some(page) = self.gpts_page.clone() {
+            self.load_gpts(page, cx);
         }
         cx.notify();
     }
@@ -2965,12 +3009,14 @@ impl Root {
     /// The strip tab of `side` in the open thread `view`: `(icon, label)`. No terminal tab
     /// without a background command, no file tab without a file viewer, no side chat tab
     /// once the side chat is gone.
+    #[allow(clippy::too_many_arguments)]
     fn side_tab(
         side: SidePanel,
         view: &Entity<ThreadView>,
         file: Option<&Entity<FileView>>,
         plan: Option<&Entity<ui::screens::plan::PlanView>>,
         side_chats: &[SideChat],
+        browsers: &[(usize, Entity<BrowserTab>)],
         console: bool,
         cx: &App,
     ) -> Option<Tab> {
@@ -3019,6 +3065,14 @@ impl Root {
                 label: plan?.read(cx).title(),
                 preview: false,
             }),
+            SidePanel::Browser(key) => {
+                let (_, tab) = browsers.iter().find(|(k, _)| *k == key)?;
+                Some(Tab {
+                    icon: "sidebar-cmd-browser",
+                    label: tab.read(cx).title(),
+                    preview: false,
+                })
+            }
         }
     }
 
@@ -3032,34 +3086,22 @@ impl Root {
         let file = self.file.clone();
         let plan = self.plan.clone();
         let chats = &self.side_chats;
+        let browsers = &self.browser_tabs;
         let console = self.terminal_panel().is_some();
-        self.tabs.retain(|side| {
+        let tab = |side: &SidePanel| {
             Self::side_tab(
                 *side,
                 view,
                 file.as_ref(),
                 plan.as_ref(),
                 chats,
+                browsers,
                 console,
                 cx,
             )
-            .is_some()
-        });
-        let tabs: Vec<Tab> = self
-            .tabs
-            .iter()
-            .filter_map(|side| {
-                Self::side_tab(
-                    *side,
-                    view,
-                    file.as_ref(),
-                    plan.as_ref(),
-                    chats,
-                    console,
-                    cx,
-                )
-            })
-            .collect();
+        };
+        self.tabs.retain(|side| tab(side).is_some());
+        let tabs: Vec<Tab> = self.tabs.iter().filter_map(tab).collect();
         let active = self
             .side
             .and_then(|side| self.tabs.iter().position(|t| *t == side))
@@ -3073,6 +3115,7 @@ impl Root {
             SidePanel::File => self.file.as_ref()?.clone().into(),
             SidePanel::SideChat(key) => self.chat(key)?.view.clone().into(),
             SidePanel::Plan => self.plan.as_ref()?.clone().into(),
+            SidePanel::Browser(key) => self.browser_tab(key)?.clone().into(),
         };
         Some((view, tabs, active))
     }
@@ -3108,8 +3151,11 @@ impl Root {
     /// the previous, is selected; closing the last tab closes the panel. A side chat's tab
     /// discards its conversation.
     fn close_side(&mut self, side: SidePanel, window: &mut Window, cx: &mut Context<Self>) {
-        if let SidePanel::SideChat(key) = side {
-            self.discard_side_chat(key, cx);
+        match side {
+            SidePanel::SideChat(key) => self.discard_side_chat(key, cx),
+            // Dropping the tab removes its page from the window.
+            SidePanel::Browser(key) => self.browser_tabs.retain(|(k, _)| *k != key),
+            _ => {}
         }
         let Some(ix) = self.tabs.iter().position(|t| *t == side) else {
             return;
@@ -3119,6 +3165,66 @@ impl Root {
             self.side = self.tabs.get(ix).or(self.tabs.last()).copied();
         }
         self.sync(window, cx);
+    }
+
+    /// `⌘T` (`url` none, the address bar focused) and a link's `Open in` ▸ `New tab`: a new
+    /// browser tab after the others, selected.
+    pub fn open_browser_tab(
+        &mut self,
+        url: Option<url::Url>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<BrowserTab> {
+        let key = self.next_browser_tab;
+        self.next_browser_tab += 1;
+        let blank = url.is_none();
+        let tab = cx.new(|cx| BrowserTab::new(url, window, cx));
+        cx.subscribe(&tab, move |this, tab, event: &BrowserEvent, cx| {
+            if !matches!(
+                event,
+                BrowserEvent::TitleChanged | BrowserEvent::Navigated { .. }
+            ) {
+                return;
+            }
+            let index = this.tabs.iter().position(|t| *t == SidePanel::Browser(key));
+            if let (Some(index), Some(split)) = (index, &this.split) {
+                let label = tab.read(cx).title();
+                split.update(cx, |split, cx| split.set_tab_label(index, label, cx));
+            }
+        })
+        .detach();
+        self.browser_tabs.push((key, tab.clone()));
+        self.set_side(SidePanel::Browser(key), window, cx);
+        if blank {
+            tab.update(cx, |tab, cx| tab.focus_address(window, cx));
+        }
+        tab
+    }
+
+    pub fn browser_tab(&self, key: usize) -> Option<&Entity<BrowserTab>> {
+        self.browser_tabs
+            .iter()
+            .find_map(|(k, tab)| (*k == key).then_some(tab))
+    }
+
+    /// The selected side tab's browser, when it is one.
+    pub fn active_browser_tab(&self) -> Option<Entity<BrowserTab>> {
+        match self.side? {
+            SidePanel::Browser(key) => self.browser_tab(key).cloned(),
+            _ => None,
+        }
+    }
+
+    /// Shows only the page of the browser tab on screen: a native page draws over every
+    /// gpui element, so the others and every other route must hide theirs.
+    // shortcut: a menu or dialog over the visible page draws under it; hide the page while
+    // an overlay is open when one needs to overlap the panel.
+    fn sync_browser_pages(&self, cx: &mut App) {
+        let thread = matches!(self.state.route, Route::Thread(_)) && self.page.is_none();
+        for (key, tab) in &self.browser_tabs {
+            let shown = thread && self.side_visible(SidePanel::Browser(*key));
+            tab.update(cx, |tab, cx| tab.set_page_hidden(!shown, cx));
+        }
     }
 
     /// `⌘K`, `⌘⇧P` and the sidebar `Search`: the command menu over live Recents, focused.
@@ -3558,6 +3664,18 @@ impl Root {
                 this.delete_memories(dialog.clone(), window, cx);
                 return;
             }
+            if let DialogOutcome::ChatMemories {
+                use_memories,
+                generate,
+            } = outcome
+            {
+                let prefs = features::memories::MemoryPrefs {
+                    use_memories: *use_memories,
+                    generate: *generate,
+                };
+                this.change_chat_memory(dialog.clone(), prefs, cx);
+                return;
+            }
             if let DialogOutcome::ScheduleTask { prompt, rrule } = outcome {
                 this.create_task(prompt.clone(), rrule.clone(), window, cx);
                 return;
@@ -3700,6 +3818,7 @@ impl Root {
                 | DialogOutcome::CheckoutBranch { .. }
                 | DialogOutcome::CommitBeforeCheckout
                 | DialogOutcome::DeleteMemories
+                | DialogOutcome::ChatMemories { .. }
                 | DialogOutcome::WritingConnect(_)
                 | DialogOutcome::WritingRetry
                 | DialogOutcome::WritingSample => unreachable!(),
@@ -6108,7 +6227,9 @@ impl Root {
                     settings_configuration::ENABLED_EFFORTS => {
                         "Could not save reasoning effort preferences"
                     }
+                    "appshotDestination" => "Could not save Appshot destination",
                     "notifications-sound" => "Couldn't change the notification sound. Try again",
+                    "preferred-file-viewers" => "Could not save your file handler preference",
                     key if key.starts_with("notifications-") => {
                         "Could not save notification preference"
                     }
@@ -6122,6 +6243,16 @@ impl Root {
                 }
                 if matches!(key, "reduced-motion-preference" | "dock-icon-preference") {
                     host_settings::apply(cx);
+                }
+                #[cfg(target_os = "macos")]
+                if key == screenshot::appshot::HOTKEY
+                    && let Err(error) = screenshot::appshot::register(cx)
+                {
+                    self.toast(
+                        Toast::danger("Failed to update appshot hotkey")
+                            .description(error.to_string()),
+                        cx,
+                    );
                 }
                 self.git_setting_saved(key, cx);
                 if key == settings_configuration::ENABLED_EFFORTS {
@@ -6225,7 +6356,8 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// The globals read from the kept config: Enter behavior and the local thinking display.
+    /// The globals read from the kept config: Enter behavior, the local thinking display and
+    /// whether the composers offer `/memories`.
     fn refresh_config_globals(&self, cx: &mut Context<Self>) {
         cx.set_global(ui::composer::EnterBehavior::from_setting(
             self.config["desktop"]["composerEnterBehavior"]
@@ -6236,6 +6368,13 @@ impl Root {
         if ReasoningVisibility::get(cx) != visibility {
             cx.set_global(visibility);
             cx.refresh_windows();
+        }
+        let memories = self.memories_available();
+        for composer in [
+            self.home.read(cx).composer.clone(),
+            self.thread_composer.clone(),
+        ] {
+            composer.update(cx, |composer, _| composer.set_memories_available(memories));
         }
     }
 

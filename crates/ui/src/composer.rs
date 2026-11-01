@@ -906,6 +906,8 @@ pub struct Composer {
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
     field_style: FieldStyle,
+    /// Enter emits [`SettingsFieldSubmit`] instead of blurring (the browser address bar).
+    submit_on_enter: bool,
     hotkey_controls: Option<AnyView>,
     document_field: bool,
     mini: bool,
@@ -1027,6 +1029,7 @@ impl Composer {
             on_model: None,
             plain_field: None,
             field_style: FieldStyle::Settings,
+            submit_on_enter: false,
             hotkey_controls: None,
             document_field: false,
             mini: false,
@@ -1129,6 +1132,17 @@ impl Composer {
         let mut field = Self::settings_field(placeholder, value, false, cx);
         field.field_style = FieldStyle::Dialog;
         field.request_label = Some(label.into());
+        field
+    }
+
+    /// [`Self::dialog_field`] whose Enter emits [`SettingsFieldSubmit`]: the browser address bar.
+    pub fn address_field(
+        label: &'static str,
+        placeholder: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut field = Self::dialog_field(label, placeholder, "", cx);
+        field.submit_on_enter = true;
         field
     }
 
@@ -1859,7 +1873,7 @@ impl Composer {
         if let Some(multiline) = self.plain_field {
             if multiline {
                 self.insert("\n", window, cx);
-            } else if self.field_style == FieldStyle::Compact {
+            } else if self.field_style == FieldStyle::Compact || self.submit_on_enter {
                 cx.emit(SettingsFieldSubmit);
             } else {
                 window.blur(cx);
