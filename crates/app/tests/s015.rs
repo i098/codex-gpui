@@ -131,6 +131,10 @@ fn command_row_expands_the_shell_card() -> Result<()> {
     // Click: the shell card opens under the row, the chevron points down.
     assert_eq!(steps[5]["type"], "click");
     fx.click(at(&steps[5]["target"]["bbox"]))?;
+    // The card opens over 300 ms (`ease-enter`); the recording waited `waitMs` after the click.
+    fx.advance(Duration::from_millis(
+        steps[5]["waitMs"].as_u64().context("card waitMs")?,
+    ))?;
     fx.hover((1270., 820.))?;
     let opened = fx.shot()?;
     opened.save(format!("{}/s015-ran-open.png", env!("CARGO_TARGET_TMPDIR")))?;
@@ -189,6 +193,9 @@ fn command_row_expands_the_shell_card() -> Result<()> {
     // Click again: the card folds, the transcript is as before.
     assert_eq!(steps[6]["type"], "click");
     fx.click(at(&steps[6]["target"]["bbox"]))?;
+    fx.advance(Duration::from_millis(
+        steps[6]["waitMs"].as_u64().context("card waitMs")?,
+    ))?;
     fx.hover((1270., 820.))?;
     let closed = fx.shot()?;
     assert!(result["ranClosed"]["card"].is_null());
