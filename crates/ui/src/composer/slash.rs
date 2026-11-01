@@ -25,6 +25,7 @@ pub enum SlashCommand {
     Feedback,
     Export,
     Recap,
+    Memories,
 }
 
 impl gpui::EventEmitter<SlashCommand> for Composer {}
@@ -120,6 +121,13 @@ const COMMANDS: &[Command] = &[
         title: "MCP",
         description: "Show MCP server status",
         icon: "sidebar-cmd-mcp-servers",
+        requires_empty: false,
+    },
+    Command {
+        id: "memories",
+        title: "Memories",
+        description: "",
+        icon: "project-marker-brain",
         requires_empty: false,
     },
     Command {
@@ -249,6 +257,8 @@ pub(super) struct Slash {
     pub(super) projects: Vec<(SharedString, String)>,
     scroll: gpui::ScrollHandle,
     pub(super) search: mention::Search,
+    /// The `memories` feature is on, so `/memories` is offered.
+    pub(super) memories: bool,
 }
 
 impl Slash {
@@ -412,6 +422,7 @@ impl Composer {
                     "project" => !self.docked,
                     "plan-mode" => self.current_model().is_some() && self.plan_supported(),
                     "fast" | "model" | "reasoning" | "ultrafast" => self.current_model().is_some(),
+                    "memories" => self.slash.memories,
                     _ => true,
                 };
                 if available
@@ -561,6 +572,7 @@ impl Composer {
             "feedback" => SlashCommand::Feedback,
             "export" => SlashCommand::Export,
             "recap" => SlashCommand::Recap,
+            "memories" => SlashCommand::Memories,
             "model" | "reasoning" | "fork" | "project" => {
                 self.open_sub(command.id, cx);
                 return;
@@ -599,6 +611,11 @@ impl Composer {
     /// The projects `/project` offers on Home: label and root path.
     pub fn set_slash_projects(&mut self, projects: Vec<(SharedString, String)>) {
         self.slash.projects = projects;
+    }
+
+    /// Offers `/memories` while the app-server's `memories` feature is on.
+    pub fn set_memories_available(&mut self, available: bool) {
+        self.slash.memories = available;
     }
 
     fn sub_items(&self, id: &str) -> Vec<SubItem> {
