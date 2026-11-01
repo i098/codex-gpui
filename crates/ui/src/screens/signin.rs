@@ -79,7 +79,7 @@ pub mod policy {
         }
     }
     pub fn gateway_provider(response: &Value) -> Option<(String, String)> {
-        if response.get("required")?.as_bool()? != true {
+        if !response.get("required")?.as_bool()? {
             return None;
         }
         Some((
@@ -549,37 +549,6 @@ async fn gateway_oauth_request<R>(
         std::task::Poll::Pending
     })
     .await
-}
-
-#[cfg(test)]
-mod gateway_oauth_tests {
-    use super::*;
-    use std::task::{Context as TaskContext, Poll, Waker};
-
-    #[test]
-    fn gateway_oauth_request_races_completion_and_timeout() {
-        let mut completed = std::pin::pin!(gateway_oauth_request(
-            async { Ok::<_, anyhow::Error>(()) },
-            async {},
-        ));
-        assert!(matches!(
-            completed
-                .as_mut()
-                .poll(&mut TaskContext::from_waker(Waker::noop())),
-            Poll::Ready((Ok(()), false))
-        ));
-
-        let mut timed_out = std::pin::pin!(gateway_oauth_request(
-            std::future::pending::<anyhow::Result<()>>(),
-            async {},
-        ));
-        assert!(matches!(
-            timed_out
-                .as_mut()
-                .poll(&mut TaskContext::from_waker(Waker::noop())),
-            Poll::Ready((Err(_), true))
-        ));
-    }
 }
 
 impl Login {
@@ -1681,5 +1650,36 @@ impl Login {
                     ),
             );
         body
+    }
+}
+
+#[cfg(test)]
+mod gateway_oauth_tests {
+    use super::*;
+    use std::task::{Context as TaskContext, Poll, Waker};
+
+    #[test]
+    fn gateway_oauth_request_races_completion_and_timeout() {
+        let mut completed = std::pin::pin!(gateway_oauth_request(
+            async { Ok::<_, anyhow::Error>(()) },
+            async {},
+        ));
+        assert!(matches!(
+            completed
+                .as_mut()
+                .poll(&mut TaskContext::from_waker(Waker::noop())),
+            Poll::Ready((Ok(()), false))
+        ));
+
+        let mut timed_out = std::pin::pin!(gateway_oauth_request(
+            std::future::pending::<anyhow::Result<()>>(),
+            async {},
+        ));
+        assert!(matches!(
+            timed_out
+                .as_mut()
+                .poll(&mut TaskContext::from_waker(Waker::noop())),
+            Poll::Ready((Err(_), true))
+        ));
     }
 }
