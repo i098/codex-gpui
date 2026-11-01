@@ -867,7 +867,7 @@ mod tests {
     fn gateway_oauth_stdio_smoke_replays_handoff_and_cancel() {
         use std::io::{BufRead, BufReader, Write};
 
-        let (client_read, server_write) = std::io::pipe().unwrap();
+        let (client_read, mut server_write) = std::io::pipe().unwrap();
         let (server_read, client_write) = std::io::pipe().unwrap();
         let (bridge, _) = bridge::Bridge::from_io(client_read, client_write, None);
         let bridge = std::sync::Arc::new(bridge);
