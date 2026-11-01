@@ -129,7 +129,10 @@ impl Render for DebugPanel {
 }
 
 fn toast(message: &'static str, cx: &mut App) {
-    let Some(window) = cx.active_window() else {
+    let Some(window) = cx
+        .active_window()
+        .and_then(|window| window.downcast::<crate::Root>())
+    else {
         return;
     };
     window
