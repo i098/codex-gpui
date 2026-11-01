@@ -106,6 +106,15 @@ struct Disclosure {
     height: Rc<Cell<f32>>,
 }
 
+/// An activity row body's open/close track and its last measured natural height. The original
+/// (`sites-end-resource` chunk, transition `no`) animates height and opacity over 300 ms
+/// `ease-enter` both ways; motion values are set at once under reduced motion.
+struct Expansion {
+    epoch: Instant,
+    fade: HoverFade,
+    height: Rc<Cell<f32>>,
+}
+
 /// Timestamp clock: live wall time, a fixed fixture time, or a base plus monotonic elapsed time.
 #[derive(Clone, Copy)]
 pub struct Clock {
@@ -203,6 +212,8 @@ pub struct ThreadView {
     /// Open disclosures: turns whose `Worked for` is expanded, by turn id, and activity groups
     /// whose rows show, by the id of their first item.
     expanded: HashSet<String>,
+    /// Activity disclosure bodies' open/close tracks and heights, by key (`items::activity`).
+    expansions: RefCell<HashMap<String, Expansion>>,
     pending_question: Option<String>,
     scroll: ScrollHandle,
     /// The turns as last laid out, to stand in for the ones far off screen.
@@ -694,6 +705,7 @@ impl ThreadView {
             turn_focus: RefCell::default(),
             mcp_images: RefCell::default(),
             expanded: HashSet::new(),
+            expansions: RefCell::default(),
             pending_question: None,
             scroll: ScrollHandle::new(),
             laid_out: Rc::default(),
@@ -2283,6 +2295,92 @@ impl ThreadView {
             .get(item)
             .map(Vec::as_slice)
             .unwrap_or_default()
+    }
+
+    /// Toggles activity disclosure `key` and starts its body's height and opacity track.
+    fn toggle_activity(&mut self, key: String, cx: &App) {
+        let open = !self.expanded.remove(&key);
+        if open {
+            self.expanded.insert(key.clone());
+        }
+        let now = cx.background_executor().now();
+        let duration = if motion::reduced(cx) {
+            Duration::ZERO
+        } else {
+            motion::RELAXED
+        };
+        let mut expansions = self.expansions.borrow_mut();
+        let expansion = expansions.entry(key).or_insert_with(|| Expansion {
+            epoch: now,
+            fade: HoverFade::settled(!open as u8 as f32),
+            height: Rc::default(),
+        });
+        expansion.fade.transition(
+            open as u8 as f32,
+            now - expansion.epoch,
+            duration,
+            motion::EASE_ENTER,
+        );
+    }
+
+    /// `body` of activity disclosure `key`, clipped to its track's height and faded with it;
+    /// `None` once closed, without building the body.
+    fn expansion(
+        &self,
+        key: &str,
+        open: bool,
+        body: impl FnOnce() -> Div,
+        window: &Window,
+        cx: &App,
+    ) -> Option<Div> {
+        let now = cx.background_executor().now();
+        // Released before `body` runs: a body can hold disclosures of its own.
+        let (progress, height) = {
+            let mut expansions = self.expansions.borrow_mut();
+            if !open && !expansions.contains_key(key) {
+                return None;
+            }
+            let expansion = expansions
+                .entry(key.to_owned())
+                .or_insert_with(|| Expansion {
+                    epoch: now,
+                    fade: HoverFade::settled(1.),
+                    height: Rc::default(),
+                });
+            let at = now - expansion.epoch;
+            let progress = if expansion.fade.is_animating(at) {
+                window.request_animation_frame();
+                expansion.fade.value(at)
+            } else {
+                open as u8 as f32
+            };
+            (progress, expansion.height.clone())
+        };
+        if progress <= 0. {
+            return None;
+        }
+        let natural = height.get();
+        let content = div()
+            .relative()
+            .w_full()
+            .child(
+                canvas(
+                    move |b, _, _| height.set(b.size.height.into()),
+                    |_, (), _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .child(body());
+        Some(if progress < 1. {
+            div()
+                .w_full()
+                .overflow_hidden()
+                .h(px(natural * progress))
+                .child(content.opacity(progress))
+        } else {
+            content
+        })
     }
 
     /// [`activity`], with find highlights painted over the agent messages while find has

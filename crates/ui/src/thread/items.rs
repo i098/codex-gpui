@@ -972,11 +972,19 @@ pub(super) fn activity(
                     .group_hover(group, move |s| s.text_color(text60)),
             )
             .on_click(cx.listener(move |view, _, _, cx| {
-                if !view.expanded.remove(&key) {
-                    view.expanded.insert(key.clone());
-                }
+                view.toggle_activity(key.clone(), cx);
                 cx.notify();
             }))
+    };
+    // A disclosure body: 4 px below its row, inside the clip so the gap opens with it.
+    let body = || {
+        div()
+            .w_full()
+            .pt(px(4.))
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap(px(4.))
     };
     let mut col = div().flex().flex_col().gap(px(16.));
     let now = cx.background_executor().now();
@@ -1018,19 +1026,20 @@ pub(super) fn activity(
                 ..
             } => {
                 let is_open = open.contains(&key);
+                let content =
+                    view.expansion(&key, is_open, || body().child(text60_block(text, t)), window, cx);
                 div()
                     .w_full()
                     .flex()
                     .flex_col()
                     .items_start()
-                    .gap(px(4.))
                     .child(disclosure(
                         key,
                         "thread-summary",
                         label(words, text60),
                         is_open,
                     ))
-                    .when(is_open, |d| d.child(text60_block(text, t)))
+                    .children(content)
             }
             Activity::Compaction(words) => row(
                 "thread-compaction",
@@ -1055,18 +1064,9 @@ pub(super) fn activity(
                 } else {
                     text60
                 };
-                let mut content = div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(disclosure(
-                        key,
-                        "thread-mcp",
-                        label(mcp_label(item), color),
-                        is_open,
-                    ));
-                if is_open {
+                let header = disclosure(key.clone(), "thread-mcp", label(mcp_label(item), color), is_open);
+                let body = || {
+                    let mut content = div().w_full().pt(px(4.)).flex().flex_col().gap(px(4.));
                     for update in progress {
                         if let Some(message) = update["message"].as_str() {
                             content =
@@ -1151,8 +1151,14 @@ pub(super) fn activity(
                             t,
                         ));
                     }
-                }
-                content
+                    content
+                };
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .child(header)
+                    .children(view.expansion(&key, is_open, body, window, cx))
             }
             Activity::Group {
                 key,
@@ -1162,24 +1168,19 @@ pub(super) fn activity(
             } => {
                 let is_open = open.contains(key);
                 let header = disclosure(key.to_owned(), icon_name, label(summary, text60), is_open);
-                let mut col = div()
-                    .flex()
-                    .flex_col()
-                    .items_start()
-                    .gap(px(4.))
-                    .child(header);
-                if is_open {
-                    col = col.children(rows.into_iter().map(|r| {
+                let content = || {
+                    body().children(rows.into_iter().map(|r| {
                         if let Some(shell) = r.shell {
                             let is_open = open.contains(&shell.key);
                             let key = shell.key.clone();
+                            let shell_body = || div().w_full().child(shell_card(&shell, t));
                             return div()
                                 .w_full()
                                 .flex()
                                 .flex_col()
                                 .items_start()
                                 .child(disclosure(key, r.icon, label(r.verb, text60), is_open))
-                                .when(is_open, |d| d.child(shell_card(&shell, t)));
+                                .children(view.expansion(&shell.key, is_open, shell_body, window, cx));
                         }
                         let mut words = div()
                             .flex()
@@ -1201,9 +1202,14 @@ pub(super) fn activity(
                             words = words.children(stats(added, removed, text60));
                         }
                         row(r.icon, words)
-                    }));
-                }
-                col
+                    }))
+                };
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .child(header)
+                    .children(view.expansion(key, is_open, content, window, cx))
             }
         });
     }
