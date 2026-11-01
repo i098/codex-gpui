@@ -677,9 +677,8 @@ impl Root {
         });
         // Both pickers write the user's `config.toml`, like the original's `writeModel`.
         let on_model = |this: WeakEntity<Self>| {
-            move |model: &str, effort: &str, cx: &mut App| {
-                this.update(cx, |this, cx| this.write_model(model, effort, cx))
-                    .ok();
+            move |pick: Option<(&str, &str)>, cx: &mut App| {
+                this.update(cx, |this, cx| this.write_model(pick, cx)).ok();
             }
         };
         let home_composer = cx.new(|cx| {
@@ -3793,7 +3792,7 @@ impl Root {
                         reasoning_effort, ..
                     } = outcome
                     {
-                        this.write_model(model, reasoning_effort, cx);
+                        this.write_model(Some((model, reasoning_effort)), cx);
                     }
                     this.remember_model_announcement(model, cx);
                     window.focus(&this.focus, cx);
@@ -5970,8 +5969,10 @@ impl Root {
     }
 
     /// A model choice: `config/batchWrite` of `model` and `model_reasoning_effort`
-    /// (the original's `writeModel`).
-    fn write_model(&mut self, model: &str, effort: &str, cx: &mut Context<Self>) {
+    /// (the original's `writeModel`); `None` (`Reset to default`) removes both.
+    fn write_model(&mut self, pick: Option<(&str, &str)>, cx: &mut Context<Self>) {
+        let (model, effort) =
+            pick.map_or((Value::Null, Value::Null), |(m, e)| (m.into(), e.into()));
         let params = json!({
             "edits": [
                 { "keyPath": "model", "value": model, "mergeStrategy": "upsert" },
@@ -5981,7 +5982,6 @@ impl Root {
             "expectedVersion": null,
             "reloadUserConfig": true,
         });
-        let (model, effort) = (model.to_owned(), effort.to_owned());
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             let done = bridge
@@ -5993,11 +5993,23 @@ impl Root {
                     composers.push(this.home.read(cx).composer.clone());
                     for composer in composers {
                         composer.update(cx, |composer, cx| {
-                            composer.set_model_and_effort(&model, &effort, cx);
+                            match (model.as_str(), effort.as_str()) {
+                                (Some(model), Some(effort)) => {
+                                    composer.set_model_and_effort(model, effort, cx)
+                                }
+                                _ => composer.reset_model(cx),
+                            }
                         });
                     }
-                    this.config["model"] = model.into();
-                    this.config["model_reasoning_effort"] = effort.into();
+                    if let Some(config) = this.config.as_object_mut() {
+                        if model.is_null() {
+                            config.remove("model");
+                            config.remove("model_reasoning_effort");
+                        } else {
+                            config.insert("model".into(), model);
+                            config.insert("model_reasoning_effort".into(), effort);
+                        }
+                    }
                 } else {
                     this.toast(Toast::danger("Couldn’t update model settings"), cx);
                 }
@@ -7278,10 +7290,8 @@ Do not modify files, source, git state, permissions, configuration, or workspace
 fn wire_thread_composer(composer: &mut Composer, this: WeakEntity<Root>, side: Option<usize>) {
     composer.enable_shell_commands();
     let (model, send) = (this.clone(), this.clone());
-    composer.on_model(move |m, effort, cx| {
-        model
-            .update(cx, |this, cx| this.write_model(m, effort, cx))
-            .ok();
+    composer.on_model(move |pick, cx| {
+        model.update(cx, |this, cx| this.write_model(pick, cx)).ok();
     });
     composer.on_submit(move |s, window, cx| {
         send.update(cx, |this, cx| this.send(side, s.clone(), None, window, cx))
