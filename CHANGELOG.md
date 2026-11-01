@@ -87,6 +87,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Fixed
 - Put the site's favicon before an external markdown link, with the original's globe until the image loads, and fetch remote images such as favicons and avatars over HTTP.
+- Match the original fill, text size and padding of the Appearance theme, accent and font pickers.
 - Use the original's compact 44 px rows in the Appearance theme cards.
 - Show the text overflow icon on a code block's `Enable word wrap` button, and the wrap icon only while wrap is on, as the original does.
 - Show the Appearance theme picker's Codex themes in a `Codex themes` flyout submenu beside `ChatGPT`, with 24 px theme icons, as the original does.
