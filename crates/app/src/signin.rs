@@ -452,7 +452,7 @@ impl Root {
                         }
                         _ => this.toast(
                             ui::toast::Toast::danger(
-                                "Sign-in failed: invalid gateway authorization URL".into(),
+                                "Sign-in failed: invalid gateway authorization URL",
                             ),
                             cx,
                         ),
