@@ -32,7 +32,7 @@ impl Focusable for Feedback {
 impl Feedback {
     fn new(cx: &mut Context<Self>) -> Self {
         let crash = crate::crash::take();
-        let reason = match &crash {
+        let reason = cx.new(|cx| match &crash {
             Some(report) => Composer::form_field(
                 "Describe the problem",
                 &format!("The app crashed on the last launch:\n{report}"),
@@ -40,9 +40,9 @@ impl Feedback {
                 cx,
             ),
             None => Composer::form_field("Describe the problem", "", true, cx),
-        };
+        });
         Self {
-            reason: cx.new(|_| reason),
+            reason,
             path: cx.new(|cx| {
                 Composer::form_field("Absolute ZIP path on the app-server host", "", false, cx)
             }),
