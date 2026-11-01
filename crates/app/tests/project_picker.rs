@@ -758,3 +758,42 @@ fn home_file_search_receives_its_session_results() -> Result<()> {
     assert!(prompt.contains(beta_file.to_str().unwrap()), "{prompt}");
     Ok(())
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn renaming_a_project_preserves_unknown_appearance_metadata() -> Result<()> {
+    use common::{Fx, exchange, script};
+    let metadata = json!({
+        "codex.chatGptBacking": "keep",
+        "appearance.color": "external-color",
+        "appearance.marker": "{\"kind\":\"icon\",\"icon\":\"external-marker\"}"
+    });
+    let project = json!({"id": "project-edit", "name": "Before", "roots": [{"path": "/project"}], "metadata": metadata});
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("project/read", json!({"project": project})));
+    lines.extend(exchange("project/read", json!({"project": project})));
+    lines.extend(exchange("project/update", json!({})));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.action(Box::new(ui::screens::sidebar::ProjectAction {
+        id: "project-edit".into(),
+        command: "edit".into(),
+    }))?;
+    fx.wait("project editor", |fx| {
+        fx.read(|root, _| root.new_project().is_some())
+    })?;
+    fx.keys("cmd-a")?;
+    fx.type_text("After")?;
+    fx.keys("enter")?;
+    fx.wait("project saved", |fx| {
+        fx.read(|root, _| root.new_project().is_none())
+    })?;
+    let requests = fx.sent()?;
+    let update = requests
+        .iter()
+        .find(|request| request["method"] == "project/update")
+        .unwrap();
+    assert_eq!(update["params"]["name"], "After");
+    assert_eq!(update["params"]["metadata"], metadata);
+    assert_eq!(update["params"]["roots"], project["roots"]);
+    Ok(())
+}

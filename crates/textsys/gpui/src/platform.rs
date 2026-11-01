@@ -2917,7 +2917,8 @@ pub enum WindowBackgroundAppearance {
     Opaque,
     /// Plain alpha transparency.
     Transparent,
-    /// Transparency, but the contents behind the window are blurred.
+    /// Transparency, but the contents behind the window are blurred: on macOS, the `menu`
+    /// vibrancy material (Electron's `vibrancy: 'menu'`).
     ///
     /// Not always supported.
     Blurred,

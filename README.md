@@ -281,6 +281,8 @@ Branch prefix saves on blur or Enter; multiline instructions save after three id
 Save and Command-S also write pending instructions.
 The native `cargo test -p app --test git_settings -- --test-threads=1` replay checks autosave, write recovery, shutdown flush, and confirmed worktree preferences.
 PR watch preference changes update active PR heartbeat instructions; paused automations remain unchanged.
+Worktree starts show creating and attaching notices, then a thread status after creation.
+Setup failures show a separate error notice.
 Settings > Worktrees provides General and Environments tabs, root and retention preferences, live worktree rows, and row actions.
 The tabs stay accessible while the content scrolls.
 Pinned conversations prevent worktree deletion.
@@ -395,6 +397,9 @@ File headers remain visible during scrolling.
 Diff code and context rows paint in their own opaque scroll layer, as in the original renderer.
 Failed reads retain the patch and provide Retry.
 Only Staged and Unstaged sources show staging actions. Uncommitted combines both states and does not expose those actions.
+
+File-change activity displays `item/fileChange/outputDelta` while a patch runs and keeps that output after completion.
+Run `cargo test -p ui --lib live_patch_output_keeps_item_boundaries` to check streaming and item isolation.
 
 The Plugins rail opens the native plugin directory and the Skills page.
 Both pages load app-server data and support search.
@@ -576,16 +581,16 @@ It then runs `tools/appcast.py` and uploads `appcast.xml` and `<zip>.sha256` bes
 General settings has an `Automatically check for updates` switch that sets Sparkle's `automaticallyChecksForUpdates`.
 The release owner must supply the production feed and complete signing and notarization before distribution.
 
-Until a production feed exists, `tools/install-mac.sh` updates an installed copy in place.
-Run it on the Mac through `tools/mac.sh -l install "nice -n 19 bash tools/install-mac.sh $(git rev-parse HEAD)"`.
+For manual local installation, run `tools/install-mac.sh` on the Mac through `tools/mac.sh -l install "nice -n 19 bash tools/install-mac.sh $(git rev-parse HEAD)"`.
 It builds the normal bundle, replaces `~/Applications/Codex GPUI.app`, and keeps the old bundle as `~/Applications/.Codex GPUI.previous.app`.
 It never opens, activates, or closes the app; a running copy changes at its next launch.
 
-Sparkle checks, downloads, verifies, installs, and relaunches the app.
-The rail shows download progress and enables `Update available` only when installation is ready.
+Sparkle checks the signed appcast and finds a newer release.
+The rail shows its update banner while the embedded installer downloads and installs the release in the background.
+The script downloads the release archive and checksum, verifies the checksum and app signature, keeps the previous bundle, and opens the new app without taking focus.
 The app reads the `in_app_updates` policy through `experimentalFeature/list`.
 A disabled policy removes the update action and shows the read-only `Managed` row in General settings.
-The native Sparkle dialogs show check progress, no-update results, and update errors.
+Sparkle dialogs show check progress, no-update results, and update errors.
 Run `cargo test -p app --lib updater` on macOS for the feed and managed-policy checks.
 Run `cargo test -p app --test updater -- --test-threads=1` for native rail visibility and input checks.
 
@@ -909,6 +914,9 @@ tools/mac.sh 'cargo run -p app --release --example bench'
 
 The example runs the real root view, headless at 1280x832 @2x, on a replayed app-server with 60 Recents and a 40-turn chat.
 It sends key, mouse and scroll-wheel events and prints, for each scenario, the p50, p95 and max milliseconds from an input to the end of its frame.
+The animation scenarios (sidebar and changes-panel toggles in a chat) also count every frame of the animation, at simulated 120 Hz ticks.
+The `fps @120Hz` column gives the frames per second that a 120 Hz display shows when each frame takes its CPU time.
+The bench also prints the time from launch to the first ready frame.
 The 120 Hz frame budget is 8.3 ms.
 With `BENCH_SHOT=<dir>`, it saves every 20th frame, so that you can compare the pixels of two builds.
 
