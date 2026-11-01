@@ -472,7 +472,6 @@ impl Composer {
                     .min_w_0()
                     .justify_end()
                     .overflow_hidden()
-                    .children(self.goal_pill(t, cx))
                     .children(self.context_donut(t))
                     .child(model_button),
             )

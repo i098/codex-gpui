@@ -2,7 +2,7 @@
 //! items) and streamed reasoning (`item/reasoning/*` deltas) of an open chat.
 
 use super::*;
-use crate::composer::{ContextUsage, Goal};
+use crate::composer::ContextUsage;
 
 /// The local thinking display, from `config.toml` `hide_agent_reasoning` and
 /// `show_raw_agent_reasoning` (the Codex CLI's keys). It changes what this app draws, not what
@@ -62,16 +62,6 @@ impl ThreadView {
         self.context_usage
     }
 
-    /// The chat's `/goal`, from `thread/goal/get` and `thread/goal/*` notifications.
-    pub fn goal(&self) -> Option<&Goal> {
-        self.goal.as_ref()
-    }
-
-    pub fn set_goal(&mut self, goal: Option<Goal>, cx: &mut Context<Self>) {
-        self.goal = goal;
-        cx.notify();
-    }
-
     /// Marks the next compaction of this chat as the user's (`/compact`), so it completes as
     /// `Context compacted` rather than `Context automatically compacted`.
     pub fn expect_manual_compaction(&mut self) {
@@ -89,8 +79,6 @@ impl ThreadView {
             "thread/tokenUsage/updated" => {
                 self.context_usage = ContextUsage::from_token_usage(&params["tokenUsage"]);
             }
-            "thread/goal/updated" => self.goal = Goal::from_value(&params["goal"]),
-            "thread/goal/cleared" => self.goal = None,
             "item/reasoning/summaryPartAdded"
             | "item/reasoning/summaryTextDelta"
             | "item/reasoning/textDelta" => {

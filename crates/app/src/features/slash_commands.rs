@@ -1,8 +1,7 @@
 //! Composer slash commands that call the app-server directly: `/status`, `/init`, `/side`,
-//! `/review-mode`, `/personality`, `/goal`, and the Home-only `/worktree`.
+//! `/review-mode`, `/personality`, and the Home-only `/worktree`.
 
 use crate::*;
-use ui::composer::Goal;
 use ui::screens::hotkey::Mode;
 
 /// The original's `/init` prompt (the Codex bundle's `Oit`).
@@ -349,127 +348,6 @@ impl Root {
             "Pragmatic"
         };
         self.toast(Toast::success(format!("Personality set to {label}")), cx);
-    }
-
-    /// `/goal <objective>` sets the open chat's goal; without text it shows the current one.
-    pub(crate) fn set_goal(
-        &mut self,
-        objective: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(view) = self.command_thread("setting a goal", cx) else {
-            return;
-        };
-        if objective.is_empty() {
-            let message = view.read(cx).goal().map_or_else(
-                || "Type /goal followed by what Codex should keep working on".to_owned(),
-                Goal::label,
-            );
-            self.toast(Toast::info(message), cx);
-            return;
-        }
-        let id = view.read(cx).id().to_owned();
-        let resume = !self.loaded.contains(&id);
-        let bridge = self.bridge.clone();
-        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let set = async {
-                resume_if(resume, &bridge, &this, &id, cx).await?;
-                bridge
-                    .request::<_, Value>(
-                        "thread/goal/set",
-                        json!({"threadId": id, "objective": objective, "status": "active"}),
-                    )
-                    .await
-            }
-            .await;
-            this.update(cx, |this, cx| match &set {
-                Ok(response) => {
-                    view.update(cx, |view, cx| {
-                        view.set_goal(Goal::from_value(&response["goal"]), cx)
-                    });
-                    this.sync_goal(cx);
-                }
-                Err(_) => this.toast(Toast::danger("Failed to set goal"), cx),
-            })?;
-            set.map(drop)
-        });
-        log_err(task, cx);
-    }
-
-    /// The goal pill's click: `thread/goal/clear` on the open chat.
-    pub(crate) fn clear_goal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(view) = self.thread.clone() else {
-            return;
-        };
-        let id = view.read(cx).id().to_owned();
-        let bridge = self.bridge.clone();
-        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let cleared = bridge
-                .request::<_, Value>("thread/goal/clear", json!({"threadId": id}))
-                .await;
-            this.update(cx, |this, cx| match &cleared {
-                Ok(_) => {
-                    view.update(cx, |view, cx| view.set_goal(None, cx));
-                    this.sync_goal(cx);
-                }
-                Err(_) => this.toast(Toast::danger("Failed to clear goal"), cx),
-            })?;
-            cleared.map(drop)
-        });
-        log_err(task, cx);
-    }
-
-    /// Reads the shown chat's goal (`thread/goal/get`); a server without goals leaves none.
-    pub(crate) fn load_goal(&mut self, cx: &mut Context<Self>) {
-        let Some(view) = self.thread.clone() else {
-            return;
-        };
-        let id = view.read(cx).id().to_owned();
-        let bridge = self.bridge.clone();
-        cx.spawn(async move |this, cx| {
-            let Ok(response) = bridge
-                .request::<_, Value>("thread/goal/get", json!({"threadId": id}))
-                .await
-            else {
-                return;
-            };
-            this.update(cx, |this, cx| {
-                view.update(cx, |view, cx| {
-                    view.set_goal(Goal::from_value(&response["goal"]), cx)
-                });
-                this.sync_goal(cx);
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// Copies each open chat's goal to its composer.
-    pub(crate) fn sync_goal(&self, cx: &mut Context<Self>) {
-        let side = self
-            .side_chats
-            .iter()
-            .map(|chat| (&chat.view, &chat.composer));
-        for (view, composer) in self.thread.iter().zip([&self.thread_composer]).chain(side) {
-            let goal = view.read(cx).goal().cloned();
-            composer.update(cx, |composer, cx| composer.set_goal(goal, cx));
-        }
-    }
-
-    /// After a `thread/goal/*` notification: refreshes the pill and announces an achieved goal.
-    pub(crate) fn goal_notification(
-        &mut self,
-        method: &str,
-        params: &Value,
-        cx: &mut Context<Self>,
-    ) {
-        self.sync_goal(cx);
-        if method == "thread/goal/updated"
-            && Goal::from_value(&params["goal"]).is_some_and(|goal| goal.achieved())
-        {
-            self.toast(Toast::success("Goal achieved"), cx);
-        }
     }
 
     /// `/worktree`: flips whether the next Home chat runs in a new worktree.

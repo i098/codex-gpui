@@ -101,6 +101,14 @@ const ACCENTS: &[(&str, &str)] = &[
     ("custom", "Custom"),
 ];
 
+/// `text-xs px-2`: the accent and font pickers' trigger.
+const COMPACT_TRIGGER: TriggerStyle = TriggerStyle {
+    size: 12.,
+    line_height: 16.,
+    padding: (8., 8.),
+    surface: false,
+};
+
 /// `gba(name, variant).accent`: the ChatGPT accent a chrome theme takes.
 fn chatgpt_accent(name: &str) -> &'static str {
     match name {
@@ -360,8 +368,7 @@ fn mix(a: Hsla, p: f32, b: Hsla) -> Hsla {
 }
 
 /// `EE`: the round `Aa` preview of a theme's surface, ink and accent.
-fn preview(accent: &str, ink: &str, surface: &str, size: f32) -> AnyElement {
-    let surface = color_of(surface);
+fn preview(accent: Hsla, ink: Hsla, surface: Hsla, size: f32) -> AnyElement {
     div()
         .size(px(size))
         .flex_none()
@@ -370,22 +377,32 @@ fn preview(accent: &str, ink: &str, surface: &str, size: f32) -> AnyElement {
         .justify_center()
         .rounded_full()
         .border_1()
-        .border_color(mix(color_of(ink), 0.16, surface))
+        .border_color(mix(ink, 0.16, surface))
         .bg(surface)
-        .child(text("Aa", 12., 12., 600., color_of(accent)))
+        .child(text("Aa", 12., 12., 600., accent))
         .into_any_element()
 }
 
 /// The preset menu values are `<variant>:<id>` so the icon callback knows the variant.
-fn preset_icon(value: &str, _: &Theme) -> Option<AnyElement> {
+fn preset_icon(value: &str, _: &Theme, size: f32) -> Option<AnyElement> {
     let (variant, id) = value.split_once(':')?;
     let preset = PRESETS
         .iter()
         .find(|preset| preset.id == id && preset.variant == variant)?;
-    Some(preview(preset.accent, preset.ink, preset.surface, 20.))
+    Some(preview(
+        color_of(preset.accent),
+        color_of(preset.ink),
+        color_of(preset.surface),
+        size,
+    ))
 }
 
-fn accent_icon(value: &str, _: &Theme) -> Option<AnyElement> {
+/// The `Codex themes` flyout row's icon: the current theme's preview with a tertiary accent.
+fn codex_themes_icon(_: &str, t: &Theme, size: f32) -> Option<AnyElement> {
+    Some(preview(t.text_tertiary, t.text, t.surface, size))
+}
+
+fn accent_icon(value: &str, _: &Theme, _: f32) -> Option<AnyElement> {
     let (variant, name) = value.split_once(':')?;
     (name != "custom").then(|| {
         div()
@@ -474,8 +491,13 @@ impl SettingsPane {
                     Select::new(current.clone(), choices, None, cx)
                         .with_icons(preset_icon)
                         .with_width(240.)
+                        .with_trigger_style(TriggerStyle {
+                            padding: (3., 12.),
+                            surface: true,
+                            ..TriggerStyle::default()
+                        })
                         .keep_default_visible()
-                        .with_heading("Codex themes")
+                        .with_submenu("Codex themes", codex_themes_icon)
                 });
                 cx.subscribe(&select, move |this, _, selected: &Selected, cx| {
                     let id = selected.0.split_once(':').map_or("", |(_, id)| id);
@@ -536,6 +558,10 @@ impl SettingsPane {
                     Select::new(current.clone(), choices, None, cx)
                         .with_icons(accent_icon)
                         .with_width(180.)
+                        .with_trigger_style(TriggerStyle {
+                            surface: true,
+                            ..COMPACT_TRIGGER
+                        })
                 });
                 cx.subscribe(&select, move |this, _, selected: &Selected, cx| {
                     let name = selected.0.split_once(':').map_or("", |(_, name)| name);
@@ -735,6 +761,7 @@ impl SettingsPane {
                 let select = cx.new(|cx| {
                     Select::new(current.clone(), choices, Some("Search fonts"), cx)
                         .with_width(240.)
+                        .with_trigger_style(COMPACT_TRIGGER)
                         .keep_default_visible()
                 });
                 cx.subscribe(&select, move |this, _, selected: &Selected, cx| {
