@@ -85,7 +85,7 @@ fn map_url(home: &Home, dark: bool, width: f32) -> String {
 
 /// An absolute image URL through the host, like the plugin icons: the host attaches no
 /// ChatGPT credentials to another origin.
-fn image(host: &dyn Host, url: &str) -> Result<Arc<gpui::Image>> {
+pub(super) fn image(host: &dyn Host, url: &str) -> Result<Arc<gpui::Image>> {
     let response = host.fetch(&Request::Http(
         json!({"url": url, "method": "GET", "headers": {}, "retry": "never"}),
     ))?;
