@@ -1133,11 +1133,20 @@ impl Page {
                     Action::UpdateSharedVersion(plugin.clone()), true));
                 (format!("Share {}", plugin.title()), content.into_any_element(), update)
             }
-            Modal::Skill(skill) => (string(skill, "name").to_owned(),
-                div().flex().flex_col().gap(px(12.))
-                    .child(text(string(skill, "description").to_owned(), 14., 20., 400., t.text_secondary).whitespace_normal())
-                    .child(div().h(px(360.)).children(self.skill_file.clone())).into_any_element(),
-                Some(("Open", Action::OpenSkill(string(skill, "path").to_owned()), true))),
+            Modal::Skill(skill) => {
+                let open_action = if is_remote_skill(skill) {
+                    None
+                } else {
+                    Some(("Open", Action::OpenSkill(string(skill, "path").to_owned()), true))
+                };
+                (
+                    string(skill, "name").to_owned(),
+                    div().flex().flex_col().gap(px(12.))
+                        .child(text(string(skill, "description").to_owned(), 14., 20., 400., t.text_secondary).whitespace_normal())
+                        .child(div().h(px(360.)).children(self.skill_file.clone())).into_any_element(),
+                    open_action,
+                )
+            }
             Modal::Connect(app) => (format!("Connect {}", string(app, "name")),
                 text(string(app, "description").to_owned(), 14., 20., 400., t.text_secondary).into_any_element(),
                 Some(("Connect", Action::ConnectApp(app.clone()), true))),
@@ -1226,8 +1235,28 @@ fn skill_description(skill: &Value) -> &str {
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| string(skill, "description"))
 }
+fn is_remote_skill(skill: &Value) -> bool {
+    skill
+        .get("remotePluginSkill")
+        .is_some_and(|remote| !remote.is_null())
+        || !skill["remotePluginId"].is_null()
+        || !skill["remoteMarketplaceName"].is_null()
+}
 
 #[cfg(test)]
+#[test]
+fn remote_skills_do_not_offer_local_open_action() {
+    assert!(is_remote_skill(
+        &serde_json::json!({"remotePluginSkill": {"remotePluginId": "remote"}})
+    ));
+    assert!(is_remote_skill(
+        &serde_json::json!({"remotePluginId": "remote-plugin"})
+    ));
+    assert!(!is_remote_skill(
+        &serde_json::json!({"path": "/tmp/SKILL.md"})
+    ));
+}
+
 #[test]
 fn skill_titles_fall_back_to_title_cased_names() {
     let title = |name: &str| skill_title(&serde_json::json!({ "name": name }));
