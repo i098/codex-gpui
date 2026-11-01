@@ -16,7 +16,7 @@ use ui::screens::settings::voice::Policy as VoicePolicy;
 #[cfg(target_os = "macos")]
 mod audio;
 #[cfg(target_os = "macos")]
-mod desktop;
+pub(crate) mod desktop;
 #[cfg(target_os = "macos")]
 mod dictation;
 mod mini;
@@ -189,6 +189,15 @@ struct Runtime {
     dictation: Option<Entity<dictation::Controller>>,
 }
 impl gpui::Global for Runtime {}
+
+/// The Mini window when it is open and on screen.
+#[cfg(target_os = "macos")]
+pub(crate) fn visible_mini(cx: &mut App) -> Option<WindowHandle<Root>> {
+    let mini = cx.try_global::<Runtime>()?.mini?;
+    windows::is_visible(mini.into(), cx)
+        .unwrap_or(false)
+        .then_some(mini)
+}
 
 pub(crate) fn init(cx: &mut App) {
     cx.set_global(Runtime::default());
