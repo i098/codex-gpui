@@ -18,7 +18,7 @@ use gpui::{
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, ScrollDelta,
     ScrollWheelEvent, TouchPhase, point, px, size,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 use std::{fs, sync::Arc, thread};
 
@@ -28,14 +28,26 @@ const EXPLAIN: &str = "01a13de9-35ed-7c72-a36a-68eeb2f4e1ee";
 const ROWS: [(f32, f32); 2] = [(196., 305.), (196., 336.)];
 const EXPLAIN_ROW: (f32, f32) = (196., 367.);
 const THREAD: (f32, f32) = (640., 400.);
+/// The Home composer's text field.
+const COMPOSER: (f32, f32) = (808., 737.);
+/// Animation triggers per animation scenario; even, so each ends in its starting state.
+const TOGGLES: usize = 10;
+/// One frame of a 120 Hz display.
+const TICK: Duration = Duration::from_nanos(8_333_333);
 const FRAMES: usize = 120;
 /// Turns of the Explain thread (6 items each): a long chat, as real histories hold.
 const TURNS: usize = 40;
 
 fn main() -> Result<()> {
-    let mut b = Bench::open()?;
+    // Projects in the user's own Codex home would move the sidebar rows: use an empty one.
+    let home = std::env::temp_dir().join(format!("cgx-bench-home-{}", std::process::id()));
+    fs::create_dir_all(&home)?;
+    // SAFETY: no other thread runs yet.
+    unsafe { std::env::set_var("CODEX_HOME", &home) };
+    let (mut b, startup) = Bench::open()?;
     let mut rows = Vec::new();
     rows.push(b.run("full redraw", |b| b.update(|w, _| w.refresh()))?);
+    b.click(COMPOSER)?;
     let mut n = 0;
     rows.push(b.run("key in composer", |b| {
         n += 1;
@@ -71,15 +83,30 @@ fn main() -> Result<()> {
         n += 1;
         b.key(if n % 20 == 0 { " " } else { "a" })
     })?);
+    rows.push(b.animate("sidebar in chat", |b| {
+        b.update(|w, cx| w.dispatch_action(Box::new(ui::ToggleSidebar), cx))
+    })?);
+    rows.push(b.animate("changes panel", |b| {
+        b.update(|w, cx| w.dispatch_action(Box::new(ui::ToggleChangesPanel), cx))
+    })?);
 
-    println!("{:<16} {:>22}", "scenario", "cpu p50 / p95 / max ms");
-    for (name, [p50, p95, max]) in rows {
-        println!("{name:<16} {p50:>6.2} {p95:>7.2} {max:>7.2}");
+    println!(
+        "startup to first ready frame: {:.0} ms",
+        startup.as_secs_f64() * 1000.
+    );
+    println!(
+        "{:<16} {:>22} {:>12}",
+        "scenario", "cpu p50 / p95 / max ms", "fps @120Hz"
+    );
+    for (name, [p50, p95, max, fps]) in rows {
+        println!("{name:<16} {p50:>6.2} {p95:>7.2} {max:>7.2} {fps:>12.0}");
     }
+    drop(b);
+    fs::remove_dir_all(&home)?;
     Ok(())
 }
 
-type Row = (&'static str, [f64; 3]);
+type Row = (&'static str, [f64; 4]);
 
 struct Bench {
     cx: HeadlessAppContext,
@@ -88,7 +115,9 @@ struct Bench {
 }
 
 impl Bench {
-    fn open() -> Result<Self> {
+    /// Opens the root and returns it with the time from launch to its first ready frame.
+    fn open() -> Result<(Self, Duration)> {
+        let launched = Instant::now();
         let path = std::env::temp_dir().join(format!("cgx-bench-{}.jsonl", std::process::id()));
         fs::write(&path, script()?)?;
         let (bridge, events) = Bridge::replay(&path)?;
@@ -127,10 +156,36 @@ impl Bench {
             window: window.into(),
         };
         b.wait("startup", |b| b.root.read_with(&b.cx, |r, _| r.ready()))?;
+        let startup = launched.elapsed();
         // Let the Recents list and every startup read land before measuring.
         thread::sleep(Duration::from_millis(300));
         b.cx.run_until_parked();
-        Ok(b)
+        Ok((b, startup))
+    }
+
+    /// Runs `trigger` [`TOGGLES`] times and then, at simulated 120 Hz ticks, every animation
+    /// frame it starts until none is requested; the row covers the trigger and those frames.
+    fn animate(
+        &mut self,
+        name: &'static str,
+        mut trigger: impl FnMut(&mut Self) -> Result<Duration>,
+    ) -> Result<Row> {
+        let mut cpu = Vec::new();
+        for _ in 0..TOGGLES {
+            cpu.push(trigger(self)?);
+            self.cx.run_until_parked();
+            for _ in 0..240 {
+                self.cx.advance_clock(TICK);
+                let mut requested = 0;
+                let d = self.update(|w, cx| requested = w.simulate_next_frame(cx))?;
+                self.cx.run_until_parked();
+                if requested == 0 {
+                    break;
+                }
+                cpu.push(d);
+            }
+        }
+        Ok((name, stats(cpu)))
     }
 
     /// Runs `frame` [`FRAMES`] times; each returns the CPU time of its input and frame.
@@ -202,8 +257,9 @@ impl Bench {
 }
 
 /// readback.jsonl with its `thread/list` grown to 60 threads (copies of the 3 recorded ones,
-/// older than them), the Explain thread grown to [`TURNS`] turns (copies of its one turn) and
-/// its thread reads repeated so every sidebar click gets an answer.
+/// older than them), the Explain thread grown to [`TURNS`] turns (copies of its one turn), its
+/// thread reads repeated so every sidebar click gets an answer, and one `thread/resume` reply
+/// for each thread the bench opens, in the order it opens them.
 fn script() -> Result<String> {
     let text = fs::read_to_string(format!("{ROOT}/fixtures/readback.jsonl"))?;
     let mut lines: Vec<Value> = text
@@ -211,11 +267,13 @@ fn script() -> Result<String> {
         .filter(|l| !l.trim().is_empty())
         .map(serde_json::from_str)
         .collect::<Result<_, _>>()?;
+    let mut opened = Vec::new();
     for v in &mut lines {
         if let Some(Value::Array(data)) = v.pointer_mut("/msg/result/data")
             && data.first().is_some_and(|t| t.get("sessionId").is_some())
         {
             let recorded = data.clone();
+            opened = recorded.iter().map(|t| t["id"].clone()).collect();
             for i in 0..57 {
                 let mut t = recorded[i % recorded.len()].clone();
                 t["id"] = format!("00000000-0000-7000-8000-{i:012}").into();
@@ -253,13 +311,48 @@ fn script() -> Result<String> {
             t
         })
         .collect();
+    // The run settings of fixtures/sessions/thread-settings.jsonl's resume. A click that leaves
+    // a thread before its resume lands resumes it again on the next open.
+    let opens = opened
+        .iter()
+        .flat_map(|t| std::iter::repeat_n(t, FRAMES / 2 + 1));
+    for (i, thread) in opens.enumerate() {
+        let id = 900_000 + i;
+        lines.push(
+            json!({"dir": "send", "msg": {"id": id, "method": "thread/resume",
+            "params": {"threadId": thread, "excludeTurns": true}}}),
+        );
+        lines.push(json!({"dir": "recv", "msg": {"id": id, "result": {
+            "thread": {"id": thread}, "model": "gpt-6-astra", "approvalPolicy": "never",
+            "sandbox": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": false,
+                "excludeTmpdirEnvVar": false, "excludeSlashTmp": false},
+            "activePermissionProfile": null, "reasoningEffort": "low",
+            "collaborationMode": {"mode": "default", "settings": {"model": "gpt-6-astra",
+                "reasoning_effort": "low", "developer_instructions": null}}}}}));
+    }
     Ok(lines.iter().map(|v| format!("{v}\n")).collect())
 }
 
-fn stats(mut d: Vec<Duration>) -> [f64; 3] {
+fn stats(mut d: Vec<Duration>) -> [f64; 4] {
+    let fps = fps_at_120hz(&d);
     d.sort();
     let ms = |i: usize| d[i.min(d.len() - 1)].as_secs_f64() * 1000.;
-    [ms(d.len() / 2), ms(d.len() * 95 / 100), ms(d.len() - 1)]
+    [
+        ms(d.len() / 2),
+        ms(d.len() * 95 / 100),
+        ms(d.len() - 1),
+        fps,
+    ]
+}
+
+/// Frames per second a 120 Hz frame source delivers when each frame takes its CPU time:
+/// a frame that overruns its tick drops the ticks it covers.
+fn fps_at_120hz(frames: &[Duration]) -> f64 {
+    let ticks: u32 = frames
+        .iter()
+        .map(|d| (d.as_secs_f64() / TICK.as_secs_f64()).ceil().max(1.) as u32)
+        .sum();
+    frames.len() as f64 / (ticks as f64 * TICK.as_secs_f64())
 }
 
 fn mouse_move((x, y): (f32, f32)) -> PlatformInput {
