@@ -221,6 +221,7 @@ pub(crate) mod menu {
     }
 }
 mod mention;
+pub use mention::ChatDrag;
 mod menus;
 mod slash;
 pub use slash::SlashCommand;
@@ -851,6 +852,8 @@ pub struct Composer {
     blocked: Option<Entity<Confirmation>>,
     /// A file drag is over the composer's drop target (`data-composer-drag-active`).
     drag_active: bool,
+    /// The drag over the drop target is a sidebar chat (`Drop to reference chat`).
+    drag_chat: bool,
     models: Vec<ModelOption>,
     model: usize,
     effort: Option<String>,
@@ -994,6 +997,7 @@ impl Composer {
             attachment_error: None,
             blocked: None,
             drag_active: false,
+            drag_chat: false,
             models: Vec::new(),
             model: 0,
             effort: Some("medium".into()),
@@ -2668,26 +2672,52 @@ pub(crate) fn card_decoration(t: &Theme, narrow: bool) -> shapes::Decoration {
 }
 
 /// `target` as `composer`'s file drop target (the original's drag handlers on the page
-/// column): while a file drag is over its box the card surface switches and the `Drop to
-/// attach` overlay (`bg-codex-drop-overlay/60`, `z-40`: a centred pill on
-/// `bg-codex-drop-prompt`, `rounded-md`, `border-border/50`, `shadow`, 13 px text) covers it;
-/// a drop attaches the files. Call it last: the overlay paints over the children added so far.
+/// column): while a file or sidebar chat drag is over its box the card surface switches and
+/// the `Drop to attach` (`Drop to reference chat`) overlay (`bg-codex-drop-overlay/60`,
+/// `z-40`: a centred pill on `bg-codex-drop-prompt`, `rounded-md`, `border-border/50`,
+/// `shadow`, 13 px text) covers it; a drop attaches the files or adds a chat chip. Call it
+/// last: the overlay paints over the children added so far.
 pub fn drop_target(target: Div, composer: &Entity<Composer>, cx: &App) -> Div {
     let t = cx.theme();
-    let over = composer.read(cx).drag_active(cx);
+    let (over, chat) = {
+        let composer = composer.read(cx);
+        (composer.drag_active(cx), composer.drag_chat)
+    };
     let (moved, dropped) = (composer.clone(), composer.clone());
+    let (chat_moved, chat_dropped) = (composer.clone(), composer.clone());
     let target = target
         .relative()
         .on_drag_move::<ExternalPaths>(move |e, _, cx| {
             let over = e.bounds.contains(&e.event.position);
-            moved.update(cx, |c, cx| c.set_drag_active(over, cx));
+            moved.update(cx, |c, cx| {
+                c.drag_chat = false;
+                c.set_drag_active(over, cx)
+            });
         })
         .on_drop::<ExternalPaths>(move |paths, _, cx| {
             dropped.update(cx, |c, cx| c.drop_files(paths.paths(), cx));
+        })
+        .on_drag_move::<ChatDrag>(move |e, _, cx| {
+            let over = e.bounds.contains(&e.event.position);
+            chat_moved.update(cx, |c, cx| {
+                c.drag_chat = true;
+                c.set_drag_active(over, cx)
+            });
+        })
+        .on_drop::<ChatDrag>(move |chat, window, cx| {
+            chat_dropped.update(cx, |c, cx| {
+                c.drop_chat(chat, cx);
+                c.focus_handle.focus(window, cx);
+            });
         });
     if !over {
         return target;
     }
+    let prompt = if chat {
+        "Drop to reference chat"
+    } else {
+        "Drop to attach"
+    };
     let black = |a: u32| -> Hsla { gpui::rgba(a).into() };
     let pill = shapes::Decoration {
         border: Some((px(1.), t.border.opacity(0.5))),
@@ -2715,7 +2745,7 @@ pub fn drop_target(target: Div, composer: &Entity<Composer>, cx: &App) -> Div {
                     .px(px(13.))
                     .py(px(5.))
                     .child(shapes::decoration(pill))
-                    .child(text("Drop to attach", 13., 18.5714, 430., t.text)),
+                    .child(text(prompt, 13., 18.5714, 430., t.text)),
             ),
     )
 }

@@ -2,6 +2,7 @@
 //! shows: header, Projects, and Recents from `thread/list`. Numbers are CSS px from
 //! refs/home and refs/sidebar.
 
+use crate::composer::ChatDrag;
 use crate::{
     Shell, blit, fixture, focus, home_sidebar_header,
     icon::icon,
@@ -1084,6 +1085,10 @@ impl HomeSidebar {
                     .any(|unread| unread == id)
                     .then_some(RowEnd::Dot)
             });
+        let drag = ChatDrag {
+            id: id.to_owned(),
+            title: label.clone(),
+        };
         thread_row(
             id,
             label,
@@ -1115,6 +1120,8 @@ impl HomeSidebar {
             )
         })
         .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenThread(open.clone()))))
+        // `Drop to reference chat`: dragged onto a composer, the row becomes a chat chip.
+        .on_drag(drag, |drag: &ChatDrag, _, _, cx| cx.new(|_| drag.clone()))
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {

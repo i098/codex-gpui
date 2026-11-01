@@ -637,9 +637,13 @@ pub fn with_comments(comments: &[Comment], prompt: String) -> String {
     combined
 }
 
-/// The user's own text of a sent prompt, without the diff and browser comment blocks.
+/// The user's own text of a sent prompt, without the diff and browser comment blocks and the
+/// referenced chats.
 pub fn prompt_body(text: &str) -> &str {
-    if text.starts_with("# Diff comments:\n") || text.starts_with("# Browser comments:\n") {
+    if text.starts_with("# Diff comments:\n")
+        || text.starts_with("# Browser comments:\n")
+        || text.starts_with("\n## Referenced chats with Codex:\n")
+    {
         text.rsplit_once("\n## My request:\n")
             .map_or(text, |(_, body)| body)
     } else {
