@@ -570,6 +570,7 @@ pub struct Root {
     /// A commit, push or branch workflow is running (the original's single workflow state).
     git_busy: Option<&'static str>,
     git_status_load: Option<Task<()>>,
+    worktree_statuses: HashMap<String, &'static str>,
     /// The repository the open commit form read; a later chat switch cannot redirect it.
     commit_cwd: Option<String>,
     /// `Include unstaged changes`, kept from one commit form to the next.
@@ -1023,6 +1024,7 @@ impl Root {
             interrupting: HashSet::new(),
             git_busy: None,
             git_status_load: None,
+            worktree_statuses: HashMap::new(),
             commit_cwd: None,
             commit_include_unstaged: true,
             generation: None,
@@ -4420,6 +4422,8 @@ impl Root {
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         view.update(cx, |view, cx| {
             view.set_git_phase(self.git_busy, cx);
+            let status = self.worktree_statuses.get(view.id()).copied();
+            view.set_worktree_status(status, cx);
             view.set_usage_limit_notice(self.usage_limit_notice, cx);
         });
         view.update(cx, |view, cx| {
@@ -5493,6 +5497,12 @@ impl Root {
         let computer_use = computer_use_overrides(&self.config);
         let host = self.host.clone();
         self.fork_pending = true;
+        let preparing_worktree = options
+            .as_ref()
+            .is_some_and(|options| options.mode == ui::screens::hotkey::Mode::Worktree);
+        if preparing_worktree {
+            self.toast(Toast::info("Creating worktree…"), cx);
+        }
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let forked = async {
                 let prepared = if let Some(options) = options {
@@ -5504,6 +5514,11 @@ impl Root {
                 } else {
                     None
                 };
+                if preparing_worktree {
+                    this.update(cx, |this, cx| {
+                        this.toast(Toast::info("Attaching worktree…"), cx)
+                    })?;
+                }
                 let mut params = json!({ "threadId": id });
                 if let Some(last_turn) = last_turn {
                     params["lastTurnId"] = json!(last_turn);
@@ -5541,16 +5556,29 @@ impl Root {
                 Ok::<_, anyhow::Error>(read)
             }
             .await;
-            this.update(cx, |this, _| this.fork_pending = false)?;
+            this.update(cx, |this, _| {
+                this.fork_pending = false;
+            })?;
             match forked {
                 Ok(read) => this.update_in(cx, |this, window, cx| {
+                    if preparing_worktree {
+                        this.worktree_statuses
+                            .insert(read.thread.id.clone(), "Checkout created");
+                    }
                     this.loaded.insert(read.thread.id.clone());
                     this.add_thread(&read.thread, cx);
                     this.show_thread(read.thread, window, cx);
                 }),
                 Err(error) => {
                     this.update(cx, |this, cx| {
-                        this.toast(Toast::danger("Failed to fork chat"), cx)
+                        this.toast(
+                            Toast::danger(if format!("{error:#}").contains("Setup script") {
+                                "Checkout created; setup failed"
+                            } else {
+                                "Failed to fork chat"
+                            }),
+                            cx,
+                        )
                     })?;
                     Err(error)
                 }
