@@ -26,6 +26,7 @@ mod diff_preview;
 mod diff_repositories;
 mod diff_watch;
 mod features;
+mod goals;
 pub mod host;
 pub mod host_settings;
 pub mod hotkey;
@@ -745,6 +746,12 @@ impl Root {
                     ui::composer::SlashCommand::Feedback => this.open_feedback(window, cx),
                     ui::composer::SlashCommand::Export => this.export_transcript(window, cx),
                     ui::composer::SlashCommand::Recap => this.recap(window, cx),
+                    ui::composer::SlashCommand::Goal { .. }
+                    | ui::composer::SlashCommand::ReadGoal
+                    | ui::composer::SlashCommand::RefreshGoal
+                    | ui::composer::SlashCommand::ClearGoal => this.goal_command(command, window, cx),
+                    ui::composer::SlashCommand::MemoryMode(_)
+                    | ui::composer::SlashCommand::MemoryStatus => this.thread_memory_command(command, window, cx),
                     ui::composer::SlashCommand::Memories => this.open_memories(window, cx),
                     ui::composer::SlashCommand::Rename => {
                         if let Route::Thread(id) = this.state.route.clone() {
@@ -6623,6 +6630,15 @@ impl Root {
                         let connected = method.ends_with("/connected");
                         view.update(cx, |view, cx| view.set_environment(connected, cx));
                     }
+                }
+                "thread/goal/updated" | "thread/goal/cleared"
+                    if params["threadId"]
+                        .as_str()
+                        .is_some_and(|id| self.state.route == Route::Thread(id.to_owned())) =>
+                {
+                    let goal = params.get("goal").filter(|goal| !goal.is_null()).cloned();
+                    self.thread_composer
+                        .update(cx, |composer, cx| composer.set_goal(goal, cx));
                 }
                 "account/updated" if self.ready => {
                     self.destination_load = None;

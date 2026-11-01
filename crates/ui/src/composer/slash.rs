@@ -3,13 +3,15 @@
 //! Model, Reasoning, Fork chat, and Work in a project open a submenu. It replaces the token with
 //! `/id ` and filters on the text typed after it; Backspace over the space returns to the list,
 //! Escape closes it, and only a pick removes the token and its query and acts.
+//! Goal uses the query as an objective; its submenu also shows the stored goal and lifecycle actions.
+//! Thread memory offers enable, disable, and status actions without changing global settings.
 //! The other commands stay visible but inactive.
 //! The same list state serves the `@` mention trigger (`super::mention`).
 //! `cargo test -p app --test s021` replays the original menu, keys, colors, focus, and requests.
 use super::*;
 use crate::screens::sidebar::SelectProject;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum SlashCommand {
     Fast,
     Archive,
@@ -25,6 +27,15 @@ pub enum SlashCommand {
     Feedback,
     Export,
     Recap,
+    Goal {
+        objective: Option<String>,
+        status: &'static str,
+    },
+    ReadGoal,
+    RefreshGoal,
+    ClearGoal,
+    MemoryMode(&'static str),
+    MemoryStatus,
     Memories,
 }
 
@@ -107,6 +118,13 @@ const COMMANDS: &[Command] = &[
         title: "Goal",
         description: "Set a goal to keep pursuing",
         icon: "thread-summary",
+        requires_empty: false,
+    },
+    Command {
+        id: "memory",
+        title: "Thread memory",
+        description: "Choose memory behavior for this chat",
+        icon: "settings-personalization",
         requires_empty: false,
     },
     Command {
@@ -256,6 +274,7 @@ pub(super) struct Slash {
     /// Home's projects for `/project`: label and root path.
     pub(super) projects: Vec<(SharedString, String)>,
     scroll: gpui::ScrollHandle,
+    goal: Option<Value>,
     pub(super) search: mention::Search,
     /// The `memories` feature is on, so `/memories` is offered.
     pub(super) memories: bool,
@@ -295,6 +314,7 @@ enum SubAction {
     Fork,
     ForkWorktree,
     Project(String),
+    Command(SlashCommand),
 }
 
 /// The open submenu of command `id`. `items` are all its rows; `Slash::matches` indexes the
@@ -418,7 +438,7 @@ impl Composer {
             for (index, command) in COMMANDS.iter().enumerate() {
                 let available = match command.id {
                     "archive" | "review-mode" | "compact" | "fork" | "init" | "new" | "pin"
-                    | "rename" | "share" | "side" => self.docked,
+                    | "rename" | "share" | "side" | "goal" | "memory" => self.docked,
                     "project" => !self.docked,
                     "plan-mode" => self.current_model().is_some() && self.plan_supported(),
                     "fast" | "model" | "reasoning" | "ultrafast" => self.current_model().is_some(),
@@ -573,7 +593,7 @@ impl Composer {
             "export" => SlashCommand::Export,
             "recap" => SlashCommand::Recap,
             "memories" => SlashCommand::Memories,
-            "model" | "reasoning" | "fork" | "project" => {
+            "model" | "reasoning" | "fork" | "project" | "goal" | "memory" => {
                 self.open_sub(command.id, cx);
                 return;
             }
@@ -643,6 +663,73 @@ impl Composer {
                     action: SubAction::Effort(effort.clone()),
                 })
                 .collect(),
+            "goal" => {
+                let goal = self.slash.goal.as_ref();
+                let objective = goal.and_then(|goal| goal["objective"].as_str());
+                let status = goal
+                    .and_then(|goal| goal["status"].as_str())
+                    .unwrap_or("No goal");
+                [
+                    (
+                        "Set goal",
+                        "Type the objective after /goal",
+                        SlashCommand::Goal {
+                            objective: None,
+                            status: "active",
+                        },
+                    ),
+                    (
+                        "Show goal",
+                        objective.unwrap_or("No goal"),
+                        SlashCommand::ReadGoal,
+                    ),
+                    (
+                        "Pause goal",
+                        status,
+                        SlashCommand::Goal {
+                            objective: None,
+                            status: "paused",
+                        },
+                    ),
+                    (
+                        "Resume goal",
+                        status,
+                        SlashCommand::Goal {
+                            objective: None,
+                            status: "active",
+                        },
+                    ),
+                    (
+                        "Clear goal",
+                        "Remove this chat's goal",
+                        SlashCommand::ClearGoal,
+                    ),
+                ]
+                .into_iter()
+                .map(|(title, description, action)| SubItem {
+                    title: title.into(),
+                    description: description.into(),
+                    icon: "thread-summary",
+                    action: SubAction::Command(action),
+                })
+                .collect()
+            }
+            "memory" => [
+                ("Enable thread memory", SlashCommand::MemoryMode("enabled")),
+                (
+                    "Disable thread memory",
+                    SlashCommand::MemoryMode("disabled"),
+                ),
+                ("Memory status", SlashCommand::MemoryStatus),
+            ]
+            .into_iter()
+            .map(|(title, action)| SubItem {
+                title: title.into(),
+                description: String::new(),
+                icon: "settings-personalization",
+                action: SubAction::Command(action),
+            })
+            .collect(),
             "fork" => vec![
                 SubItem {
                     title: "Fork chat".into(),
@@ -671,10 +758,13 @@ impl Composer {
         }
     }
 
-    /// Enter on a submenu command: the token becomes `/id `, the caret follows it, and the
-    /// text typed next filters the rows. The rest of the draft stays as it is.
+    /// Enter replaces the command token with `/id ` and keeps the remaining draft.
+    /// Text filters the rows; Goal uses it as the objective.
     fn open_sub(&mut self, id: &'static str, cx: &mut Context<Self>) {
         self.cancel_dictation(cx);
+        if id == "goal" {
+            self.slash.goal = None;
+        }
         let start = self.slash.range.start;
         let token = format!("/{id} ");
         self.splice(self.slash.range.clone(), &token);
@@ -688,6 +778,9 @@ impl Composer {
             items: self.sub_items(id),
         });
         self.refresh_sub(cx);
+        if id == "goal" {
+            cx.emit(SlashCommand::RefreshGoal);
+        }
     }
 
     fn refresh_sub(&mut self, cx: &mut Context<Self>) {
@@ -700,7 +793,7 @@ impl Composer {
             .items
             .iter()
             .enumerate()
-            .filter(|(_, item)| matches_query(&item.title, &query))
+            .filter(|(_, item)| sub.id == "goal" || matches_query(&item.title, &query))
             .map(|(index, _)| index)
             .collect();
         self.slash.open = true;
@@ -710,8 +803,17 @@ impl Composer {
         cx.notify();
     }
 
+    pub fn set_goal(&mut self, goal: Option<Value>, cx: &mut Context<Self>) {
+        self.slash.goal = goal;
+        if self.slash.sub.as_ref().is_some_and(|sub| sub.id == "goal") {
+            let items = self.sub_items("goal");
+            self.slash.sub.as_mut().unwrap().items = items;
+        }
+        cx.notify();
+    }
+
     fn pick_sub(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(action) = self
+        let Some(mut action) = self
             .slash
             .sub
             .as_ref()
@@ -720,6 +822,28 @@ impl Composer {
         else {
             return;
         };
+        if index == 0
+            && let Some(sub) = &self.slash.sub
+            && sub.id == "goal"
+        {
+            let objective = self.content
+                [self.slash.range.start + 2 + sub.id.len()..self.slash.range.end]
+                .trim()
+                .to_owned();
+            if objective.is_empty() {
+                return;
+            }
+            action = SubAction::Command(SlashCommand::Goal {
+                objective: Some(objective),
+                status: "active",
+            });
+        }
+        if index != 0
+            && let Some(sub) = &self.slash.sub
+            && sub.id == "goal"
+        {
+            self.slash.range.end = self.slash.range.start + 2 + sub.id.len();
+        }
         self.finish_command(window, cx);
         match action {
             SubAction::Model(model) => {
@@ -732,6 +856,7 @@ impl Composer {
             }
             SubAction::Fork => cx.emit(SlashCommand::Fork),
             SubAction::ForkWorktree => cx.emit(SlashCommand::ForkWorktree),
+            SubAction::Command(command) => cx.emit(command),
             SubAction::Project(root) => {
                 window.dispatch_action(Box::new(SelectProject(root)), cx);
             }
