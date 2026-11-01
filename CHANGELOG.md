@@ -9,6 +9,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ### Added
 - Save panic reports with a backtrace to `last-crash.txt` in the user data directory, and prefill the feedback dialog with the last crash on the next launch.
 
+- Browse a remote device's folders (`fs/readDirectory`) from `File > New Project...`: with a remote device selected and the folder field empty, `Add` opens a folder picker, and `Choose` adds the listed folder as a source.
 - Add Windows sandbox readiness, setup actions, and completion feedback on Home.
 - Drag existing files from the Changes file list and workspace file tree to other apps with their native file icon.
 - Show the New Window, Full view, Browser, and Send Feedback actions in the native menu.

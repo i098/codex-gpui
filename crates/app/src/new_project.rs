@@ -1,13 +1,15 @@
-//! `File > New Project…`: the native create-project form over the host's project store.
+//! `File > New Project…`: the native create-project form over the host's project store, with
+//! a remote folder picker over the device's app-server (`remoteWorkspaceDirectoryEntries`).
 
 use crate::Root;
 use crate::host;
+use anyhow::Context as _;
 use gpui::{AppContext as _, Context, Entity, Focusable as _, PathPromptOptions, Window};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use ui::screens::{
     connections::{ConnectionsState, Tab},
-    new_project::{Dialog, Outcome},
+    new_project::{Browser, Dialog, Outcome},
 };
 use ui::toast::Toast;
 
@@ -44,6 +46,9 @@ impl Root {
                     this.open_connections(Tab::Ssh, window, cx);
                 }
                 Outcome::PickFolders => this.pick_project_sources(dialog.clone(), window, cx),
+                Outcome::Browse { host_id, path } => {
+                    this.browse_remote(dialog.clone(), host_id, path.clone(), window, cx)
+                }
                 Outcome::Create {
                     host_id,
                     project_id,
@@ -117,11 +122,7 @@ impl Root {
             .iter()
             .map(|thread| (thread.id.clone(), thread.cwd.clone()))
             .collect::<Vec<_>>();
-        let bridge = if host_id == self.host_id {
-            Some(self.bridge.clone())
-        } else {
-            crate::connections::bridge(&host_id, cx)
-        };
+        let bridge = self.project_bridge(&host_id, cx);
         cx.spawn_in(window, async move |this, cx| {
             let result = async {
                 let bridge = bridge
@@ -170,6 +171,55 @@ impl Root {
                 }
             })
             .ok();
+        })
+        .detach();
+    }
+
+    fn project_bridge(
+        &self,
+        host_id: &str,
+        cx: &Context<Self>,
+    ) -> Option<std::sync::Arc<bridge::Bridge>> {
+        if host_id == self.host_id {
+            Some(self.bridge.clone())
+        } else {
+            crate::connections::bridge(host_id, cx)
+        }
+    }
+
+    /// Lists the subfolders of `path` on `host_id`, or of the folder that holds the host's Codex
+    /// home when `path` is `None` (`getDefaultWorkspaceDirectoryPath`).
+    fn browse_remote(
+        &mut self,
+        dialog: Entity<Dialog>,
+        host_id: &str,
+        path: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let bridge = self.project_bridge(host_id, cx);
+        cx.spawn_in(window, async move |_, cx| {
+            let listing = async {
+                let bridge = bridge.context("Project host is disconnected")?;
+                let path = match path {
+                    Some(path) => path,
+                    None => {
+                        let home = bridge
+                            .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
+                            .await?
+                            .codex_home;
+                        parent(&home).unwrap_or(home)
+                    }
+                };
+                let response: Value = bridge
+                    .request("fs/readDirectory", json!({"path": path}))
+                    .await?;
+                Ok::<_, anyhow::Error>(listing(path, &response))
+            }
+            .await;
+            dialog.update(cx, |dialog, cx| {
+                dialog.set_listing(listing.map_err(|error| format!("{error:#}")), cx)
+            });
         })
         .detach();
     }
@@ -283,4 +333,53 @@ async fn update_project(
         )
         .await?;
     Ok(())
+}
+
+// shortcut: POSIX remote paths only (SSH hosts); upgrade when Windows remotes connect.
+fn parent(path: &str) -> Option<String> {
+    let trimmed = path.trim_end_matches('/');
+    match trimmed.rfind('/')? {
+        0 => Some("/".to_owned()),
+        index => Some(trimmed[..index].to_owned()),
+    }
+}
+
+/// `fs/readDirectory` `entries` as the picker's folders: directories only, dot folders last,
+/// each group by name (`remoteWorkspaceDirectoryEntries`).
+fn listing(path: String, response: &Value) -> Browser {
+    let mut folders: Vec<String> = response["entries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry["isDirectory"] == true)
+        .filter_map(|entry| entry["fileName"].as_str().map(str::to_owned))
+        .collect();
+    folders.sort_by(|a, b| (a.starts_with('.'), a).cmp(&(b.starts_with('.'), b)));
+    Browser {
+        parent: parent(&path),
+        path,
+        folders,
+        error: None,
+        loading: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_listing_keeps_folders_with_dot_folders_last() {
+        let response = json!({"entries": [
+            {"fileName": "src", "isDirectory": true, "isFile": false},
+            {"fileName": "README.md", "isDirectory": false, "isFile": true},
+            {"fileName": ".git", "isDirectory": true, "isFile": false},
+            {"fileName": "app", "isDirectory": true, "isFile": false},
+        ]});
+        let browser = listing("/home/me/repo/".into(), &response);
+        assert_eq!(browser.folders, ["app", "src", ".git"]);
+        assert_eq!(browser.parent.as_deref(), Some("/home/me"));
+        assert_eq!(parent("/home"), Some("/".into()));
+        assert_eq!(parent("/"), None);
+    }
 }
