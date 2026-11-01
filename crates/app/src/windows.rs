@@ -265,7 +265,10 @@ pub fn open<V: Render + 'static>(
         }
         let view = build(window, cx);
         view.update(cx, |_, cx| {
-            cx.observe_window_activation(window, |_, window, cx| {
+            cx.observe_window_activation(window, move |_, window, cx| {
+                if kind == Kind::Primary {
+                    apply_backdrop(window);
+                }
                 let id = window.window_handle().window_id();
                 if let Some(entry) = cx.global::<Windows>().entries.get(&id)
                     && entry.kind == Kind::Primary
@@ -282,8 +285,13 @@ pub fn open<V: Render + 'static>(
                 }
             })
             .detach();
-            cx.observe_window_bounds(window, |_, window, cx| remember_bounds(window, cx))
-                .detach();
+            cx.observe_window_bounds(window, move |_, window, cx| {
+                if kind == Kind::Primary {
+                    apply_backdrop(window);
+                }
+                remember_bounds(window, cx)
+            })
+            .detach();
         });
         view
     })?;
@@ -302,6 +310,24 @@ pub fn open<V: Render + 'static>(
         windows.last_primary = Some(id);
     }
     Ok(handle)
+}
+
+/// The original's macOS backdrop (`applyWindowBackdrop`): `vibrancy: 'menu'` under the page
+/// while focused; an opaque surface when blurred or at 3840x2160 device px or more.
+fn apply_backdrop(window: &mut Window) {
+    let size = window
+        .bounds()
+        .size
+        .map(|v| f32::from(v) * window.scale_factor());
+    let large = size.width.max(size.height) >= 3840. && size.width.min(size.height) >= 2160.;
+    let backdrop = if cfg!(target_os = "macos") && window.is_window_active() && !large {
+        gpui::WindowBackgroundAppearance::Blurred
+    } else {
+        gpui::WindowBackgroundAppearance::Opaque
+    };
+    if window.background_appearance() != backdrop {
+        window.set_background_appearance(backdrop);
+    }
 }
 
 pub fn handles(kind: Kind, cx: &App) -> Vec<AnyWindowHandle> {

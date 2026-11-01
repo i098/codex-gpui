@@ -173,22 +173,6 @@ pub trait Host: Send + Sync {
         bail!("pinning a project is unsupported by this host")
     }
 
-    /// `Edit project` `Save`: renames `id` and replaces its roots, primary first.
-    fn update_project(
-        &self,
-        _id: &str,
-        _name: &str,
-        _roots: &[PathBuf],
-        _appearance: Option<Value>,
-    ) -> Result<()> {
-        bail!("editing a local project is unsupported by this host")
-    }
-
-    /// `Remove project`: forgets `id` and its order, pin and appearance; files and chats stay.
-    fn remove_project(&self, _id: &str) -> Result<()> {
-        bail!("removing a local project is unsupported by this host")
-    }
-
     fn prepare_projectless(&self, _prompt: &str) -> Result<Workspace> {
         bail!("projectless workspaces are unsupported by this host")
     }
@@ -603,23 +587,99 @@ fn project_rows(
     Ok(rows)
 }
 
-/// The canonical UTF-8 folders behind `roots`, deduplicated in order.
-fn project_folders<'a>(roots: impl Iterator<Item = &'a PathBuf>) -> Result<Vec<String>> {
-    let mut paths = Vec::new();
-    for root in roots {
-        let root = root
-            .canonicalize()
-            .with_context(|| format!("resolve project folder {}", root.display()))?;
-        ensure!(root.is_dir(), "{} is not a folder", root.display());
-        let root = root
-            .to_str()
-            .context("project path must be UTF-8")?
-            .to_owned();
-        if !paths.contains(&root) {
-            paths.push(root);
-        }
+pub(crate) fn project_metadata(mut metadata: Value, appearance: Option<Value>) -> Result<Value> {
+    if metadata.is_null() {
+        metadata = json!({});
     }
-    Ok(paths)
+    let fields = metadata
+        .as_object_mut()
+        .context("Invalid project metadata")?;
+    fields.remove("appearance.color");
+    fields.remove("appearance.marker");
+    if let Some(appearance) = appearance {
+        fields.insert("appearance.color".into(), appearance["color"].clone());
+        fields.insert(
+            "appearance.marker".into(),
+            appearance["marker"].to_string().into(),
+        );
+    }
+    Ok(metadata)
+}
+
+pub(crate) async fn create_server_project(
+    bridge: &Bridge,
+    name: &str,
+    paths: &[String],
+    appearance: Option<Value>,
+) -> Result<String> {
+    let root = paths.first().context("Add a project folder")?;
+    let fallback = root
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(root);
+    let name = if name.trim().is_empty() {
+        fallback
+    } else {
+        name.trim()
+    };
+    let _: Value = bridge
+        .request(
+            "project/create",
+            json!({
+                "name": name,
+                "roots": paths.iter().map(|path| json!({"path": path})).collect::<Vec<_>>(),
+                "metadata": project_metadata(json!({}), appearance)?,
+                "idempotencyKey": crate::uuid_v4(),
+            }),
+        )
+        .await?;
+    Ok(root.clone())
+}
+
+pub(crate) async fn app_server_projects(
+    bridge: &Bridge,
+    home: &Path,
+    mut state: Value,
+    local: bool,
+) -> Result<Vec<Project>> {
+    let mut cursor: Option<String> = None;
+    let mut seen = HashSet::new();
+    let mut projects = serde_json::Map::new();
+    let mut order = Vec::new();
+    loop {
+        let page: Value = bridge
+            .request("project/list", json!({"cursor": cursor, "limit": 100}))
+            .await?;
+        for project in page["data"].as_array().context("missing project list")? {
+            let id = project["id"].as_str().context("missing project ID")?;
+            let roots = project["roots"]
+                .as_array()
+                .context("missing project roots")?
+                .iter()
+                .map(|root| root["path"].as_str().context("missing project root path"))
+                .collect::<Result<Vec<_>>>()?;
+            projects.insert(
+                id.into(),
+                json!({
+                    "id": id, "name": project["name"], "rootPaths": roots,
+                    "createdAt": project["createdAt"], "updatedAt": project["updatedAt"],
+                }),
+            );
+            order.push(Value::from(id));
+        }
+        cursor = page["nextCursor"].as_str().map(str::to_owned);
+        let Some(next) = &cursor else { break };
+        ensure!(
+            seen.insert(next.clone()),
+            "App-server repeated a project cursor"
+        );
+    }
+    state["local-projects"] = projects.into();
+    state["project-order"] = order.into();
+    project_rows(&state, home, |path, _| {
+        Ok(local.then(|| Path::new(path).exists()))
+    })
 }
 
 fn is_windows_path(path: &str) -> bool {
@@ -1593,6 +1653,14 @@ impl Host for LocalHost {
     }
 
     fn projects(&self) -> Result<Vec<Project>> {
+        if let Some(bridge) = &self.bridge {
+            return pollster::block_on(app_server_projects(
+                bridge,
+                &self.home,
+                self.read_global_state()?,
+                true,
+            ));
+        }
         let state = self.read_global_state()?;
         project_rows(&state, &self.home, |path, _| {
             Ok(Some(Path::new(path).exists()))
@@ -1651,6 +1719,23 @@ impl Host for LocalHost {
             .context("resolve selected project folder")?;
         ensure!(root.is_dir(), "selected project must be a folder");
         let root = root.to_str().context("project path must be UTF-8")?;
+        if let Some(bridge) = &self.bridge {
+            let projects = self.projects()?;
+            if !projects
+                .iter()
+                .any(|project| project.root.as_deref() == Some(root))
+            {
+                let name = Path::new(root)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(root);
+                let _: Value = pollster::block_on(bridge.request(
+                    "project/import",
+                    json!({"name": name, "roots": [{"path": root}], "idempotencyKey": crate::uuid_v4()}),
+                ))?;
+            }
+            return Ok(root.to_owned());
+        }
         self.update_global_state(|state| {
             if state["local-projects"].is_null() {
                 state["local-projects"] = json!({});
@@ -1716,7 +1801,23 @@ impl Host for LocalHost {
             None
         };
         let result = (|| {
-            let mut paths = project_folders(created.iter().chain(roots))?;
+            let mut paths = Vec::new();
+            for root in created.iter().chain(roots) {
+                let root = root
+                    .canonicalize()
+                    .with_context(|| format!("resolve project folder {}", root.display()))?;
+                ensure!(root.is_dir(), "{} is not a folder", root.display());
+                let root = root
+                    .to_str()
+                    .context("project path must be UTF-8")?
+                    .to_owned();
+                if !paths.contains(&root) {
+                    paths.push(root);
+                }
+            }
+            if let Some(bridge) = &self.bridge {
+                return pollster::block_on(create_server_project(bridge, name, &paths, appearance));
+            }
             let threads: Vec<_> = threads
                 .iter()
                 .map(|(id, cwd)| {
@@ -1836,56 +1937,6 @@ impl Host for LocalHost {
             }
             state["pinned-project-ids"] = ids.into();
             Ok(true)
-        })
-    }
-
-    fn update_project(
-        &self,
-        id: &str,
-        name: &str,
-        roots: &[PathBuf],
-        appearance: Option<Value>,
-    ) -> Result<()> {
-        let paths = project_folders(roots.iter())?;
-        ensure!(!paths.is_empty(), "a project needs a folder");
-        self.update_global_state(|state| {
-            let project = state["local-projects"]
-                .get_mut(id)
-                .context("the project no longer exists")?;
-            if !name.trim().is_empty() {
-                project["name"] = name.trim().into();
-            }
-            project["rootPaths"] = paths.into();
-            project["updatedAt"] = chrono::Utc::now().timestamp_millis().into();
-            if let Some(appearance) = appearance {
-                state["project-appearances"][id] = appearance;
-            }
-            Ok(true)
-        })
-    }
-
-    fn remove_project(&self, id: &str) -> Result<()> {
-        self.update_global_state(|state| {
-            let removed = state["local-projects"]
-                .as_object_mut()
-                .and_then(|projects| projects.remove(id))
-                .is_some();
-            if let Some(appearances) = state["project-appearances"].as_object_mut() {
-                appearances.remove(id);
-            }
-            for list in ["project-order", "pinned-project-ids"] {
-                if let Some(ids) = state[list].as_array_mut() {
-                    ids.retain(|other| other != id);
-                }
-            }
-            // Its chats keep their files and history and fall back to Recents.
-            if let Some(assignments) = state["thread-project-assignments"].as_object_mut() {
-                assignments.retain(|_, owner| owner["projectId"] != id);
-            }
-            if state["selected-project"]["projectId"] == id {
-                state["selected-project"] = Value::Null;
-            }
-            Ok(removed)
         })
     }
 
@@ -2521,20 +2572,6 @@ impl Host for CloudHost {
 
     fn set_project_pinned(&self, id: &str, pinned: bool) -> Result<()> {
         self.local.set_project_pinned(id, pinned)
-    }
-
-    fn update_project(
-        &self,
-        id: &str,
-        name: &str,
-        roots: &[PathBuf],
-        appearance: Option<Value>,
-    ) -> Result<()> {
-        self.local.update_project(id, name, roots, appearance)
-    }
-
-    fn remove_project(&self, id: &str) -> Result<()> {
-        self.local.remove_project(id)
     }
 
     fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<Option<bool>> {
@@ -3199,5 +3236,70 @@ mod pending_archive_tests {
             .map(|a| a.root)
             .collect();
         assert_eq!(roots, ["/w/live", "/w/live2"]);
+    }
+}
+
+#[cfg(test)]
+mod app_server_project_tests {
+    use super::*;
+
+    #[test]
+    fn server_pages_preserve_order_and_remote_paths() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let fixture = directory.path().join("projects.jsonl");
+        let mut records = String::new();
+        for (index, id) in ["second", "first"].iter().enumerate() {
+            for (dir, msg) in [
+                (
+                    "send",
+                    json!({"id": index, "method": "project/list", "params": {"cursor": if index == 0 { Value::Null } else { json!("next") }, "limit": 100}}),
+                ),
+                (
+                    "recv",
+                    json!({"id": index, "result": {"data": [{
+                    "id": id, "name": id, "roots": [{"path": format!("/remote/{id}")}],
+                    "createdAt": 1, "updatedAt": 2
+                }], "nextCursor": if index == 0 { json!("next") } else { Value::Null }}}),
+                ),
+            ] {
+                records.push_str(&json!({"dir": dir, "msg": msg}).to_string());
+                records.push('\n');
+            }
+        }
+        fs::write(&fixture, records)?;
+        let (bridge, _) = Bridge::replay(&fixture)?;
+        let projects = pollster::block_on(app_server_projects(
+            &bridge,
+            directory.path(),
+            json!({}),
+            false,
+        ))?;
+        assert_eq!(
+            projects
+                .iter()
+                .map(|project| project.id.as_ref())
+                .collect::<Vec<_>>(),
+            ["second", "first"]
+        );
+        assert!(projects.iter().all(|project| !project.missing));
+        Ok(())
+    }
+
+    #[test]
+    fn editing_appearance_preserves_other_metadata() -> Result<()> {
+        let metadata = project_metadata(
+            json!({"codex.chatGptBacking": "keep", "appearance.color": "old", "appearance.marker": "old"}),
+            Some(json!({"color": "blue", "marker": {"icon": "folder"}})),
+        )?;
+        assert_eq!(metadata["codex.chatGptBacking"], "keep");
+        assert_eq!(metadata["appearance.color"], "blue");
+        assert_eq!(
+            serde_json::from_str::<Value>(metadata["appearance.marker"].as_str().unwrap())?,
+            json!({"icon": "folder"})
+        );
+        let cleared = project_metadata(metadata, None)?;
+        assert_eq!(cleared["codex.chatGptBacking"], "keep");
+        assert!(cleared.get("appearance.marker").is_none());
+        Ok(())
     }
 }

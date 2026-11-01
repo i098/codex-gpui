@@ -1,19 +1,18 @@
 use super::*;
 
-/// A project row menu item (`Tbs`); the app runs it against the host's project store.
+/// A project row menu item that acts on the sidebar's own state; `Edit`, `Move up` and
+/// `Remove project` go through [`super::ProjectAction`].
 #[derive(Clone, Copy, PartialEq)]
 pub enum ProjectCommand {
     /// `Pin` (`true`) or `Unpin`: the global state's `pinned-project-ids`.
     Pin(bool),
-    Edit,
     MarkRead,
     Archive,
-    Remove,
 }
 
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = sidebar, no_json)]
-pub struct ProjectAction {
+pub struct ProjectMenuAction {
     pub project: String,
     pub command: ProjectCommand,
 }

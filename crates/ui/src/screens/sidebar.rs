@@ -2,6 +2,7 @@
 //! shows: header, Projects, and Recents from `thread/list`. Numbers are CSS px from
 //! refs/home and refs/sidebar.
 
+use crate::composer::ChatDrag;
 use crate::{
     Shell, blit, fixture, focus, home_sidebar_header,
     icon::icon,
@@ -365,6 +366,13 @@ pub struct ArchiveThread(pub String);
 #[action(namespace = sidebar, no_json)]
 pub struct SelectProject(pub String);
 
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = sidebar, no_json)]
+pub struct ProjectAction {
+    pub id: String,
+    pub command: String,
+}
+
 /// A row's `Pin chat` / `Unpin chat`: `thread/section/move` of the thread (its id) into the
 /// Pinned section (`true`) or out of it (`false`).
 #[derive(Clone, PartialEq, Action)]
@@ -526,6 +534,7 @@ impl HomeSidebar {
             .gap(px(1.))
             .children(self.projects.iter().map(|project| {
                 let group = project.id.clone();
+                let project_id = project.id.to_string();
                 let color = theme.text_default_nav;
                 let label_width = if project.worktree { 204. } else { 240. };
                 // A deleted or moved folder cannot host a chat.
@@ -599,7 +608,7 @@ impl HomeSidebar {
                             .child({
                                 let id = project.id.to_string();
                                 div()
-                                    .id("project-actions")
+                                    .id(SharedString::from(format!("project-actions-{project_id}")))
                                     .size(px(20.))
                                     .flex()
                                     .items_center()
@@ -808,6 +817,10 @@ impl HomeSidebar {
             self.running.remove(id);
         }
         cx.notify();
+    }
+
+    pub fn any_running(&self) -> bool {
+        !self.running.is_empty()
     }
 
     pub fn is_running(&self, id: &str) -> bool {
@@ -1074,6 +1087,10 @@ impl HomeSidebar {
                     .any(|unread| unread == id)
                     .then_some(RowEnd::Dot)
             });
+        let drag = ChatDrag {
+            id: id.to_owned(),
+            title: label.clone(),
+        };
         thread_row(
             id,
             label,
@@ -1105,6 +1122,8 @@ impl HomeSidebar {
             )
         })
         .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenThread(open.clone()))))
+        // `Drop to reference chat`: dragged onto a composer, the row becomes a chat chip.
+        .on_drag(drag, |drag: &ChatDrag, _, _, cx| cx.new(|_| drag.clone()))
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
@@ -2371,7 +2390,7 @@ const COMMANDS: &[Command] = &[
         "Mark as unread",
         "Mark the current chat as unread",
         "⇧⌘U",
-        false,
+        true,
     ),
     (
         "Chat",

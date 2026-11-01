@@ -333,13 +333,18 @@ const UNPIN_PROJECT: Item = Item {
 };
 
 /// The original's project menu (`Tbs`) for a local project without sections or worktrees:
-/// `Pin`/`Unpin`, `Edit`, the chat actions, then `Remove project`.
-const fn project_items(pin: Item) -> [Item; 7] {
+/// `Pin`/`Unpin`, `Edit`, the chat actions, then `Remove project`; `Move up` is the port's own.
+const fn project_items(pin: Item) -> [Item; 8] {
     [
         pin,
         Item {
             id: "edit-project",
             label: "Edit",
+            ..SECTION_ITEMS[0]
+        },
+        Item {
+            id: "move-project-up",
+            label: "Move up",
             ..SECTION_ITEMS[0]
         },
         Item {
@@ -366,8 +371,8 @@ const fn project_items(pin: Item) -> [Item; 7] {
     ]
 }
 
-const PROJECT_ITEMS: [Item; 7] = project_items(PIN_PROJECT);
-const PINNED_PROJECT_ITEMS: [Item; 7] = project_items(UNPIN_PROJECT);
+const PROJECT_ITEMS: [Item; 8] = project_items(PIN_PROJECT);
+const PINNED_PROJECT_ITEMS: [Item; 8] = project_items(UNPIN_PROJECT);
 
 impl HomeSidebar {
     pub(super) fn section_menu_open(&self, id: &str) -> bool {
@@ -678,17 +683,30 @@ impl HomeSidebar {
             return;
         }
         if let Some(project) = menu.project {
-            use super::projects::{ProjectAction, ProjectCommand};
+            use super::projects::{ProjectCommand, ProjectMenuAction};
             let command = match id {
                 "pin-project" => ProjectCommand::Pin(true),
                 "unpin-project" => ProjectCommand::Pin(false),
-                "edit-project" => ProjectCommand::Edit,
                 "mark-project-threads-read" => ProjectCommand::MarkRead,
                 "archive-project-threads" => ProjectCommand::Archive,
-                "remove-project" => ProjectCommand::Remove,
+                "edit-project" | "move-project-up" | "remove-project" => {
+                    let command = match id {
+                        "edit-project" => "edit",
+                        "move-project-up" => "move-up",
+                        _ => "delete",
+                    };
+                    window.dispatch_action(
+                        Box::new(ProjectAction {
+                            id: project,
+                            command: command.into(),
+                        }),
+                        cx,
+                    );
+                    return;
+                }
                 _ => return,
             };
-            window.dispatch_action(Box::new(ProjectAction { project, command }), cx);
+            window.dispatch_action(Box::new(ProjectMenuAction { project, command }), cx);
             return;
         }
         let thread = menu.thread;
