@@ -343,7 +343,7 @@ impl Composer {
         cx.notify();
     }
 
-    pub(super) fn add_files(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn add_files(&mut self, cx: &mut Context<Self>) {
         let generation = self.attachment_generation;
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,

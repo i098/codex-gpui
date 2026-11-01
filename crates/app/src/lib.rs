@@ -2018,23 +2018,41 @@ impl Root {
         let Some(thread) = self.thread.clone() else {
             return;
         };
-        let cwd = thread.read(cx).cwd().to_owned();
+        let (cwd, thread_id) = {
+            let view = thread.read(cx);
+            (view.cwd().to_owned(), view.id().to_owned())
+        };
         let host = self.host.clone();
         let lookup = host.clone();
         thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         self.sync_git_availability(cx);
         let read = cx.background_spawn(async move {
-            git_call(&*lookup, "git-commit-status", json!({"cwd": cwd}))
+            let repository = git_call(&*lookup, "git-commit-status", json!({"cwd": cwd}))
                 .and_then(|status| commit_repository(&status, true, String::new()))
-                .map_err(|error| error.to_string())
+                .map_err(|error| error.to_string());
+            let projectless = lookup
+                .fetch(&host::Request::post(
+                    "get-global-state",
+                    Some(json!({"key": "projectless-thread-ids"})),
+                ))
+                .and_then(|reply| host::json_body(&reply))
+                .is_ok_and(|reply| {
+                    reply["value"]
+                        .as_array()
+                        .is_some_and(|ids| ids.iter().any(|id| id == thread_id.as_str()))
+                });
+            (repository, projectless)
         });
         self.git_status_load = Some(cx.spawn(async move |this, cx| {
-            let repository = read.await;
+            let (repository, projectless) = read.await;
             this.update(cx, |this, cx| {
                 if this.thread.as_ref() != Some(&thread) || !Arc::ptr_eq(&host, &this.host) {
                     return;
                 }
-                thread.update(cx, |view, cx| view.set_git_repository(Some(repository), cx));
+                thread.update(cx, |view, cx| {
+                    view.set_git_repository(Some(repository), cx);
+                    view.set_projectless(projectless, cx);
+                });
                 this.sync_git_availability(cx);
             })
             .ok();

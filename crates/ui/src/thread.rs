@@ -142,6 +142,8 @@ pub struct ThreadView {
     cwd: String,
     /// The `Toggle summary` panel is open.
     pub summary_open: bool,
+    /// A projectless chat (`projectless-thread-ids`): the summary shows `Sources`.
+    projectless: bool,
     /// The view fills the main surface (no side panel): it draws its px at the surface's
     /// rounded right corners through the clip (`Shell::main_clips_right`).
     pub clip_right: bool,
@@ -337,6 +339,11 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) {
         self.git_repository = repository;
+        cx.notify();
+    }
+
+    pub fn set_projectless(&mut self, projectless: bool, cx: &mut Context<Self>) {
+        self.projectless = projectless;
         cx.notify();
     }
 
@@ -659,6 +666,7 @@ impl ThreadView {
             environment_connected: None,
             cwd: thread.cwd,
             summary_open: false,
+            projectless: false,
             clip_right: false,
             clip_top_left: false,
             docked_below: false,
@@ -1266,36 +1274,7 @@ impl ThreadView {
     /// `Toggle summary` panel: project changes and background processes.
     fn summary(&mut self, window: &mut Window, t: &Theme, cx: &mut Context<Self>) -> Div {
         let project = self.cwd.rsplit('/').next().unwrap_or(&self.cwd).to_owned();
-        // `sticky` headers: their background (and their `before:` 8 px above) paints again in
-        // the panel's rounded `overflow: hidden` clip, over the panel's corner.
-        let header = |label: String| {
-            div()
-                .relative()
-                .child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .top(px(-8.))
-                        .child(shapes::decoration(shapes::Decoration {
-                            fill: Some(t.surface_elevated_secondary),
-                            ..Default::default()
-                        })),
-                )
-                .h(px(28.))
-                .pb(px(2.))
-                .pl(px(20.))
-                .pr(px(14.))
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .child(div().flex_1().min_w_0().py(px(2.)).child(text(
-                    label,
-                    13.,
-                    18.5714,
-                    400.,
-                    t.text_secondary,
-                )))
-        };
+        let header = |label: String| summary_header(label.into(), t);
         // `trailing`: the row's hover-only actions keep their space. A label that overflows its
         // viewport gets the marquee's mask (`_overflowingViewport`: 0.571429em left fade over
         // the track's padding, 1.14286em right fade), a masked box in its own layer.
@@ -1346,42 +1325,63 @@ impl ThreadView {
         let row_hover = t.ghost_hover;
         let git_control = self.git_control(cx);
         let has_terminals = self.background_terminal_items().next().is_some();
-        let mut sections = vec![
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(2.))
-                .child(
-                    header(project).child(
-                        div()
-                            .size(px(24.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(icon("thread-summary-actions", 18., t.text_tertiary)),
-                    ),
-                )
-                .when(has_changes, |d| {
-                    d.child(
-                        row("thread-summary-changes", "Changes".into(), 32., 0, window)
-                            .relative()
-                            .group("summary-changes")
-                            .mx(px(12.))
-                            .px(px(8.))
-                            .rounded(Theme::RADIUS_SM)
-                            .when(git_row_active, |d| d.bg(row_hover))
-                            .hover(move |style| style.bg(row_hover))
-                            .child(
-                                div()
-                                    .absolute()
-                                    .right(px(2.))
-                                    .top(px(2.))
-                                    .child(git_control),
-                            )
-                            .on_click(crate::dispatch::<crate::OpenChangesPanel>),
+        // The original drops the project section (name and `Changes`) in a projectless chat.
+        let mut sections: Vec<Div> = (!self.projectless)
+            .then(|| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        header(project).child(
+                            div()
+                                .size(px(24.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(icon("thread-summary-actions", 18., t.text_tertiary)),
+                        ),
                     )
-                }),
-        ];
+                    .when(has_changes, |d| {
+                        d.child(
+                            row("thread-summary-changes", "Changes".into(), 32., 0, window)
+                                .relative()
+                                .group("summary-changes")
+                                .mx(px(12.))
+                                .px(px(8.))
+                                .rounded(Theme::RADIUS_SM)
+                                .when(git_row_active, |d| d.bg(row_hover))
+                                .hover(move |style| style.bg(row_hover))
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .right(px(2.))
+                                        .top(px(2.))
+                                        .child(git_control),
+                                )
+                                .on_click(crate::dispatch::<crate::OpenChangesPanel>),
+                        )
+                    })
+            })
+            .into_iter()
+            .collect();
+        // `Outputs` stays empty here (`Create a file or site`) in a projectless or non-git
+        // workspace; `Sources` (`Attach files or connect apps`) in a projectless chat.
+        // shortcut: produced outputs and used sources are not listed yet, so the empty rows always show.
+        // `Outputs` is the one section the original draws without its rule (`divider: false`).
+        let mut outputs = None;
+        if self.projectless || matches!(self.git_repository, Some(Err(_))) {
+            outputs = Some(sections.len());
+            let button = self.summary_bounds("summary-outputs-add", window, cx);
+            let row_bounds = self.summary_bounds("summary-outputs-row", window, cx);
+            sections.push(self.summary_section(
+                ("Outputs", "Create a file or site"),
+                &CREATE_ITEMS,
+                (button, row_bounds),
+                t,
+                cx,
+            ));
+        }
         if has_terminals {
             sections.push(
                 div()
@@ -1516,6 +1516,16 @@ impl ThreadView {
                     ),
             );
         }
+        if self.projectless {
+            let button = self.summary_bounds("summary-sources-add", window, cx);
+            sections.push(self.summary_section(
+                ("Sources", "Attach files or connect apps"),
+                &SOURCE_ITEMS,
+                (button.clone(), button),
+                t,
+                cx,
+            ));
+        }
         let n = sections.len();
         // A fixed popover: its own composited layer, whose rect (and tile grid) starts at the
         // widest shadow's ink, 1.5 blur = 30 px out.
@@ -1557,18 +1567,127 @@ impl ThreadView {
                             .children(sections.into_iter().enumerate().map(|(i, s)| {
                                 s.when(i + 1 < n, |s| {
                                     // Half-px rule under every section but the last.
-                                    s.relative().pb(px(8.)).child(
-                                        div()
-                                            .absolute()
-                                            .bottom_0()
-                                            .left(px(20.))
-                                            .right(px(20.))
-                                            .h(px(0.5))
-                                            .bg(over(t.border, t.surface_elevated_secondary)),
-                                    )
+                                    s.relative().pb(px(8.)).when(outputs != Some(i), |s| {
+                                        s.child(
+                                            div()
+                                                .absolute()
+                                                .bottom_0()
+                                                .left(px(20.))
+                                                .right(px(20.))
+                                                .h(px(0.5))
+                                                .bg(over(t.border, t.surface_elevated_secondary)),
+                                        )
+                                    })
                                 })
                             })),
                     )),
+            )
+    }
+
+    fn summary_bounds(
+        &self,
+        key: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Entity<Bounds<Pixels>> {
+        window.use_keyed_state(
+            SharedString::from(format!("{key}-{:?}", cx.entity().entity_id())),
+            cx,
+            |_, _| Bounds::default(),
+        )
+    }
+
+    /// A summary section with nothing to list: its title, a `+` that opens `items` under itself
+    /// (`align: end`), and a dimmed row (`tone: conversation-summary`, `text-text/40`, hover
+    /// `text-default`) that opens them under `anchors.1`.
+    fn summary_section(
+        &self,
+        (title, prompt): (&'static str, &'static str),
+        items: &'static [(&'static str, &'static str, &'static [u8])],
+        (button, row): (gpui::Entity<Bounds<Pixels>>, gpui::Entity<Bounds<Pixels>>),
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let measure = |bounds: &gpui::Entity<Bounds<Pixels>>| {
+            let bounds = bounds.clone();
+            canvas(
+                move |rect, _, cx| bounds.update(cx, |stored, _| *stored = rect),
+                |_, (), _, _| {},
+            )
+            .absolute()
+            .size_full()
+        };
+        let open = |anchor: gpui::Entity<Bounds<Pixels>>| {
+            cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+                let items = items
+                    .iter()
+                    .map(|&(id, label, icon)| menu::Item {
+                        icon: Some(icon),
+                        ..menu::Item::new(id, label, true)
+                    })
+                    .collect();
+                let anchor = *anchor.read(cx);
+                this.menu = Some(menu::ContextMenu::dropdown(
+                    items,
+                    String::new(),
+                    anchor,
+                    window,
+                    cx,
+                ));
+                cx.notify();
+            })
+        };
+        let dim = t.text.opacity(0.4);
+        let hover_text = t.text;
+        let label = format!("Add {}", title.to_lowercase());
+        let group = SharedString::from(format!("summary-{title}-row"));
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .child(
+                summary_header(title.into(), t).child(tooltip(
+                    div()
+                        .id(SharedString::from(format!("summary-{title}-add")))
+                        .relative()
+                        .child(measure(&button))
+                        .size(px(24.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(10.))
+                        .role(gpui::Role::Button)
+                        .aria_label(SharedString::from(label.clone()))
+                        .tab_index(0)
+                        .cursor_pointer()
+                        .hover(|style| style.bg(t.ghost_hover))
+                        .child(icon("automations-plus", 18., dim))
+                        .on_click(open(button.clone())),
+                    label,
+                    None,
+                    Side::Bottom,
+                )),
+            )
+            .child(
+                div()
+                    .id(group.clone())
+                    .group(group.clone())
+                    .relative()
+                    .child(measure(&row))
+                    .h(px(28.))
+                    .px(px(20.))
+                    .py(px(4.))
+                    .flex()
+                    .items_center()
+                    .role(gpui::Role::Button)
+                    .aria_label(prompt)
+                    .tab_index(0)
+                    .cursor_pointer()
+                    .child(
+                        text(prompt, 13., 18.5714, 430., dim)
+                            .group_hover(group, move |style| style.text_color(hover_text)),
+                    )
+                    .on_click(open(row)),
             )
     }
 
@@ -2674,6 +2793,75 @@ impl Render for ThreadView {
         })
     }
 }
+
+/// A summary section's title row. `sticky`: its background (and its `before:` 8 px above)
+/// paints again in the panel's rounded `overflow: hidden` clip, over the panel's corner.
+fn summary_header(label: SharedString, t: &Theme) -> Div {
+    div()
+        .relative()
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .top(px(-8.))
+                .child(shapes::decoration(shapes::Decoration {
+                    fill: Some(t.surface_elevated_secondary),
+                    ..Default::default()
+                })),
+        )
+        .h(px(28.))
+        .pb(px(2.))
+        .pl(px(20.))
+        .pr(px(14.))
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .child(div().flex_1().min_w_0().py(px(2.)).child(text(
+            label,
+            13.,
+            18.5714,
+            400.,
+            t.text_secondary,
+        )))
+}
+
+/// `summary-panel-create-output-menu`: `(id, label, icon)`.
+const CREATE_ITEMS: [(&str, &str, &[u8]); 4] = [
+    (
+        "create-document",
+        "Create document",
+        include_bytes!("../../../assets/icons/summary-create-document.svg"),
+    ),
+    (
+        "create-presentation",
+        "Create presentation",
+        include_bytes!("../../../assets/icons/summary-create-presentation.svg"),
+    ),
+    (
+        "create-spreadsheet",
+        "Create spreadsheet",
+        include_bytes!("../../../assets/icons/summary-create-spreadsheet.svg"),
+    ),
+    (
+        "create-site",
+        "Create site",
+        include_bytes!("../../../assets/icons/summary-create-site.svg"),
+    ),
+];
+
+/// `add-source-menu` with plugins off: `Use plugins`, then `Attach files or folders`.
+const SOURCE_ITEMS: [(&str, &str, &[u8]); 2] = [
+    (
+        "use-plugins",
+        "Use plugins",
+        include_bytes!("../../../assets/icons/sidebar-cmd-plugins.svg"),
+    ),
+    (
+        "attach-files",
+        "Attach files or folders",
+        include_bytes!("../../../assets/icons/summary-attach-files.svg"),
+    ),
+];
 
 pub(crate) fn render_comment_markdown(source: &str, window: &Window, theme: &Theme) -> Div {
     markdown::markdown(source, window, theme, &[])

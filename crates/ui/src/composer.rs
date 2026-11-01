@@ -1764,6 +1764,21 @@ impl Composer {
         }
     }
 
+    /// Appends `prompt` after the draft and focuses the input (the original's
+    /// `appendPromptText`), keeping the draft's mention chips.
+    pub fn append_prompt(&mut self, prompt: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let end = self.content.len();
+        self.selected_range = end..end;
+        self.marked_range = None;
+        let gap = if self.content.is_empty() || self.content.ends_with(char::is_whitespace) {
+            ""
+        } else {
+            " "
+        };
+        self.insert(&format!("{gap}{prompt}"), window, cx);
+        self.focus_handle.focus(window, cx);
+    }
+
     pub fn set_text(&mut self, s: &str, cx: &mut Context<Self>) {
         self.cancel_dictation(cx);
         self.dictation_error = None;
