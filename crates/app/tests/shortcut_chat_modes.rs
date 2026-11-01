@@ -67,6 +67,9 @@ fn standalone_menu_allocates_its_own_workspace() -> Result<()> {
             .as_str()
             .is_some_and(|text| text.contains("Projectless Chat"))
     );
+    // The projectless chat's summary offers `Outputs` and `Sources`.
+    fx.click((fx.size.0 - 63., 22.))?;
+    fx.capture_evidence("CGX_SUMMARY_PANEL_EVIDENCE", "native-summary")?;
     Ok(())
 }
 
