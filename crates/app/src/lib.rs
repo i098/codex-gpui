@@ -4302,11 +4302,16 @@ impl Root {
             .turns
             .iter()
             .any(|turn| turn.status == TurnStatus::InProgress);
+        let interrupted = thread
+            .turns
+            .last()
+            .is_some_and(|turn| turn.status == TurnStatus::Interrupted);
         // The composer is shared; load the selected thread's own queue after navigation. An
         // archived chat cannot have a side chat.
         let side_chat = !self.archived.contains(&thread.id);
         self.thread_composer.update(cx, |c, cx| {
             c.set_running(running, cx);
+            c.set_queue_interrupted(interrupted, cx);
             c.set_queued(Vec::new(), cx);
             c.set_failed_queued(Vec::new(), cx);
             c.set_queue_pending(self.queue_pending, cx);
@@ -4672,6 +4677,9 @@ impl Root {
             QueueAction::Edit(id) => return self.edit_queued(side, id.clone(), window, cx),
             QueueAction::SideChat(id) => return self.open_side_chat(id.clone(), window, cx),
             QueueAction::Queueing(queue) => return self.set_queueing(*queue, cx),
+            QueueAction::Resume | QueueAction::ClearQueue => {
+                return self.paused_queue_action(side, action, window, cx);
+            }
             _ => {}
         }
         if self.queue_pending {
@@ -4790,6 +4798,69 @@ impl Root {
                 if side.is_some() {
                     this.list_queue(thread_id.clone(), cx);
                 }
+            })?;
+            result
+        });
+        log_err(task, cx);
+    }
+
+    /// `Resume` starts the paused queue (`thread/queue/start`); `Clear queue` deletes its
+    /// rows before the new message's turn can drain them.
+    fn paused_queue_action(
+        &mut self,
+        side: Option<usize>,
+        action: &QueueAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((view, composer)) = self.conversation(side) else {
+            return;
+        };
+        let thread_id = view.read(cx).id().to_owned();
+        let ids: Vec<String> = composer
+            .read(cx)
+            .queued()
+            .iter()
+            .filter(|row| !row.failed)
+            .map(|row| row.submission.id.clone())
+            .collect();
+        let resume = matches!(action, QueueAction::Resume);
+        let load = !self.loaded.contains(&thread_id);
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let result = async {
+                resume_if(load, &bridge, &this, &thread_id, cx).await?;
+                if resume {
+                    let params = json!({ "threadId": thread_id });
+                    bridge
+                        .request::<_, Value>("thread/queue/start", params)
+                        .await?;
+                    return Ok(());
+                }
+                for id in &ids {
+                    let params = json!({ "threadId": thread_id, "queuedSubmissionId": id });
+                    bridge
+                        .request::<_, Value>("thread/queue/delete", params)
+                        .await?;
+                }
+                anyhow::Ok(())
+            }
+            .await;
+            this.update(cx, |this, cx| match &result {
+                Ok(()) if !resume => composer.update(cx, |composer, cx| {
+                    for id in &ids {
+                        composer.remove_queued(id, cx);
+                    }
+                }),
+                Ok(()) => {}
+                Err(_) => this.toast(
+                    Toast::danger(if resume {
+                        "Failed to resume queue"
+                    } else {
+                        "Failed to clear queue"
+                    }),
+                    cx,
+                ),
             })?;
             result
         });
@@ -6649,8 +6720,16 @@ impl Root {
                 .iter()
                 .map(|chat| (&chat.view, &chat.composer));
             for (view, composer) in self.thread.iter().zip([&self.thread_composer]).chain(side) {
-                let running = view.read(cx).is_running();
-                composer.update(cx, |c, cx| c.set_running(running, cx));
+                let view = view.read(cx);
+                let running = view.is_running();
+                let interrupted = view
+                    .turns()
+                    .last()
+                    .is_some_and(|turn| turn.status == TurnStatus::Interrupted);
+                composer.update(cx, |c, cx| {
+                    c.set_running(running, cx);
+                    c.set_queue_interrupted(interrupted, cx);
+                });
             }
             if let Some(split) = &self.split {
                 for (index, side) in self.tabs.iter().enumerate() {
