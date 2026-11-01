@@ -54,6 +54,8 @@ pub enum Route {
     SecurityCloud,
     /// Explore ▸ `Maps` (`/maps`).
     Maps,
+    /// A Sites row (`/sites/:projectId`): the site's details.
+    Site(String),
     /// Explore ▸ `Images` (`/images`).
     Images,
     /// Explore ▸ `GPTs` (`/gpts`), or one GPT's page (`/g/:gizmoId`).
@@ -231,7 +233,8 @@ impl Root {
             Route::PullRequests(selected) => Some(self.pull_requests_shell(selected, window, cx)),
             Route::Security => Some(crate::security::shell(self, window, cx)),
             Route::Plugins(path) => Some(self.plugins_shell(path, window, cx)),
-            Route::Sites => Some(sites::page(self, cx)),
+            Route::Sites => Some(sites::page(self, None, window, cx)),
+            Route::Site(id) => Some(sites::page(self, Some(id), window, cx)),
             Route::SecurityCloud => Some(security_cloud::page(self, cx)),
             Route::Maps => Some(maps::page(self, cx)),
             Route::Images => Some(images::page(self, cx)),
