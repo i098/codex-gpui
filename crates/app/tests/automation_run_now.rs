@@ -70,6 +70,9 @@ while IFS= read -r line; do
       fi
       [ -z "$ARCHIVE_FAIL" ] || { printf '{"id":%s,"error":{"code":-32000,"message":"archive refused"}}\n' "$id"; continue; }
       printf '{"id":%s,"result":{}}\n' "$id" ;;
+    *'"project/list"'*)
+      projects=$PROJECTS; [ -n "$projects" ] || projects='{"data":[]}'
+      printf '{"id":%s,"result":%s}\n' "$id" "$projects" ;;
     *'"thread/unarchive"'*)
       [ ! -e "$RESTORE_FAIL_FILE" ] || { printf '{"id":%s,"error":{"code":-32000,"message":"restore refused"}}\n' "$id"; continue; }
       printf '{"id":%s,"result":{}}\n' "$id" ;;
@@ -1511,7 +1514,14 @@ mod app_tools {
         fs::create_dir(&project)?;
         let storage = LocalHost::new(dir.path());
         storage.add_project(&project)?;
-        let tools = provider(dir.path(), &dir.path().join("requests.jsonl"), &[])?;
+        let listed = json!({"data": [{"id": "project-1", "name": "project",
+            "roots": [{"path": project.canonicalize()?}], "createdAt": 0, "updatedAt": 0}]})
+        .to_string();
+        let tools = provider(
+            dir.path(),
+            &dir.path().join("requests.jsonl"),
+            &[("PROJECTS", &listed)],
+        )?;
         let mut stream = connect(&tools)?;
         let projects = value(&call(&mut stream, 1, "list_projects", json!({}))?)?;
         let id = projects["projects"][0]["projectId"].as_str().unwrap();
