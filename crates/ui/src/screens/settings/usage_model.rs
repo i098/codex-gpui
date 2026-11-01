@@ -178,6 +178,31 @@ impl ReloadDraft {
     }
 }
 
+/// The original's warning after a failed initial auto-reload top-up, and whether the card was
+/// declined (which offers the payment recovery links). `None` when the top-up did not fail.
+pub fn top_up_warning(response: &serde_json::Value) -> Option<(&'static str, bool)> {
+    let declined = match response["immediate_top_up_status"].as_str()? {
+        "payment_declined" => true,
+        "failed" => false,
+        _ => return None,
+    };
+    let warning = match (declined, response["is_enabled"] == true) {
+        (true, true) => {
+            "Auto-reload is on, but the initial top-up was declined. Update your payment method before trying again."
+        }
+        (true, false) => {
+            "Auto-reload is off. The initial top-up was declined. Update your payment method before trying again."
+        }
+        (false, true) => {
+            "Auto-reload is on, but we couldn’t confirm the initial top-up. Check your transaction history before trying again."
+        }
+        (false, false) => {
+            "Auto-reload is off, and we couldn’t confirm the initial top-up. Check your transaction history before trying again."
+        }
+    };
+    Some((warning, declined))
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct BalanceHistory {
     #[serde(default)]
@@ -333,6 +358,22 @@ mod tests {
             ..previous
         };
         assert!(draft.payload(&previous)["recharge_monthly_limit"].is_null());
+    }
+
+    #[test]
+    fn only_a_failed_top_up_warns_and_only_a_decline_offers_payment_recovery() {
+        let warn = |status: &str, enabled: bool| {
+            top_up_warning(&json!({"immediate_top_up_status": status, "is_enabled": enabled}))
+        };
+        assert_eq!(warn("succeeded", true), None);
+        assert_eq!(warn("not_required", false), None);
+        assert_eq!(top_up_warning(&json!({"is_enabled": true})), None);
+        let (text, declined) = warn("payment_declined", false).unwrap();
+        assert!(
+            declined && text.starts_with("Auto-reload is off. The initial top-up was declined")
+        );
+        let (text, declined) = warn("failed", true).unwrap();
+        assert!(!declined && text.starts_with("Auto-reload is on, but we couldn’t confirm"));
     }
 
     #[test]
