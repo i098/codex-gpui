@@ -59,6 +59,7 @@ actions!(
     native_menus,
     [
         ShowAbout,
+        ShowFeedback,
         CheckForUpdates,
         OpenDocumentation,
         OpenChangelog,
@@ -72,6 +73,7 @@ actions!(
         TextReplacement,
         TogglePinnedSummary,
         ToggleNavigationPanel,
+        ToggleBrowserPanel,
     ]
 );
 
@@ -118,6 +120,27 @@ pub(crate) fn actions(root: Div, owner: &crate::Root, cx: &mut Context<crate::Ro
     } else {
         root
     };
+    let root = root.on_action(cx.listener(|this, _: &ShowFeedback, window, cx| {
+        this.open_feedback(window, cx);
+    }));
+    let root = root.on_action(cx.listener(|this, _: &ToggleBrowserPanel, window, cx| {
+        if !matches!(this.state.route, crate::Route::Thread(_)) {
+            return;
+        }
+        if let Some((key, _)) = this.browser_tabs.last() {
+            let side = crate::SidePanel::Browser(*key);
+            if this.side_visible(side) {
+                this.tabs
+                    .retain(|tab| !matches!(tab, crate::SidePanel::Browser(_)));
+                this.side = this.tabs.last().copied();
+                this.sync(window, cx);
+            } else {
+                this.set_side(side, window, cx);
+            }
+        } else {
+            this.open_browser_tab(None, window, cx);
+        }
+    }));
     if ui::native_text::is_speaking(cx) {
         root.on_action(|_: &ui::StopSpeaking, _, cx| ui::native_text::stop_speaking(cx))
     } else {
@@ -155,17 +178,24 @@ fn bring_all_to_front(cx: &mut App) {
 struct NativeMenuState {
     sidebar_collapsible: bool,
     locale: String,
+    browser_available: bool,
 }
 impl gpui::Global for NativeMenuState {}
 
 pub(crate) fn refresh_menus(cx: &mut App) {
     let state = cx.try_global::<NativeMenuState>();
     let sidebar_collapsible = state.is_none_or(|state| state.sidebar_collapsible);
+    let browser_available = state.is_some_and(|state| state.browser_available);
     let locale = state.map_or_else(system_locale, |state| state.locale.clone());
     let updates = cx
         .try_global::<ui::updater::Updates>()
         .is_some_and(|updates| updates.available && !updates.managed);
-    cx.set_menus(menus_for_route(sidebar_collapsible, updates, &locale));
+    cx.set_menus(menus_for_route(
+        sidebar_collapsible,
+        updates,
+        browser_available,
+        &locale,
+    ));
 }
 
 impl crate::Root {
@@ -175,18 +205,22 @@ impl crate::Root {
             return;
         }
         let sidebar_collapsible = self.state.route != crate::Route::Settings;
+        let browser_available = matches!(self.state.route, crate::Route::Thread(_));
         let locale = self.config["desktop"]["localeOverride"]
             .as_str()
             .map(effective_locale)
             .filter(|locale| !locale.is_empty())
             .unwrap_or_else(system_locale);
         if cx.try_global::<NativeMenuState>().is_some_and(|state| {
-            state.sidebar_collapsible == sidebar_collapsible && state.locale == locale
+            state.sidebar_collapsible == sidebar_collapsible
+                && state.browser_available == browser_available
+                && state.locale == locale
         }) {
             return;
         }
         cx.set_global(NativeMenuState {
             sidebar_collapsible,
+            browser_available,
             locale,
         });
         refresh_menus(cx);
@@ -196,6 +230,9 @@ impl crate::Root {
         let sidebar_collapsible = cx
             .try_global::<NativeMenuState>()
             .is_none_or(|state| state.sidebar_collapsible);
+        let browser_available = cx
+            .try_global::<NativeMenuState>()
+            .is_some_and(|state| state.browser_available);
         let locale = self.config["desktop"]["localeOverride"]
             .as_str()
             .map(effective_locale)
@@ -203,6 +240,7 @@ impl crate::Root {
             .unwrap_or_else(system_locale);
         cx.set_global(NativeMenuState {
             sidebar_collapsible,
+            browser_available,
             locale,
         });
         refresh_menus(cx);
@@ -211,12 +249,23 @@ impl crate::Root {
 
 /// Builds the native menu items backed by the app's registered actions.
 pub(crate) fn menus() -> Vec<Menu> {
-    menus_for_route(true, false, &system_locale())
+    menus_for_route(true, false, false, &system_locale())
 }
 
-fn menus_for_route(sidebar_collapsible: bool, updates: bool, locale: &str) -> Vec<Menu> {
+fn menus_for_route(
+    sidebar_collapsible: bool,
+    updates: bool,
+    browser_available: bool,
+    locale: &str,
+) -> Vec<Menu> {
     let messages = messages(locale);
     let label = |key: &str, fallback: &str| localized(messages.as_ref(), key, fallback);
+    let browser = browser_available.then(|| {
+        MenuItem::submenu(
+            Menu::new("Browser")
+                .items([MenuItem::action("Toggle browser panel", ToggleBrowserPanel)]),
+        )
+    });
     vec![
         Menu::new(label("windowsMenuBar.app", "Codex")).items([
             MenuItem::action(
@@ -247,6 +296,7 @@ fn menus_for_route(sidebar_collapsible: bool, updates: bool, locale: &str) -> Ve
             MenuItem::action(label("electron.appMenu.app.quit", "Quit Codex"), Quit),
         ]),
         Menu::new(label("windowsMenuBar.file", "File")).items([
+            MenuItem::action("New Window", crate::windows::NewWindow),
             MenuItem::action(label("codex.command.newThread", "New Chat"), NewChat),
             MenuItem::action(
                 label("codex.command.temporaryChat", "New Temporary Chat"),
@@ -256,8 +306,7 @@ fn menus_for_route(sidebar_collapsible: bool, updates: bool, locale: &str) -> Ve
             MenuItem::action(
                 label("codex.command.newProjectlessTask", "New standalone chat"),
                 features::shortcuts::NewStandaloneChat,
-            )
-            .hidden(true),
+            ),
             MenuItem::separator(),
             MenuItem::action(
                 label("codex.command.openFolder", "Open Folder…"),
@@ -360,71 +409,78 @@ fn menus_for_route(sidebar_collapsible: bool, updates: bool, locale: &str) -> Ve
                 ]),
             ),
         ]),
-        Menu::new(label("windowsMenuBar.view", "View")).items([
-            MenuItem::action(
-                label("codex.commandMenuTitle.toggleSidebar", "Toggle Sidebar"),
-                ToggleSidebar,
-            )
-            .hidden(!sidebar_collapsible),
-            MenuItem::action(
-                label(
-                    "codex.commandMenuTitle.toggleBottomPanel",
-                    "Toggle Bottom Panel",
+        Menu::new(label("windowsMenuBar.view", "View")).items(
+            [
+                MenuItem::action(
+                    label("codex.commandMenuTitle.toggleSidebar", "Toggle Sidebar"),
+                    ToggleSidebar,
+                )
+                .hidden(!sidebar_collapsible),
+                MenuItem::action(
+                    label(
+                        "codex.commandMenuTitle.toggleBottomPanel",
+                        "Toggle Bottom Panel",
+                    ),
+                    features::shortcuts::ToggleBottomPanel,
                 ),
-                features::shortcuts::ToggleBottomPanel,
-            ),
-            MenuItem::action(
-                label(
-                    "codex.commandMenuTitle.togglePinnedSummary",
-                    "Toggle Pinned Summary",
+                MenuItem::action(
+                    label(
+                        "codex.commandMenuTitle.togglePinnedSummary",
+                        "Toggle Pinned Summary",
+                    ),
+                    TogglePinnedSummary,
                 ),
-                TogglePinnedSummary,
-            ),
-            MenuItem::action(
-                label("codex.command.toggleTerminal", "Open Terminal"),
-                features::shortcuts::OpenInteractiveTerminal,
-            ),
-            MenuItem::action(
-                label(
-                    "codex.commandMenuTitle.toggleFileTreePanel",
-                    "Toggle navigation panel",
+                MenuItem::action(
+                    label("codex.command.toggleTerminal", "Open Terminal"),
+                    features::shortcuts::OpenInteractiveTerminal,
                 ),
-                ToggleNavigationPanel,
-            ),
-            MenuItem::action(
-                label(
-                    "codex.commandMenuTitle.toggleReviewPanel",
-                    "Toggle Changes Panel",
+                MenuItem::action(
+                    label(
+                        "codex.commandMenuTitle.toggleFileTreePanel",
+                        "Toggle navigation panel",
+                    ),
+                    ToggleNavigationPanel,
                 ),
-                ToggleChangesPanel,
-            ),
-            MenuItem::separator(),
-            MenuItem::action(label("codex.command.findInThread", "Find"), FindInThread),
-            MenuItem::separator(),
-            MenuItem::action(
-                label("codex.commandMenuTitle.previousThread", "Previous Chat"),
-                PreviousChat,
-            ),
-            MenuItem::action(
-                label("codex.commandMenuTitle.nextThread", "Next Chat"),
-                NextChat,
-            ),
-            MenuItem::action(label("codex.command.navigateBack", "Back"), GoBack),
-            MenuItem::action(label("codex.command.navigateForward", "Forward"), GoForward),
-            MenuItem::separator(),
-            MenuItem::action(
-                label("browserSidebar.zoomBanner.zoomIn", "Zoom In"),
-                features::shortcuts::ZoomIn,
-            ),
-            MenuItem::action(
-                label("browserSidebar.zoomBanner.zoomOut", "Zoom Out"),
-                features::shortcuts::ZoomOut,
-            ),
-            MenuItem::action(
-                label("electron.appMenu.view.actualSize", "Actual Size"),
-                features::shortcuts::ActualSize,
-            ),
-        ]),
+                MenuItem::action("Full view", ui::ShowWorkspaceTabView),
+                MenuItem::action(
+                    label(
+                        "codex.commandMenuTitle.toggleReviewPanel",
+                        "Toggle Changes Panel",
+                    ),
+                    ToggleChangesPanel,
+                ),
+            ]
+            .into_iter()
+            .chain(browser)
+            .chain([
+                MenuItem::separator(),
+                MenuItem::action(label("codex.command.findInThread", "Find"), FindInThread),
+                MenuItem::separator(),
+                MenuItem::action(
+                    label("codex.commandMenuTitle.previousThread", "Previous Chat"),
+                    PreviousChat,
+                ),
+                MenuItem::action(
+                    label("codex.commandMenuTitle.nextThread", "Next Chat"),
+                    NextChat,
+                ),
+                MenuItem::action(label("codex.command.navigateBack", "Back"), GoBack),
+                MenuItem::action(label("codex.command.navigateForward", "Forward"), GoForward),
+                MenuItem::separator(),
+                MenuItem::action(
+                    label("browserSidebar.zoomBanner.zoomIn", "Zoom In"),
+                    features::shortcuts::ZoomIn,
+                ),
+                MenuItem::action(
+                    label("browserSidebar.zoomBanner.zoomOut", "Zoom Out"),
+                    features::shortcuts::ZoomOut,
+                ),
+                MenuItem::action(
+                    label("electron.appMenu.view.actualSize", "Actual Size"),
+                    features::shortcuts::ActualSize,
+                ),
+            ]),
+        ),
         Menu::new(label("electron.appMenu.window", "Window")).items([
             MenuItem::action(
                 label("electron.appMenu.window.minimize", "Minimize"),
@@ -459,6 +515,7 @@ fn menus_for_route(sidebar_collapsible: bool, updates: bool, locale: &str) -> Ve
                 label("electron.appMenu.help.systemStatus", "System Status"),
                 OpenSystemStatus,
             ),
+            MenuItem::action("Send Feedback", ShowFeedback),
         ]),
     ]
 }
@@ -492,5 +549,21 @@ mod tests {
         for locale in locale::SUPPORTED {
             assert!(messages(locale).is_some(), "invalid locale file: {locale}");
         }
+    }
+
+    #[test]
+    fn browser_menu_is_available_only_on_thread_routes() {
+        let has_browser_menu = |browser_available| {
+            menus_for_route(true, false, browser_available, "")
+                .into_iter()
+                .find(|menu| menu.name == "View")
+                .unwrap()
+                .items
+                .iter()
+                .any(|item| matches!(item, MenuItem::Submenu(menu) if menu.name == "Browser"))
+        };
+
+        assert!(!has_browser_menu(false));
+        assert!(has_browser_menu(true));
     }
 }
