@@ -1,0 +1,81 @@
+{
+  "provenance": {
+    "appVersion": "26.1007.30912",
+    "queries": [
+      "appgen-sites-query-8ee1359247fa.js /websites/{project_id} (w)"
+    ],
+    "schema": "Response fields follow the original zod schemas A and j (items, cursor).",
+    "origin": "Owned synthetic data derived from the contract. No live account call. Placeholders: user@example.com, Demo User, example.invalid.",
+    "clock": "2026-10-15T17:00:00-07:00 (all updated_at values precede it)"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/websites?limit=20",
+          "method": "GET",
+          "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "originator": "Codex Desktop"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"items\":[{\"id\":\"site-000000000000000000000001\",\"is_pinned\":true,\"title\":\"Launch page\",\"description\":null,\"slug\":\"launch\",\"status\":\"active\",\"live_url\":\"https://launch.example.invalid\",\"hosted_url\":null,\"latest_edit_context\":null,\"screenshot_url\":null,\"current_user_role\":\"owner\",\"owner\":{\"name\":\"Demo User\",\"email\":\"user@example.com\"},\"sharing\":{\"access_mode\":\"private\",\"user_count\":0,\"group_count\":0},\"updated_at\":\"2026-10-15T23:00:00Z\"},{\"id\":\"site-000000000000000000000002\",\"is_pinned\":false,\"title\":\"Team handbook\",\"description\":null,\"slug\":\"handbook\",\"status\":\"active\",\"live_url\":\"https://handbook.example.invalid\",\"hosted_url\":null,\"latest_edit_context\":null,\"screenshot_url\":null,\"current_user_role\":\"owner\",\"owner\":{\"name\":\"Demo User\",\"email\":\"user@example.com\"},\"sharing\":{\"access_mode\":\"workspace\",\"user_count\":3,\"group_count\":1},\"updated_at\":\"2026-10-15T23:00:00Z\"}],\"cursor\":null}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/websites/site-000000000000000000000001",
+          "method": "GET",
+          "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "originator": "Codex Desktop"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"id\":\"site-000000000000000000000001\",\"is_pinned\":true,\"title\":\"Launch page\",\"description\":null,\"slug\":\"launch\",\"status\":\"active\",\"live_url\":\"https://launch.example.invalid\",\"hosted_url\":null,\"latest_edit_context\":null,\"screenshot_url\":null,\"current_user_role\":\"owner\",\"owner\":{\"name\":\"Demo User\",\"email\":\"user@example.com\"},\"sharing\":{\"access_mode\":\"private\",\"user_count\":0,\"group_count\":0},\"updated_at\":\"2026-10-15T23:00:00Z\"}"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

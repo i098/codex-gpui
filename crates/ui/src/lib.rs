@@ -314,7 +314,8 @@ pub struct Shell {
 // add the 3/8 and larger decodes when a larger zoom matters.
 fn avatar(under: Hsla) -> AnyElement {
     const PNG: &[u8] = include_bytes!("../assets/avatar-decoded-64.png");
-    if !cfg!(target_os = "macos") {
+    // The compositor tile needs an opaque `under`; over vibrancy the image is drawn directly.
+    if !cfg!(target_os = "macos") || under.a < 1. {
         let image = Arc::new(Image::from_bytes(ImageFormat::Png, PNG.to_vec()));
         return img(image).size(px(24.)).rounded_full().into_any_element();
     }
@@ -500,6 +501,16 @@ pub fn blit(top: Hsla, bottom: Hsla) -> Hsla {
 /// Window color behind the rail and titlebar: `_PageSurfaceLayout` over the body.
 pub fn layout_color(t: &Theme) -> Hsla {
     over(t.page_surface_layout, t.background_surface_under)
+}
+
+/// The body under the page: none over the window's vibrancy (the original's focused macOS
+/// window), else `--app-color-background-surface-under` (`electron-opaque`).
+fn body_color(t: &Theme, window: &Window) -> Hsla {
+    if window.background_appearance() == gpui::WindowBackgroundAppearance::Blurred {
+        gpui::transparent_black()
+    } else {
+        t.background_surface_under
+    }
 }
 
 pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
@@ -962,6 +973,20 @@ pub fn home_sidebar_header(
                         .items_center()
                         .gap(px(6.))
                         .rounded(RADIUS_BUTTON_XL)
+                        // Ghost `[data-state=open]:before`: the hover fill at opacity 0.6.
+                        .when(mode.menu.is_some(), |d| {
+                            d.child(div().absolute().inset_0().child(shapes::decoration(
+                                shapes::Decoration {
+                                    radius: Corners::all(RADIUS_BUTTON_XL),
+                                    corner: shapes::Corner::Squircle,
+                                    fill: Some(Hsla {
+                                        a: t.ghost_hover.a * 0.6,
+                                        ..t.ghost_hover
+                                    }),
+                                    ..Default::default()
+                                },
+                            )))
+                        })
                         .child(
                             icon::icon_sized(
                                 mode.wordmark.0,
@@ -1118,7 +1143,7 @@ impl Shell {
         // The avatar composites over the rail, or over the profile button's hover fill.
         // ponytail: the hover fill's end color, not its 150 ms fade; pass the fade's color if
         // the avatar's corners ever show during it.
-        let under = over(t.page_surface_layout, t.background_surface_under);
+        let under = over(t.page_surface_layout, body_color(t, window));
         let avatar_under = if self.avatar_hovered {
             over(hover_bg, under)
         } else {
@@ -2016,7 +2041,7 @@ impl Render for Shell {
             fill: Some(t.sidebar_divider.opacity(hairline_alpha)),
             ..Default::default()
         };
-        let under = t.background_surface_under;
+        let under = body_color(&t, window);
         let surface_px = {
             let c = gpui::Rgba::from(t.surface);
             [c.r, c.g, c.b, 1.].map(|v| (v * 255.).round() as u8)
