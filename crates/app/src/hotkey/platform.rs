@@ -148,6 +148,8 @@ pub struct Native {
     callback: Box<(Sender<ShortcutEvent>, Vec<Shortcut>)>,
     #[cfg(target_os = "macos")]
     modifiers: Option<super::desktop::Monitor>,
+    // Held for its `Drop`, which stops the worker thread.
+    #[allow(dead_code)]
     #[cfg(target_os = "linux")]
     linux: Option<LinuxNative>,
     #[cfg(target_os = "windows")]
@@ -990,6 +992,7 @@ mod tests {
             binding(Shortcut::Spotlight, "Alt+K").unwrap(),
             binding(Shortcut::DictationHold, "Fn").unwrap(),
         ];
+        let (sender, receiver) = async_channel::unbounded();
         let native = Native::new(&bindings, sender).unwrap();
         for (key, pressed) in [(alt, 1), (key, 1), (key, 0), (alt, 0)] {
             assert_ne!(unsafe { fake_key_event(display, key, pressed, 0) }, 0);
