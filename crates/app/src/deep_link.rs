@@ -138,7 +138,7 @@ fn browser_link(params: &Params<'_>) -> Option<Link> {
     (matches!(url.scheme(), "http" | "https")
         && url.username().is_empty()
         && url.password().is_none())
-    .then(|| Link::Browser(url))
+    .then_some(Link::Browser(url))
 }
 fn codex_app_link(sub: &[&str]) -> Option<Link> {
     match sub {
