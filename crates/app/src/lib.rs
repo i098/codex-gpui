@@ -1834,10 +1834,11 @@ impl Root {
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = async {
-                let Some(paths) = paths.await?? else {
-                    return Ok(None);
-                };
-                let Some(directory) = paths.into_iter().next() else {
+                let paths = paths
+                    .await
+                    .map_err(|error| std::io::Error::other(error.to_string()))?
+                    .map_err(std::io::Error::other)?;
+                let Some(directory) = paths.and_then(|paths| paths.into_iter().next()) else {
                     return Ok(None);
                 };
                 cx.background_spawn(async move { logging::export(&directory) })
