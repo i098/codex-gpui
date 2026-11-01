@@ -76,6 +76,42 @@ impl ThreadView {
     /// Folds the notifications this module owns; `false` for any other method.
     pub(super) fn apply_context(&mut self, method: &str, params: &Value) -> bool {
         match method {
+            "model/rerouted" => {
+                let (Some(turn), Some(from), Some(to)) = (
+                    params["turnId"].as_str(),
+                    params["fromModel"].as_str(),
+                    params["toModel"].as_str(),
+                ) else {
+                    return false;
+                };
+                self.notices
+                    .entry(turn.to_owned())
+                    .or_default()
+                    .push(format!("Model changed from {from} to {to}."));
+            }
+            "model/safetyBuffering/updated" => {
+                let Some(turn) = params["turnId"].as_str() else {
+                    return false;
+                };
+                if params["showBufferingUi"] == true {
+                    self.safety_buffering.insert(turn.to_owned());
+                } else {
+                    self.safety_buffering.remove(turn);
+                }
+            }
+            "model/verification" => {
+                let Some(turn) = params["turnId"].as_str() else {
+                    return false;
+                };
+                let cyber = params["verifications"]
+                    .as_array()
+                    .is_some_and(|v| v.iter().any(|v| v == "trustedAccessForCyber"));
+                let notice = "Some cybersecurity requests may still be limited.";
+                let notices = self.notices.entry(turn.to_owned()).or_default();
+                if cyber && !notices.iter().any(|n| n == notice) {
+                    notices.push(notice.to_owned());
+                }
+            }
             "thread/tokenUsage/updated" => {
                 self.context_usage = ContextUsage::from_token_usage(&params["tokenUsage"]);
             }
@@ -145,5 +181,26 @@ impl ThreadView {
     /// Whether reasoning item `id` is streaming now.
     pub(super) fn thinking(&self, id: &str) -> bool {
         self.reasoning_since.contains_key(id)
+    }
+
+    /// The inline notices under turn `turn`: reroutes, verification, and while the turn runs
+    /// the safety buffering line.
+    pub(super) fn turn_notices(&self, turn: &bridge::types::Turn, cx: &Context<Self>) -> Vec<Div> {
+        let buffering = (self.safety_buffering.contains(&turn.id)
+            && turn.status == TurnStatus::InProgress)
+            .then_some("Giving this request a little extra thought");
+        let color = cx.theme().text_alpha_60;
+        self.notices
+            .get(&turn.id)
+            .into_iter()
+            .flatten()
+            .map(String::as_str)
+            .chain(buffering)
+            .map(|line| {
+                div()
+                    .mt(px(16.))
+                    .child(text(line.to_owned(), 14., 21., 430., color))
+            })
+            .collect()
     }
 }
