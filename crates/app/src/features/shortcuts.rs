@@ -32,6 +32,7 @@ actions!(
         NextSideTab,
         PreviousSideTab,
         CopyDeeplink,
+        CopyLastCodeBlock,
         CloseWholeWindow,
         CloseOtherSideTabs
     ]
@@ -137,6 +138,15 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
     .on_action(cx.listener(|this, _: &CopyDeeplink, _, cx| {
         if let Route::Thread(id) = &this.state.route {
             cx.write_to_clipboard(ClipboardItem::new_string(format!("codex://threads/{id}")));
+        }
+    }))
+    .on_action(cx.listener(|this, _: &CopyLastCodeBlock, _, cx| {
+        let code = this
+            .thread
+            .as_ref()
+            .and_then(|view| view.read(cx).last_code_block());
+        if let Some(code) = code {
+            cx.write_to_clipboard(ClipboardItem::new_string(code));
         }
     }))
     .on_action(
