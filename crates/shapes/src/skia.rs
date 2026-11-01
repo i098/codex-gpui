@@ -2717,7 +2717,11 @@ pub(crate) fn ops(d: &Decoration, bounds: Bounds<Pixels>, s: f32) -> (Contour, V
     rr.constrain();
     let squircle = 2f64.powf(1.5) as f32;
     let k = rr.radii.map(|c| match d.corner {
-        Corner::Squircle if c[0] > 0. && c[1] > 0. => squircle,
+        Corner::Squircle
+            if c[0] > 0. && c[1] > 0. && !super::debug_off(&super::debug::NO_SQUIRCLES) =>
+        {
+            squircle
+        }
         _ => 2.,
     });
     let border = Contour { rr, k, origin: rr };
