@@ -13,6 +13,7 @@ mod native;
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum PageChange {
     /// The committed URL, title or history position changed.
+    #[cfg(target_os = "macos")]
     Changed,
     /// A document finished loading.
     Finished,
