@@ -7,6 +7,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+
+- Add Windows sandbox readiness, setup actions, and completion feedback on Home.
 - Drag existing files from the Changes file list and workspace file tree to other apps with their native file icon.
 - Show the New Window, Full view, Browser, and Send Feedback actions in the native menu.
 - Add a `newWindow` action that opens a new primary window on Home.
