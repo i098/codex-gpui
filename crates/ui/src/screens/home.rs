@@ -25,7 +25,15 @@ pub struct FinishedScrollAnimation(pub AnyWindowHandle);
 
 impl Global for FinishedScrollAnimation {}
 
-actions!(home, [OpenFolder, ClearProject]);
+actions!(
+    home,
+    [
+        OpenFolder,
+        ClearProject,
+        SetupWindowsSandboxElevated,
+        SetupWindowsSandboxUnelevated
+    ]
+);
 
 /// `Choose project` menu: whether it is open, where its chip was last laid out, and its
 /// `Search projects` field.
@@ -78,6 +86,9 @@ pub struct HomeMain {
     /// shows it when `/beacons/home` offers it; the port has no such feed yet, so it starts
     /// hidden (flows.md Home rows 5 and 6) and dismissal lasts for the session only.
     pub beacon: bool,
+    /// Windows sandbox setup is needed and in progress.
+    pub windows_sandbox_setup_needed: bool,
+    pub windows_sandbox_setup_pending: bool,
     /// The ChatGPT or Work headline; `None` shows the Codex hero.
     pub headline: Option<&'static str>,
 }
@@ -90,6 +101,8 @@ impl HomeMain {
             location: LocationMenu::default(),
             projects: ProjectMenu::new(cx),
             beacon: false,
+            windows_sandbox_setup_needed: false,
+            windows_sandbox_setup_pending: false,
             headline: None,
         }
     }
@@ -103,7 +116,7 @@ impl HomeMain {
 
     /// Follows the sidebar's mode (a [`crate::screens::sidebar::MODES`] index).
     pub fn set_mode(&mut self, mode: usize, cx: &mut Context<Self>) {
-        let (headline, placeholder) = match crate::screens::sidebar::MODES[mode].0 {
+        let (headline, placeholder) = match crate::screens::sidebar::MODES[mode] {
             "ChatGPT" => {
                 // `Math.random()` in the original; the clock is random enough for a greeting.
                 let nanos = std::time::SystemTime::now()
@@ -235,6 +248,89 @@ impl HomeMain {
                 .child(icon("close", 16., t.text_tertiary))
                 .on_click(cx.listener(|this, _, _, cx| this.set_beacon(false, cx))),
             )
+    }
+    fn windows_sandbox_banner(
+        &self,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let elevated_focus = focus::handle("home-windows-sandbox-elevated", 0, window, cx);
+        let unelevated_focus = focus::handle("home-windows-sandbox-unelevated", 0, window, cx);
+        let actions = if self.windows_sandbox_setup_pending {
+            div().child(text("Setting up…", 13., 18., 400., t.text_tertiary))
+        } else {
+            div().flex().gap(px(8.)).children([
+                focus::ring(
+                    div().id("home-windows-sandbox-elevated"),
+                    &elevated_focus,
+                    Theme::RADIUS_FULL,
+                    px(2.),
+                    cx,
+                )
+                .role(gpui::Role::Button)
+                .aria_label("Set up Windows sandbox as administrator")
+                .h(px(32.))
+                .px(px(12.))
+                .flex()
+                .items_center()
+                .rounded_full()
+                .bg(t.composer_primary)
+                .child(text(
+                    "Run as administrator",
+                    13.,
+                    18.,
+                    400.,
+                    t.text_composer_primary,
+                ))
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(SetupWindowsSandboxElevated), cx)
+                }),
+                focus::ring(
+                    div().id("home-windows-sandbox-unelevated"),
+                    &unelevated_focus,
+                    Theme::RADIUS_FULL,
+                    px(2.),
+                    cx,
+                )
+                .role(gpui::Role::Button)
+                .aria_label("Set up Windows sandbox without administrator access")
+                .h(px(32.))
+                .px(px(12.))
+                .flex()
+                .items_center()
+                .rounded_full()
+                .bg(t.text_alpha_5)
+                .child(text("Without administrator", 13., 18., 400., t.text))
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(SetupWindowsSandboxUnelevated), cx)
+                }),
+            ])
+        };
+        div()
+            .h(px(74.))
+            .mb(px(8.))
+            .px(px(16.))
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .rounded(px(16.))
+            .border_1()
+            .border_color(t.border)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(text("Set up Windows sandbox", 14., 20., 500., t.text))
+                    .child(text(
+                        "Choose how to configure the protected environment",
+                        13.,
+                        18.,
+                        400.,
+                        t.text_tertiary,
+                    )),
+            )
+            .child(actions)
     }
 }
 
@@ -912,6 +1008,9 @@ impl Render for HomeMain {
             .child(div().h(px(8.)))
             .when(self.beacon, |column| {
                 column.child(self.beacon(&t, window, cx))
+            })
+            .when(self.windows_sandbox_setup_needed, |column| {
+                column.child(self.windows_sandbox_banner(&t, window, cx))
             })
             // The Chat and Work homes have no `Work in` row above the composer.
             .when(!chat, |column| {
