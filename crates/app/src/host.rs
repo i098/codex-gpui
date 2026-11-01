@@ -703,8 +703,8 @@ impl LocalHost {
             #[cfg(target_os = "macos")]
             app_tools: Mutex::new(None),
             opener: "/usr/bin/open".into(),
-            host_settings_path: PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                .join("Library/Application Support/codex-gpui/host-settings.json"),
+            host_settings_path: crate::user_data::user_data_dir("codex-gpui")
+                .join("host-settings.json"),
             settings: None,
             context_files: context_files::ContextFiles::default(),
         }
