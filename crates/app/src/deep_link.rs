@@ -447,7 +447,7 @@ impl Root {
                 return;
             }
             Link::Browser(url) => {
-                self.open_browser_tab(Some(url), window, cx);
+                self.open_browser_tab(Some(url.clone()), window, cx);
                 return;
             }
             Link::Space => {
