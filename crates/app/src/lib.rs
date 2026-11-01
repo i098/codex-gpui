@@ -1054,23 +1054,20 @@ impl Root {
             .unwrap_or(true)
         });
         cx.on_system_notification_response(move |response, cx| {
-            let Some(id) = response
-                .tag
-                .strip_prefix("automation:")
-                .filter(|id| !id.is_empty())
-            else {
+            let Some((host_id, id)) = notifications::destination(&response.tag) else {
                 return;
             };
+            cx.dismiss_system_notification(&response.tag);
             for handle in cx.windows() {
                 let Some(handle) = handle.downcast::<Root>() else {
                     continue;
                 };
                 let opened = handle
                     .update(cx, |root, window, cx| {
-                        if root.host_id != "local" {
+                        if root.host_id != host_id {
                             return false;
                         }
-                        root.navigate(Route::Thread(id.to_owned()), window, cx);
+                        root.navigate(Route::Thread(id.clone()), window, cx);
                         window.activate_window();
                         true
                     })
@@ -6748,6 +6745,7 @@ impl Root {
                     return;
                 }
                 if self.approval_card(&pending, cx).is_some() {
+                    self.approval_notification(&pending, cx);
                     self.approvals.push(pending);
                     self.show_approval(cx);
                 } else {
