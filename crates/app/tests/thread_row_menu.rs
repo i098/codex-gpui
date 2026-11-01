@@ -233,7 +233,7 @@ fn copy_conversation_path_uses_the_thread_read_path() -> Result<()> {
     read[1]["msg"]["result"]["thread"]["path"] = PATH.into();
     lines.extend(read);
 
-    let mut fx = Fx::scripted(lines)?;
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     fx.keys("cmd-1")?;
     fx.wait_thread(GREETING)?;
     fx.keys("cmd-alt-shift-c")?;
