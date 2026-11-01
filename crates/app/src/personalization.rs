@@ -195,6 +195,60 @@ pub fn reset_memory(bridge: &Bridge) -> Result<()> {
     request(bridge, "memory/reset", Value::Null).map(|_| ())
 }
 
+impl Root {
+    pub(super) fn thread_memory_command(
+        &mut self,
+        command: &ui::composer::SlashCommand,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let crate::Route::Thread(id) = self.state.route.clone() else {
+            return;
+        };
+        let (method, params, mode) = match command {
+            ui::composer::SlashCommand::MemoryMode(mode) => (
+                "thread/memoryMode/set",
+                json!({"threadId": id, "mode": mode}),
+                Some(*mode),
+            ),
+            ui::composer::SlashCommand::MemoryStatus => ("memory/status", json!({}), None),
+            _ => return,
+        };
+        let resume = mode.is_some() && !self.loaded.contains(&id);
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let result = async {
+                crate::resume_if(resume, &bridge, &this, &id, cx).await?;
+                bridge.request::<_, Value>(method, params).await
+            }
+            .await;
+            this.update(cx, |this, cx| {
+                if this.state.route != crate::Route::Thread(id.clone()) {
+                    return;
+                }
+                match &result {
+                    Ok(value) => {
+                        let message = if let Some(mode) = mode {
+                            format!("Thread memory {mode}")
+                        } else {
+                            format!(
+                                "Memory ready: {}; consolidated threads: {}",
+                                value["v2Ready"], value["v2ConsolidatedThreads"]
+                            )
+                        };
+                        this.toast(Toast::info(message), cx);
+                    }
+                    Err(error) => {
+                        this.toast(Toast::danger(format!("Memory request failed: {error}")), cx)
+                    }
+                }
+            })?;
+            result.map(drop)
+        });
+        crate::log_err(task, cx);
+    }
+}
+
 const WRITING_APP: &str = "connector_openai_write_like_me";
 
 pub struct WritingWrite {
