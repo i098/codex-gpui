@@ -14,7 +14,7 @@ fn crash_path() -> PathBuf {
 }
 
 /// Saves a panic report for the next launch; called from the process panic hook.
-pub(crate) fn save(report: &str) {
+pub fn save(report: &str) {
     let _guard = CRASH_LOCK.lock().unwrap();
     if let Err(error) = fs::write(crash_path(), report) {
         std::eprintln!("codex-gpui: cannot save the crash report: {error}");
@@ -33,7 +33,7 @@ pub(crate) fn take() -> Option<String> {
 }
 
 /// The crash report text: a timestamped panic line plus the captured backtrace.
-pub(crate) fn report(info: &std::panic::PanicHookInfo) -> String {
+pub fn report(info: &std::panic::PanicHookInfo) -> String {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs())
