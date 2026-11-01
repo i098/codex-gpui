@@ -160,15 +160,24 @@ fn keyboard_model_selection_and_reset_preserve_the_draft() -> Result<()> {
     fx.click(fx.at("home", "GPT-6 Astra")?)?;
     // `Select model`, `Speed` (its submenu: Standard, Fast, Ultrafast), `Reset`.
     fx.keys("down down right down enter")?;
-    ensure!(
+    let tier = |fx: &Fx| {
         fx.composer()
-            .read_with(&fx.cx, |composer, _| composer.fast_mode()),
+            .read_with(&fx.cx, |composer, _| composer.service_tier())
+    };
+    ensure!(
+        tier(&fx) == Some("priority"),
         "Enter on Fast did not enable fast mode"
     );
-    fx.keys("right enter")?;
+    fx.keys("right down down enter")?;
     ensure!(
-        !fx.composer()
-            .read_with(&fx.cx, |composer, _| composer.fast_mode()),
+        tier(&fx) == Some("ultrafast"),
+        "Enter on Ultrafast did not pick the ultrafast tier"
+    );
+    fx.keys("right")?;
+    fx.capture_evidence("CGX_ULTRAFAST_EVIDENCE", "ultrafast-checked")?;
+    fx.keys("enter")?;
+    ensure!(
+        tier(&fx).is_none(),
         "Enter on Standard did not disable fast mode"
     );
 

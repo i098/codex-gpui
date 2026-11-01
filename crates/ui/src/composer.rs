@@ -518,8 +518,8 @@ pub struct Submission {
     pub model: String,
     pub effort: Option<String>,
     pub permission: Permission,
-    /// Fast mode (bolt toggle in the model picker).
-    pub fast: bool,
+    /// `turn/start`'s `serviceTier` from the `Speed` submenu: `None` for Standard.
+    pub service_tier: Option<&'static str>,
     /// Plan mode (`collaborationMode.mode` `plan`).
     pub plan: bool,
     /// `composer.submitInBackground`: create the chat and start its turn without opening it.
@@ -741,6 +741,8 @@ const SPEEDS: [(&str, &str); 3] = [
         "The fastest available responses for latency-sensitive work.",
     ),
 ];
+/// `turn/start`'s `serviceTier` per [`SPEEDS`] item, as the original's `xjt`/`Cjt`.
+const SERVICE_TIERS: [Option<&str>; 3] = [None, Some("priority"), Some("ultrafast")];
 
 type SubmitHandler = Rc<dyn Fn(&Submission, &mut Window, &mut App)>;
 type CancelEditHandler = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -849,7 +851,8 @@ pub struct Composer {
     model: usize,
     effort: Option<String>,
     default_selection: (usize, Option<String>),
-    fast: bool,
+    /// Index into [`SPEEDS`] and [`SERVICE_TIERS`].
+    speed: usize,
     /// Plan mode: the next turns run in the `plan` collaboration mode.
     plan: bool,
     /// `collaborationMode/list` masks: each names a `mode` and may preset `model` and
@@ -988,7 +991,7 @@ impl Composer {
             model: 0,
             effort: Some("medium".into()),
             default_selection: (0, Some("medium".into())),
-            fast: false,
+            speed: 0,
             plan: false,
             collaboration_modes: Vec::new(),
             permission: Permission::Custom,
@@ -1336,7 +1339,11 @@ impl Composer {
         self.default_selection = (self.model, self.effort.clone());
         self.permission = Permission::from_config(config);
         self.queue_mode = config["desktop"]["followUpQueueMode"] == "queue";
-        self.fast = config["service_tier"] == "priority";
+        self.speed = match config["service_tier"].as_str() {
+            Some("priority" | "fast") => 1,
+            Some("ultrafast") => 2,
+            _ => 0,
+        };
         if self.menu == Some(Menu::Models) {
             self.menu_focus.prepare(self.models.len(), cx);
         }
@@ -2027,7 +2034,7 @@ impl Composer {
             model: self.mode_settings().0,
             effort: self.mode_settings().1,
             permission: self.permission.clone(),
-            fast: self.fast,
+            service_tier: SERVICE_TIERS[self.speed],
             plan: self.plan,
             background,
         }
@@ -2269,8 +2276,7 @@ impl Composer {
 
     /// A speed picked in the submenu closes it and focuses the `Speed` trigger.
     pub(super) fn pick_speed(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        // ponytail: Ultrafast shares the `fast` flag; add a tier when `turn/start` sends it.
-        self.fast = index > 0;
+        self.speed = index;
         self.close_speed();
         self.menu_focus.items[SPEED_ITEM].focus(window, cx);
         cx.notify();
@@ -2439,8 +2445,9 @@ impl Composer {
         self.stop_armed.is_some()
     }
 
-    pub fn fast_mode(&self) -> bool {
-        self.fast
+    /// `turn/start`'s `serviceTier` for the picked speed: `None` for Standard.
+    pub fn service_tier(&self) -> Option<&'static str> {
+        SERVICE_TIERS[self.speed]
     }
 
     /// The server's `collaborationMode/list` answer; its presets drive the turn settings and

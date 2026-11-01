@@ -602,11 +602,17 @@ impl Composer {
                 self.toggle_plan(cx);
                 return;
             }
+            "ultrafast" => {
+                self.finish_command(window, cx);
+                self.speed = if self.speed == 2 { 0 } else { 2 };
+                cx.notify();
+                return;
+            }
             _ => return,
         };
         self.finish_command(window, cx);
         if matches!(action, SlashCommand::Fast) {
-            self.fast = !self.fast;
+            self.speed = usize::from(self.speed == 0);
         }
         cx.emit(action);
         cx.notify();
