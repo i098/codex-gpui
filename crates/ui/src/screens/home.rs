@@ -79,7 +79,7 @@ impl HomeMain {
 
     /// Follows the sidebar's mode (a [`crate::screens::sidebar::MODES`] index).
     pub fn set_mode(&mut self, mode: usize, cx: &mut Context<Self>) {
-        let (headline, placeholder) = match crate::screens::sidebar::MODES[mode].0 {
+        let (headline, placeholder) = match crate::screens::sidebar::MODES[mode] {
             "ChatGPT" => {
                 // `Math.random()` in the original; the clock is random enough for a greeting.
                 let nanos = std::time::SystemTime::now()

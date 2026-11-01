@@ -91,6 +91,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Fold a running turn's interim messages under `Working for` once its final answer starts, as the original does.
 - Show `Mark as unread` in the Search palette only while a chat is open, as the original does; Home no longer lists it.
 - Show tool activity labels in full when they fit, as the original does, instead of `Read math....`.
+- Show the original's two rows in the `Codex ⌄` mode menu, `ChatGPT` and `Codex` with their descriptions and no shortcut text, and fill the trigger while the menu is open.
 - Keep the macOS window buttons centred in the top bar at every zoom level, as the original does; they stayed at the 100% position.
 - Use the original icons in the composer `+` menu: the gray paperclip, folder, target, light bulb and green scribble.
 - Show reads of a skill's `SKILL.md` as `Loaded a tool` or `Loaded tools` with the wrench icon in the activity group summary, as the original does.
