@@ -430,6 +430,12 @@ Comment owners call `finish_dictation` and wait for `Completion::Succeeded` befo
 | 18 | Usage limit | error | Usage limit banner. | `usageLimitExceeded` shows the divider and the advice for the plan reported by `account/read`. Unknown plans use the retry-later fallback. Source details remain available, and completion retains terminal errors. | PASS (`thread_recovery`: account-plan advice and source-error retention) |
 | 19 | Focus ring on cards | focus ring | 2 px ring (`focus-visible:ring-2 ring-offset-0`) on the diff card's `Undo` and `View changes`. | Both buttons are tab stops and draw the shared 2 px `#3a83f7` ring only under keyboard focus; a pointer move keeps it. No original capture of the focused card exists, so its pixels are not compared. | PASS (`thread_card_focus_ring`; no pixel reference) |
 | 20 | Resize | resize | The side panel yields width before the chat column. | `panel_width` keeps 320 px for the chat; no flow checks the 3 widths with the panel open. | FAIL (no flow; `crates/ui/src/diff.rs` `panel_width` assumes the sidebar open) |
+| 21 | Desktop notifications | event | Alert on completion, approval, or questions while unfocused. | `turn/completed` follows the saved completion mode. Supported approval and question requests follow their alert switches and require an inactive window. Delivery rechecks macOS permission, uses the saved sound, and keeps focus unchanged. A click opens the exact host and thread. Automation policy remains separate. | PASS (`chat_notifications`, five notification unit tests, and live app-server proof; no visible OS capture) |
+
+The live headless `Root` proof used codex-cli `0.164.0-alpha.11.1` with `gpt-6.1-sol`.
+`thread/start` and `turn/start` produced completion, command approval, and user-input notifications through the real app-server.
+All three alerts retained the inactive window; the regression also checks disabled preferences, duplicate requests, and click navigation.
+Visible Notification Center captures were skipped to keep the Mac in the background.
 
 TH-123/124/125 add permission, user-input, standard MCP elicitation, and supported dynamic-tool forms to the existing request queue.
 The request editor retains drafts by thread and request while switching chats or recovering from a failed cancellation.
@@ -499,7 +505,9 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 | 6b | `/fork` then `Fork into new worktree` | shortcut | Fork in an isolated checkout. | Reuses `hotkey::prepare_start`, passes the new workspace to `thread/fork.cwd`, and records the fork as the checkout owner. A refusal keeps the source chat and removes the unused checkout. The checkout uses the source's current commit, including a selected project subdirectory. | PASS (`slash_commands::worktree_fork_keeps_the_source_transcript_and_cleans_up_a_refusal`, macOS); live `thread/fork.cwd` and inclusive `lastTurnId` checks preserve the source transcript. |
 | 6c | `/fast` then Enter; Settings > Configuration `Available reasoning efforts`, `Open config.toml` | shortcut | `/fast` toggles Fast; the efforts menu lists the `model/list` catalog's optional efforts; Open config.toml opens the user layer. | `/fast` writes `service_tier = "priority"`, a second `/fast` removes it (`config/batchWrite`). The menu shows `Max`, `Ultra`, and `Persistent` only when a catalog model supports them, saves `enabled-reasoning-efforts`, and the composer's effort choices follow it (`low` to `xhigh` always stay). The page reads `config/read` with `includeLayers` on the window's host: a row that another layer sets names that layer, a disabled layer shows its reason, and Open config.toml opens the user layer's file. A remote host's path or a missing user layer shows a toast; a failed read shows `Unable to read config.toml`. | PASS (`settings_actions::fast_toggles_the_priority_service_tier`, `settings_actions::configuration_efforts_and_open_config_follow_the_host`) |
 | 6d | `/mcp` and slash skill rows | shortcut | Show MCP status or insert a skill invocation. | `/mcp` opens the existing MCP settings (`mcpServerStatus/list`). Skill rows insert the same linked `$name` chip as mentions. `skills/changed` calls `skills/list` with `forceReload`, then replaces cached and open-composer skills. | PASS (`mcp_skills::mcp_slash_opens_existing_settings_without_sending_the_draft`, `mcp_skills::slash_skill_inserts_the_same_link_as_a_mention`, `mcp_skills::changed_skills_refresh_open_composers_and_remove_disabled_skills`) |
-| 6e | `/` then Enter on `Code review` | shortcut | The CLI's `/review` (`review/start`); the original's submenu: `Review uncommitted changes`, then `Review against a base branch` with the branches. | Enter turns the token into `/review-mode ` and reads the chat's local branches (newest first, `main` or `master` first, current branch left out) and 50 latest commits (host `git-review-targets`; `Loading branches…`, `Unable to load branches`). Rows: `Review uncommitted changes` (`uncommittedChanges`), the branches under `Review against a base branch` (`baseBranch`), and the commits under `Review a commit` (`commit` with `sha` and `title`). A pick sends `review/start` inline on the open chat (resumed first). The chat shows the reply's hint (`current changes`), not the forwarded review prompt. The review runs as a sub-turn (`rootTurnId`), so Stop sends the sub-turn id. The row hides while a turn runs, as the CLI does. Escape sends nothing; a refusal shows `Failed to start code review`. | PASS (`review_start`) |
+| 6e | `/goal` in a chat | shortcut | Set, inspect, pause, resume, or clear the persistent goal. | Type an objective after `/goal ` and choose Set goal. Other rows call `thread/goal/get`, `thread/goal/set`, and `thread/goal/clear` with user origin. Server notifications update the displayed objective and status. Escape preserves the draft. | Native `goals` regression and live 0.164.0-alpha.11.1 RPC proof pass. Live UI proof is blocked by thread history loading: `list_turns is not supported yet`. |
+| 6f | `/memory` in a chat | shortcut | Choose memory behavior for this thread. | Enable and Disable call `thread/memoryMode/set`; Memory status calls `memory/status`. These actions do not write global memory configuration. Errors remain visible. | Native `goals` regression and live 0.164.0-alpha.11.1 RPC proof pass. Live UI proof is blocked by thread history loading: `list_turns is not supported yet`. |
+| 6g | `/` then Enter on `Code review` | shortcut | The CLI's `/review` (`review/start`); the original's submenu: `Review uncommitted changes`, then `Review against a base branch` with the branches. | Enter turns the token into `/review-mode ` and reads the chat's local branches (newest first, `main` or `master` first, current branch left out) and 50 latest commits (host `git-review-targets`; `Loading branches…`, `Unable to load branches`). Rows: `Review uncommitted changes` (`uncommittedChanges`), the branches under `Review against a base branch` (`baseBranch`), and the commits under `Review a commit` (`commit` with `sha` and `title`). A pick sends `review/start` inline on the open chat (resumed first). The chat shows the reply's hint (`current changes`), not the forwarded review prompt. The review runs as a sub-turn (`rootTurnId`), so Stop sends the sub-turn id. The row hides while a turn runs, as the CLI does. Escape sends nothing; a refusal shows `Failed to start code review`. | PASS (`review_start`) |
 | 7 | Paste large text | click | `Pasted text.txt` chip. | Clipboard text of 5,000 UTF-16 units or more is saved as `Pasted text.txt` and shown as a chip. | PASS (`attach::tests::pasted_text_keeps_its_host_after_another_window_becomes_active`) |
 | 8 | Drag file over composer | hover | `Drop to attach`. | A file dragged over the page column shows the `Drop to attach` overlay and the drag-active card; it clears when the file leaves, and a drop attaches the files. | PASS (`s017b::file_drag_over_the_composer_matches_the_original`, macOS) |
 | 8a | Selected-host image attachment | action | CLI image input uses a path on the selected host. | Read image previews through that window's `fs/readFile`. Save pasted images with `fs/createDirectory` and `fs/writeFile` under its reported Codex home. Send host paths as `turn/start` `localImage` inputs. Other active windows cannot redirect these requests. A missing image blocks Send and keeps the draft. | PASS (`host_images`, native live app-server 0.164.0-alpha.11.1: `Red`) |
@@ -1466,10 +1474,10 @@ The [strict static report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/f
 
 `Choose project`, the selected Home title, `⌘O`, `⌥⇧⌘O`, File > Open Folder, and the `Open folder` command use GPUI's folder picker.
 The picker accepts one folder and does not change the selection or the current chat when canceled.
-The local host adds the folder to the existing `local-projects` and `project-order` records.
-It retains other projects and unrelated values in `.codex-global-state.json`.
-Selecting an existing root does not add a duplicate project.
-The sidebar uses the same host project rows as the marker flow.
+With an app-server connection, the local host imports the folder through `project/import`.
+The sidebar reads paginated `project/list` results from the window's host.
+`project/changed` and `thread/project/updated` refresh the sidebar and chats.
+Hosts without an app-server connection retain the local project store.
 
 The app saves the selected new-chat root in `state.json`.
 The Home title, project chip, and file search use that selection.
@@ -1510,13 +1518,13 @@ The original emoji and icon browser is not recorded, so the native picker is a g
 `Add` and `Add folder` open GPUI's multi-folder picker; new folders go after the current ones and duplicates are skipped.
 The first folder is primary; `Make primary` moves a folder first, and the close button removes it.
 The device menu lists this computer and connected remotes; `Add remote` opens Settings > Connections at SSH.
-Remote rows are disabled because the native app has no remote-project store yet.
-
-`Create project` asks `thread/list` for chats in the chosen folders, then calls `Host::create_project`.
-The local host first pins each such chat that has no assignment to its current single owner project.
-It then reuses a project with the same roots or adds one, saves the appearance, puts the project first in `project-order` and sets `selected-project`.
-Without folders, it makes a `name` folder (or `name 2`, …) under `~/Documents/ChatGPT`.
-A failure shows `Failed to create project`, keeps the form open with its input, and removes a folder it made.
+Choose a connected remote and enter its folder path to create a project on that host.
+The app-server handles project creation, import, updates, ordering, and removal.
+The sidebar project menu provides `Edit`, `Move up`, and `Remove`.
+Editing keeps the project on its host and retains metadata that the user did not change.
+Removing a project does not delete its files.
+Without local folders, creation makes a folder under `~/Documents/ChatGPT`.
+A failure shows the error and keeps the form open with its input.
 `crates/app/tests/project_picker.rs` checks root order, appearance, ownership pins, reuse, default folders and failure.
 `crates/ui/src/screens/new_project.rs` checks source order and the stored appearance.
 
@@ -1696,3 +1704,13 @@ The recap prompt asks the model not to use tools; the existing permissions remai
 Live protocol evidence uses Codex CLI `0.164.0-alpha.11.1`.
 The synthetic conversation retained both turns after the recap.
 The real server accepted `feedback/save` and `feedback/upload` with logs excluded.
+
+## Pull request chat attachments (PROTO-18)
+
+Open `Link a chat` in the pull request detail pane to read the current attachment owners.
+Each chat shows `Link` or `Unlink` according to that result.
+The app uses `thread/attachment/add` and `thread/attachment/remove` with the canonical pull request identity.
+Worktree settings show attachment owners alongside chats whose working directory lies in the worktree.
+Worktree deletion checks both groups and refuses deletion while an owner chat is pinned.
+Servers without attachment-owner support retain the working-directory list.
+
