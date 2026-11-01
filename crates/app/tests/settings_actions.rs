@@ -208,6 +208,28 @@ fn host_value(fx: &Fx, key: &str) -> Value {
     })
 }
 
+/// The theme picker holds `ChatGPT` and a `Codex themes` flyout: Down stops at the flyout row,
+/// Right opens it on its first theme (`Absolutely`), and Enter picks that theme.
+#[test]
+fn appearance_codex_themes_flyout() -> Result<()> {
+    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
+    fx.cx
+        .update_window(fx.window, |_, window, _| window.activate_window())?;
+    fx.keys("cmd-,")?;
+    fx.click((200., 118.))?;
+    fx.type_text("Appearance")?;
+    press(&mut fx, "tab enter")?;
+    // Mode's three segments, Import and Copy precede the picker.
+    press(
+        &mut fx,
+        "tab tab tab tab tab tab tab enter down down right enter",
+    )?;
+    fx.wait("picked theme", |fx| {
+        host_value(fx, "appearanceDarkCodeThemeId") == "absolutely"
+    })?;
+    Ok(())
+}
+
 /// Copy theme, Import theme (a Dracula share string saves its theme and code theme together),
 /// the Advanced rows, and Reset to default, all from the keyboard.
 #[test]

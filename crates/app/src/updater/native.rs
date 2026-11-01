@@ -1,5 +1,5 @@
 //! Sparkle 2.9 user-driver messages stay on the main thread.
-//! Sparkle owns archive verification, privileged installation, and relaunch.
+//! Sparkle checks the signed appcast; a small background script installs its newer release.
 use anyhow::{Context as _, Result, ensure};
 use async_channel::{Receiver, Sender};
 use block2::{DynBlock, RcBlock};
@@ -8,29 +8,27 @@ use objc2::{
     rc::{Allocated, Retained},
     runtime::{AnyClass, AnyObject},
 };
-use objc2_foundation::{MainThreadMarker, NSBundle, NSError, NSObject, NSObjectProtocol, NSString};
+use objc2_foundation::{
+    MainThreadMarker, NSBundle, NSError, NSObject, NSObjectProtocol, NSProcessInfo, NSString,
+};
 use std::cell::{Cell, RefCell};
 use ui::updater::Status;
 
 const SKIP: isize = 0;
-const INSTALL: isize = 1;
-const DISMISS: isize = 2;
-const STAGE_INSTALLING: isize = 2;
-
-struct Installation {
-    reply: RcBlock<dyn Fn(isize)>,
-    cancel_choice: isize,
-}
+/// Sparkle checks in the background on this interval when automatic checks are on.
+const CHECK_INTERVAL_SECONDS: f64 = 3600.;
 
 struct DriverState {
     events: Sender<Status>,
     standard: Retained<AnyObject>,
-    install: RefCell<Option<Installation>>,
+    archive_url: RefCell<Option<String>>,
     cancel: RefCell<Option<RcBlock<dyn Fn()>>>,
     blocked: Cell<bool>,
     expected: Cell<u64>,
     received: Cell<u64>,
     status: Cell<Status>,
+    feed: RefCell<Option<Retained<NSString>>>,
+    bundle_path: String,
 }
 
 impl DriverState {
@@ -44,10 +42,23 @@ impl DriverState {
         if self.blocked.get() {
             return;
         }
-        let reply = self.install.borrow_mut().take();
-        if let Some(reply) = reply {
-            self.emit(Status::Installing);
-            reply.reply.call((INSTALL,));
+        let Some(url) = self.archive_url.borrow_mut().take() else {
+            return;
+        };
+        self.emit(Status::Installing);
+        if let Err(error) = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(INSTALL_SCRIPT)
+            .arg("codex-gpui-update")
+            .arg(url)
+            .arg(&self.bundle_path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            eprintln!("codex-gpui: cannot start update installer: {error}");
+            self.emit(Status::Ready);
         }
     }
 
@@ -56,17 +67,16 @@ impl DriverState {
         if !managed {
             return;
         }
+        self.archive_url.borrow_mut().take();
         let cancel = self.cancel.borrow_mut().take();
         if let Some(cancel) = cancel {
             cancel.call(());
         }
-        let install = self.install.borrow_mut().take();
-        if let Some(install) = install {
-            install.reply.call((install.cancel_choice,));
-        }
         self.emit(Status::Idle);
     }
 }
+
+const INSTALL_SCRIPT: &str = include_str!("../../../../tools/install-update-mac.sh");
 
 define_class!(
     #[unsafe(super = NSObject)]
@@ -83,6 +93,11 @@ define_class!(
             !self.ivars().blocked.get()
         }
 
+        #[unsafe(method_id(feedURLStringForUpdater:))]
+        fn feed_url(&self, _: &AnyObject) -> Option<Retained<NSString>> {
+            self.ivars().feed.borrow().clone()
+        }
+
         #[unsafe(method(showUpdatePermissionRequest:reply:))]
         fn permission(&self, request: &AnyObject, reply: &DynBlock<dyn Fn(*mut AnyObject)>) {
             unsafe { let _: () = msg_send![&*self.ivars().standard, showUpdatePermissionRequest: request, reply: reply]; }
@@ -97,9 +112,8 @@ define_class!(
 
         #[unsafe(method(showUpdateFoundWithAppcastItem:state:reply:))]
         fn found(&self, item: &AnyObject, state: &AnyObject, reply: &DynBlock<dyn Fn(isize)>) {
-            let stage: isize = unsafe { msg_send![state, stage] };
             if self.ivars().blocked.get() {
-                reply.call((if stage == STAGE_INSTALLING { SKIP } else { DISMISS },));
+                reply.call((SKIP,));
                 return;
             }
             unsafe {
@@ -108,13 +122,12 @@ define_class!(
                     let _: () = msg_send![&*self.ivars().standard, showUpdateFoundWithAppcastItem: item, state: state, reply: reply];
                     return;
                 }
-                if stage == STAGE_INSTALLING {
-                    *self.ivars().install.borrow_mut() = Some(Installation { reply: reply.copy(), cancel_choice: SKIP });
-                    self.emit(Status::Ready);
-                } else {
-                    self.dismiss_standard();
-                    reply.call((INSTALL,));
-                }
+                let url: Retained<AnyObject> = msg_send![item, fileURL];
+                let url: Retained<NSString> = msg_send![&*url, absoluteString];
+                *self.ivars().archive_url.borrow_mut() = Some(url.to_string());
+                self.dismiss_standard();
+                self.ivars().install();
+                reply.call((SKIP,));
             }
         }
 
@@ -137,7 +150,7 @@ define_class!(
         #[unsafe(method(showUpdaterError:acknowledgement:))]
         fn error(&self, error: &NSError, reply: &DynBlock<dyn Fn()>) {
             eprintln!("codex-gpui: update failed: {error:?}");
-            self.ivars().install.borrow_mut().take();
+            self.ivars().archive_url.borrow_mut().take();
             self.emit(Status::Idle);
             unsafe { let _: () = msg_send![&*self.ivars().standard, showUpdaterError: error, acknowledgement: reply]; }
         }
@@ -174,12 +187,12 @@ define_class!(
 
         #[unsafe(method(showReadyToInstallAndRelaunch:))]
         fn ready(&self, reply: &DynBlock<dyn Fn(isize)>) {
-            if self.ivars().blocked.get() {
-                reply.call((SKIP,));
-                return;
-            }
-            *self.ivars().install.borrow_mut() = Some(Installation { reply: reply.copy(), cancel_choice: SKIP });
-            self.emit(Status::Ready);
+            reply.call((SKIP,));
+            self.emit(if self.ivars().archive_url.borrow().is_some() {
+                Status::Ready
+            } else {
+                Status::Idle
+            });
         }
 
         #[unsafe(method(showInstallingUpdateWithApplicationTerminated:retryTerminatingApplication:))]
@@ -196,7 +209,7 @@ define_class!(
 
         #[unsafe(method(dismissUpdateInstallation))]
         fn dismiss(&self) {
-            self.ivars().install.borrow_mut().take();
+            self.ivars().archive_url.borrow_mut().take();
             self.ivars().cancel.borrow_mut().take();
             self.dismiss_standard();
             self.emit(Status::Idle);
@@ -234,6 +247,7 @@ impl UserDriver {
 pub(super) struct Backend {
     updater: Retained<AnyObject>,
     driver: Retained<UserDriver>,
+    base: String,
 }
 
 impl Backend {
@@ -266,6 +280,36 @@ impl Backend {
     pub(super) fn set_managed(&self, managed: bool) {
         self.driver.ivars().set_managed(managed);
     }
+
+    /// The original checks once in the background at start when automatic checks are on.
+    pub(super) fn check_at_start(&self) {
+        if self.automatic() {
+            unsafe {
+                let _: () = msg_send![&*self.updater, checkForUpdatesInBackground];
+            }
+        }
+    }
+
+    /// Sets the appcast URL that Sparkle reads on its next check.
+    pub(super) fn configure(&self, beta: bool, plan: &str, installation: &str) {
+        let version = bundle_string("CFBundleShortVersionString")
+            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_owned());
+        let os = NSProcessInfo::processInfo().operatingSystemVersion();
+        let os = format!(
+            "{}.{}.{}",
+            os.majorVersion, os.minorVersion, os.patchVersion
+        );
+        let feed = super::feed_url(
+            &self.base,
+            installation,
+            std::env::consts::ARCH,
+            &version,
+            beta,
+            &os,
+            plan,
+        );
+        *self.driver.ivars().feed.borrow_mut() = feed.as_deref().map(NSString::from_str);
+    }
 }
 
 fn bundle_string(key: &str) -> Option<String> {
@@ -277,7 +321,11 @@ fn bundle_string(key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-pub(super) fn start() -> Result<Option<(Backend, Receiver<Status>)>> {
+pub(super) fn start(
+    beta: bool,
+    plan: &str,
+    installation: &str,
+) -> Result<Option<(Backend, Receiver<Status>)>> {
     let (Some(feed), Some(key)) = (bundle_string("SUFeedURL"), bundle_string("SUPublicEDKey"))
     else {
         return Ok(None);
@@ -301,12 +349,14 @@ pub(super) fn start() -> Result<Option<(Backend, Receiver<Status>)>> {
     let driver = UserDriver::alloc(mtm).set_ivars(DriverState {
         events,
         standard,
-        install: RefCell::new(None),
+        archive_url: RefCell::new(None),
         cancel: RefCell::new(None),
         blocked: Cell::new(false),
         expected: Cell::new(0),
         received: Cell::new(0),
         status: Cell::new(Status::Idle),
+        feed: RefCell::new(None),
+        bundle_path: bundle.bundlePath().to_string(),
     });
     let driver: Retained<UserDriver> = unsafe { msg_send![super(driver), init] };
     let class = AnyClass::get(c"SPUUpdater").context("Sparkle updater is unavailable")?;
@@ -314,8 +364,17 @@ pub(super) fn start() -> Result<Option<(Backend, Receiver<Status>)>> {
         let allocated: Allocated<AnyObject> = msg_send![class, alloc];
         msg_send![allocated, initWithHostBundle: &*bundle, applicationBundle: &*bundle, userDriver: &*driver, delegate: &*driver]
     };
+    let backend = Backend {
+        updater,
+        driver,
+        base: feed,
+    };
+    backend.configure(beta, plan, installation);
+    unsafe {
+        let _: () = msg_send![&*backend.updater, setUpdateCheckInterval: CHECK_INTERVAL_SECONDS];
+    }
     let mut error: Option<Retained<NSError>> = None;
-    let started: bool = unsafe { msg_send![&*updater, startUpdater: &mut error] };
+    let started: bool = unsafe { msg_send![&*backend.updater, startUpdater: &mut error] };
     ensure!(
         started,
         "{}",
@@ -323,7 +382,7 @@ pub(super) fn start() -> Result<Option<(Backend, Receiver<Status>)>> {
             .map(|error| error.localizedDescription().to_string())
             .unwrap_or_else(|| "Sparkle could not start".into())
     );
-    Ok(Some((Backend { updater, driver }, receiver)))
+    Ok(Some((backend, receiver)))
 }
 
 #[cfg(test)]
@@ -334,32 +393,28 @@ mod tests {
     #[test]
     fn managed_policy_cancels_a_staged_update_before_install() {
         let (events, receiver) = async_channel::unbounded();
-        let choice = Rc::new(Cell::new(None));
-        let reply_choice = choice.clone();
         let canceled = Rc::new(Cell::new(false));
         let cancel_called = canceled.clone();
         let standard = unsafe { msg_send![objc2::class!(NSObject), new] };
         let state = DriverState {
             events,
             standard,
-            install: RefCell::new(Some(Installation {
-                reply: RcBlock::new(move |value| reply_choice.set(Some(value))),
-                cancel_choice: SKIP,
-            })),
+            archive_url: RefCell::new(Some("https://example.test/update.zip".into())),
             cancel: RefCell::new(Some(RcBlock::new(move || cancel_called.set(true)))),
             blocked: Cell::new(false),
             expected: Cell::new(0),
             received: Cell::new(0),
             status: Cell::new(Status::Ready),
+            feed: RefCell::new(None),
+            bundle_path: "/Applications/Codex GPUI.app".into(),
         };
 
         state.set_managed(true);
         state.install();
 
         assert!(canceled.get());
-        assert_eq!(choice.get(), Some(SKIP));
         assert_eq!(receiver.try_recv().unwrap(), Status::Idle);
         assert!(receiver.try_recv().is_err());
-        assert!(state.install.borrow().is_none());
+        assert!(state.archive_url.borrow().is_none());
     }
 }
