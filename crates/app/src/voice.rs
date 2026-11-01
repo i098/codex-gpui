@@ -51,8 +51,13 @@ impl Root {
             VoiceAction::ImportWords(words) => Some(words.clone()),
             _ => None,
         };
+        let hotkey = match &action {
+            VoiceAction::SetHotkey(kind, _) => Some(*kind),
+            _ => None,
+        };
         state.pending = true;
         state.error = None;
+        state.hotkey_error = None;
         state.epoch += 1;
         let epoch = state.epoch;
         let previous = state.data.clone();
@@ -85,7 +90,10 @@ impl Root {
                         }
                         state.data = Arc::new(data);
                     }
-                    Err(error) => state.error = Some(error.to_string()),
+                    Err(error) => match hotkey {
+                        Some(kind) => state.hotkey_error = Some((kind, error.to_string())),
+                        None => state.error = Some(error.to_string()),
+                    },
                 }
                 cx.set_global(state);
             });
@@ -110,6 +118,20 @@ fn set_preference(state: &mut VoiceState, key: &str, value: Value, cx: &mut App)
     settings.write(key, value)?;
     Arc::make_mut(&mut state.data).values = Value::Object(settings.read_all().clone());
     Ok(())
+}
+
+/// The original's message for a hotkey service reply with `success: false`.
+fn hotkey_error(kind: ui::screens::settings::voice::Hotkey, result: &Value) -> String {
+    use ui::screens::settings::voice::Hotkey;
+    if kind != Hotkey::Voice && result["errorCode"] == "shortcut-conflict" {
+        return "Choose a different shortcut for single-tap dictation".into();
+    }
+    let fallback = match kind {
+        Hotkey::Voice => "Failed to update voice chat hotkey",
+        Hotkey::Hold => "Failed to update dictation shortcut",
+        Hotkey::Toggle => "Failed to update single-tap dictation shortcut",
+    };
+    result["error"].as_str().unwrap_or(fallback).to_owned()
 }
 
 fn apply(
@@ -146,9 +168,7 @@ fn apply(
             ensure!(
                 result["success"] != false,
                 "{}",
-                result["error"]
-                    .as_str()
-                    .unwrap_or("Failed to update voice chat hotkey")
+                hotkey_error(*kind, &result)
             );
             let key = match kind {
                 ui::screens::settings::voice::Hotkey::Voice => "voice",

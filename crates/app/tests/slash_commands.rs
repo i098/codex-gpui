@@ -8,7 +8,7 @@ mod common;
 
 use anyhow::{Context as _, Result, ensure};
 use app::host::{Host, LocalHost};
-use common::{Fx, GREETING, SUBTRACT, exchange, recorded_thread, script};
+use common::{Fx, GREETING, SUBTRACT, exchange, recorded_thread, refusal, script};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -160,6 +160,75 @@ fn rename_opens_the_dialog_and_returns_focus_to_the_composer() -> Result<()> {
             == json!({"threadId": GREETING, "name": "Greeting tweak"})
     );
     ensure!(fx.composer_focused()?, "Save returns focus to the composer");
+    Ok(())
+}
+
+/// Turns the `memories` feature on in every recorded `config/read`.
+fn memories_on(line: &mut Value) {
+    if let Some(config) = line.pointer_mut("/msg/result/config")
+        && config.is_object()
+    {
+        config["features"]["memories"] = true.into();
+    }
+}
+
+#[test]
+fn memories_sets_the_open_chats_memory_mode_and_restores_a_refusal() -> Result<()> {
+    let mut fx = captured(script(None, |_| {})?)?;
+    open_chat(&mut fx)?;
+    fx.type_text("/memo")?;
+    let found = rows(&fx)?;
+    ensure!(
+        !found.iter().any(|row| row == "Memories"),
+        "/memories needs the memories feature: {found:?}"
+    );
+
+    let mut lines = script(None, memories_on)?;
+    lines.extend(exchange("thread/memoryMode/set", json!({})));
+    lines.extend(refusal("thread/memoryMode/set", "refused"));
+    let mut fx = captured(lines)?;
+    open_chat(&mut fx)?;
+    fx.type_text("/memo")?;
+    let found = rows(&fx)?;
+    // Recorded skills (`… Memo`) match too; the command ranks first, so Enter picks it.
+    ensure!(
+        found.first().map(String::as_str) == Some("Memories"),
+        "{found:?}"
+    );
+    shot(&mut fx, "memories-slash")?;
+    fx.keys("enter")?;
+    let focused = |fx: &Fx| {
+        fx.read(|root, cx| {
+            root.dialog()
+                .map(|d| d.read(cx).focused_control().to_owned())
+        })
+    };
+    // Use memories is fixed on a started chat: focus starts on Generate memories.
+    ensure!(focused(&fx).as_deref() == Some("Generate memories"));
+    fx.keys("space")?;
+    fx.wait("memory mode write", |fx| {
+        requests(fx, "thread/memoryMode/set").is_ok_and(|r| r.len() == 1)
+    })?;
+    ensure!(
+        requests(&mut fx, "thread/memoryMode/set")?[0]["params"]
+            == json!({"threadId": GREETING, "mode": "disabled"})
+    );
+    shot(&mut fx, "memories")?;
+    fx.keys("space")?;
+    fx.wait("refused memory mode write", |fx| {
+        requests(fx, "thread/memoryMode/set").is_ok_and(|r| r.len() == 2)
+    })?;
+    ensure!(requests(&mut fx, "thread/memoryMode/set")?[1]["params"]["mode"] == "enabled");
+    // The refusal puts the switch back to off: the next press asks for `enabled` again.
+    fx.wait("restored switch", |fx| {
+        fx.read(|root, cx| {
+            root.dialog()
+                .is_some_and(|d| d.read(cx).memory_switches() == Some((true, false)))
+        })
+    })?;
+    fx.keys("escape")?;
+    ensure!(fx.read(|root, _| root.dialog().is_none()));
+    ensure!(fx.composer_focused()?, "Done returns focus to the composer");
     Ok(())
 }
 

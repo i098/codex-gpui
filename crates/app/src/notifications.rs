@@ -45,10 +45,9 @@ pub fn install(root: WeakEntity<Root>, cx: &mut App) {
     });
 }
 
-/// `~/Library/Application Support/codex-gpui/notification-sounds`, next to `host-settings.json`.
+/// `codex-gpui/notification-sounds` in the user data directory, next to `host-settings.json`.
 fn sounds_dir() -> PathBuf {
-    PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-        .join("Library/Application Support/codex-gpui/notification-sounds")
+    crate::user_data::user_data_dir("codex-gpui").join("notification-sounds")
 }
 
 /// The file a sound setting plays (`Wh`): `None` for `none`.
