@@ -121,6 +121,7 @@ mod editor;
 pub use diff_comments::DiffCommentsChanged;
 mod footer;
 mod requests;
+pub use requests::IMPLEMENT_PLAN_METHOD;
 pub(crate) mod menu {
     //! Focus rules for the recorded Radix menus: arrows stop at the ends, Escape returns
     //! focus to the trigger, and Enter or Space activates the focused item.
@@ -2177,6 +2178,7 @@ impl Composer {
         self.focus_handle.focus(window, cx);
         self.menu = None;
         cx.notify();
+        self.follow_plan(&approval, &response, window, cx);
         if let Some(f) = self.on_approval.clone() {
             f(
                 approval.identity.id.clone(),
