@@ -117,7 +117,7 @@ const COMMANDS: &[Command] = &[
         id: "goal",
         title: "Goal",
         description: "Set a goal to keep pursuing",
-        icon: "thread-summary",
+        icon: "slash-goal",
         requires_empty: false,
     },
     Command {
@@ -138,7 +138,7 @@ const COMMANDS: &[Command] = &[
         id: "mcp",
         title: "MCP",
         description: "Show MCP server status",
-        icon: "sidebar-cmd-mcp-servers",
+        icon: "slash-mcp",
         requires_empty: false,
     },
     Command {
@@ -152,7 +152,7 @@ const COMMANDS: &[Command] = &[
         id: "model",
         title: "Model",
         description: "",
-        icon: "composer-model",
+        icon: "diff-hide-imports",
         requires_empty: false,
     },
     Command {
@@ -166,7 +166,7 @@ const COMMANDS: &[Command] = &[
         id: "pet",
         title: "Pet",
         description: "Wake or tuck away the desktop pet",
-        icon: "settings-mini-pets",
+        icon: "slash-pet",
         requires_empty: false,
     },
     Command {
@@ -180,14 +180,14 @@ const COMMANDS: &[Command] = &[
         id: "plan-mode",
         title: "Plan mode",
         description: "Turn plan mode on",
-        icon: "settings-personalization",
+        icon: "slash-plan-mode",
         requires_empty: false,
     },
     Command {
         id: "reasoning",
         title: "Reasoning",
         description: "",
-        icon: "settings-personalization",
+        icon: "project-marker-brain",
         requires_empty: false,
     },
     Command {
@@ -215,7 +215,7 @@ const COMMANDS: &[Command] = &[
         id: "sketch",
         title: "Sketch",
         description: "Draw a sketch",
-        icon: "pencil",
+        icon: "slash-sketch",
         requires_empty: false,
     },
     Command {
@@ -229,7 +229,7 @@ const COMMANDS: &[Command] = &[
         id: "ultrafast",
         title: "Ultrafast",
         description: "The fastest available responses for latency-sensitive work.",
-        icon: "composer-bolt",
+        icon: "slash-ultrafast",
         requires_empty: false,
     },
     Command {
@@ -880,6 +880,21 @@ impl Composer {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let active = selected == self.slash.selected;
+        let command = COMMANDS
+            .get(index)
+            .filter(|_| !self.slash.mention && self.slash.sub.is_none());
+        // The original authors these two glyphs' colors; the others follow the text color.
+        let icon_color = match command.map(|command| command.id) {
+            Some("mcp") => gpui::rgb(0x222326).into(),
+            Some("sketch") => gpui::rgb(0x04bb9f).into(),
+            _ => t.text,
+        };
+        let submenu = command.is_some_and(|command| {
+            matches!(
+                command.id,
+                "mcp" | "model" | "reasoning" | "fork" | "project"
+            )
+        });
         div()
             .id(("suggestion", index))
             .flex_none()
@@ -902,7 +917,7 @@ impl Composer {
                 this.slash.selected = selected;
                 this.activate_slash(window, cx);
             }))
-            .child(icon(icon_name, 16., t.text))
+            .child(icon(icon_name, 16., icon_color))
             .child(text(title.to_owned(), 13., 18.5714, 400., t.text).flex_none())
             .child(
                 text(
@@ -914,6 +929,13 @@ impl Composer {
                 )
                 .truncate(),
             )
+            .when(submenu, |row| {
+                row.child(
+                    div()
+                        .ml_auto()
+                        .child(icon("chevron-right", 16., t.text_tertiary)),
+                )
+            })
     }
 
     pub(super) fn slash_menu(&self, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
