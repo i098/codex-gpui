@@ -134,6 +134,10 @@ impl Clock {
 
 pub struct ThreadView {
     thread_id: String,
+    /// Branch recorded by `thread/metadata/update`; the header shows it once known.
+    branch: Option<SharedString>,
+    /// Remote environment link (`thread/environment/connected` / `disconnected`).
+    environment_connected: Option<bool>,
     /// Workspace folder; its name heads the summary panel.
     cwd: String,
     /// The `Toggle summary` panel is open.
@@ -650,6 +654,8 @@ impl ThreadView {
             terminal_item: None,
             terminals_stopping: false,
             thread_id: thread.id,
+            branch: None,
+            environment_connected: None,
             cwd: thread.cwd,
             summary_open: false,
             clip_right: false,
@@ -1489,6 +1495,25 @@ impl ThreadView {
                     )),
             );
         }
+        if let Some((_, plan)) = crate::screens::plan::latest_plan(&self.turns) {
+            let title = crate::screens::plan::plan_title(plan);
+            sections.push(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(header("Plan".into()))
+                    .child(
+                        row("context-file-document", title, 16., 0, window)
+                            .mx(px(12.))
+                            .px(px(8.))
+                            .rounded(Theme::RADIUS_SM)
+                            .hover(move |style| style.bg(row_hover))
+                            .aria_label("Open plan")
+                            .on_click(crate::dispatch::<crate::OpenPlanPanel>),
+                    ),
+            );
+        }
         let n = sections.len();
         // A fixed popover: its own composited layer, whose rect (and tile grid) starts at the
         // widest shadow's ink, 1.5 blur = 30 px out.
@@ -1557,6 +1582,18 @@ impl ThreadView {
             find.dirty = true;
         }
         match method.as_str() {
+            "item/commandExecution/terminalInteraction" => {
+                let (Some(id), Some(stdin)) = (params["itemId"].as_str(), params["stdin"].as_str())
+                else {
+                    return;
+                };
+                if let Some(ThreadItem::CommandExecution {
+                    aggregated_output, ..
+                }) = self.item_mut(id)
+                {
+                    aggregated_output.get_or_insert_default().push_str(stdin);
+                }
+            }
             "turn/started" | "turn/completed" => {
                 let Ok(mut n) = serde_json::from_value::<TurnNotification>(params.clone()) else {
                     return;
@@ -2723,6 +2760,18 @@ fn day_and_time(at: i64, now: i64, utc_offset: i64) -> (String, String) {
 /// Exact layout width of a single-line run. GPUI rounds measured text boxes up to whole px;
 /// inline runs placed after one another need the fractional advances Chromium uses.
 fn width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>) -> Pixels {
+    crate::run_width(shaped_width(window, s, size, weight, family), window)
+}
+
+/// The width of a box that holds a single-line run without truncating it: the shaped width
+/// rounded up to the layout unit, as Blink sizes a `w-fit` box. [`width`] rounds to the
+/// nearest unit, so a `truncate` box of that width can cut the run's last glyphs.
+fn fit_width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>) -> Pixels {
+    let unit = window.scale_factor() * 64.;
+    px((f32::from(shaped_width(window, s, size, weight, family)) * unit).ceil() / unit)
+}
+
+fn shaped_width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>) -> Pixels {
     let family = SharedString::from(family.unwrap_or(SANS));
     let run = TextRun {
         len: s.len(),
@@ -2735,13 +2784,10 @@ fn width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>)
         underline: None,
         strikethrough: None,
     };
-    crate::run_width(
-        window
-            .text_system()
-            .layout_line(s, px(size), &[run], None)
-            .width,
-        window,
-    )
+    window
+        .text_system()
+        .layout_line(s, px(size), &[run], None)
+        .width
 }
 
 /// Text of a known run width (see [`width`]) as one text item (`markdown::ItemPen`).
@@ -3012,6 +3058,9 @@ mod tests {
             view.apply(&notification("item/commandExecution/outputDelta", serde_json::json!({
                 "threadId": "retention", "turnId": "turn", "itemId": "command", "delta": "actual output\n",
             })), cx);
+            view.apply(&notification("item/commandExecution/terminalInteraction", serde_json::json!({
+                "threadId": "retention", "turnId": "turn", "itemId": "command", "stdin": "yes\n",
+            })), cx);
             item["status"] = "failed".into();
             item["exitCode"] = 17.into();
             view.apply(&notification("item/completed", serde_json::json!({
@@ -3022,7 +3071,7 @@ mod tests {
             assert!(view.background_terminals().is_empty());
             assert!(matches!(&view.turns[0].items[0],
                 ThreadItem::CommandExecution { status, exit_code: Some(17), aggregated_output: Some(output), .. }
-                    if status == "failed" && output == "actual output\n"));
+                    if status == "failed" && output == "actual output\nyes\n"));
         });
     }
 
