@@ -17,9 +17,9 @@ on:
       - .github/PULL_REQUEST_TEMPLATE.md
       - .github/ISSUE_TEMPLATE/**
       - docs/*.md
-# A new push to a PR cancels its older run; each main push keeps its own group, so none is cancelled.
+# A new push to a PR cancels its older run; main pushes share one group, so only the newest main commit runs.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   quick:
