@@ -6521,6 +6521,41 @@ impl Root {
         }
     }
 
+    /// After a completed turn that ended in a plan: the `Implement this plan?` request, which the
+    /// original's `turn/completed` handler raises as `item/plan/requestImplementation`.
+    fn offer_plan_implementation(&mut self, params: &Value, cx: &mut Context<Self>) {
+        let (Some(thread), Some(turn)) =
+            (params["threadId"].as_str(), params["turn"]["id"].as_str())
+        else {
+            return;
+        };
+        if params["turn"]["status"] != "completed" {
+            return;
+        }
+        let plan = self
+            .owner(thread, cx)
+            .and_then(|side| self.conversation(side))
+            .and_then(|(view, _)| {
+                let view = view.read(cx);
+                let turn = view.turns().iter().find(|t| t.id == turn)?;
+                turn.items.iter().rev().find_map(|item| match item {
+                    ThreadItem::Plan { text, .. } if !text.trim().is_empty() => {
+                        Some(text.trim().to_owned())
+                    }
+                    _ => None,
+                })
+            });
+        let Some(plan) = plan else { return };
+        let id = json!(format!("implement-plan:{turn}"));
+        self.approvals.retain(|p| p.id != id);
+        self.approvals.push(PendingApproval {
+            id,
+            method: ui::composer::IMPLEMENT_PLAN_METHOD.to_owned(),
+            params: json!({ "threadId": thread, "turnId": turn, "planContent": plan }),
+            interrupting: false,
+        });
+    }
+
     /// Settles only the request whose card produced the answer.
     fn answer(&mut self, id: Value, thread: &str, response: Value, cx: &mut Context<Self>) {
         let Some(i) = self
@@ -6531,6 +6566,12 @@ impl Root {
             return;
         };
         if self.approvals[i].interrupting {
+            return;
+        }
+        // Raised here, not by the server: it leaves without a reply (the composer sent the follow-up).
+        if self.approvals[i].method == ui::composer::IMPLEMENT_PLAN_METHOD {
+            self.approvals.remove(i);
+            self.show_approval(cx);
             return;
         }
         if response.is_null() && self.approvals[i].method == "item/tool/requestUserInput" {
@@ -6835,6 +6876,14 @@ impl Root {
                             .insert(id.to_owned(), (turn.to_owned(), text.to_owned()));
                     }
                 }
+                // The server named the chat: row and header follow at once.
+                "thread/name/updated" => {
+                    if let (Some(id), Some(name)) =
+                        (params["threadId"].as_str(), params["threadName"].as_str())
+                    {
+                        self.apply_thread_title(id, name, cx);
+                    }
+                }
                 "thread/archived" => {
                     if let Some(id) = params["threadId"].as_str() {
                         self.threads.retain(|thread| thread.id != id);
@@ -6894,6 +6943,7 @@ impl Root {
                             || p.params["threadId"] != params["threadId"]
                             || p.params["turnId"] != *turn
                     });
+                    self.offer_plan_implementation(&params, cx);
                     self.show_approval(cx);
                     self.refresh_threads(cx)
                 }
