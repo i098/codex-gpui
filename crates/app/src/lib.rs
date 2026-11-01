@@ -6472,6 +6472,7 @@ impl Root {
             (Some("desktop.followUpQueueMode"), false) => "Couldn’t save your changes. Try again",
             _ => "Couldn't save your changes. Try again",
         };
+        let locale_changed = params["keyPath"] == "desktop.localeOverride";
         let queue_mode = params["keyPath"] == "desktop.followUpQueueMode";
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             if let Err(error) = bridge.request::<_, Value>(method, params).await {
@@ -6489,6 +6490,9 @@ impl Root {
             this.update(cx, |this, cx| {
                 apply(&mut this.config);
                 this.refresh_config_globals(cx);
+                if locale_changed {
+                    this.refresh_native_menu_locale(cx);
+                }
             })
         });
         log_err(task, cx);
