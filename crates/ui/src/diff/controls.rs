@@ -524,63 +524,107 @@ impl DiffPanel {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(2.))
-                    .mr(px(30.))
-                    .children(
-                        [
-                            (DiffLayout::Unified, "Switch to unified diff"),
-                            (DiffLayout::Split, "Switch to split diff"),
-                            (DiffLayout::Auto, "Auto"),
-                        ]
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, (layout, label))| {
-                            div()
-                                .id(("diff-layout-choice", i))
-                                .role(gpui::Role::Button)
-                                .aria_label(label)
-                                .aria_selected(self.layout == layout)
-                                .focusable()
-                                .tab_index(0)
-                                .cursor_pointer()
-                                .relative()
-                                .w(px(34.))
-                                .h(px(28.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .when(self.layout == layout, |d| {
-                                    d.layer().child(shapes::decoration(shapes::Decoration {
-                                        radius: gpui::Corners::all(px(12.5)),
-                                        corner: shapes::Corner::Squircle,
-                                        fill: Some(t.text_alpha_5),
-                                        ..Default::default()
-                                    }))
-                                })
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.set_layout(layout, cx);
-                                }))
-                                .on_key_down(cx.listener(
-                                    move |this, event: &KeyDownEvent, _, cx| {
-                                        if matches!(event.keystroke.key.as_str(), "enter" | "space")
-                                        {
-                                            this.set_layout(layout, cx);
-                                            cx.stop_propagation();
-                                        }
-                                    },
-                                ))
-                                .child(icon(
-                                    layout.icon(),
-                                    16.,
-                                    if self.layout == layout {
-                                        t.text
-                                    } else {
-                                        t.text_tertiary
-                                    },
-                                ))
-                        }),
-                    ),
+                    .gap(px(4.))
+                    .child(self.layout_choices(t, cx))
+                    .child(self.rich_preview_toggle(t, cx)),
             )
+    }
+
+    /// The original's `Toggle rich preview` ghost button: active fill while previews show.
+    fn rich_preview_toggle(&self, t: &Theme, cx: &Context<Self>) -> Stateful<Div> {
+        let on = self.rich_preview;
+        div()
+            .id("diff-rich-preview-toggle")
+            .role(gpui::Role::Button)
+            .aria_label("Toggle rich preview")
+            .aria_toggled(if on {
+                gpui::Toggled::True
+            } else {
+                gpui::Toggled::False
+            })
+            .focusable()
+            .tab_index(0)
+            .cursor_pointer()
+            .relative()
+            .size(px(26.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .when(on, |d| {
+                d.layer().child(shapes::decoration(shapes::Decoration {
+                    radius: gpui::Corners::all(px(12.5)),
+                    corner: shapes::Corner::Squircle,
+                    fill: Some(t.text_alpha_5),
+                    ..Default::default()
+                }))
+            })
+            .on_click(cx.listener(|this, _, _, cx| this.toggle_rich_preview(cx)))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.toggle_rich_preview(cx);
+                    cx.stop_propagation();
+                }
+            }))
+            // The original swaps icons: an image while previews show, braces (source) otherwise.
+            .child(if on {
+                icon("diff-rich-preview", 16., t.text)
+            } else {
+                icon("import-category-braces", 16., t.text_tertiary)
+            })
+    }
+
+    fn layout_choices(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        div().flex().items_center().gap(px(2.)).children(
+            [
+                (DiffLayout::Unified, "Switch to unified diff"),
+                (DiffLayout::Split, "Switch to split diff"),
+                (DiffLayout::Auto, "Auto"),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(i, (layout, label))| {
+                div()
+                    .id(("diff-layout-choice", i))
+                    .role(gpui::Role::Button)
+                    .aria_label(label)
+                    .aria_selected(self.layout == layout)
+                    .focusable()
+                    .tab_index(0)
+                    .cursor_pointer()
+                    .relative()
+                    .w(px(34.))
+                    .h(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(self.layout == layout, |d| {
+                        d.layer().child(shapes::decoration(shapes::Decoration {
+                            radius: gpui::Corners::all(px(12.5)),
+                            corner: shapes::Corner::Squircle,
+                            fill: Some(t.text_alpha_5),
+                            ..Default::default()
+                        }))
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_layout(layout, cx);
+                    }))
+                    .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            this.set_layout(layout, cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .child(icon(
+                        layout.icon(),
+                        16.,
+                        if self.layout == layout {
+                            t.text
+                        } else {
+                            t.text_tertiary
+                        },
+                    ))
+            }),
+        )
     }
 
     pub(super) fn standalone_file_header(
