@@ -327,6 +327,8 @@ impl Root {
             Action::Share(plugin)
             | Action::CreateShare(plugin)
             | Action::UpdateSharedVersion(plugin)
+            | Action::UpdateShareTargets(plugin)
+            | Action::DeleteShare(plugin)
             | Action::EditPlugin(plugin) => Some(plugin),
             _ => None,
         };
@@ -431,6 +433,7 @@ impl Root {
     ) {
         match action {
             Action::Share(plugin) => {
+                let has_share = share_remote_plugin_id(plugin).is_ok();
                 page.update(cx, |page, cx| {
                     page.share_url = page
                         .detail_data
@@ -439,7 +442,14 @@ impl Root {
                         .map(str::to_owned);
                     page.show_modal(Modal::Share(plugin.clone()), window, cx);
                 });
+                if has_share {
+                    self.load_share_targets(page, plugin.clone(), cx);
+                }
             }
+            Action::UpdateShareTargets(plugin) => {
+                self.update_share_targets(page, plugin.clone(), cx);
+            }
+            Action::DeleteShare(plugin) => self.delete_share(page, plugin.clone(), window, cx),
             Action::Manage => self.open_settings_section("Plugins", window, cx),
             Action::Navigate(route) => {
                 self.open_plugins(route, window, cx);
@@ -524,26 +534,29 @@ impl Root {
                 let copy_link = matches!(action, Action::CreateShare(_));
                 match action {
                     Action::CreateShare(plugin) | Action::UpdateSharedVersion(plugin) => {
+                        let mut published = (*plugin).clone();
+                        if !published.summary["shareContext"].is_object() {
+                            published.summary["shareContext"] = json!({});
+                        }
+                        published.summary["shareContext"]["remotePluginId"] =
+                            value["remotePluginId"].clone();
+                        let published = Arc::new(published);
                         page.update(cx, |page, cx| {
                             page.share_url = value["shareUrl"].as_str().map(str::to_owned);
                             if copy_link && let Some(url) = &page.share_url {
                                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(url.clone()));
                             }
-                            let mut published = (*plugin).clone();
-                            if !published.summary["shareContext"].is_object() {
-                                published.summary["shareContext"] = json!({});
-                            }
-                            published.summary["shareContext"]["remotePluginId"] =
-                                value["remotePluginId"].clone();
                             if let Resource::Ready(detail) = &mut page.detail_data {
                                 detail["shareUrl"] = value["shareUrl"].clone();
                                 detail["summary"] = published.summary.clone();
                             }
-                            let published = Arc::new(published);
                             page.detail = Some(published.clone());
-                            page.modal = Some(Modal::Share(published));
+                            page.modal = Some(Modal::Share(published.clone()));
                             cx.notify();
                         });
+                        if copy_link {
+                            this.load_share_targets(page.clone(), published, cx);
+                        }
                     }
                     Action::Install(plugin) => {
                         let apps = plugins::array(&value, "appsNeedingAuth").to_vec();
@@ -577,8 +590,261 @@ impl Root {
         })
         .detach();
     }
+    fn load_share_targets(&self, page: Entity<Page>, plugin: Arc<Plugin>, cx: &mut Context<Self>) {
+        let remote_plugin_id = match share_remote_plugin_id(&plugin) {
+            Ok(id) => id,
+            Err(error) => {
+                page.update(cx, |page, cx| {
+                    page.error = Some(error.to_string());
+                    cx.notify();
+                });
+                return;
+            }
+        };
+        page.update(cx, |page, cx| {
+            page.pending = true;
+            page.error = None;
+            cx.notify();
+        });
+        let bridge = self.bridge.clone();
+        let task = cx.background_spawn(async move {
+            let response: Value = bridge.request("plugin/share/list", json!({})).await?;
+            let share = plugins::array(&response, "data")
+                .iter()
+                .find(|share| share["remotePluginId"] == remote_plugin_id);
+            Ok::<_, anyhow::Error>((
+                share
+                    .and_then(|share| share["discoverability"].as_str())
+                    .unwrap_or("PRIVATE")
+                    .to_owned(),
+                share
+                    .and_then(|share| share["sharePrincipals"].as_array())
+                    .map(|targets| visible_share_targets(targets))
+                    .unwrap_or_default(),
+                share
+                    .and_then(|share| share["shareUrl"].as_str())
+                    .map(str::to_owned),
+            ))
+        });
+        cx.spawn(async move |_, cx| {
+            let result = task.await;
+            page.update(cx, |page, cx| {
+                page.pending = false;
+                match result {
+                    Ok((discoverability, targets, share_url)) => {
+                        page.share_discoverability = discoverability;
+                        page.share_targets = targets;
+                        if let Some(share_url) = share_url {
+                            page.share_url = Some(share_url);
+                        }
+                    }
+                    Err(error) => page.error = Some(error.to_string()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn update_share_targets(
+        &self,
+        page: Entity<Page>,
+        plugin: Arc<Plugin>,
+        cx: &mut Context<Self>,
+    ) {
+        if page.read(cx).pending || page.read(cx).error.is_some() {
+            return;
+        }
+        let remote_plugin_id = match share_remote_plugin_id(&plugin) {
+            Ok(id) => id,
+            Err(error) => {
+                page.update(cx, |page, cx| {
+                    page.error = Some(error.to_string());
+                    cx.notify();
+                });
+                return;
+            }
+        };
+        let (discoverability, share_targets) = {
+            let state = page.read(cx);
+            (
+                state.share_discoverability.clone(),
+                state.share_targets.clone(),
+            )
+        };
+        let share_targets = match share_target_params(&share_targets) {
+            Ok(targets) => targets,
+            Err(error) => {
+                page.update(cx, |page, cx| {
+                    page.error = Some(error.to_string());
+                    cx.notify();
+                });
+                return;
+            }
+        };
+        page.update(cx, |page, cx| {
+            page.pending = true;
+            page.error = None;
+            cx.notify();
+        });
+        let bridge = self.bridge.clone();
+        let task = cx.background_spawn(async move {
+            bridge
+                .request::<_, Value>(
+                    "plugin/share/updateTargets",
+                    json!({
+                        "remotePluginId": remote_plugin_id,
+                        "discoverability": discoverability,
+                        "shareTargets": share_targets,
+                    }),
+                )
+                .await
+        });
+        cx.spawn(async move |_, cx| {
+            let result = task.await;
+            page.update(cx, |page, cx| {
+                page.pending = false;
+                match result {
+                    Ok(response) => {
+                        if let Some(principals) = response["principals"].as_array() {
+                            page.share_targets = visible_share_targets(principals);
+                        }
+                    }
+                    Err(error) => page.error = Some(error.to_string()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn delete_share(
+        &self,
+        page: Entity<Page>,
+        plugin: Arc<Plugin>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if page.read(cx).pending {
+            return;
+        }
+        let remote_plugin_id = match share_remote_plugin_id(&plugin) {
+            Ok(id) => id,
+            Err(error) => {
+                page.update(cx, |page, cx| {
+                    page.error = Some(error.to_string());
+                    cx.notify();
+                });
+                return;
+            }
+        };
+        let plugin_id = plugin.id().to_owned();
+        page.update(cx, |page, cx| {
+            page.pending = true;
+            page.error = None;
+            cx.notify();
+        });
+        let bridge = self.bridge.clone();
+        let window = window.window_handle();
+        let task = cx.background_spawn(async move {
+            bridge
+                .request::<_, Value>(
+                    "plugin/share/delete",
+                    json!({"remotePluginId": remote_plugin_id}),
+                )
+                .await
+        });
+        cx.spawn(async move |_, cx| {
+            let result = task.await;
+            let _ = cx.update_window(window, |_, window, cx| {
+                page.update(cx, |page, cx| {
+                    page.pending = false;
+                    match result {
+                        Ok(_) => {
+                            page.share_url = None;
+                            page.share_targets.clear();
+                            page.share_discoverability = "PRIVATE".into();
+                            if let Some(detail) = page
+                                .detail
+                                .as_ref()
+                                .filter(|detail| detail.id() == plugin_id)
+                            {
+                                let mut detail = (**detail).clone();
+                                detail.summary["shareContext"] = Value::Null;
+                                page.detail = Some(Arc::new(detail));
+                            }
+                            if let Resource::Ready(detail) = &mut page.detail_data {
+                                detail["shareUrl"] = Value::Null;
+                                detail["summary"]["shareContext"] = Value::Null;
+                            }
+                            page.close_modal(window, cx);
+                        }
+                        Err(error) => {
+                            page.error = Some(error.to_string());
+                            cx.notify();
+                        }
+                    }
+                });
+            });
+        })
+        .detach();
+    }
 }
 
+fn share_remote_plugin_id(plugin: &Plugin) -> anyhow::Result<String> {
+    plugin.summary["shareContext"]["remotePluginId"]
+        .as_str()
+        .map(str::to_owned)
+        .context("Create a share link before managing plugin access")
+}
+fn visible_share_targets(targets: &[Value]) -> Vec<Value> {
+    targets
+        .iter()
+        .filter(|target| {
+            target["principal_type"]
+                .as_str()
+                .or_else(|| target["principalType"].as_str())
+                != Some("workspace")
+        })
+        .map(|target| {
+            json!({
+                "principal_id": target.get("principal_id")
+                    .or_else(|| target.get("principalId"))
+                    .cloned()
+                    .unwrap_or(Value::Null),
+                "principal_type": target.get("principal_type")
+                    .or_else(|| target.get("principalType"))
+                    .cloned()
+                    .unwrap_or(Value::Null),
+                "role": target["role"],
+                "name": target["name"],
+            })
+        })
+        .collect()
+}
+
+fn share_target_params(targets: &[Value]) -> anyhow::Result<Vec<Value>> {
+    targets
+        .iter()
+        .map(|target| {
+            let principal_id = target
+                .get("principal_id")
+                .or_else(|| target.get("principalId"))
+                .and_then(Value::as_str)
+                .context("Plugin share target is missing its principal ID")?;
+            let principal_type = target
+                .get("principal_type")
+                .or_else(|| target.get("principalType"))
+                .and_then(Value::as_str)
+                .context("Plugin share target is missing its principal type")?;
+            Ok(json!({
+                "principalId": principal_id,
+                "principalType": principal_type,
+                "role": target["role"].as_str().unwrap_or("reader"),
+            }))
+        })
+        .collect()
+}
 fn route_plugin_id(route: &str) -> Option<&str> {
     let path = route.split('?').next().unwrap_or(route);
     let path = path
