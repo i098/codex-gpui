@@ -62,7 +62,7 @@ impl Composer {
                 .unwrap_or_default(),
             effort: self.effort.clone(),
             permission: self.permission.clone(),
-            fast: self.fast,
+            service_tier: SERVICE_TIERS[self.speed],
             plan: self.plan,
             background: false,
         };
