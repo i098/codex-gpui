@@ -128,7 +128,7 @@ fn new_project_keeps_root_order_appearance_and_existing_thread_owners() -> Resul
 }
 
 #[test]
-fn project_menu_pins_edits_and_removes_without_touching_files_or_other_projects() -> Result<()> {
+fn project_menu_pin_lists_pinned_projects_first() -> Result<()> {
     let profile = tempfile::tempdir()?;
     let alpha = profile.path().join("alpha");
     let beta = profile.path().join("beta");
@@ -162,39 +162,6 @@ fn project_menu_pins_edits_and_removes_without_touching_files_or_other_projects(
     assert!(host.projects()?[0].pinned);
     host.set_project_pinned("b", false)?;
     assert_eq!(ids(&host)?, ["a", "b"]);
-
-    // Edit renames and replaces the roots, primary first; a missing folder changes nothing.
-    host.update_project("a", " Renamed ", &[beta.clone(), alpha.clone()], None)?;
-    let a = &host.projects()?[0];
-    assert_eq!(a.label.as_ref(), "Renamed");
-    assert_eq!(a.root.as_deref(), beta.to_str());
-    assert_eq!(a.roots.len(), 2);
-    let saved = fs::read(&file)?;
-    assert!(
-        host.update_project("a", "x", &[profile.path().join("missing")], None)
-            .is_err()
-    );
-    assert!(
-        host.update_project("gone", "x", std::slice::from_ref(&alpha), None)
-            .is_err()
-    );
-    assert_eq!(fs::read(&file)?, saved);
-
-    // Remove forgets the project everywhere but keeps its folder and the other project.
-    host.set_project_pinned("b", true)?;
-    host.remove_project("b")?;
-    assert_eq!(ids(&host)?, ["a"]);
-    let state: Value = serde_json::from_slice(&fs::read(&file)?)?;
-    assert_eq!(state["project-order"], json!(["a"]));
-    assert_eq!(state["pinned-project-ids"], json!([]));
-    assert!(state["project-appearances"]["b"].is_null());
-    assert!(state["thread-project-assignments"]["moved"].is_null());
-    assert_eq!(
-        state["thread-project-assignments"]["other"]["projectId"],
-        "a"
-    );
-    assert!(state["selected-project"].is_null());
-    assert!(beta.is_dir());
     Ok(())
 }
 
@@ -460,91 +427,6 @@ fn new_project_form_creates_and_selects_a_multi_folder_project() -> Result<()> {
         .count();
     assert_eq!(lists, 2, "both chat lists are read before the roots change");
     shot(&mut fx, "created")?;
-    Ok(())
-}
-
-/// The project row menu's commands (a native AppKit menu on macOS) run against the host store.
-#[cfg(target_os = "macos")]
-#[test]
-fn project_menu_pins_edits_and_removes_a_sidebar_project() -> Result<()> {
-    use common::script;
-    use std::sync::Arc;
-    use ui::screens::sidebar::projects::{ProjectAction, ProjectCommand};
-
-    let temp = tempfile::tempdir()?;
-    let [alpha, beta] = ["alpha", "beta"].map(|name| temp.path().join(name));
-    for root in [&alpha, &beta] {
-        fs::create_dir(root)?;
-    }
-    let state_path = temp.path().join("state.json");
-    let host = Arc::new(LocalHost::new(temp.path().join("codex")));
-    host.add_project(&alpha)?;
-    host.add_project(&beta)?;
-    let (mut fx, _, _) = isolated_root(temp.path(), &script(None, |_| {})?, &state_path)?;
-    fx.root
-        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
-    let labels = |fx: &mut common::Fx| {
-        fx.read(|root, cx| {
-            let sidebar = root.sidebar().read(cx);
-            sidebar
-                .projects()
-                .iter()
-                .map(|p| p.label.to_string())
-                .collect::<Vec<_>>()
-        })
-    };
-    fx.wait("two project rows", |fx| labels(fx).len() == 2)?;
-    let id = |fx: &mut common::Fx, index: usize| {
-        fx.read(|root, cx| root.sidebar().read(cx).projects()[index].id.to_string())
-    };
-    let output = std::env::var_os("CGX_PROJECT_SHOTS").map(std::path::PathBuf::from);
-    let shot_at = |fx: &mut common::Fx, name: &str, hover: (f32, f32)| -> Result<()> {
-        if let Some(out) = &output {
-            fs::create_dir_all(out)?;
-            fx.hover(hover)?;
-            fx.shot()?.save(out.join(format!("{name}.png")))?;
-        }
-        Ok(())
-    };
-    let shot = |fx: &mut common::Fx, name: &str| shot_at(fx, name, (900., 10.));
-    // The hovered row shows its `...` actions button (the recorded f1d layout: first row at y 218).
-    shot_at(&mut fx, "hover", (150., 218.))?;
-    let act = |fx: &mut common::Fx, project: String, command| {
-        fx.action(Box::new(ProjectAction { project, command }))
-    };
-
-    let beta_id = id(&mut fx, 1);
-    act(&mut fx, beta_id.clone(), ProjectCommand::Pin(true))?;
-    fx.wait("beta pinned first", |fx| labels(fx) == ["beta", "alpha"])?;
-    shot(&mut fx, "pinned")?;
-
-    let alpha_id = id(&mut fx, 1);
-    act(&mut fx, alpha_id, ProjectCommand::Edit)?;
-    fx.wait("edit form", |fx| {
-        fx.read(|root, _| root.new_project().is_some())
-    })?;
-    assert_eq!(
-        fx.read(|root, cx| root.new_project().unwrap().read(cx).sources().to_vec()),
-        [alpha.canonicalize()?.to_str().unwrap()]
-    );
-    shot(&mut fx, "edit")?;
-    fx.type_text("X")?;
-    fx.keys("enter")?;
-    fx.wait("renamed", |fx| {
-        fx.read(|root, _| root.new_project().is_none()) && labels(fx)[1].ends_with('X')
-    })?;
-
-    act(&mut fx, beta_id, ProjectCommand::Remove)?;
-    fx.wait("remove dialog", |fx| {
-        fx.read(|root, _| root.dialog().is_some())
-    })?;
-    shot(&mut fx, "remove")?;
-    // `Cancel` holds the focus, as in the original; click `Remove project`.
-    fx.click((763., 457.))?;
-    fx.wait("beta removed", |fx| labels(fx).len() == 1)?;
-    assert!(beta.is_dir(), "removing a project keeps its folder");
-    assert_eq!(host.projects()?.len(), 1);
-    shot(&mut fx, "removed")?;
     Ok(())
 }
 

@@ -7,12 +7,12 @@ pub(crate) const PROJECT_PREFIX: &str = "project:";
 
 pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     root.on_action(cx.listener(|this, action: &ProjectMenuAction, window, cx| {
-        this.project_action(action, window, cx);
+        this.project_menu_action(action, window, cx);
     }))
 }
 
 impl Root {
-    fn project_action(
+    fn project_menu_action(
         &mut self,
         action: &ProjectMenuAction,
         window: &mut Window,
