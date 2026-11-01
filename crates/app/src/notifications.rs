@@ -45,10 +45,9 @@ pub fn install(root: WeakEntity<Root>, cx: &mut App) {
     });
 }
 
-/// `~/Library/Application Support/codex-gpui/notification-sounds`, next to `host-settings.json`.
+/// `codex-gpui/notification-sounds` in the user data directory, next to `host-settings.json`.
 fn sounds_dir() -> PathBuf {
-    PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-        .join("Library/Application Support/codex-gpui/notification-sounds")
+    crate::user_data::user_data_dir("codex-gpui").join("notification-sounds")
 }
 
 /// The file a sound setting plays (`Wh`): `None` for `none`.
@@ -236,7 +235,132 @@ fn update(cx: &mut App, f: impl FnOnce(&mut State)) {
     cx.update_global::<State, _>(|state, _| f(state));
 }
 
+fn chat_notice_enabled(
+    kind: &str,
+    settings: &serde_json::Map<String, Value>,
+    focused: bool,
+) -> bool {
+    match kind {
+        "completion" => match settings
+            .get("notifications-turn-mode")
+            .and_then(Value::as_str)
+        {
+            Some("off") => false,
+            Some("always") => true,
+            _ => !focused,
+        },
+        "permission" | "question" => {
+            !focused
+                && settings
+                    .get(if kind == "permission" {
+                        "notifications-permissions-enabled"
+                    } else {
+                        "notifications-questions-enabled"
+                    })
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true)
+        }
+        _ => false,
+    }
+}
+
+pub(crate) fn destination(tag: &str) -> Option<(String, String)> {
+    if let Some(id) = tag.strip_prefix("automation:").filter(|id| !id.is_empty()) {
+        return Some(("local".into(), id.into()));
+    }
+    serde_json::from_str(tag.strip_prefix("chat:")?).ok()
+}
+
 impl Root {
+    pub(super) fn chat_notification(
+        &mut self,
+        kind: &'static str,
+        id: &str,
+        body: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let title = self
+            .threads
+            .iter()
+            .find(|thread| thread.id == id)
+            .map(thread_title)
+            .unwrap_or_else(|| "Codex".into());
+        let notice = gpui::SystemNotification {
+            tag: format!("chat:{}", json!([self.host_id, id])).into(),
+            title,
+            body: body.into(),
+            actions: Vec::new(),
+            reply_placeholder: None,
+        };
+        // Read permission again: System Settings can change while this app is in the background.
+        cx.spawn(async move |this, cx| {
+            #[cfg(target_os = "macos")]
+            if matches!(
+                system::permission().await,
+                Some(Permission::Disabled | Permission::NotDetermined)
+            ) {
+                return;
+            }
+            this.update(cx, |this, cx| {
+                let focused = this
+                    .context_window
+                    .update(cx, |_, window, _| window.is_window_active())
+                    .unwrap_or(true);
+                let sound = {
+                    let settings = cx
+                        .try_global::<host_settings::Settings>()
+                        .map(host_settings::Settings::read_all);
+                    let empty = serde_json::Map::new();
+                    let settings = settings.as_deref().unwrap_or(&empty);
+                    if !chat_notice_enabled(kind, settings, focused) {
+                        return;
+                    }
+                    settings
+                        .get("notifications-sound")
+                        .cloned()
+                        .unwrap_or_default()
+                };
+                cx.show_system_notification(notice);
+                cx.background_spawn(async move {
+                    let result = sound_path(&sound, &sounds_dir()).and_then(|path| {
+                        if let Some(path) = path {
+                            play(&path)?.wait()?;
+                        }
+                        Ok(())
+                    });
+                    if let Err(error) = result {
+                        eprintln!("codex-gpui: notification sound: {error:#}");
+                    }
+                })
+                .detach();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub(super) fn approval_notification(
+        &mut self,
+        pending: &PendingApproval,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = pending.params["threadId"].as_str() else {
+            return;
+        };
+        let (kind, body) = match pending.method.as_str() {
+            "item/commandExecution/requestApproval"
+            | "item/fileChange/requestApproval"
+            | "item/permissions/requestApproval" => {
+                ("permission", "Approval is needed to continue.")
+            }
+            "item/tool/requestUserInput" | "mcpServer/elicitation/request" => {
+                ("question", "A question needs your answer.")
+            }
+            _ => return,
+        };
+        self.chat_notification(kind, id, body, cx);
+    }
+
     pub(crate) fn notifications_action(&mut self, action: Action, cx: &mut Context<Self>) {
         match action {
             Action::RefreshPermission => self.refresh_notification_permission(cx),
@@ -513,6 +637,27 @@ fn set_channel(cx: &mut App, category: &str, channel: &str, enabled: bool) -> bo
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn chat_preferences_gate_each_notification_kind() {
+        let mut settings = serde_json::Map::new();
+        for kind in ["completion", "permission", "question"] {
+            assert!(chat_notice_enabled(kind, &settings, false));
+            assert!(!chat_notice_enabled(kind, &settings, true));
+        }
+        settings.insert("notifications-turn-mode".into(), json!("always"));
+        assert!(chat_notice_enabled("completion", &settings, true));
+        settings.insert("notifications-turn-mode".into(), json!("off"));
+        assert!(!chat_notice_enabled("completion", &settings, false));
+        for (kind, key) in [
+            ("permission", "notifications-permissions-enabled"),
+            ("question", "notifications-questions-enabled"),
+        ] {
+            settings.insert(key.into(), json!(false));
+            assert!(!chat_notice_enabled(kind, &settings, false));
+            settings.insert(key.into(), json!(true));
+            assert!(chat_notice_enabled(kind, &settings, false));
+        }
+    }
 
     fn wav(seconds: u32) -> Vec<u8> {
         let (rate, block) = (8_000u32, 2u16);
