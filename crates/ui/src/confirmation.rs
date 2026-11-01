@@ -10,6 +10,8 @@ use theme::{ActiveTheme as _, Theme};
 pub enum Outcome {
     Confirm,
     Cancel,
+    /// The left button of [`Confirmation::alternate`]; Escape still cancels.
+    Alternate,
 }
 
 pub struct Confirmation {
@@ -18,6 +20,8 @@ pub struct Confirmation {
     confirm_label: SharedString,
     cancel_label: SharedString,
     destructive: bool,
+    /// The left button is a second, destructive choice instead of Cancel.
+    alternate: bool,
     /// One primary button (`confirm_label`) and no Cancel, like `Unable to send message`.
     notice: bool,
     settings_style: bool,
@@ -54,6 +58,7 @@ impl Confirmation {
             confirm_label: confirm_label.into(),
             cancel_label: "Cancel".into(),
             destructive: false,
+            alternate: false,
             notice: false,
             settings_style: false,
             controls,
@@ -79,6 +84,20 @@ impl Confirmation {
 
     pub fn cancel_label(mut self, label: impl Into<SharedString>) -> Self {
         self.cancel_label = label.into();
+        self
+    }
+
+    /// Replaces Cancel with a destructive `label` button that emits [`Outcome::Alternate`],
+    /// like `Clear queue` beside `Send message`. Enter confirms: the confirm button has focus.
+    pub fn alternate(
+        mut self,
+        label: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        self.cancel_label = label.into();
+        self.alternate = true;
+        self.controls[1].focus(window, cx);
         self
     }
 
@@ -179,6 +198,8 @@ impl Confirmation {
                 }
                 let outcome = if self.controls[1].is_focused(window) {
                     Outcome::Confirm
+                } else if self.alternate {
+                    Outcome::Alternate
                 } else {
                     Outcome::Cancel
                 };
@@ -270,7 +291,11 @@ impl Render for Confirmation {
             .enumerate()
             .skip(self.notice as usize)
             .map(|(index, label)| {
-                let destructive = index == 1 && self.destructive;
+                let destructive = if index == 0 {
+                    self.alternate
+                } else {
+                    self.destructive
+                };
                 let fill = if self.settings_style {
                     if destructive {
                         t.text_error.opacity(0.1)
@@ -294,7 +319,7 @@ impl Render for Confirmation {
                     } else {
                         t.text_inverse
                     }
-                } else if index == 1 {
+                } else if index == 1 || destructive {
                     t.text_inverse
                 } else {
                     t.text
@@ -353,10 +378,12 @@ impl Render for Confirmation {
                     ))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.finish(
-                            if index == 0 {
-                                Outcome::Cancel
-                            } else {
+                            if index == 1 {
                                 Outcome::Confirm
+                            } else if this.alternate {
+                                Outcome::Alternate
+                            } else {
+                                Outcome::Cancel
                             },
                             window,
                             cx,
