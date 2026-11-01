@@ -58,6 +58,8 @@ pub use preview::{PreviewContent, PreviewRequest, PreviewSource};
 #[path = "diff/pdf.rs"]
 mod pdf;
 
+#[path = "diff/artifact_annotations.rs"]
+mod artifact_annotations;
 #[path = "diff/comment_view.rs"]
 mod comment_view;
 #[path = "diff/comments.rs"]
@@ -278,6 +280,9 @@ pub enum DiffRequest {
     },
     CommentsChanged(Vec<comments::Comment>),
     DismissModelComment(String),
+    /// `artifact.sendAnnotations`: send this batch of artifact annotations as its own turn
+    /// (the bundle's `artifact-direct-comment`); answer with `artifact_annotations_sent`.
+    SendAnnotations(Vec<comments::Comment>),
     /// Open this absolute path in the configured editor.
     Open(String),
 }
@@ -378,6 +383,7 @@ pub struct DiffPanel {
     content_generation: u64,
     rich_preview: bool,
     annotations: comment_view::Annotations,
+    artifacts: artifact_annotations::ArtifactAnnotations,
     context: context::State,
     full_view: Option<gpui::WeakEntity<Shell>>,
     viewed_files: serde_json::Map<String, serde_json::Value>,
@@ -538,6 +544,7 @@ impl DiffPanel {
             content_generation: 0,
             rich_preview: false,
             annotations: comment_view::Annotations::default(),
+            artifacts: Default::default(),
             context: context::State::default(),
             full_view: None,
             viewed_files: Default::default(),
@@ -1043,6 +1050,17 @@ impl DiffPanel {
             }
             cx.stop_propagation();
             cx.notify();
+            return;
+        }
+        // A line comment card keeps its own Cmd+Enter.
+        if key.modifiers.platform
+            && key.key == "enter"
+            && !self.comment_draft().is_some_and(|editor| {
+                gpui::Focusable::focus_handle(editor.read(cx), cx).is_focused(window)
+            })
+            && self.artifact_modified_enter(window, cx)
+        {
+            cx.stop_propagation();
             return;
         }
         if key.modifiers.platform && key.key == "f" {

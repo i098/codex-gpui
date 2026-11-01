@@ -1902,7 +1902,10 @@ impl Composer {
     }
 
     fn modified_enter(&mut self, _: &ModifiedSubmit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.plain_field.is_some() {
+        if self.plain_field.is_some() && self.on_cancel_edit.is_some() {
+            // A comment card's owner decides: the artifact card adds its annotation.
+            cx.propagate();
+        } else if self.plain_field.is_some() {
             self.enter(&Submit, window, cx);
         } else {
             self.submit(&Submit, window, cx);
@@ -1923,6 +1926,9 @@ impl Composer {
     ) {
         if !self.docked && self.approval.is_none() && self.plain_field.is_none() {
             self.send_draft(true, window, cx);
+        } else if self.plain_field.is_some() {
+            // Same Cmd+Enter: a plain field's `ModifiedSubmit` owns it.
+            cx.propagate();
         }
     }
 
