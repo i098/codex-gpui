@@ -2868,6 +2868,7 @@ pub struct FileView {
     tree: file_tree::WorkspaceTree,
     revision: u64,
     preview: bool,
+    local_controls: bool,
     /// An image or PDF ([`Self::previews`]) shown instead of text lines.
     media: Option<preview::FileMedia>,
 }
@@ -2893,6 +2894,7 @@ impl FileView {
             tree,
             revision: 0,
             preview: true,
+            local_controls: true,
             media: None,
         }
     }
@@ -2910,6 +2912,11 @@ impl FileView {
 
     pub fn name(&self) -> SharedString {
         self.crumbs.last().cloned().unwrap_or_default()
+    }
+
+    /// Hide controls that use the local workspace.
+    pub fn set_local_controls(&mut self, visible: bool) {
+        self.local_controls = visible;
     }
 
     pub fn is_preview(&self) -> bool {
@@ -2992,69 +2999,72 @@ impl FileView {
                         .children(crumbs),
                 ),
             )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(6.))
-                    .child(
-                        capsule(t, clamped)
-                            .w(px(32.))
-                            .id("file-search")
-                            .role(gpui::Role::Button)
-                            .aria_label("Search in files")
-                            .focusable()
-                            .tab_index(0)
-                            .rounded_full()
-                            .focus_visible(crate::composer::menu::trigger_focus)
-                            .justify_center()
-                            .on_click(
-                                cx.listener(|view, _, window, cx| {
+            .when(self.local_controls, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .gap(px(6.))
+                        .child(
+                            capsule(t, clamped)
+                                .w(px(32.))
+                                .id("file-search")
+                                .role(gpui::Role::Button)
+                                .aria_label("Search in files")
+                                .focusable()
+                                .tab_index(0)
+                                .rounded_full()
+                                .focus_visible(crate::composer::menu::trigger_focus)
+                                .justify_center()
+                                .on_click(cx.listener(|view, _, window, cx| {
                                     view.focus_file_search(window, cx)
-                                }),
-                            )
-                            .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
-                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                    view.focus_file_search(window, cx);
-                                    cx.stop_propagation();
-                                }
-                            }))
-                            .child(icon("diff-jump-to-file", 16., t.text).runtime())
-                            // The `backdrop-filter` button is its own cc layer: its icon
-                            // rasterizes on that layer's tiles.
-                            .layer(),
-                    )
-                    .child(self.file_tree_button(t, clamped, cx))
-                    .child(
-                        capsule(t, clamped).p_0().child(
-                            div()
-                                .h(px(32.))
-                                .pl(px(9.))
-                                .flex()
-                                .items_center()
-                                .child(text("Open", 13., 18., 430., t.text))
-                                .child(
-                                    div()
-                                        .ml(px(4.))
-                                        .w(px(23.))
-                                        .h_full()
-                                        .flex()
-                                        .items_center()
-                                        .pl(px(2.))
-                                        .child(
-                                            menu::backdrop_glyph(
-                                                include_bytes!(
-                                                    "../../../assets/icons/chevron-down.svg"
-                                                ),
-                                                "navigation-open-chevron",
-                                                t.text,
-                                                128,
-                                            )
-                                            .size(px(14.)),
-                                        ),
-                                ),
+                                }))
+                                .on_key_down(cx.listener(
+                                    |view, event: &KeyDownEvent, window, cx| {
+                                        if matches!(event.keystroke.key.as_str(), "enter" | "space")
+                                        {
+                                            view.focus_file_search(window, cx);
+                                            cx.stop_propagation();
+                                        }
+                                    },
+                                ))
+                                .child(icon("diff-jump-to-file", 16., t.text).runtime())
+                                // The `backdrop-filter` button is its own cc layer: its icon
+                                // rasterizes on that layer's tiles.
+                                .layer(),
+                        )
+                        .child(self.file_tree_button(t, clamped, cx))
+                        .child(
+                            capsule(t, clamped).p_0().child(
+                                div()
+                                    .h(px(32.))
+                                    .pl(px(9.))
+                                    .flex()
+                                    .items_center()
+                                    .child(text("Open", 13., 18., 430., t.text))
+                                    .child(
+                                        div()
+                                            .ml(px(4.))
+                                            .w(px(23.))
+                                            .h_full()
+                                            .flex()
+                                            .items_center()
+                                            .pl(px(2.))
+                                            .child(
+                                                menu::backdrop_glyph(
+                                                    include_bytes!(
+                                                        "../../../assets/icons/chevron-down.svg"
+                                                    ),
+                                                    "navigation-open-chevron",
+                                                    t.text,
+                                                    128,
+                                                )
+                                                .size(px(14.)),
+                                            ),
+                                    ),
+                            ),
                         ),
-                    ),
-            )
+                )
+            })
     }
 
     fn file_content(
