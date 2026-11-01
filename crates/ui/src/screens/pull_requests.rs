@@ -265,8 +265,14 @@ pub enum Event {
         prompt: String,
     },
     Code,
-    Media { generation: u64, url: String },
-    Link { thread: String, remove: bool },
+    Media {
+        generation: u64,
+        url: String,
+    },
+    Link {
+        thread: String,
+        remove: bool,
+    },
     Links,
 }
 
