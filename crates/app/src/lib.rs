@@ -55,6 +55,7 @@ pub mod settings_import;
 pub(crate) mod settings_integrations;
 mod settings_subtrees;
 mod signin;
+mod sleep;
 mod storage;
 pub mod updater;
 mod usage;
@@ -6357,6 +6358,7 @@ impl Root {
                 .as_str()
                 .unwrap_or("enter"),
         ));
+        self.sync_prevent_sleep(cx);
         let visibility = ReasoningVisibility::from_config(&self.config);
         if ReasoningVisibility::get(cx) != visibility {
             cx.set_global(visibility);
@@ -6704,6 +6706,7 @@ impl Root {
                         }
                         self.sidebar
                             .update(cx, |s, cx| s.set_running(id, active, cx));
+                        self.sync_prevent_sleep(cx);
                     }
                 }
                 // Completion can leave the selected thread unread, including a background terminal.
