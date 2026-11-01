@@ -76,6 +76,7 @@ fn normal_profile_keeps_existing_state_and_settings() -> Result<()> {
                 "--nocapture",
             ])
             .env("HOME", directory.path())
+            .env_remove("XDG_CONFIG_HOME")
             .env("CODEX_HOME", directory.path().join("normal-codex"))
             .env("QA_NORMAL_PROFILE_CHILD", "1")
             .status()?;
@@ -90,7 +91,7 @@ fn normal_profile_keeps_existing_state_and_settings() -> Result<()> {
         Some(home.clone().into_os_string())
     );
     assert_eq!(std::env::var_os("CODEX_HOME"), codex_home);
-    let directory = home.join("Library/Application Support/codex-gpui");
+    let directory = app::user_data::user_data_dir("codex-gpui");
     std::fs::create_dir_all(&directory)?;
     std::fs::write(
         directory.join("state.json"),
@@ -115,10 +116,6 @@ fn normal_profile_keeps_existing_state_and_settings() -> Result<()> {
         app::host_settings::Settings::load(settings_path)?.read_all()["qa-normal-proof"],
         true
     );
-    assert!(
-        !home
-            .join("Library/Application Support/codex-gpui-qa")
-            .exists()
-    );
+    assert!(!app::user_data::user_data_dir("codex-gpui-qa").exists());
     Ok(())
 }

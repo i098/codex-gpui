@@ -8,13 +8,35 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Choose the integrated terminal shell in Settings from the shells in `/etc/shells`; new terminal tabs start it (`desktop.integratedTerminalShell`).
+- Drag existing files from the Changes file list and workspace file tree to other apps with their native file icon.
+- Show the New Window, Full view, Browser, and Send Feedback actions in the native menu.
+- Add a `newWindow` action that opens a new primary window on Home.
+- Run `environmentAction1` through `environmentAction9` in the active terminal.
+- Open the failed recording from a dictation failure notice in Settings ▸ Voice, with `Retry`, `Download audio` and `Show all recordings`, and show a voice or dictation shortcut capture failure under its row, with the original's conflict and fallback messages.
+- Open the Images page from the Explore menu: a grid of the account's Library images (`/files/library/nodes`, `categories=image`) with thumbnails, and loading, error with Try again, and empty states.
+- Open the GPTs page from the Explore menu: `My GPTs` (`/gizmos/bootstrap`) and the `GPT catalog` (`/public-api/gizmos/discovery`); a row opens the GPT's page (`/gizmos/{id}`) with its author, description and conversation starters.
+- Add Settings ▸ `Debug` (debug builds, or `CODEX_GPUI_DEBUG_MENU=1`): the `GPU Tearing Debug` switches turn scroll fade masks, backdrop blur, motion or squircle corners off for the session.
+- Add Settings ▸ `File type handlers`: one row per file extension an installed plugin's MCP tool declares as a `file` entrypoint, with a `Built-in` or plugin viewer menu saved in the `preferred-file-viewers` host setting, plus loading, `Couldn’t load file handlers` with Retry, and empty states.
+- Add Settings ▸ `Appshots` on macOS: press both ⌘, ⌥ or ⇧ keys to capture the frontmost window into the current chat, a new chat or a visible Mini, with destination and sound settings.
+- Show an image or PDF in the Files tab as a preview (PDFs with page arrows), not as text lines that fail with `Could not open file`.
+- Open the latest plan from Thread summary ▸ `Plan` in an editable `Plan` side panel tab that saves to `$CODEX_HOME/plans/<thread>/<plan item>/PLAN.md`.
+- Open the Maps page from the Explore menu: the ChatGPT backend `/local/home` prompt suggestions and map, with loading, error with Try again, and empty states.
+- Store app state, host settings, notification sounds and the QA profile in the per-OS user data directory (`%APPDATA%` on Windows, XDG config on Linux).
 - Add `Toggle Git blame` to the command menu: the file viewer shows the author, commit summary, short SHA and date for the active (clicked or cited) line from the host's `git blame`.
+- List installed plugins in the `@` mention list's `Plugins` section, with `Loading plugins...` while `plugin/list` runs; a picked plugin becomes a chip and sends `[@name](plugin://id)`.
 - Check for updates in the background every hour, send the original's appcast parameters (installation id, architecture, version, beta, macOS version and plan), and add a `Beta updates` setting.
+- Block sending images with a model whose `inputModalities` has no `image`, with the original's `Remove images or switch models to send this message`.
+- Release the macOS bundle as one universal (arm64 and Intel) zip.
+- Build the Linux app with the Wayland and X11 window backends, and smoke-open the primary window in CI.
 - Publish a signed Sparkle `appcast.xml` and SHA-256 checksum with each release, and add an Automatically check for updates switch to General settings.
+- Add `/memories` and its `Chat memories` dialog while the `memories` feature is on: `Generate memories` sets the open chat's memory mode with `thread/memoryMode/set`, and on Home both switches apply to the next chat.
+- Show `$…$` and `$$…$$` math in agent answers as Unicode math text, with display math centered on its own line; copying a selection keeps the TeX source.
+- Self-update the Linux AppImage from a signed `latest.json` release manifest: check every 6 hours, verify SHA-256 and Ed25519, then swap the file and relaunch on install.
 - Add named permission profiles, per-category approval settings, writable folder selection, automatic review notices, and `/approve` for one denied retry.
 - Restrict human-only approval cards to the server's offered one-time decisions.
 - Send browser annotations with the next turn under `# Browser comments:`, after the diff comments and with the same comment numbers as the original app.
 - Switch the sidebar and Home with the ChatGPT and Work modes: the ChatGPT wordmark, the account's ChatGPT conversations in Recents from `GET /conversations`, the `Chat | Work` tabs, and the Chat or Work headline and composer placeholder.
+- Open an in-app browser tab in the thread side panel with ⌘T or a link's `Open in` ▸ `New tab`: an address bar (URL, host or web search) over a real WKWebView page, with the page title as the tab label.
 - Keep file change cards after Undo and add Reapply through the host Git worker, without changing conversation history.
 - Add a background macOS check for minimize, zoom, hide, quit, and the 480×600 window minimum, with safe call-level checks for Hide Others and Show All.
 - Open the Sites page from the rail: the owned sites list from the ChatGPT backend `/websites`, with loading, error with Retry, and empty states.
@@ -25,6 +47,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Start normal chats and forks in managed worktrees, retain the selected checkout, and fork selected turns with the server's history boundary.
 - Run explicit `!` shell commands in Full access chats after a native warning confirmation; keep sandboxed drafts disabled and separate from the terminal panel.
 - Add plan mode: `/plan-mode`, the `@` menu row and the footer `Plan` chip turn it on and off, turns send the `plan` collaboration mode, a resumed chat keeps it, and plan text and step progress show in the chat. Restore an edited queued message's place across every queue page.
+- Open Space (`/space`) from the rail: the account's Spaces from `GET /spaces/v2`, with search, empty, no-match, and `Could not load spaces` / `Try again` states.
 - Show `Unable to send message` with the reason and `OK` when a composer submit waits for file uploads.
 - Draw the 2 px keyboard focus ring on the mobile setup buttons.
 - Draw the 2 px keyboard focus ring on the diff card's `Undo` and `View changes` buttons in a chat.
@@ -58,8 +81,16 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Restore `View` > `Toggle Bottom Panel` and `View` > `Open Terminal` in the macOS menu bar, in the original order.
 
 ### Fixed
+- Put the site's favicon before an external markdown link, with the original's globe until the image loads, and fetch remote images such as favicons and avatars over HTTP.
+- Use the original's compact 44 px rows in the Appearance theme cards.
+- Show the text overflow icon on a code block's `Enable word wrap` button, and the wrap icon only while wrap is on, as the original does.
+- Show the Appearance theme picker's Codex themes in a `Codex themes` flyout submenu beside `ChatGPT`, with 24 px theme icons, as the original does.
 - Fold a running turn's interim messages under `Working for` once its final answer starts, as the original does.
+- Show tool activity labels in full when they fit, as the original does, instead of `Read math....`.
+- Keep the macOS window buttons centred in the top bar at every zoom level, as the original does; they stayed at the 100% position.
+- Use the original icons in the composer `+` menu: the gray paperclip, folder, target, light bulb and green scribble.
 - Show reads of a skill's `SKILL.md` as `Loaded a tool` or `Loaded tools` with the wrench icon in the activity group summary, as the original does.
+- Raster moving shapes about twice as fast and remove GPUI's 30 fps cap on unfocused windows, so the sidebar animation runs at 87–107 fps after its first toggle (was 35–54).
 - Ignore app list updates while the Plugins page is loading, so large account catalogs can finish loading.
 - Connect MCP and skill commands to the existing settings and mention actions, and refresh skill lists after changes.
 - Hide the mobile setup artwork below 1024 px, so the setup column stays centered in the main surface.
@@ -99,3 +130,4 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Group the diff find bar in one composited layer and paint its icons under the bar's rounded overflow clip, as the original does.
 - Clip the diff line-number gutters to the scroller so scrolled-out rows no longer paint over the panel header.
 - Measure text x-height at the requested optical size on macOS so CoreText metrics match the rendered font size
+- Space the Code Review list row's branch and diff stats 8 px apart, as the original does, so long branch names keep the same visible letters.
