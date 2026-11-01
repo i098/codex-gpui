@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Save panic reports with a backtrace to `last-crash.txt` in the user data directory, and prefill the feedback dialog with the last crash on the next launch.
 
 - Add Windows sandbox readiness, setup actions, and completion feedback on Home.
 - Drag existing files from the Changes file list and workspace file tree to other apps with their native file icon.
