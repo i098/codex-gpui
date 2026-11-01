@@ -11,7 +11,7 @@ use std::{
 };
 use ui::screens::{
     dictation::{Action, Phase, Recovery, View},
-    settings::voice::{Policy, Recording},
+    settings::voice::{Policy, Recording, VoiceState},
 };
 
 struct Session {
@@ -560,8 +560,17 @@ impl Controller {
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
             ),
             Action::Recordings => {
+                let recording = self.last_id.clone();
                 let _ = self.owner.update(cx, |root, window, cx| {
-                    root.open_settings_section("Voice", window, cx)
+                    root.open_settings_section("Voice", window, cx);
+                    // After the page loads its state, so the reload does not clear it.
+                    if let Some(state) = cx.try_global::<VoiceState>() {
+                        let state = VoiceState {
+                            recording,
+                            ..state.clone()
+                        };
+                        cx.set_global(state);
+                    }
                 });
             }
             Action::Copy => {
