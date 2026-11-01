@@ -2344,7 +2344,7 @@ const COMMANDS: &[Command] = &[
         "Mark as unread",
         "Mark the current chat as unread",
         "⇧⌘U",
-        false,
+        true,
     ),
     (
         "Chat",
