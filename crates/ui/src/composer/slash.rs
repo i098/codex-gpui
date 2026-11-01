@@ -733,6 +733,7 @@ impl Composer {
                     description: description.into(),
                     icon: "thread-summary",
                     action: SubAction::Command(action),
+                    heading: None,
                 })
                 .collect()
             }
@@ -750,6 +751,7 @@ impl Composer {
                 description: String::new(),
                 icon: "settings-personalization",
                 action: SubAction::Command(action),
+                heading: None,
             })
             .collect(),
             "fork" => vec![
