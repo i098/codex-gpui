@@ -111,6 +111,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("rail_focus_ring", rail_focus_ring),
     ("profile_menu_settings", profile_menu_settings),
     ("profile_menu_dismiss", profile_menu_dismiss),
+    ("profile_menu_usage", profile_menu_usage),
     ("profile_menu_mobile", profile_menu_mobile),
     ("mobile_button_hover", mobile_button_hover),
     ("mobile_focus_ring", mobile_focus_ring),
@@ -929,8 +930,9 @@ fn avatar(fx: &Fx) -> (f32, f32) {
 }
 
 /// Profile menu rows `Settings` and `Set up mobile`, above the `Keyboard Shortcuts` row.
+/// `Usage`, `Personalization` and `Open config.toml` sit between `Settings` and `Show Mini`.
 fn profile_item(fx: &Fx, n: usize) -> (f32, f32) {
-    (118., fx.size.1 - [192., 100.][n])
+    (118., fx.size.1 - [320., 100.][n])
 }
 
 fn profile_menu_settings() -> Result<String> {
@@ -953,6 +955,17 @@ fn profile_menu_settings() -> Result<String> {
         fx.shell(|s| !s.profile_menu),
         "a second avatar click left it open"
     );
+    Ok(String::new())
+}
+
+/// `Usage` opens Settings ▸ `Usage & billing`.
+fn profile_menu_usage() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.click(avatar(&fx))?;
+    fx.capture_evidence("CGX_PROFILE_SHOTS", "profile-menu")?;
+    fx.click((118., fx.size.1 - 288.))?;
+    ensure!(fx.route() == Route::Settings, "route {:?}", fx.route());
+    fx.capture_evidence("CGX_PROFILE_SHOTS", "profile-usage")?;
     Ok(String::new())
 }
 

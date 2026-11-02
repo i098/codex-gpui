@@ -2033,10 +2033,14 @@ impl Host for LocalHost {
             | "git-init-repo" | "git-commit-status" | "git-commit-diff" | "git-commit"
             | "git-push" | "git-checkout" | "git-cat-file" | "git-review-patch"
             | "git-file-url" | "git-blame-file" => git::fetch(endpoint, &params)?,
-            "gh-cli-status" | "gh-current-user" | "gh-pr-search" | "gh-pr-detail"
-            | "gh-pr-patch" | "gh-pr-media" => {
-                github_pull_requests::fetch(self, endpoint, &params)?
-            }
+            "gh-cli-status"
+            | "gh-current-user"
+            | "gh-pr-search"
+            | "gh-pr-detail"
+            | "gh-pr-patch"
+            | "gh-pr-media"
+            | "pull-request-chat"
+            | "pull-request-chat-link" => github_pull_requests::fetch(self, endpoint, &params)?,
             "create-worktree" => self.create_worktree(&params)?,
             "set-worktree-owner-thread" | "worktree-set-owner-thread" => {
                 let worktree = params["worktree"].as_str().context("missing worktree")?;
