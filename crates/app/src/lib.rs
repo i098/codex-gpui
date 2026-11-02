@@ -79,13 +79,14 @@ use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, BorrowAppContext as _,
     Context, Entity, EntityInputHandler as _, FocusHandle, Focusable as _, InteractiveElement as _,
     IntoElement, KeyBinding, KeyDownEvent, ParentElement as _, PathPromptOptions, Pixels, Render,
-    SharedString, Styled as _, Task, WeakEntity, Window, WindowAppearance, actions, div, px,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window,
+    WindowAppearance, actions, div, px,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::PathBuf, sync::Arc, time::Duration};
-use theme::Theme;
+use theme::{ActiveTheme as _, Theme};
 use ui::browser::{BrowserEvent, BrowserTab};
 use ui::composer::{Approval, Composer, Permission, QueueAction, Submission};
 use ui::dialog::{
@@ -518,6 +519,8 @@ pub struct Root {
     /// The signed-in ChatGPT account's email (`account/read`), shown in the logout dialog.
     account_email: Option<String>,
     chatgpt_account: bool,
+    /// The sign-in screen came from the profile menu over a signed-in account: it offers `Cancel`.
+    switching_account: bool,
     usage_limit_notice: UsageLimitNotice,
     bridge: Arc<Bridge>,
     host_id: String,
@@ -1006,6 +1009,7 @@ impl Root {
             logout_pending: false,
             account_email: None,
             chatgpt_account: false,
+            switching_account: false,
             usage_limit_notice: UsageLimitNotice::RetryLater,
             host: host::thread_host(
                 &host_id,
@@ -7213,10 +7217,35 @@ impl Root {
 
     fn finish_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.login = None;
+        self.switching_account = false;
         self.read_account(Some(window), cx);
         self.refresh_threads(cx);
         self.load_projects(cx);
         self.load_sections(cx);
+        cx.notify();
+    }
+
+    /// Profile menu `Add account` / `Sign in with ChatGPT`: the app-server holds one account, so
+    /// a new sign-in replaces the current one; until it finishes, `Cancel` keeps the current one.
+    pub fn switch_account(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.login.is_some() || self.logout_pending {
+            return;
+        }
+        cx.set_global(AppServer(self.bridge.clone()));
+        self.switching_account = true;
+        self.login = Some(self.new_login(window, cx));
+        cx.notify();
+    }
+
+    pub fn cancel_switch_account(&mut self, cx: &mut Context<Self>) {
+        if !self.switching_account {
+            return;
+        }
+        self.switching_account = false;
+        if let Some(login) = self.login.take() {
+            login.update(cx, |login, cx| login.cancel_pending(cx));
+        }
+        self.ready = true;
         cx.notify();
     }
 
@@ -7226,6 +7255,17 @@ impl Root {
         self.account_email = account.and_then(chatgpt_email);
         self.chatgpt_account =
             account.is_some_and(|account| matches!(account.account, Some(Account::Chatgpt { .. })));
+        let profile = account.and_then(|account| match &account.account {
+            Some(Account::Chatgpt { email, .. }) => Some(ui::ProfileAccount::Chatgpt(
+                email.clone().map(SharedString::from),
+            )),
+            Some(Account::ApiKey) => Some(ui::ProfileAccount::ApiKey),
+            _ => None,
+        });
+        self.shell.update(cx, |shell, cx| {
+            shell.account = profile;
+            cx.notify();
+        });
         let plan = account.and_then(|account| match &account.account {
             Some(Account::Chatgpt { plan_type, .. }) => Some(plan_type.as_str()),
             _ => None,
@@ -8259,6 +8299,26 @@ impl Render for Root {
                     .on_action(|_: &Minimize, window, _| window.minimize_window())
                     .on_action(|_: &Zoom, window, _| window.zoom_window())
                     .child(exclusive)
+                    .when(self.switching_account && self.login.is_some(), |d| {
+                        let t = cx.theme().clone();
+                        d.child(
+                            div()
+                                .id("switch-account-cancel")
+                                .absolute()
+                                .top(px(44.))
+                                .right(px(16.))
+                                .px(px(12.))
+                                .py(px(6.))
+                                .rounded(px(8.))
+                                .border_1()
+                                .border_color(t.border)
+                                .hover(move |s| s.bg(t.ghost_hover))
+                                .child(ui::text("Cancel", 14., 20., 500., t.text))
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.cancel_switch_account(cx)),
+                                ),
+                        )
+                    })
                     .children(self.dialog.clone()),
                 self,
                 cx,
@@ -8390,6 +8450,9 @@ impl Render for Root {
                     let dialog = cx.new(|cx| Dialog::logout(email, cx));
                     this.show_dialog(dialog, window, cx);
                 }
+            }))
+            .on_action(cx.listener(|this, _: &ui::SwitchAccount, window, cx| {
+                this.switch_account(window, cx)
             }))
             .on_action(cx.listener(|this, _: &OpenScheduled, window, cx| {
                 this.navigate(Route::Scheduled, window, cx)
