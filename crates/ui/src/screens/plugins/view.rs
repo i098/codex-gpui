@@ -421,26 +421,82 @@ impl Page {
             Resource::Ready(value) => value,
         };
         let personal = self.section == "Personal";
-        let plugins: Vec<_> = markets
+        let sections: Vec<_> = markets
             .iter()
-            .flat_map(|m| &m.plugins)
-            .filter(|p| {
-                p.visible() && p.matches(query) && self.data.personal_path(p).is_some() == personal
+            .filter_map(|market| {
+                let plugins: Vec<_> = market
+                    .plugins
+                    .iter()
+                    .filter(|p| {
+                        p.visible()
+                            && p.matches(query)
+                            && self.data.personal_path(p).is_some() == personal
+                    })
+                    .collect();
+                (!plugins.is_empty()).then_some((market, plugins))
             })
             .collect();
-        if plugins.is_empty() {
+        if sections.is_empty() {
             return self.status("No plugins found", None, cx);
         }
+        let t = cx.theme().clone();
         div()
-            .mt(px(24.))
-            .grid()
-            .grid_cols(2)
-            .gap(px(16.))
-            .children(
-                plugins
-                    .into_iter()
-                    .map(|plugin| self.plugin_card(plugin, window, cx)),
-            )
+            .flex()
+            .flex_col()
+            .children(sections.into_iter().map(|(market, plugins)| {
+                // A signed-in catalog holds ~10k remote plugins; render pages, not all cards.
+                let shown = plugins
+                    .len()
+                    .min(self.plugin_rows.get(&market.name).copied().unwrap_or(6));
+                let mut section = div()
+                    .mt(px(24.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(text(market.title.clone(), 16., 24., 500., t.text))
+                    .child(
+                        div().grid().grid_cols(2).gap(px(16.)).children(
+                            plugins[..shown]
+                                .iter()
+                                .map(|plugin| self.plugin_card(plugin, window, cx)),
+                        ),
+                    );
+                if shown < plugins.len() {
+                    let name = market.name.clone();
+                    let id = format!("plugins-more-{name}");
+                    let handle = focus::handle(id.clone(), 0, window, cx);
+                    section = section.child(
+                        focus::ring(
+                            div()
+                                .id(id)
+                                .role(gpui::Role::Button)
+                                .aria_label("See more")
+                                .min_h(px(31.))
+                                .px(px(8.))
+                                .flex()
+                                .items_center()
+                                .rounded_full()
+                                .hover(|d| d.bg(t.ghost_hover))
+                                .child(text(
+                                    format!("See more ({} more)", plugins.len() - shown),
+                                    13.,
+                                    21.125,
+                                    430.,
+                                    t.text_secondary,
+                                )),
+                            &handle,
+                            px(16.),
+                            px(2.),
+                            cx,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            *this.plugin_rows.entry(name.clone()).or_insert(6) += 60;
+                            cx.notify();
+                        })),
+                    );
+                }
+                section
+            }))
             .into_any_element()
     }
 
