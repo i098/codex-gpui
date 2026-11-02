@@ -7004,6 +7004,10 @@ impl Root {
         };
         match event {
             Event::Notification { method, params } => match method.as_str() {
+                "project/changed" | "thread/project/updated" => {
+                    self.load_projects(cx);
+                    self.refresh_threads(cx);
+                }
                 "thread/settings/updated" => {
                     if let Some(id) = params["threadId"].as_str()
                         && let Some(owner) = self.owner(id, cx)
