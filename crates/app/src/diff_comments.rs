@@ -147,4 +147,29 @@ impl Root {
             self.toast(Toast::danger("Could not dismiss comment. Try again."), cx);
         }
     }
+
+    /// `artifact-direct-comment`: the open chat sends the batch as its own turn and the batch
+    /// clears. A turn that cannot start now keeps the batch (bundle `artifactAnnotationBatch.sendFailed`).
+    pub(super) fn send_artifact_annotations(
+        &mut self,
+        panel: Entity<DiffPanel>,
+        comments: &[Comment],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let submission = self
+            .thread
+            .is_some()
+            .then(|| self.thread_composer.read(cx).comments_submission(comments))
+            .flatten();
+        if let Some(submission) = submission {
+            // The batch is its own turn: a queued message taken back with Edit keeps its slot.
+            let edit = self.queue_edit.take();
+            self.send(None, submission, None, window, cx);
+            self.queue_edit = edit;
+            panel.update(cx, |panel, cx| panel.artifact_annotations_sent(cx));
+        } else {
+            self.toast(Toast::danger("Could not send requests. Try again."), cx);
+        }
+    }
 }

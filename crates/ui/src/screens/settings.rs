@@ -1830,24 +1830,64 @@ pub(crate) fn select(
     open: bool,
     t: &Theme,
 ) -> Div {
+    select_with(
+        label,
+        weight,
+        leading,
+        disabled,
+        open,
+        TriggerStyle::default(),
+        t,
+    )
+}
+
+/// A select trigger's text size, horizontal padding and fill.
+#[derive(Clone, Copy)]
+pub(crate) struct TriggerStyle {
+    pub size: f32,
+    pub line_height: f32,
+    pub padding: (f32, f32),
+    /// `bg-token-main-surface-primary` instead of the soft primary fill.
+    pub surface: bool,
+}
+
+impl Default for TriggerStyle {
+    fn default() -> Self {
+        Self {
+            size: 13.,
+            line_height: 18.,
+            padding: (13., 13.),
+            surface: false,
+        }
+    }
+}
+
+pub(crate) fn select_with(
+    label: impl Into<SharedString>,
+    weight: f32,
+    leading: Option<AnyElement>,
+    disabled: bool,
+    open: bool,
+    style: TriggerStyle,
+    t: &Theme,
+) -> Div {
+    let fill = if open {
+        t.ghost_hover
+    } else if style.surface {
+        t.surface
+    } else {
+        t.primary_soft_alpha
+    };
     div()
         .h(px(28.))
-        .px(px(13.))
+        .pl(px(style.padding.0))
+        .pr(px(style.padding.1))
         .flex()
         .items_center()
         .justify_between()
         .gap(px(4.))
         .relative()
-        .child(on_card(
-            12.5,
-            Squircle,
-            if open {
-                t.ghost_hover
-            } else {
-                t.primary_soft_alpha
-            },
-            Some(t.border),
-        ))
+        .child(on_card(12.5, Squircle, fill, Some(t.border)))
         .when(disabled, |d| d.opacity(0.4))
         .child(
             div()
@@ -1855,7 +1895,7 @@ pub(crate) fn select(
                 .items_center()
                 .gap(px(6.))
                 .children(leading)
-                .child(text(label, 13., 18., weight, t.text)),
+                .child(text(label, style.size, style.line_height, weight, t.text)),
         )
         .child(icon("chevron-down", 14., t.text_tertiary))
 }
