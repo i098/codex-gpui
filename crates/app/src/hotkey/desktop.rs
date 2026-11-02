@@ -11,6 +11,7 @@ unsafe extern "C" {
     fn CGEventCreateKeyboardEvent(source: *const c_void, key: u16, down: u8) -> *mut c_void;
     fn CGEventSetFlags(event: *mut c_void, flags: u64);
     fn CGEventPost(location: u32, event: *mut c_void);
+    fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) -> *mut AnyObject;
 }
 #[link(name = "CoreFoundation", kind = "framework")]
 unsafe extern "C" {
@@ -40,6 +41,33 @@ pub fn frontmost_application() -> Option<i32> {
         } else {
             Some(msg_send![application, processIdentifier])
         }
+    }
+}
+
+/// The window number of the frontmost application's front window, for `screencapture -l`.
+pub fn frontmost_window() -> Option<u32> {
+    let pid = frontmost_application()?;
+    unsafe {
+        // On-screen only, desktop excluded; the list runs front to back.
+        let windows = CGWindowListCopyWindowInfo(1 | 16, 0);
+        if windows.is_null() {
+            return None;
+        }
+        let number = |info: *mut AnyObject, key: &str| -> Option<i64> {
+            let key = objc2_foundation::NSString::from_str(key);
+            let value: *mut AnyObject = msg_send![info, objectForKey: &*key];
+            (!value.is_null()).then(|| msg_send![value, longLongValue])
+        };
+        let count: usize = msg_send![windows, count];
+        let found = (0..count).find_map(|index| {
+            let info: *mut AnyObject = msg_send![windows, objectAtIndex: index];
+            (number(info, "kCGWindowOwnerPID") == Some(i64::from(pid))
+                && number(info, "kCGWindowLayer") == Some(0))
+            .then(|| number(info, "kCGWindowNumber"))
+            .flatten()
+        });
+        CFRelease(windows.cast());
+        found.and_then(|number| u32::try_from(number).ok())
     }
 }
 
@@ -154,6 +182,27 @@ impl Monitor {
                     let _ = sender.try_send(super::platform::ShortcutEvent { shortcut, pressed });
                 }
             }
+        })
+    }
+
+    /// Calls `pressed` each time both keys of one modifier go down together. `device` is the
+    /// pair's `NX_DEVICE*KEYMASK` bits, which tell the left key from the right one.
+    pub fn both(device: usize, pressed: impl Fn() + 'static) -> Result<Self> {
+        ensure!(
+            unsafe { AXIsProcessTrusted() } != 0,
+            "Enable Accessibility to use the appshot hotkey"
+        );
+        let down = std::cell::Cell::new(false);
+        Self::listen(1 << 12, move |event| {
+            if event.is_null() {
+                return;
+            }
+            let flags: usize = unsafe { msg_send![event, modifierFlags] };
+            let both = flags & device == device;
+            if both && !down.get() {
+                pressed();
+            }
+            down.set(both);
         })
     }
 }

@@ -129,3 +129,135 @@ impl Root {
         .detach();
     }
 }
+
+impl Root {
+    #[cfg(target_os = "windows")]
+    pub(super) fn check_windows_sandbox_readiness(&mut self, cx: &mut Context<Self>) {
+        let bridge = self.bridge.clone();
+        cx.spawn(async move |root, cx| {
+            let result = bridge
+                .request::<_, Value>("windowsSandbox/readiness", json!({}))
+                .await;
+            root.update(cx, |root, cx| match result {
+                Ok(response) => match windows_sandbox_setup_needed(response["status"].as_str()) {
+                    Some(needed) => root.set_windows_sandbox_state(needed, false, cx),
+                    None => root.toast(
+                        Toast::danger(format!(
+                            "Unknown Windows sandbox readiness: {}",
+                            response["status"]
+                        )),
+                        cx,
+                    ),
+                },
+                Err(error) => root.toast(
+                    Toast::danger(format!(
+                        "Could not check Windows sandbox readiness: {error}"
+                    )),
+                    cx,
+                ),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    #[cfg(target_os = "windows")]
+    pub(super) fn start_windows_sandbox_setup(
+        &mut self,
+        mode: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        if self.home.read(cx).windows_sandbox_setup_pending {
+            return;
+        }
+        self.set_windows_sandbox_state(true, true, cx);
+        let bridge = self.bridge.clone();
+        let cwd = self.state.project_root.clone();
+        cx.spawn(async move |root, cx| {
+            let result = bridge
+                .request::<_, Value>(
+                    "windowsSandbox/setupStart",
+                    json!({"mode": mode, "cwd": cwd}),
+                )
+                .await;
+            root.update(cx, |root, cx| match result {
+                Ok(response) if response["started"] == true => {}
+                Ok(_) => {
+                    root.set_windows_sandbox_state(true, false, cx);
+                    root.toast(Toast::danger("Windows sandbox setup did not start"), cx);
+                }
+                Err(error) => {
+                    root.set_windows_sandbox_state(true, false, cx);
+                    root.toast(
+                        Toast::danger(format!("Could not start Windows sandbox setup: {error}")),
+                        cx,
+                    );
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    #[cfg(target_os = "windows")]
+    pub(super) fn windows_sandbox_setup_completed(
+        &mut self,
+        params: &Value,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.home.read(cx).windows_sandbox_setup_pending {
+            return;
+        }
+        let success = params["success"].as_bool().unwrap_or(false);
+        self.set_windows_sandbox_state(!success, false, cx);
+        if success {
+            self.toast(Toast::info("Windows sandbox setup completed"), cx);
+        } else {
+            let error = params["error"]
+                .as_str()
+                .unwrap_or("No error details were provided");
+            self.toast(
+                Toast::danger(format!("Windows sandbox setup failed: {error}")),
+                cx,
+            );
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn set_windows_sandbox_state(&mut self, needed: bool, pending: bool, cx: &mut Context<Self>) {
+        self.home.update(cx, |home, cx| {
+            home.windows_sandbox_setup_needed = needed;
+            home.windows_sandbox_setup_pending = pending;
+            cx.notify();
+        });
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_sandbox_setup_needed(status: Option<&str>) -> Option<bool> {
+    match status {
+        Some("ready") => Some(false),
+        Some("notConfigured" | "updateRequired") => Some(true),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod windows_sandbox_tests {
+    use super::*;
+
+    #[test]
+    fn readiness_only_shows_setup_for_incomplete_states() {
+        assert_eq!(windows_sandbox_setup_needed(Some("ready")), Some(false));
+        assert_eq!(
+            windows_sandbox_setup_needed(Some("notConfigured")),
+            Some(true)
+        );
+        assert_eq!(
+            windows_sandbox_setup_needed(Some("updateRequired")),
+            Some(true)
+        );
+        assert_eq!(windows_sandbox_setup_needed(None), None);
+        assert_eq!(windows_sandbox_setup_needed(Some("unknown")), None);
+    }
+}
