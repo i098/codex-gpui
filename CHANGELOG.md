@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Keep a separate composer draft for each chat: switching chats keeps the text, chips and attachments of each one, and the text returns after a restart.
 - Save panic reports with a backtrace to `last-crash.txt` in the user data directory, and prefill the feedback dialog with the last crash on the next launch.
 
 - Add Windows sandbox readiness, setup actions, and completion feedback on Home.
