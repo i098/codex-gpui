@@ -422,6 +422,7 @@ pub fn key_label(accelerator: &str) -> String {
 const HOME_ONLY: &[&str] = &["composer.submitInBackground"];
 const DIALOG_HIDDEN: &[&str] = &[
     "temporaryChat",
+    "copyLastCodeBlock",
     "openReviewTab",
     "undoAppAction",
     "redoAppAction",
