@@ -37,6 +37,14 @@ pub mod updater;
 pub mod workspace;
 pub mod zoom;
 
+/// The account the profile menu shows (`account/read`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProfileAccount {
+    /// A ChatGPT sign-in and its email.
+    Chatgpt(Option<SharedString>),
+    ApiKey,
+}
+
 actions!(
     shell,
     [
@@ -55,6 +63,8 @@ actions!(
         GoForward,
         OpenSettings,
         LogOut,
+        /// Profile menu `Add account` / `Sign in with ChatGPT`: the sign-in screen, cancelable.
+        SwitchAccount,
         ShowKeyboardShortcuts,
         OpenMini,
         /// Rail `Space`: the Spaces list (`/space`).
@@ -289,6 +299,8 @@ pub struct Shell {
     pub scheduled_attention: bool,
     /// The profile avatar's menu is open.
     pub profile_menu: bool,
+    /// The signed-in account the profile menu names; `None` when signed out of OpenAI.
+    pub account: Option<ProfileAccount>,
     /// Pointer over the avatar: its own click toggles the menu, so a press there must not
     /// also close it as a click outside.
     avatar_hovered: bool,
@@ -390,6 +402,7 @@ impl Shell {
             security_available: false,
             scheduled_attention: false,
             profile_menu: false,
+            account: None,
             avatar_hovered: false,
             explore_menu: false,
             explore_hovered: false,
@@ -1447,6 +1460,17 @@ impl Shell {
             dispatch::<OpenMobileSetup>,
         );
         let mini = item("profile-mini", "Show Mini", dispatch::<OpenMini>);
+        // `profileDropdown`: the signed-in account, then `Add account` (ChatGPT) or
+        // `Sign in with ChatGPT`; both open the sign-in screen through `SwitchAccount`.
+        let (account, switch) = match &self.account {
+            Some(ProfileAccount::Chatgpt(email)) => (email.clone(), "Add account"),
+            Some(ProfileAccount::ApiKey) => (
+                Some("Logged in with API key".into()),
+                "Sign in with ChatGPT",
+            ),
+            None => (None, "Sign in with ChatGPT"),
+        };
+        let switch = item("profile-switch-account", switch, dispatch::<SwitchAccount>);
         div()
             .absolute()
             .left(px(8.))
@@ -1458,22 +1482,33 @@ impl Shell {
                 }
             }))
             .child(composer::popover(t, 220., |d| {
-                d.child(settings)
-                    .child(mini)
-                    .child(item("profile-log-out", "Log out", dispatch::<LogOut>))
-                    .child(div().px(px(8.)).pt(px(8.)).pb(px(4.)).child(text(
-                        "Help",
-                        12.,
-                        16.,
-                        400.,
-                        t.text_tertiary,
-                    )))
-                    .child(mobile)
-                    .child(item(
-                        "profile-keyboard-shortcuts",
-                        "Keyboard Shortcuts",
-                        dispatch::<ShowKeyboardShortcuts>,
-                    ))
+                d.when_some(account, |d, account| {
+                    d.child(
+                        div()
+                            .id("profile-account")
+                            .px(px(8.))
+                            .pt(px(6.))
+                            .pb(px(4.))
+                            .child(text(account, 12., 16., 400., t.text_tertiary)),
+                    )
+                })
+                .child(switch)
+                .child(settings)
+                .child(mini)
+                .child(item("profile-log-out", "Log out", dispatch::<LogOut>))
+                .child(div().px(px(8.)).pt(px(8.)).pb(px(4.)).child(text(
+                    "Help",
+                    12.,
+                    16.,
+                    400.,
+                    t.text_tertiary,
+                )))
+                .child(mobile)
+                .child(item(
+                    "profile-keyboard-shortcuts",
+                    "Keyboard Shortcuts",
+                    dispatch::<ShowKeyboardShortcuts>,
+                ))
             }))
     }
 

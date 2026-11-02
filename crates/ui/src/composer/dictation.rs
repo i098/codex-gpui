@@ -259,6 +259,16 @@ impl Composer {
         }
     }
 
+    /// The original's `composer.dictation.*.tooltip` for the same state.
+    pub(super) fn dictation_tooltip(&self) -> &'static str {
+        match &self.dictation {
+            Some(active) if active.transcribing => "Finishing dictation",
+            Some(active) if active.starting => "Starting dictation…",
+            Some(_) => "Stop dictation",
+            None => "Dictate",
+        }
+    }
+
     pub fn dictation_error(&self) -> Option<&str> {
         self.dictation_error.as_deref()
     }
