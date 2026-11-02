@@ -265,7 +265,10 @@ pub fn open<V: Render + 'static>(
         }
         let view = build(window, cx);
         view.update(cx, |_, cx| {
-            cx.observe_window_activation(window, |_, window, cx| {
+            cx.observe_window_activation(window, move |_, window, cx| {
+                if kind == Kind::Primary {
+                    apply_backdrop(window);
+                }
                 let id = window.window_handle().window_id();
                 if let Some(entry) = cx.global::<Windows>().entries.get(&id)
                     && entry.kind == Kind::Primary
@@ -282,8 +285,13 @@ pub fn open<V: Render + 'static>(
                 }
             })
             .detach();
-            cx.observe_window_bounds(window, |_, window, cx| remember_bounds(window, cx))
-                .detach();
+            cx.observe_window_bounds(window, move |_, window, cx| {
+                if kind == Kind::Primary {
+                    apply_backdrop(window);
+                }
+                remember_bounds(window, cx)
+            })
+            .detach();
         });
         view
     })?;
@@ -304,6 +312,24 @@ pub fn open<V: Render + 'static>(
     Ok(handle)
 }
 
+/// The original's macOS backdrop (`applyWindowBackdrop`): `vibrancy: 'menu'` under the page
+/// while focused; an opaque surface when blurred or at 3840x2160 device px or more.
+fn apply_backdrop(window: &mut Window) {
+    let size = window
+        .bounds()
+        .size
+        .map(|v| f32::from(v) * window.scale_factor());
+    let large = size.width.max(size.height) >= 3840. && size.width.min(size.height) >= 2160.;
+    let backdrop = if cfg!(target_os = "macos") && window.is_window_active() && !large {
+        gpui::WindowBackgroundAppearance::Blurred
+    } else {
+        gpui::WindowBackgroundAppearance::Opaque
+    };
+    if window.background_appearance() != backdrop {
+        window.set_background_appearance(backdrop);
+    }
+}
+
 pub fn handles(kind: Kind, cx: &App) -> Vec<AnyWindowHandle> {
     cx.try_global::<Windows>()
         .into_iter()
@@ -311,6 +337,11 @@ pub fn handles(kind: Kind, cx: &App) -> Vec<AnyWindowHandle> {
         .filter(|entry| entry.kind == kind)
         .map(|entry| entry.handle)
         .collect()
+}
+
+/// Sets the Dock badge to `count`; zero clears it.
+pub(crate) fn set_badge(count: usize) {
+    platform::set_badge(count);
 }
 
 pub(crate) fn set_kind(window: &Window, kind: Kind, cx: &mut App) {
@@ -602,7 +633,7 @@ fn remember_bounds(window: &Window, cx: &mut App) {
     }
 }
 
-actions!(windows, [OpenThreadWindow]);
+actions!(windows, [OpenThreadWindow, NewWindow]);
 
 pub(crate) fn bind_root(window: &mut Window, cx: &mut Context<Root>) {
     cx.observe_window_activation(window, |root, window, cx| {
@@ -615,7 +646,16 @@ pub(crate) fn bind_root(window: &mut Window, cx: &mut Context<Root>) {
 }
 
 pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
-    root.on_action(cx.listener(|this, _: &OpenThreadWindow, _, cx| {
+    root.on_action(cx.listener(|this, _: &NewWindow, _, cx| {
+        if let Err(error) = open_primary(new_window_state(State::load()), this.cwd.clone(), cx) {
+            this.toast(
+                ui::toast::Toast::danger("Could not open the window")
+                    .description(format!("{error:#}")),
+                cx,
+            );
+        }
+    }))
+    .on_action(cx.listener(|this, _: &OpenThreadWindow, _, cx| {
         if !matches!(this.route(), Route::Thread(_)) {
             return;
         }
@@ -629,6 +669,7 @@ pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             confirm_before_close: this.state.confirm_before_close,
             project_root: this.state.project_root.clone(),
             zoom: this.state.zoom,
+            drafts: this.state.drafts.clone(),
             path: this.state.path.clone(),
         };
         if let Err(error) = open_primary(state, this.cwd.clone(), cx) {
@@ -639,6 +680,11 @@ pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             );
         }
     }))
+}
+
+fn new_window_state(mut state: State) -> State {
+    state.route = Route::Home;
+    state
 }
 
 #[cfg(test)]
@@ -663,5 +709,137 @@ mod tests {
             let bounds = kind.bounds(small, small);
             assert_eq!(small.intersect(&bounds), bounds);
         }
+    }
+    #[test]
+    fn new_window_state_always_starts_on_home() {
+        let state = new_window_state(State {
+            route: Route::Thread("thread".into()),
+            ..State::default()
+        });
+        assert!(matches!(state.route, Route::Home));
+    }
+
+    #[test]
+    fn new_window_action_opens_an_additional_home_window() {
+        use gpui::HeadlessAppContext;
+        use serde_json::Value;
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        // Replay the recorded app-server transcript so the primary window becomes
+        // ready; only a ready Root renders the main tree that binds NewWindow.
+        let recorded = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/readback.jsonl"),
+        )
+        .expect("read the recorded app-server transcript");
+        let lines = recorded
+            .lines()
+            .map(serde_json::from_str::<Value>)
+            .collect::<serde_json::Result<Vec<_>>>()
+            .expect("parse the recorded app-server transcript");
+        let requested = lines
+            .iter()
+            .filter(|line| {
+                line["dir"] == "send"
+                    && matches!(
+                        line["msg"]["method"].as_str(),
+                        Some(
+                            "account/read"
+                                | "thread/list"
+                                | "model/list"
+                                | "config/read"
+                                | "skills/list"
+                        )
+                    )
+            })
+            .map(|line| line["msg"]["id"].clone())
+            .collect::<Vec<_>>();
+        let repeated = lines
+            .iter()
+            .filter(|line| !line["msg"]["id"].is_null() && requested.contains(&line["msg"]["id"]))
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let recording = tempfile::NamedTempFile::new().expect("create the replay file");
+        std::fs::write(
+            recording.path(),
+            format!("{recorded}\n{repeated}\n{repeated}\n"),
+        )
+        .expect("write the replay file");
+        let (bridge, events) =
+            bridge::Bridge::replay(recording.path()).expect("build the replayed app-server bridge");
+
+        // Linux checks need layout and input without a GPU; macOS captures render headlessly.
+        #[cfg(not(target_os = "linux"))]
+        let renderer = gpui_platform::current_headless_renderer;
+        #[cfg(target_os = "linux")]
+        let renderer = || Ok(None);
+        let mut cx = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            renderer,
+        );
+        // Mirror main.rs startup: fonts, theme global, then app::init.
+        cx.update(|cx| {
+            theme::load_fonts(cx);
+            cx.set_global(theme::Theme::dark());
+            crate::init(cx);
+        });
+        cx.allow_parking();
+        let handle = cx
+            .open_window(gpui::size(gpui::px(900.), gpui::px(700.)), |window, cx| {
+                cx.new(|cx| {
+                    Root::new(
+                        State {
+                            theme: crate::ThemeSetting::Dark,
+                            ..Default::default()
+                        },
+                        bridge,
+                        events,
+                        std::env::temp_dir().to_string_lossy().into_owned(),
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .expect("open the primary window");
+        let window: gpui::AnyWindowHandle = handle.into();
+        let root = cx.read_window(&handle, |root, _| root).expect("read Root");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !root.read_with(&cx, |root, _| root.ready()) {
+            assert!(
+                Instant::now() < deadline,
+                "the primary window never became ready"
+            );
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // Draw the ready main tree so its NewWindow handler is in the dispatch tree.
+        cx.advance_clock(Duration::from_millis(16));
+        cx.test_window(window)
+            .simulate_frame_request(gpui::RequestFrameOptions {
+                require_presentation: true,
+                ..Default::default()
+            });
+        cx.run_until_parked();
+
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_action(Box::new(NewWindow), cx);
+        })
+        .expect("dispatch NewWindow");
+        // The dispatch is deferred; let it run and open the second window.
+        cx.run_until_parked();
+
+        let windows_are_home = cx.update(|cx| {
+            let windows = cx.windows();
+            assert_eq!(windows.len(), 2);
+            windows.into_iter().all(|handle| {
+                handle.downcast::<Root>().is_some_and(|root| {
+                    root.read(cx)
+                        .is_ok_and(|root| matches!(root.route(), Route::Home))
+                })
+            })
+        });
+        assert!(windows_are_home);
     }
 }

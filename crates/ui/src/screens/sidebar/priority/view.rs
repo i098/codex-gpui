@@ -83,7 +83,7 @@ impl HomeSidebar {
                     div().flex().flex_col().gap(px(1.)).children(
                         priority
                             .into_iter()
-                            .map(|(id, label, _)| self.chat_row(id, label.clone(), window, cx)),
+                            .map(|(id, label, _)| self.chat_row(id, label.clone(), 0., window, cx)),
                     ),
                 );
             }
@@ -99,7 +99,7 @@ impl HomeSidebar {
                             .filter(|(id, _, _)| {
                                 self.pinned.contains(id) && self.activity_visible(id)
                             })
-                            .map(|(id, label, _)| self.chat_row(id, label.clone(), window, cx)),
+                            .map(|(id, label, _)| self.chat_row(id, label.clone(), 0., window, cx)),
                     ),
                 );
         }
@@ -146,7 +146,7 @@ impl HomeSidebar {
                 ));
                 previous = Some(date);
             }
-            list = list.child(self.chat_row(id, label.clone(), window, cx).mb(px(1.)));
+            list = list.child(self.chat_row(id, label.clone(), 0., window, cx).mb(px(1.)));
         }
         if !self.activity_priority && previous.is_none() && !pinned_visible {
             list = list.child(self.activity_heading("Today", true, window, cx));
