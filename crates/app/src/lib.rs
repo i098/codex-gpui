@@ -762,6 +762,14 @@ impl Root {
                     ui::composer::SlashCommand::MemoryMode(_)
                     | ui::composer::SlashCommand::MemoryStatus => this.thread_memory_command(command, window, cx),
                     ui::composer::SlashCommand::Memories => this.open_memories(window, cx),
+                    ui::composer::SlashCommand::Status => this.show_status(window, cx),
+                    ui::composer::SlashCommand::Init => this.init_agents(window, cx),
+                    ui::composer::SlashCommand::Side => this.start_side_chat(window, cx),
+                    ui::composer::SlashCommand::ReviewBranches => this.load_review_branches(composer.clone(), cx),
+                    ui::composer::SlashCommand::Review(branch) => this.start_review(branch.clone(), window, cx),
+                    ui::composer::SlashCommand::Personality(name) => this.set_personality(name, cx),
+                    ui::composer::SlashCommand::Chat => this.new_special_chat(features::shortcuts::NewChatMode::Standalone, window, cx),
+                    ui::composer::SlashCommand::Worktree => this.toggle_worktree_run(cx),
                     ui::composer::SlashCommand::Rename => {
                         if let Route::Thread(id) = this.state.route.clone() {
                             this.open_rename(id, true, window, cx);
@@ -3296,11 +3304,9 @@ impl Root {
         let unread = self.sidebar.read(cx).unread.clone();
         let thread_open = matches!(self.state.route, Route::Thread(_));
         let cloud = self.chatgpt_account && self.host.supports_cloud_search();
-        let navigation = native_menus::navigation::available(self, cx);
         let menu = cx.new(|cx| {
             CommandMenu::with_threads(&self.threads, &unread, thread_open, "", cx)
                 .with_cloud_search(cloud)
-                .with_navigation_panel(navigation)
         });
         menu.update(cx, |menu, cx| {
             menu.set_activity_available(self.sidebar.read(cx).activity_available, cx)
@@ -6573,6 +6579,11 @@ impl Root {
             self.config["desktop"]["composerEnterBehavior"]
                 .as_str()
                 .unwrap_or("enter"),
+        ));
+        cx.set_global(terminal::TerminalShell(
+            self.config["desktop"]["integratedTerminalShell"]
+                .as_str()
+                .map(str::to_owned),
         ));
         self.sync_prevent_sleep(cx);
         let visibility = ReasoningVisibility::from_config(&self.config);
