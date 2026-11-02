@@ -158,40 +158,6 @@ pub(crate) fn http(
     host::json_body(&response)
 }
 
-/// Like [`http`], but hands back the HTTP status and parsed body for callers that map
-/// error codes; only a transport failure is an `Err`.
-pub(crate) fn send(
-    host: &dyn Host,
-    identity: &Identity,
-    method: &str,
-    url: &str,
-    body: Option<Value>,
-) -> Result<(u64, Value)> {
-    let response = fetch(host, identity, method, url, body)?;
-    let wire = host::response_wire(&response);
-    let status = wire["status"]
-        .as_u64()
-        .or(wire["responseStatus"].as_u64())
-        .context("missing host status")?;
-    let body = wire
-        .get("bodyJsonString")
-        .or_else(|| wire.get("body"))
-        .and_then(Value::as_str)
-        .and_then(|body| serde_json::from_str(body).ok())
-        .or_else(|| {
-            wire["error"]
-                .as_str()
-                .and_then(|body| serde_json::from_str(body).ok())
-        })
-        .unwrap_or(Value::Null);
-    Ok((status, body))
-}
-
-/// The backend error code: `detail.code`, else a top-level `code`.
-pub(crate) fn error_code(body: &Value) -> Option<&str> {
-    body["detail"]["code"].as_str().or(body["code"].as_str())
-}
-
 /// The account's Statsig gates (`/wham/statsig/bootstrap`); `Null` when unavailable.
 pub(crate) fn statsig(host: &dyn Host, identity: &Identity) -> Value {
     http(host, identity, "POST", "/wham/statsig/bootstrap", Some(json!({
@@ -433,6 +399,16 @@ async fn snapshot(
     }
     let gates = statsig(host.as_ref(), &identity);
     state.access = access(&state.plan, current, &gates, has_balance);
+    state.gift_credits = state.access.manage_credits
+        && gates["layer_configs"]["3116837080"]["value"]["purchase_flow_enabled"] == true
+        && http(
+            host.as_ref(),
+            &identity,
+            "GET",
+            "/gift-credits/senders/eligibility",
+            None,
+        )
+        .is_ok_and(|value| value["eligible"] == true);
     if state.access.app_limits {
         state.app_limits = load(read_app_limits(host.as_ref(), &identity));
         if matches!(&state.app_limits, Load::Ready(apps) if !apps.is_null())
@@ -815,6 +791,10 @@ fn save_reload(
         result["mandate_setup"].is_null(),
         "Auto-reload mandate confirmation requires a supported client"
     );
+    // The server saved the setting; a failed first charge is reported, not an error.
+    if view::top_up_warning(&result).is_some() {
+        return Ok(result);
+    }
     ensure!(result["is_enabled"] == true, "Auto-reload was not enabled");
     if let Some(status) = result["immediate_top_up_status"].as_str() {
         ensure!(
@@ -910,7 +890,10 @@ fn apply_usage_response(
         }
         Action::Reset(_) => return apply_reset_response(state, &value),
         Action::SaveReload(_) | Action::DisableReload => {
-            if reload_confirmed {
+            if let Some((warning, declined)) = view::top_up_warning(&value) {
+                state.error = Some(warning.into());
+                state.reload_declined = declined;
+            } else if reload_confirmed {
                 let enabled = matches!(&state.reload, Load::Ready(reload) if reload.is_enabled);
                 state.notice = Some(
                     if enabled {
@@ -1097,6 +1080,7 @@ impl Root {
         cx.update_global::<State, _>(|state, _| {
             state.busy = true;
             state.error = None;
+            state.reload_declined = false;
             state.notice = None;
             if let Some(attempt) = &attempt {
                 state.pending_reset_limits = attempt.limits.clone();

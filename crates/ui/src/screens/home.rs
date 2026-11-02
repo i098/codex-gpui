@@ -24,7 +24,14 @@ pub struct FinishedScrollAnimation(pub AnyWindowHandle);
 
 impl Global for FinishedScrollAnimation {}
 
-actions!(home, [OpenFolder]);
+actions!(
+    home,
+    [
+        OpenFolder,
+        SetupWindowsSandboxElevated,
+        SetupWindowsSandboxUnelevated
+    ]
+);
 
 /// `Work in` menu state: whether it is open, and where its chip was last laid out.
 #[derive(Default)]
@@ -55,6 +62,9 @@ pub struct HomeMain {
     /// shows it when `/beacons/home` offers it; the port has no such feed yet, so it starts
     /// hidden (flows.md Home rows 5 and 6) and dismissal lasts for the session only.
     pub beacon: bool,
+    /// Windows sandbox setup is needed and in progress.
+    pub windows_sandbox_setup_needed: bool,
+    pub windows_sandbox_setup_pending: bool,
     /// The ChatGPT or Work headline; `None` shows the Codex hero.
     pub headline: Option<&'static str>,
 }
@@ -66,6 +76,8 @@ impl HomeMain {
             project: None,
             location: LocationMenu::default(),
             beacon: false,
+            windows_sandbox_setup_needed: false,
+            windows_sandbox_setup_pending: false,
             headline: None,
         }
     }
@@ -79,7 +91,7 @@ impl HomeMain {
 
     /// Follows the sidebar's mode (a [`crate::screens::sidebar::MODES`] index).
     pub fn set_mode(&mut self, mode: usize, cx: &mut Context<Self>) {
-        let (headline, placeholder) = match crate::screens::sidebar::MODES[mode].0 {
+        let (headline, placeholder) = match crate::screens::sidebar::MODES[mode] {
             "ChatGPT" => {
                 // `Math.random()` in the original; the clock is random enough for a greeting.
                 let nanos = std::time::SystemTime::now()
@@ -212,6 +224,89 @@ impl HomeMain {
                 .on_click(cx.listener(|this, _, _, cx| this.set_beacon(false, cx))),
             )
     }
+    fn windows_sandbox_banner(
+        &self,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let elevated_focus = focus::handle("home-windows-sandbox-elevated", 0, window, cx);
+        let unelevated_focus = focus::handle("home-windows-sandbox-unelevated", 0, window, cx);
+        let actions = if self.windows_sandbox_setup_pending {
+            div().child(text("Setting up…", 13., 18., 400., t.text_tertiary))
+        } else {
+            div().flex().gap(px(8.)).children([
+                focus::ring(
+                    div().id("home-windows-sandbox-elevated"),
+                    &elevated_focus,
+                    Theme::RADIUS_FULL,
+                    px(2.),
+                    cx,
+                )
+                .role(gpui::Role::Button)
+                .aria_label("Set up Windows sandbox as administrator")
+                .h(px(32.))
+                .px(px(12.))
+                .flex()
+                .items_center()
+                .rounded_full()
+                .bg(t.composer_primary)
+                .child(text(
+                    "Run as administrator",
+                    13.,
+                    18.,
+                    400.,
+                    t.text_composer_primary,
+                ))
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(SetupWindowsSandboxElevated), cx)
+                }),
+                focus::ring(
+                    div().id("home-windows-sandbox-unelevated"),
+                    &unelevated_focus,
+                    Theme::RADIUS_FULL,
+                    px(2.),
+                    cx,
+                )
+                .role(gpui::Role::Button)
+                .aria_label("Set up Windows sandbox without administrator access")
+                .h(px(32.))
+                .px(px(12.))
+                .flex()
+                .items_center()
+                .rounded_full()
+                .bg(t.text_alpha_5)
+                .child(text("Without administrator", 13., 18., 400., t.text))
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(SetupWindowsSandboxUnelevated), cx)
+                }),
+            ])
+        };
+        div()
+            .h(px(74.))
+            .mb(px(8.))
+            .px(px(16.))
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .rounded(px(16.))
+            .border_1()
+            .border_color(t.border)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(text("Set up Windows sandbox", 14., 20., 500., t.text))
+                    .child(text(
+                        "Choose how to configure the protected environment",
+                        13.,
+                        18.,
+                        400.,
+                        t.text_tertiary,
+                    )),
+            )
+            .child(actions)
+    }
 }
 
 /// The Home main panel (no shell).
@@ -316,15 +411,19 @@ fn location_menu(
         return None;
     }
     let trigger = location.bounds;
+    let worktree = location.mode == super::hotkey::Mode::Worktree;
+    // The original's rows: `Work in` label, This computer, Cloud, Remote. The port keeps
+    // its managed-worktree start under This computer while a project is selected.
+    // (index into `pick_location`, label, icon, enabled, checked)
     let rows = [
-        ("This computer", true),
-        ("New worktree", has_project),
-        ("Remote", false),
-        ("Cloud", false),
+        Some((0, "This computer", "laptop", true, !worktree)),
+        has_project.then_some((1, "New worktree", "thread-fork", true, worktree)),
+        Some((2, "Cloud", "settings-codex-cloud", false, false)),
+        Some((3, "Remote", "project-marker-globe", false, false)),
     ]
     .into_iter()
-    .enumerate()
-    .map(|(i, (label, enabled))| {
+    .flatten()
+    .map(|(i, label, glyph, enabled, checked)| {
         let owner = owner.clone();
         div()
             .id(("work-in-option", i))
@@ -332,34 +431,44 @@ fn location_menu(
             .aria_label(label)
             .aria_disabled(!enabled)
             .px(px(8.))
-            .py(px(6.))
+            .py(px(5.))
             .flex()
             .items_center()
-            .gap(px(8.))
-            .rounded(px(12.))
-            .opacity(if enabled { 1. } else { 0.5 })
+            .gap(px(6.))
+            .rounded(px(15.))
             .when(i == location.selected, |d| d.bg(t.menu_item_hover))
             .when(enabled, |d| {
                 let hover = t.menu_item_hover;
                 d.hover(move |s| s.bg(hover))
             })
-            .child(div().flex_1().child(text(label, 14., 20., 430., t.text)))
+            .child(icon(glyph, 16., t.text).opacity(0.75))
             .child(
-                div().size(px(16.)).children(
-                    (i == usize::from(location.mode == super::hotkey::Mode::Worktree))
-                        .then(|| icon("menu-check", 16., t.text)),
-                ),
+                div()
+                    .flex_1()
+                    .child(text(label, 13., 18.5714, 430., t.text)),
             )
+            .when(checked, |d| {
+                d.child(icon("archive-check", 16., t.text).opacity(0.75))
+            })
             .when(enabled, |d| {
                 d.on_click(move |_, _, cx| pick_location(&owner, i, cx))
             })
     });
     let dismiss = owner.clone();
-    let popup = crate::composer::popover(t, 260., |d| d.children(rows))
-        .id("work-in-menu")
-        .role(gpui::Role::Menu)
-        .aria_label("Work in")
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+    let popup = crate::composer::popover(t, 280., |d| {
+        d.child(div().px(px(8.)).py(px(4.)).child(text(
+            "Work in",
+            13.,
+            18.5714,
+            430.,
+            t.text_tertiary,
+        )))
+        .children(rows)
+    })
+    .id("work-in-menu")
+    .role(gpui::Role::Menu)
+    .aria_label("Work in")
+    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
     // Opens upward from the chip: the bar sits at the bottom of the window. A full-window
     // backdrop under the popup closes it on a click anywhere else, the chip included.
     Some(
@@ -374,7 +483,9 @@ fn location_menu(
                     })
                     .child(
                         anchored()
-                            .position(point(trigger.left(), trigger.top() - px(4.)))
+                            // `sideOffset` 0 plus the content's `m-px`; the popover's 16.5 px
+                            // shadow-layer inset comes off too (measured against the original).
+                            .position(point(trigger.left() + px(1.), trigger.top() - px(18.5)))
                             .anchor(gpui::Anchor::BottomLeft)
                             .snap_to_window_with_margin(px(8.))
                             .child(popup),
@@ -509,15 +620,23 @@ fn utility_bar(
                                     )
                                     .role(gpui::Role::Button)
                                     .aria_label("Work in")
+                                    // Ghost `[data-state=open]` fill, as on the composer's menus.
+                                    .when(location.open, |d| d.bg(t.ghost_hover).rounded_full())
                                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                                         cx.stop_propagation()
                                     })
                                     .on_click({
                                         let toggle = toggle.clone();
                                         let focus = work_focus.read(cx).handle.clone();
+                                        let key_owner_click = owner.clone();
                                         move |_, window, cx| {
                                             window.focus(&focus, cx);
-                                            toggle(cx)
+                                            toggle(cx);
+                                            // Radix focuses the content: a pointer open
+                                            // highlights no row.
+                                            key_owner_click.update(cx, |main, _| {
+                                                main.location.selected = usize::MAX
+                                            });
                                         }
                                     })
                                     .on_key_down(move |event, _, cx| {
@@ -525,14 +644,17 @@ fn utility_bar(
                                         let menu = &key_owner.read(cx).location;
                                         match key {
                                             "enter" | "space" if menu.open => {
-                                                pick_location(&key_owner, menu.selected, cx);
+                                                if menu.selected != usize::MAX {
+                                                    pick_location(&key_owner, menu.selected, cx);
+                                                }
                                             }
                                             "enter" | "space" => toggle(cx),
                                             "escape" => set_location(&key_owner, Some(false), cx),
-                                            "up" | "down" if menu.open && has_project => {
+                                            "up" | "down" if menu.open => {
                                                 key_owner.update(cx, |main, cx| {
-                                                    main.location.selected =
-                                                        1 - main.location.selected;
+                                                    main.location.selected = usize::from(
+                                                        has_project && main.location.selected == 0,
+                                                    );
                                                     cx.notify();
                                                 });
                                             }
@@ -625,6 +747,9 @@ impl Render for HomeMain {
             .child(div().h(px(8.)))
             .when(self.beacon, |column| {
                 column.child(self.beacon(&t, window, cx))
+            })
+            .when(self.windows_sandbox_setup_needed, |column| {
+                column.child(self.windows_sandbox_banner(&t, window, cx))
             })
             // The Chat and Work homes have no `Work in` row above the composer.
             .when(!chat, |column| {
