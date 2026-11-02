@@ -38,6 +38,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - List each expanded sidebar project's chats under its folder, with `Show more` paging, `No chats`, and the unread dot on a collapsed folder; an open thread in the focused window is read at once.
 - Send the `ultrafast` service tier when the `Speed` submenu or `/ultrafast` picks Ultrafast, and show Ultrafast as the current speed.
 - Block sending images with a model whose `inputModalities` has no `image`, with the original's `Remove images or switch models to send this message`.
+- Make the Code Review detail's `Chat` start a projectless chat named after the pull request, open it with the original's prompt in the composer, and link it as `Open chat` through the original's `pull-request-chat-associations-v2` store.
 - Package Windows builds as an MSIX that registers the `codex:` protocol through `tools/package-windows.ps1`, signed when a certificate secret is set, and attach it to the GitHub release.
 - Add the `Toggle rich preview` button to the standalone diff window header.
 - Release the macOS bundle as one universal (arm64 and Intel) zip.
