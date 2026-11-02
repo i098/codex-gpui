@@ -6,9 +6,10 @@ use crate::{
     text,
 };
 use gpui::{
-    Anchor, AnyElement, App, AppContext as _, Context, Entity, Global, InteractiveElement,
-    IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
-    anchored, deferred, div, point, prelude::FluentBuilder as _, px,
+    Anchor, AnyElement, App, AppContext as _, BorrowAppContext as _, Context, Entity, Global,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString,
+    StatefulInteractiveElement, Styled, Window, anchored, deferred, div, point,
+    prelude::FluentBuilder as _, px,
 };
 use serde_json::{Value, json};
 use std::sync::Arc;
