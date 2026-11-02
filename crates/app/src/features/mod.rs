@@ -19,6 +19,7 @@ pub(crate) mod feedback;
 mod keymap;
 pub(crate) mod memories;
 pub(crate) mod shortcuts;
+mod slash_commands;
 mod thread_menu;
 mod workspace;
 pub(crate) use command_destinations::OpenThreadInNewWindow;
