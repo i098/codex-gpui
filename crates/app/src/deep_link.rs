@@ -1,7 +1,7 @@
 //! Native Codex URL parsing and page-family dispatch (SH-151..155).
 
 use crate::{Root, Route, State, windows};
-use gpui::{App, AppContext as _, Context, Focusable, Window};
+use gpui::{App, AppContext as _, BorrowAppContext as _, Context, Focusable, Window};
 use std::borrow::Cow;
 use ui::screens::connections::Tab;
 use url::Url;
@@ -445,7 +445,7 @@ impl Root {
                 config_path,
             } => {
                 let create = (workspace_root.clone(), config_path.clone());
-                cx.update_global::<ui::screens::environments::State, _>(|state, _| {
+                cx.update_global::<ui::screens::settings::environments::State, _>(|state, _| {
                     state.create = Some(create)
                 });
                 self.open_settings_section("Worktrees", window, cx);
