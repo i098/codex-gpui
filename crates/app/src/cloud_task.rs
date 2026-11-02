@@ -1053,6 +1053,7 @@ pub fn parse_task_response(detail: &Value, turns: &Value) -> Result<CloudTask> {
                 git_info: None,
                 forked_from_id: None,
                 turns: vec![turn],
+                older_cursor: None,
             },
             phase,
             error: assistant

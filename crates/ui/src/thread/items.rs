@@ -552,6 +552,8 @@ pub(super) enum Activity<'a> {
     },
     /// A `contextCompaction` item: `Compacting context`, `Context compacted`, …
     Compaction(&'static str),
+    /// A `dynamicToolCall` item: `Reading chat terminal`, `Read chat terminal`, or the tool name.
+    Tool(&'static str, String),
     /// An `enteredReviewMode` item: `Reviewing <what>`.
     Review(String),
     /// Consecutive finished commands and file changes behind one summary
@@ -641,6 +643,7 @@ impl Activity<'_> {
                         .cloned(),
                 )
                 .collect(),
+            Activity::Tool(_, label) => vec![label.clone()],
             Activity::Review(label) => vec![label.clone()],
             Activity::Group {
                 key, summary, rows, ..
@@ -718,6 +721,18 @@ pub(super) fn activities<'a>(
             ThreadItem::McpToolCall { .. } => {
                 flush(&mut out, &mut group);
                 out.push(Activity::Mcp(item));
+            }
+            ThreadItem::DynamicToolCall { tool, status, .. } => {
+                flush(&mut out, &mut group);
+                out.push(match (tool.as_str(), status.as_str()) {
+                    ("read_thread_terminal", "inProgress") => {
+                        Activity::Tool("thread-terminal", "Reading chat terminal".into())
+                    }
+                    ("read_thread_terminal", _) => {
+                        Activity::Tool("thread-terminal", "Read chat terminal".into())
+                    }
+                    _ => Activity::Tool("thread-mcp", tool.clone()),
+                });
             }
             ThreadItem::CommandExecution { .. } | ThreadItem::FileChange { .. } => {
                 group.push(item);
@@ -1354,6 +1369,7 @@ pub(super) fn activity(
                         )
                     })
             }
+            Activity::Tool(icon, words) => row(glyph(icon), plain(label(words.clone(), text60))),
             Activity::Mcp(item) => {
                 let ThreadItem::McpToolCall {
                     id,
