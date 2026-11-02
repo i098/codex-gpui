@@ -10,10 +10,82 @@ pub(super) struct Form {
     unsupported: bool,
 }
 
+/// The request the original raises after a completed plan (`item/plan/requestImplementation`).
+pub const IMPLEMENT_PLAN_METHOD: &str = "item/plan/requestImplementation";
+const IMPLEMENT_PLAN_OPTION: &str = "Yes, implement this plan";
+const IMPLEMENT_PLAN_PROMPT: &str = "PLEASE IMPLEMENT THIS PLAN:";
+
+impl Composer {
+    /// Answers of the `Implement this plan?` card: the option leaves Plan mode and sends the plan
+    /// for implementation; typed text goes as feedback and stays in Plan mode; dismissing only
+    /// leaves Plan mode. Other requests are left alone.
+    pub(super) fn follow_plan(
+        &mut self,
+        approval: &Approval,
+        response: &Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(form) = approval
+            .form
+            .as_ref()
+            .filter(|f| f.method == IMPLEMENT_PLAN_METHOD)
+        else {
+            return;
+        };
+        let answer = response["answers"]["implement"]["answers"][0].as_str();
+        let text = match answer {
+            Some(IMPLEMENT_PLAN_OPTION) => {
+                self.plan = false;
+                format!(
+                    "{IMPLEMENT_PLAN_PROMPT}\n{}",
+                    form.params["planContent"].as_str().unwrap_or_default()
+                )
+            }
+            Some(feedback) => {
+                self.plan = true;
+                feedback.to_owned()
+            }
+            None => {
+                self.plan = false;
+                return;
+            }
+        };
+        let submission = Submission {
+            text,
+            shell_command: false,
+            attachments: Vec::new(),
+            context_files: Vec::new(),
+            model: self
+                .current_model()
+                .map(|m| m.id.clone())
+                .unwrap_or_default(),
+            effort: self.effort.clone(),
+            permission: self.permission.clone(),
+            service_tier: SERVICE_TIERS[self.speed],
+            plan: self.plan,
+            background: false,
+        };
+        if let Some(send) = self.on_submit.clone() {
+            send(&submission, window, cx);
+        }
+    }
+}
+
 impl Approval {
     pub fn form(id: Value, method: &str, params: &Value) -> Option<Self> {
         params.as_object()?;
         let (title, fields, unsupported) = match method {
+            IMPLEMENT_PLAN_METHOD => {
+                params["turnId"].as_str()?;
+                params["planContent"].as_str()?;
+                let field = json!({
+                    "id": "implement", "question": "Implement this plan?",
+                    "options": [{ "label": IMPLEMENT_PLAN_OPTION, "description": "" }],
+                    "isOther": true, "isSecret": false,
+                });
+                ("Implement this plan?".to_owned(), vec![field], false)
+            }
             "item/tool/requestUserInput" => {
                 params["turnId"].as_str()?;
                 params["itemId"].as_str()?;

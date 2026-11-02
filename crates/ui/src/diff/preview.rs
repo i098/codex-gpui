@@ -386,12 +386,32 @@ impl DiffPanel {
         let available = preview.content_width(width);
         let render_side = |side: usize| {
             let value = &preview.sides[side];
+            // `artifact-annotation`: only the current (after) side takes annotations.
+            let path = (side == 1).then(|| self.file_path(index)).flatten();
             let body = side_body(
                 preview,
                 value,
                 available,
                 format!("diff-preview-{index}-{side}").into(),
                 t,
+                |content, image_width| {
+                    path.map(|path| {
+                        let page = artifact_annotations::Page {
+                            path,
+                            title: file.name.to_string(),
+                            kind: if preview.pdf { "pdf" } else { "image" },
+                            number: value.page,
+                            count: content.pages,
+                            size: comments::PageSize {
+                                width: content.pixels.dimensions().0 as f32,
+                                height: content.pixels.dimensions().1 as f32,
+                            },
+                            bounds: Default::default(),
+                        };
+                        self.artifact_layer(page, image_width, cx)
+                    })
+                    .unwrap_or_default()
+                },
             );
             let pages = value.content.as_ref().map_or(0, |content| content.pages);
             div()
@@ -463,21 +483,27 @@ impl DiffPanel {
                     )
                 })
         };
+        let review = self
+            .file_path(index)
+            .and_then(|path| self.artifact_review_bar(&path, index, width, cx));
         Some(
             div()
                 .w_full()
+                .relative()
                 .flex()
                 .gap(px(1.))
                 .when(!preview.after_only, |d| d.child(render_side(0)))
-                .child(render_side(1)),
+                .child(render_side(1))
+                .children(review),
         )
     }
 
-    fn turn_pdf_page(
+    /// Show `page` of a PDF preview side.
+    pub(super) fn show_preview_page(
         &mut self,
         index: usize,
         side: usize,
-        step: isize,
+        page: usize,
         width: Pixels,
         window: &Window,
         cx: &mut Context<Self>,
@@ -490,10 +516,8 @@ impl DiffPanel {
             return;
         };
         let side_value = &mut preview.sides[side];
-        let Some(page) = side_value.page.checked_add_signed(step) else {
-            return;
-        };
         if page == 0
+            || page == side_value.page
             || side_value
                 .content
                 .as_ref()
@@ -506,6 +530,26 @@ impl DiffPanel {
         self.request_preview(index, side, width, window.scale_factor(), cx);
         cx.notify();
     }
+
+    fn turn_pdf_page(
+        &mut self,
+        index: usize,
+        side: usize,
+        step: isize,
+        width: Pixels,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(page) = self
+            .files
+            .get(index)
+            .and_then(|file| file.preview.as_ref())
+            .and_then(|preview| preview.sides[side].page.checked_add_signed(step))
+        else {
+            return;
+        };
+        self.show_preview_page(index, side, page, width, window, cx);
+    }
 }
 
 /// One side's picture at its fitted size, else its loading or failure label.
@@ -515,6 +559,7 @@ fn side_body(
     available: Pixels,
     id: SharedString,
     t: &Theme,
+    layer: impl FnOnce(&PreviewContent, Pixels) -> Vec<gpui::AnyElement>,
 ) -> gpui::AnyElement {
     let Some(content) = value.content.as_ref().filter(|_| !value.loading) else {
         let label = if value.loading {
@@ -582,6 +627,7 @@ fn side_body(
         .relative()
         .child(shapes::decoration(frame(None)))
         .child(picture)
+        .children(layer(content, image_width))
         .into_any_element()
 }
 
@@ -780,6 +826,7 @@ impl FileView {
                     available,
                     "file-preview-image".into(),
                     t,
+                    |_, _| Vec::new(),
                 ))
                 .when(preview.pdf && pages > 1, |d| {
                     d.child(
