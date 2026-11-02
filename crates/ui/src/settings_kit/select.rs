@@ -1,6 +1,7 @@
 use super::Choice;
 use crate::{
     composer::{Composer, popover},
+    screens::settings::TriggerStyle,
     text,
 };
 use gpui::{
@@ -38,6 +39,7 @@ pub struct Select {
     width: f32,
     /// The trigger label's font weight.
     weight: f32,
+    trigger_style: TriggerStyle,
     /// A flyout submenu (`FlyoutSubmenuItem`) holding the options after a pinned default: its
     /// trigger's title and icon (given the current value).
     submenu: Option<(&'static str, Icons)>,
@@ -96,6 +98,7 @@ impl Select {
             details: std::collections::HashMap::new(),
             width: 240.,
             weight: 430.,
+            trigger_style: TriggerStyle::default(),
             submenu: None,
             submenu_trigger: cx.focus_handle(),
             submenu_open: false,
@@ -115,6 +118,11 @@ impl Select {
 
     pub fn with_width(mut self, width: f32) -> Self {
         self.width = width;
+        self
+    }
+
+    pub(crate) fn with_trigger_style(mut self, style: TriggerStyle) -> Self {
+        self.trigger_style = style;
         self
     }
 
@@ -582,12 +590,13 @@ impl Render for Select {
             .map(|choice| choice.label.clone())
             .unwrap_or_else(|| self.value.clone());
         let leading = self.icons.and_then(|icon| icon(&self.value, &t, 20.));
-        let control = crate::screens::settings::select(
+        let control = crate::screens::settings::select_with(
             label,
             self.weight,
             leading,
             self.loading || self.disabled,
             self.open,
+            self.trigger_style,
             &t,
         )
         .id("settings-select-trigger")
