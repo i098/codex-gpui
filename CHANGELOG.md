@@ -121,6 +121,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Raster moving shapes about twice as fast and remove GPUI's 30 fps cap on unfocused windows, so the sidebar animation runs at 87–107 fps after its first toggle (was 35–54).
 - Ignore app list updates while the Plugins page is loading, so large account catalogs can finish loading.
 - Connect MCP and skill commands to the existing settings and mention actions, and refresh skill lists after changes.
+- Fade the top 24 px of an open tool activity list, icons included, as the original's `vertical-scroll-fade-mask` does.
 - Hide the mobile setup artwork below 1024 px, so the setup column stays centered in the main surface.
 - Read and save image attachments on the selected host, and keep the draft when an image cannot load.
 - Install, read and uninstall remote catalog plugins from the Plugins directory by their `remotePluginId`, as the original does; the plain name returned 404 and the catalog ID left the plugin installed.
