@@ -127,6 +127,44 @@ fn new_project_keeps_root_order_appearance_and_existing_thread_owners() -> Resul
     Ok(())
 }
 
+#[test]
+fn project_menu_pin_lists_pinned_projects_first() -> Result<()> {
+    let profile = tempfile::tempdir()?;
+    let alpha = profile.path().join("alpha");
+    let beta = profile.path().join("beta");
+    fs::create_dir(&alpha)?;
+    fs::create_dir(&beta)?;
+    let (alpha, beta) = (alpha.canonicalize()?, beta.canonicalize()?);
+    let file = profile.path().join(".codex-global-state.json");
+    let project = |id: &str, root: &std::path::Path| json!({"id": id, "name": id, "rootPaths": [root], "createdAt": 1, "updatedAt": 1});
+    fs::write(
+        &file,
+        serde_json::to_vec(&json!({
+            "local-projects": {"a": project("a", &alpha), "b": project("b", &beta)},
+            "project-order": ["a", "b"],
+            "project-appearances": {"b": {"color": "blue"}},
+            "thread-project-assignments": {
+                "moved": {"projectKind": "local", "projectId": "b"},
+                "other": {"projectKind": "local", "projectId": "a"},
+            },
+            "selected-project": {"type": "local", "projectId": "b"},
+        }))?,
+    )?;
+    let host = LocalHost::new(profile.path());
+    let ids = |host: &LocalHost| -> Result<Vec<String>> {
+        Ok(host.projects()?.iter().map(|p| p.id.to_string()).collect())
+    };
+
+    // Pinned projects list first; unpinning restores `project-order`.
+    host.set_project_pinned("b", true)?;
+    host.set_project_pinned("b", true)?;
+    assert_eq!(ids(&host)?, ["b", "a"]);
+    assert!(host.projects()?[0].pinned);
+    host.set_project_pinned("b", false)?;
+    assert_eq!(ids(&host)?, ["a", "b"]);
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn proxy() {
