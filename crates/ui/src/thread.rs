@@ -3052,10 +3052,12 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::Plan { id, .. }
         | ThreadItem::Reasoning { id, .. }
         | ThreadItem::CommandExecution { id, .. }
-        | ThreadItem::FileChange { id, .. }
         | ThreadItem::McpToolCall { id, .. }
+        | ThreadItem::FileChange { id, .. }
         | ThreadItem::ContextCompaction { id }
-        | ThreadItem::WebSearch { id, .. } => Some(id),
+        | ThreadItem::WebSearch { id, .. }
+        | ThreadItem::EnteredReviewMode { id, .. }
+        | ThreadItem::ExitedReviewMode { id, .. } => Some(id),
         ThreadItem::Other => None,
     }
 }

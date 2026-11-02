@@ -166,6 +166,16 @@ pub enum ThreadItem {
         #[serde(default)]
         action: Option<Value>,
     },
+    /// `/review` began: `review` names what is reviewed.
+    EnteredReviewMode {
+        id: String,
+        review: String,
+    },
+    /// `/review` finished: `review` is the review text.
+    ExitedReviewMode {
+        id: String,
+        review: String,
+    },
     #[serde(other)]
     Other,
 }
