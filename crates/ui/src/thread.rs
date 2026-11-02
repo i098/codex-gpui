@@ -182,6 +182,10 @@ pub struct ThreadView {
     patch_pending: bool,
     render_errors: RefCell<HashMap<String, String>>,
     stream_errors: HashMap<String, Vec<(bridge::types::TurnError, bool)>>,
+    /// Inline notices of each turn (model reroute, verification) and the turns whose safety
+    /// buffering banner shows (`context.rs`).
+    notices: HashMap<String, Vec<String>>,
+    safety_buffering: HashSet<String>,
     usage_limit_notice: UsageLimitNotice,
     clock: Clock,
     composer: AnyView,
@@ -693,6 +697,8 @@ impl ThreadView {
             patch_pending: false,
             render_errors: RefCell::default(),
             stream_errors: HashMap::new(),
+            notices: HashMap::new(),
+            safety_buffering: HashSet::new(),
             usage_limit_notice: UsageLimitNotice::RetryLater,
             clock,
             composer,
@@ -2573,7 +2579,9 @@ impl Render for ThreadView {
                             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                 self.turn(turn, i + 1 == n, window, &t, cx)
                             })) {
-                                Ok(body) => body.children(self.turn_errors(turn, window, cx)),
+                                Ok(body) => body
+                                    .children(self.turn_errors(turn, window, cx))
+                                    .children(self.turn_notices(turn, cx)),
                                 Err(error) => {
                                     let error = error
                                         .downcast_ref::<String>()

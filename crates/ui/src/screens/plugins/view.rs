@@ -421,26 +421,82 @@ impl Page {
             Resource::Ready(value) => value,
         };
         let personal = self.section == "Personal";
-        let plugins: Vec<_> = markets
+        let sections: Vec<_> = markets
             .iter()
-            .flat_map(|m| &m.plugins)
-            .filter(|p| {
-                p.visible() && p.matches(query) && self.data.personal_path(p).is_some() == personal
+            .filter_map(|market| {
+                let plugins: Vec<_> = market
+                    .plugins
+                    .iter()
+                    .filter(|p| {
+                        p.visible()
+                            && p.matches(query)
+                            && self.data.personal_path(p).is_some() == personal
+                    })
+                    .collect();
+                (!plugins.is_empty()).then_some((market, plugins))
             })
             .collect();
-        if plugins.is_empty() {
+        if sections.is_empty() {
             return self.status("No plugins found", None, cx);
         }
+        let t = cx.theme().clone();
         div()
-            .mt(px(24.))
-            .grid()
-            .grid_cols(2)
-            .gap(px(16.))
-            .children(
-                plugins
-                    .into_iter()
-                    .map(|plugin| self.plugin_card(plugin, window, cx)),
-            )
+            .flex()
+            .flex_col()
+            .children(sections.into_iter().map(|(market, plugins)| {
+                // A signed-in catalog holds ~10k remote plugins; render pages, not all cards.
+                let shown = plugins
+                    .len()
+                    .min(self.plugin_rows.get(&market.name).copied().unwrap_or(6));
+                let mut section = div()
+                    .mt(px(24.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(text(market.title.clone(), 16., 24., 500., t.text))
+                    .child(
+                        div().grid().grid_cols(2).gap(px(16.)).children(
+                            plugins[..shown]
+                                .iter()
+                                .map(|plugin| self.plugin_card(plugin, window, cx)),
+                        ),
+                    );
+                if shown < plugins.len() {
+                    let name = market.name.clone();
+                    let id = format!("plugins-more-{name}");
+                    let handle = focus::handle(id.clone(), 0, window, cx);
+                    section = section.child(
+                        focus::ring(
+                            div()
+                                .id(id)
+                                .role(gpui::Role::Button)
+                                .aria_label("See more")
+                                .min_h(px(31.))
+                                .px(px(8.))
+                                .flex()
+                                .items_center()
+                                .rounded_full()
+                                .hover(|d| d.bg(t.ghost_hover))
+                                .child(text(
+                                    format!("See more ({} more)", plugins.len() - shown),
+                                    13.,
+                                    21.125,
+                                    430.,
+                                    t.text_secondary,
+                                )),
+                            &handle,
+                            px(16.),
+                            px(2.),
+                            cx,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            *this.plugin_rows.entry(name.clone()).or_insert(6) += 60;
+                            cx.notify();
+                        })),
+                    );
+                }
+                section
+            }))
             .into_any_element()
     }
 
@@ -1069,13 +1125,83 @@ impl Page {
                     let url = url.clone();
                     content = content.child(button("Copy link", t.text_alpha_5, None, &t).id("copy-share-link")
                         .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(url.clone()))));
+                    content = content.child(self.action_button(
+                        "update-shared-version",
+                        "Update shared version",
+                        Action::UpdateSharedVersion(plugin.clone()),
+                        true,
+                        window,
+                        cx,
+                    ));
+                    content = content.child(text("Discoverability", 14., 20., 500., t.text));
+                    for discoverability in ["PRIVATE", "UNLISTED", "LISTED"] {
+                        let selected = self.share_discoverability == discoverability;
+                        content = content.child(
+                            button(
+                                discoverability,
+                                if selected {
+                                    t.surface_secondary
+                                } else {
+                                    t.text_alpha_5
+                                },
+                                None,
+                                &t,
+                            )
+                            .id(format!("share-discoverability-{discoverability}"))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.share_discoverability = discoverability.to_owned();
+                                cx.notify();
+                            })),
+                        );
+                    }
+                    content =
+                        content.child(text("People and teams with access", 14., 20., 500., t.text));
+                    for (index, target) in self.share_targets.iter().enumerate() {
+                        let label = target["name"]
+                            .as_str()
+                            .unwrap_or("Unknown target")
+                            .to_owned();
+                        content = content.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(text(label, 13., 18., 400., t.text_secondary))
+                                .child(
+                                    button("Remove", t.text_alpha_5, None, &t)
+                                        .id(format!("remove-share-target-{index}"))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            if index < this.share_targets.len() {
+                                                this.share_targets.remove(index);
+                                                cx.notify();
+                                            }
+                                        })),
+                                ),
+                        );
+                    }
+                    if self.pending {
+                        content = content.child(text("Loading access settings…", 13., 18., 400., t.text_secondary));
+                    }
+                    if let Some(error) = &self.error {
+                        content = content.child(text(error.clone(), 13., 18., 400., t.text_secondary));
+                    }
+                    content = content.child(self.action_button(
+                        "delete-share",
+                        "Unshare",
+                        Action::DeleteShare(plugin.clone()),
+                        true,
+                        window,
+                        cx,
+                    ));
+                    let update = self.error.is_none().then(|| {
+                        ("Save access", Action::UpdateShareTargets(plugin.clone()), true)
+                    });
+                    (format!("Share {}", plugin.title()), content.into_any_element(), update)
                 } else {
                     content = content.child(self.action_button("create-share-link", "Copy link",
                         Action::CreateShare(plugin.clone()), true, window, cx));
+                    (format!("Share {}", plugin.title()), content.into_any_element(), None)
                 }
-                let update = self.share_url.as_ref().map(|_| ("Update shared version",
-                    Action::UpdateSharedVersion(plugin.clone()), true));
-                (format!("Share {}", plugin.title()), content.into_any_element(), update)
             }
             Modal::Skill(skill) => {
                 let open_action = if is_remote_skill(skill) {
