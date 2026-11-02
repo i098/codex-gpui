@@ -6580,6 +6580,11 @@ impl Root {
                 .as_str()
                 .unwrap_or("enter"),
         ));
+        cx.set_global(terminal::TerminalShell(
+            self.config["desktop"]["integratedTerminalShell"]
+                .as_str()
+                .map(str::to_owned),
+        ));
         self.sync_prevent_sleep(cx);
         let visibility = ReasoningVisibility::from_config(&self.config);
         if ReasoningVisibility::get(cx) != visibility {
