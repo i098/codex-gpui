@@ -26,6 +26,10 @@ use ui::{
 static NEXT_PROCESS: AtomicU64 = AtomicU64::new(1);
 const HOME_TERMINAL: &str = "home";
 
+/// The `desktop.integratedTerminalShell` setting, kept in step with the config by `Root`.
+pub(crate) struct TerminalShell(pub Option<String>);
+impl gpui::Global for TerminalShell {}
+
 impl Root {
     pub(super) fn send_shell(
         &mut self,
@@ -300,6 +304,53 @@ impl Root {
         }
     }
 
+    pub(crate) fn run_environment_action(
+        &mut self,
+        number: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ui::screens::computer_use::Load::Ready(config) = &cx
+            .global::<ui::screens::settings::environments::State>()
+            .selected
+        else {
+            return;
+        };
+        let Some(command) = Self::environment_action_command(config, number) else {
+            return;
+        };
+        let command = format!("{command}\r").into_bytes();
+        self.show_terminal(false, window, cx);
+        if let Some(panel) = self.terminal_panel().cloned() {
+            panel.update(cx, |panel, _| {
+                let active = panel.active;
+                panel.write(active, command);
+            });
+        }
+    }
+
+    fn environment_action_command(config: &serde_json::Value, number: usize) -> Option<&str> {
+        if !(1..=9).contains(&number) {
+            return None;
+        }
+        config["environment"]["environment"]["actions"]
+            .as_array()?
+            .get(number - 1)
+            .filter(|action| {
+                action["platform"].as_str().is_none_or(|platform| {
+                    platform
+                        == if cfg!(target_os = "macos") {
+                            "darwin"
+                        } else if cfg!(windows) {
+                            "win32"
+                        } else {
+                            "linux"
+                        }
+                })
+            })
+            .and_then(|action| action["command"].as_str())
+    }
+
     pub(crate) fn toggle_bottom_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.terminal.visible
             && self
@@ -462,17 +513,12 @@ pub struct TerminalPanel {
     strip_left: f32,
     cwd: String,
     roots: Vec<String>,
-    shell: String,
     workspaces_loaded: bool,
     focus_pending: bool,
 }
 
 impl TerminalPanel {
     fn new(cwd: String, cx: &mut Context<Self>) -> Self {
-        let shell = std::env::var("SHELL")
-            .ok()
-            .filter(|s| s.starts_with('/'))
-            .unwrap_or_else(|| "/bin/sh".into());
         let mut panel = Self {
             sessions: Vec::new(),
             active: 0,
@@ -481,7 +527,6 @@ impl TerminalPanel {
             strip_left: 0.,
             cwd: cwd.clone(),
             roots: vec![cwd],
-            shell,
             workspaces_loaded: false,
             focus_pending: false,
         };
@@ -559,7 +604,13 @@ impl TerminalPanel {
             }
         })
         .detach();
-        let mut command = CommandBuilder::new(&self.shell);
+        // Read per tab so a changed setting applies to the next new terminal.
+        let shell = cx
+            .try_global::<TerminalShell>()
+            .and_then(|shell| shell.0.clone())
+            .filter(|shell| std::path::Path::new(shell).is_file())
+            .unwrap_or_else(ui::screens::settings::default_shell);
+        let mut command = CommandBuilder::new(shell);
         command.arg("-l");
         command.cwd(&self.cwd);
         command.env("TERM", "xterm-256color");
@@ -1206,5 +1257,38 @@ mod tests {
             source_directories(Some(&state), "other", "/project/current"),
             ["/project/current"]
         );
+    }
+
+    #[test]
+    fn environment_actions_use_one_based_index_and_current_platform() {
+        let current_platform = if cfg!(target_os = "macos") {
+            "darwin"
+        } else if cfg!(windows) {
+            "win32"
+        } else {
+            "linux"
+        };
+        let other_platform = if current_platform == "darwin" {
+            "linux"
+        } else {
+            "darwin"
+        };
+        let config = json!({
+            "environment": {
+                "environment": {
+                    "actions": [
+                        {"command": "run-current", "platform": current_platform},
+                        {"command": "run-other", "platform": other_platform}
+                    ]
+                }
+            }
+        });
+        assert_eq!(
+            super::Root::environment_action_command(&config, 1),
+            Some("run-current")
+        );
+        assert_eq!(super::Root::environment_action_command(&config, 2), None);
+        assert_eq!(super::Root::environment_action_command(&config, 0), None);
+        assert_eq!(super::Root::environment_action_command(&config, 10), None);
     }
 }
