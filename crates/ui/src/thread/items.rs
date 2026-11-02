@@ -1,4 +1,5 @@
 use super::*;
+use crate::icon::Icon;
 use base64::Engine as _;
 use gpui::{Image, ImageFormat};
 
@@ -479,6 +480,7 @@ pub(super) enum Activity<'a> {
     /// A command still running, by its command line.
     Running(&'a str),
     Mcp(&'a ThreadItem),
+    PatchOutput(&'a str, &'a str),
     /// A reasoning item seen live: `Thought for 3s` once completed, its summary under it while
     /// open (keyed `reasoning-<id>`); `Thinking` while it streams, with the streamed text
     /// under it.
@@ -542,6 +544,7 @@ impl Activity<'_> {
             Activity::Markdown(_, text) => vec![(*text).to_owned()],
             Activity::Running(command) => vec![(*command).to_owned()],
             Activity::Mcp(item) => vec![mcp_label(item)],
+            Activity::PatchOutput(_, output) => vec![(*output).to_owned()],
             Activity::Reasoning {
                 key,
                 label,
@@ -569,7 +572,7 @@ impl Activity<'_> {
 pub(super) fn activities<'a>(
     items: &'a [ThreadItem],
     running: bool,
-    view: &ThreadView,
+    view: &'a ThreadView,
     visibility: super::ReasoningVisibility,
     now: Instant,
 ) -> Vec<Activity<'a>> {
@@ -617,6 +620,11 @@ pub(super) fn activities<'a>(
                 ));
             }
             ThreadItem::McpToolCall { .. } if automation_item(item).is_some() => {}
+            ThreadItem::FileChange { id, .. } if view.patch_output.contains_key(id) => {
+                group.push(item);
+                flush(&mut out, &mut group);
+                out.push(Activity::PatchOutput(id, &view.patch_output[id]));
+            }
             ThreadItem::McpToolCall { .. } => {
                 flush(&mut out, &mut group);
                 out.push(Activity::Mcp(item));
@@ -925,19 +933,20 @@ pub(super) fn activity(
     };
     let plain = |(label, w): (Div, Pixels)| boxed(label.into_any_element(), w);
     // A 21 px line: a 16 px icon, then its words.
-    let row = |icon_name: &'static str, words: Div| {
+    let glyph = |name: &'static str| icon(name, 16., text60);
+    let row = |glyph: Icon, words: Div| {
         div()
             .h(px(21.))
             .min_w_0()
             .flex()
             .items_center()
             .gap(px(6.))
-            .child(icon(icon_name, 16., text60))
+            .child(glyph)
             .child(words)
     };
     // A row that opens `key`: its label whitens on hover, its 14 px chevron shows on hover and
     // points down while open.
-    let disclosure = |key: String, icon_name: &'static str, (label, w): (Div, Pixels), is_open| {
+    let disclosure = |key: String, glyph: Icon, (label, w): (Div, Pixels), is_open| {
         let group = SharedString::from(format!("activity-group-{key}"));
         // Group hover recolours text only on a stateful element: the run colour is fixed at
         // layout, before this frame's group hitbox exists.
@@ -958,18 +967,26 @@ pub(super) fn activity(
             .flex()
             .items_center()
             .gap(px(4.))
-            .child(row(icon_name, boxed(label.into_any_element(), w)))
+            .child(row(glyph, boxed(label.into_any_element(), w)))
             .child(
                 // `Icon` folds its opacity into the color, so the hover sets the color.
                 icon(chevron, 14., text60.opacity(if is_open { 1. } else { 0. }))
                     .group_hover(group, move |s| s.text_color(text60)),
             )
             .on_click(cx.listener(move |view, _, _, cx| {
-                if !view.expanded.remove(&key) {
-                    view.expanded.insert(key.clone());
-                }
+                view.toggle_activity(key.clone(), cx);
                 cx.notify();
             }))
+    };
+    // A disclosure body: 4 px below its row, inside the clip so the gap opens with it.
+    let body = || {
+        div()
+            .w_full()
+            .pt(px(4.))
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap(px(4.))
     };
     let mut col = div().flex().flex_col().gap(px(16.));
     let now = cx.background_executor().now();
@@ -986,8 +1003,11 @@ pub(super) fn activity(
                 markdown(text, window, t, segments)
             }
             Activity::Running(command) => {
-                row("thread-terminal", plain(label(command.to_owned(), text60)))
+                row(glyph("thread-terminal"), plain(label(command.to_owned(), text60)))
             }
+            Activity::PatchOutput(id, output) => mcp_output(
+                format!("patch-output-{id}"), "text", output, t,
+            ),
             Activity::Reasoning {
                 key: _,
                 label: words,
@@ -999,7 +1019,7 @@ pub(super) fn activity(
                 .flex_col()
                 .items_start()
                 .gap(px(4.))
-                .child(row("thread-summary", plain(label(words, text60))))
+                .child(row(glyph("thread-summary"), plain(label(words, text60))))
                 .when(!text.is_empty(), |d| d.child(text60_block(text, t))),
             Activity::Reasoning {
                 key,
@@ -1008,22 +1028,23 @@ pub(super) fn activity(
                 ..
             } => {
                 let is_open = open.contains(&key);
+                let content =
+                    view.expansion(&key, is_open, || body().child(text60_block(text, t)), window, cx);
                 div()
                     .w_full()
                     .flex()
                     .flex_col()
                     .items_start()
-                    .gap(px(4.))
                     .child(disclosure(
                         key,
-                        "thread-summary",
+                        glyph("thread-summary"),
                         label(words, text60),
                         is_open,
                     ))
-                    .when(is_open, |d| d.child(text60_block(text, t)))
+                    .children(content)
             }
             Activity::Compaction(words) => row(
-                "thread-compaction",
+                glyph("thread-compaction"),
                 plain(label(words.to_owned(), text60)),
             ),
             Activity::Mcp(item) => {
@@ -1045,18 +1066,9 @@ pub(super) fn activity(
                 } else {
                     text60
                 };
-                let mut content = div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(disclosure(
-                        key,
-                        "thread-mcp",
-                        label(mcp_label(item), color),
-                        is_open,
-                    ));
-                if is_open {
+                let header = disclosure(key.clone(), glyph("thread-mcp"), label(mcp_label(item), color), is_open);
+                let body = || {
+                    let mut content = div().w_full().pt(px(4.)).flex().flex_col().gap(px(4.));
                     for update in progress {
                         if let Some(message) = update["message"].as_str() {
                             content =
@@ -1141,8 +1153,14 @@ pub(super) fn activity(
                             t,
                         ));
                     }
-                }
-                content
+                    content
+                };
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .child(header)
+                    .children(view.expansion(&key, is_open, body, window, cx))
             }
             Activity::Group {
                 key,
@@ -1151,25 +1169,25 @@ pub(super) fn activity(
                 rows,
             } => {
                 let is_open = open.contains(key);
-                let header = disclosure(key.to_owned(), icon_name, label(summary, text60), is_open);
-                let mut col = div()
-                    .flex()
-                    .flex_col()
-                    .items_start()
-                    .gap(px(4.))
-                    .child(header);
-                if is_open {
-                    col = col.children(rows.into_iter().map(|r| {
+                let header = disclosure(key.to_owned(), glyph(icon_name), label(summary, text60), is_open);
+                // Fitted icon images paint outside layers, so the fade would skip them.
+                let faded = |name| glyph(name).runtime();
+                let content = || {
+                    // `vertical-scroll-fade-mask` with `--edge-fade-distance: 1.5rem`: rows that
+                    // fit show a 24 px top fade from the header's foot.
+                    // shortcut: no `max-h-56` scroll, so a list past 224 px grows unclipped.
+                    let list = body().children(rows.into_iter().map(|r| {
                         if let Some(shell) = r.shell {
                             let is_open = open.contains(&shell.key);
                             let key = shell.key.clone();
+                            let shell_body = || div().w_full().child(shell_card(&shell, t));
                             return div()
                                 .w_full()
                                 .flex()
                                 .flex_col()
                                 .items_start()
-                                .child(disclosure(key, r.icon, label(r.verb, text60), is_open))
-                                .when(is_open, |d| d.child(shell_card(&shell, t)));
+                                .child(disclosure(key, faded(r.icon), label(r.verb, text60), is_open))
+                                .children(view.expansion(&shell.key, is_open, shell_body, window, cx));
                         }
                         let mut words = div()
                             .flex()
@@ -1190,10 +1208,16 @@ pub(super) fn activity(
                         if let Some((added, removed)) = r.stats {
                             words = words.children(stats(added, removed, text60));
                         }
-                        row(r.icon, words)
+                        row(faded(r.icon), words)
                     }));
-                }
-                col
+                    list.layer().child(shapes::top_fade(px(24.)))
+                };
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .child(header)
+                    .children(view.expansion(key, is_open, content, window, cx))
             }
         });
     }

@@ -207,7 +207,7 @@ impl Root {
                                     json!({
                                         "threadId":thread_id,"input":input,
                                         "model":submission.model,"effort":submission.effort,
-                                        "serviceTier":submission.fast.then_some("priority"),
+                                        "serviceTier":submission.service_tier,
                                     }),
                                 )
                                 .await?;
