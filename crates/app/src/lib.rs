@@ -31,6 +31,7 @@ mod goals;
 pub mod host;
 pub mod host_settings;
 pub mod hotkey;
+mod logging;
 pub mod native_menus;
 mod new_project;
 mod notifications;
@@ -148,8 +149,17 @@ actions!(
         NextChat,
         /// `⌘⇧A`: archive the open chat (`archiveThread`).
         ArchiveChat,
+        ExportLogs,
     ]
 );
+
+macro_rules! eprintln {
+    ($($arg:tt)*) => {{
+        let message = format!($($arg)*);
+        logging::write(&message);
+        std::eprintln!("{message}");
+    }};
+}
 
 /// `thread1..9`: open the Nth Recents row (0-based).
 #[derive(Clone, PartialEq, Action)]
@@ -166,6 +176,7 @@ const SIDEBAR_BREAKPOINT: Pixels = px(720.);
 
 /// Fixed platform bindings and app-level commands; configurable bindings are installed by the keymap module.
 pub fn init(cx: &mut App) {
+    logging::write("codex-gpui session started");
     cx.set_app_identity(
         if qa::ENABLED {
             "dev.codexgpui.qa"
@@ -189,6 +200,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-shift-p", OpenCommandMenu, None),
         KeyBinding::new("alt-cmd-b", ToggleChangesPanel, None),
         KeyBinding::new("cmd-shift-a", ArchiveChat, None),
+        KeyBinding::new("alt-cmd-shift-l", ExportLogs, None),
     ]);
     ui::composer::bind_keys(cx);
     features::init(cx);
@@ -1875,6 +1887,43 @@ impl Root {
                             this.toast(Toast::danger("Cannot open project folder"), cx);
                         }
                     }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn export_logs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Export logs".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                let paths = paths
+                    .await
+                    .map_err(|error| std::io::Error::other(error.to_string()))?
+                    .map_err(std::io::Error::other)?;
+                let Some(directory) = paths.and_then(|paths| paths.into_iter().next()) else {
+                    return Ok(None);
+                };
+                cx.background_spawn(async move { logging::export(&directory) })
+                    .await
+                    .map(Some)
+            }
+            .await;
+            this.update_in(cx, |this, _window, cx| match result {
+                Ok(Some(path)) => this.toast(
+                    Toast::success("Logs exported").description(path.display().to_string()),
+                    cx,
+                ),
+                Ok(None) => {}
+                Err(error) => {
+                    eprintln!("codex-gpui: cannot export logs: {error:#}");
+                    this.toast(Toast::danger("Unable to export logs"), cx);
                 }
             })
             .ok();
@@ -8625,6 +8674,7 @@ impl Render for Root {
             .on_action(cx.listener(|this, _: &OpenCommandMenu, window, cx| {
                 this.open_command_menu(window, cx)
             }))
+            .on_action(cx.listener(|this, _: &ExportLogs, window, cx| this.export_logs(window, cx)))
             .on_action(cx.listener(|this, a: &SetTheme, window, cx| {
                 let theme = serde_json::from_value(json!(a.0)).unwrap_or_default();
                 this.set_theme(theme, window, cx)

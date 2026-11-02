@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Write a rotating `logs/app.log` in the user data directory, mirror app diagnostics into it, and add `Export logs` that saves the last three logs as a zip.
 - Show the signed-in account in the profile menu (the ChatGPT email, or `Logged in with API key`) and add `Add account` / `Sign in with ChatGPT`, which opens the sign-in screen with `Cancel` to keep the current account.
 - Choose the integrated terminal shell in Settings from the shells in `/etc/shells`; new terminal tabs start it (`desktop.integratedTerminalShell`).
 - Keep a separate composer draft for each chat: switching chats keeps the text, chips and attachments of each one, and the text returns after a restart.
