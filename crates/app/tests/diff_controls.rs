@@ -237,6 +237,15 @@ fn header_wrap_retry_and_line_navigation_use_native_input() -> Result<()> {
         standalone_panel.read_with(&fx.cx, |panel, _| panel.layout()) == DiffLayout::Auto,
         "the auto control did not select automatic layout"
     );
+    let rich = standalone_panel.read_with(&fx.cx, |panel, _| panel.shows_rich_preview());
+    fx.click((1258., 22.))?;
+    ensure!(
+        standalone_panel.read_with(&fx.cx, |panel, _| panel.shows_rich_preview()) != rich,
+        "the rich preview button did not toggle rich preview"
+    );
+    shot(&mut fx, "standalone-rich-preview")?;
+    fx.click((1258., 22.))?;
+    ensure!(standalone_panel.read_with(&fx.cx, |panel, _| panel.shows_rich_preview()) == rich);
     fx.resize(767., 832.)?;
     shot(&mut fx, "standalone-auto-767")?;
     fx.resize(600., 832.)?;
