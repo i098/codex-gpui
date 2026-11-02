@@ -111,6 +111,12 @@ fn native_archive_interactions() -> Result<()> {
         fx.click((916., 203.))?;
         shot(&mut fx, "filter")?;
         fx.keys("escape")?;
+        // Down opens the menu; the ninth Down focuses `Group by` ▸ `None`, the eighth `Project`.
+        fx.keys("down down down down down down down down down enter")?;
+        shot(&mut fx, "ungrouped")?;
+        fx.click((916., 203.))?;
+        shot(&mut fx, "filter-ungrouped")?;
+        fx.keys("escape down down down down down down down down enter")?;
         fx.click((1084., 203.))?;
         shot(&mut fx, "projects")?;
         fx.keys("escape")?;
