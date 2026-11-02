@@ -23,6 +23,8 @@ pub enum Link {
         host_id: Option<String>,
         shared: bool,
     },
+    Plugins(String),
+    PetInstall,
     Settings(Option<&'static str>),
     Connections(Tab),
     AddSsh {
@@ -61,6 +63,10 @@ pub fn parse(value: &str) -> Option<Link> {
     let sub: Vec<_> = url.path().split('/').filter(|s| !s.is_empty()).collect();
     let params = Params(url.query_pairs().collect());
     match destination {
+        "plugins" => Some(Link::Plugins(plugin_route(&sub)?)),
+        "mcp-app" if sub.is_empty() => Some(Link::Plugins("/plugins".into())),
+        "skills" if sub.is_empty() => Some(Link::Plugins("/skills".into())),
+        "pets" if sub.as_slice() == ["install"] => Some(Link::PetInstall),
         "threads" if sub.as_slice() == ["new"] => new_thread(&params, false),
         "threads" => thread(sub.first()?, &params),
         "new" if sub.is_empty() => new_thread(&params, true),
@@ -74,6 +80,18 @@ pub fn parse(value: &str) -> Option<Link> {
         "browser" => browser_link(&params),
         "codex-app" => codex_app_link(&sub),
         "space" if sub.is_empty() => Some(Link::Space),
+        _ => None,
+    }
+}
+
+fn plugin_route(sub: &[&str]) -> Option<String> {
+    match sub {
+        [] => Some("/plugins".into()),
+        [id] if *id != "install" => {
+            let id = component(id)?;
+            (!id.contains('/')).then(|| format!("/plugins/{id}"))
+        }
+        ["install", _] => Some("/plugins".into()),
         _ => None,
     }
 }
@@ -201,6 +219,7 @@ fn https_link(url: &Url) -> Option<Link> {
         _ => None,
     }
 }
+
 fn thread(id: &str, params: &Params<'_>) -> Option<Link> {
     if !uuid(id) {
         return None;
@@ -426,6 +445,14 @@ impl Root {
                 self.navigate(Route::Thread(id.clone()), window, cx);
                 prompt = prefill.clone();
             }
+            Link::Plugins(path) => {
+                self.open_plugins(path, window, cx);
+                return;
+            }
+            Link::PetInstall => {
+                self.open_settings_section("Mini & Pets", window, cx);
+                return;
+            }
             Link::Settings(None) => self.navigate(Route::Settings, window, cx),
             Link::Settings(Some(label)) => self.open_settings_section(label, window, cx),
             Link::Connections(tab) => self.open_connections(*tab, window, cx),
@@ -566,6 +593,36 @@ mod tests {
         );
         assert!(parse("codex://threads/new?mode=invalid").is_none());
         assert!(parse("codex://threads/new?mode=chat&mode=chat").is_none());
+    }
+
+    #[test]
+    fn routes_plugin_skill_mcp_app_and_pet_links() {
+        assert_eq!(
+            parse("codex://plugins"),
+            Some(Link::Plugins("/plugins".into()))
+        );
+        assert_eq!(
+            parse("codex://plugins/code-review%40openai-bundled"),
+            Some(Link::Plugins("/plugins/code-review@openai-bundled".into()))
+        );
+        assert_eq!(
+            parse("codex://plugins/install/my-plugin?marketplace=public"),
+            Some(Link::Plugins("/plugins".into()))
+        );
+        assert_eq!(
+            parse("codex://mcp-app?appId=calendar"),
+            Some(Link::Plugins("/plugins".into()))
+        );
+        assert_eq!(
+            parse("codex://skills"),
+            Some(Link::Plugins("/skills".into()))
+        );
+        assert_eq!(
+            parse("codex://pets/install?name=Mini"),
+            Some(Link::PetInstall)
+        );
+        assert!(parse("codex://plugins/a%2Fb").is_none());
+        assert!(parse("codex://plugins/install").is_none());
     }
 
     #[test]
@@ -777,7 +834,9 @@ mod tests {
                 }
                 Some(Link::Scheduled) => assert_eq!(expected["kind"], "automations", "{value}"),
                 Some(
-                    Link::Browser(_)
+                    Link::Plugins(_)
+                    | Link::PetInstall
+                    | Link::Browser(_)
                     | Link::Space
                     | Link::CloudEnvironmentCreate
                     | Link::Onboarding,
@@ -789,8 +848,6 @@ mod tests {
             }
         }
         for value in [
-            "codex://plugins",
-            "codex://skills",
             "codex://sites/edit",
             "codex://connector/callback",
             "https://chatgpt.com/",
