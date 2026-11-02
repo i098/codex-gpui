@@ -39,6 +39,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("new_chat_row", new_chat_row),
     ("new_chat_same_route_history", new_chat_same_route_history),
     ("your_dot_row", your_dot_row),
+    ("sidebar_follows_panel", sidebar_follows_panel),
     ("sidebar_empty_lists", sidebar_empty_lists),
     ("cmd_n_new_chat", cmd_n_new_chat),
     ("editor_click_focuses", editor_click_focuses),
@@ -461,6 +462,50 @@ fn your_dot_row() -> Result<String> {
         "Your dot did not open the dot home page"
     );
     ensure!(fx.route() == Route::Home, "route {:?}", fx.route());
+    Ok(String::new())
+}
+
+/// The whole sidebar fades with the panel, and Recents titles fill a widened panel.
+fn sidebar_follows_panel() -> Result<String> {
+    let mut fx = Fx::new()?;
+    let new_chat = fx.at("home", "New chat")?;
+    let subtract = fx.at("home", "Add a subtract")?;
+    // The brightest red in a logical box of the dark theme: light text on a dark panel.
+    let brightest = |shot: &RgbaImage, x: (f32, f32), y: (f32, f32)| {
+        let s = shot.width() as f32 / 1280.;
+        let (x, y) = (
+            (x.0 * s) as u32..(x.1 * s) as u32,
+            (y.0 * s) as u32..(y.1 * s) as u32,
+        );
+        y.flat_map(|y| x.clone().map(move |x| (x, y)))
+            .map(|(x, y)| shot.get_pixel(x, y)[0])
+            .max()
+            .unwrap_or(0)
+    };
+    let label = (new_chat.0 - 20., new_chat.0 + 20.);
+    let label_y = (new_chat.1 - 6., new_chat.1 + 6.);
+    let rest = brightest(&fx.shot()?, label, label_y);
+    fx.keys("cmd-b")?;
+    fx.advance(std::time::Duration::from_millis(80))?;
+    let closing = brightest(&fx.shot()?, label, label_y);
+    ensure!(
+        u16::from(closing) * 5 < u16::from(rest) * 4,
+        "New chat stayed at {closing} of {rest} while closing"
+    );
+    fx.keys("cmd-b")?;
+    fx.advance(std::time::Duration::from_millis(800))?;
+    fx.drag((340., 400.), (517., 400.), 8)?;
+    fx.hover((900., 6.))?;
+    let row = (subtract.1 - 6., subtract.1 + 6.);
+    let shot = fx.shot()?;
+    let (title, empty) = (
+        brightest(&shot, (360., 480.), row),
+        brightest(&shot, (500., 505.), row),
+    );
+    ensure!(
+        title > empty,
+        "the title stops before 360 px in a 517 px sidebar"
+    );
     Ok(String::new())
 }
 
