@@ -42,6 +42,8 @@ mod personalization;
 mod pull_requests;
 pub mod qa;
 mod routes;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub mod single_instance;
 pub mod terminal;
 mod thread_patch;
 mod tray;
