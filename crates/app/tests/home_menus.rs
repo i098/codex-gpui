@@ -19,11 +19,24 @@ fn mode_switch_menu_picks_with_keys_and_click_outside_closes() -> Result<()> {
     assert_eq!(mode(&app), 1, "Codex is the launch mode");
     let trigger = app.at("home", MODE_SWITCH)?;
 
+    // The original's two rows, ChatGPT then Codex; a pointer open highlights neither, so
+    // the first Down picks ChatGPT and the first Up picks Codex.
     app.click(trigger)?;
     assert!(mode_menu(&app));
-    app.keys("up enter")?;
+    app.capture_evidence("CGX_MODE_MENU_SHOTS", "mode-menu")?;
+    app.keys("down enter")?;
     assert_eq!(mode(&app), 0);
     assert!(!mode_menu(&app));
+
+    // Work shares the ChatGPT row: picking it keeps Work.
+    app.keys("ctrl-2")?;
+    app.click(trigger)?;
+    app.keys("down enter")?;
+    assert_eq!(mode(&app), 2);
+    app.click(trigger)?;
+    app.keys("up enter")?;
+    assert_eq!(mode(&app), 1);
+    app.keys("ctrl-1")?;
 
     app.click(trigger)?;
     assert!(mode_menu(&app));

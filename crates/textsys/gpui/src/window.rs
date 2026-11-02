@@ -3168,6 +3168,11 @@ impl Window {
             .set_background_appearance(background_appearance);
     }
 
+    /// The window background appearance.
+    pub fn background_appearance(&self) -> WindowBackgroundAppearance {
+        self.platform_window.background_appearance()
+    }
+
     /// Mark the window as dirty at the platform level.
     pub fn set_window_edited(&mut self, edited: bool) {
         self.platform_window.set_edited(edited);
