@@ -40,6 +40,10 @@ fn tool_failure(text: &str) -> Value {
     json!({ "success": false, "contentItems": [{ "type": "inputText", "text": text }] })
 }
 
+/// The `desktop.integratedTerminalShell` setting, kept in step with the config by `Root`.
+pub(crate) struct TerminalShell(pub Option<String>);
+impl gpui::Global for TerminalShell {}
+
 impl Root {
     pub(super) fn send_shell(
         &mut self,
@@ -582,17 +586,12 @@ pub struct TerminalPanel {
     strip_left: f32,
     cwd: String,
     roots: Vec<String>,
-    shell: String,
     workspaces_loaded: bool,
     focus_pending: bool,
 }
 
 impl TerminalPanel {
     fn new(cwd: String, cx: &mut Context<Self>) -> Self {
-        let shell = std::env::var("SHELL")
-            .ok()
-            .filter(|s| s.starts_with('/'))
-            .unwrap_or_else(|| "/bin/sh".into());
         let mut panel = Self {
             sessions: Vec::new(),
             active: 0,
@@ -601,7 +600,6 @@ impl TerminalPanel {
             strip_left: 0.,
             cwd: cwd.clone(),
             roots: vec![cwd],
-            shell,
             workspaces_loaded: false,
             focus_pending: false,
         };
@@ -679,7 +677,13 @@ impl TerminalPanel {
             }
         })
         .detach();
-        let mut command = CommandBuilder::new(&self.shell);
+        // Read per tab so a changed setting applies to the next new terminal.
+        let shell = cx
+            .try_global::<TerminalShell>()
+            .and_then(|shell| shell.0.clone())
+            .filter(|shell| std::path::Path::new(shell).is_file())
+            .unwrap_or_else(ui::screens::settings::default_shell);
+        let mut command = CommandBuilder::new(shell);
         command.arg("-l");
         command.cwd(&self.cwd);
         command.env("TERM", "xterm-256color");
