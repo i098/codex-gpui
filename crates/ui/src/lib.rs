@@ -69,6 +69,8 @@ actions!(
         OpenMini,
         /// Rail `Space`: the Spaces list (`/space`).
         OpenSpace,
+        /// Profile menu `Open config.toml`: the window host's user config layer.
+        OpenUserConfig,
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
         OpenPullRequests,
@@ -878,6 +880,8 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
 
 /// Click handler for the Home mode switch.
 pub type ModeSwitchClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+/// Profile-menu row action.
+type MenuAction = Box<dyn Fn(&mut Window, &mut App)>;
 
 /// The `Codex ⌄` trigger's current mode, click handler and open menu.
 pub struct ModeSwitch {
@@ -1432,34 +1436,99 @@ impl Shell {
             }))
     }
 
-    /// Profile avatar menu (`codex.profileDropdown.*`) above the avatar: `Settings`, then the
-    /// `Help` submenu's `Set up mobile`, flattened under a `Help` heading.
-    /// Profile and Usage open pages that this menu does not yet expose.
+    /// Profile avatar menu (`codex.profileDropdown.*`) above the avatar: `Settings`, `Usage`
+    /// with the primary limit's `{n}% left`, `Personalization`, `Open config.toml`, the
+    /// free-plan upgrade link, then the `Help` submenu flattened under a `Help` heading.
+    /// `Log out` opens the `Log out?` confirmation.
+    /// shortcut: no `Profile` or `Invite a coworker`; the port has no profile page or referral
+    /// client yet.
     fn profile_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let hover = t.menu_item_hover;
+        let usage = cx.try_global::<screens::settings::usage::State>();
+        let remaining = usage.and_then(|state| match &state.limits {
+            screens::computer_use::Load::Ready(limits) => {
+                limits.rate_limits.primary.as_ref().map(|w| w.remaining())
+            }
+            _ => None,
+        });
+        let pricing = usage
+            .filter(|state| matches!(state.plan.as_str(), "free" | "go"))
+            .map(|state| {
+                if state.access.logged_in_pricing {
+                    "https://chatgpt.com/#pricing"
+                } else {
+                    "https://chatgpt.com/pricing/"
+                }
+            });
         let item = |id: &'static str,
                     label: &'static str,
-                    action: fn(&ClickEvent, &mut Window, &mut App)| {
+                    trailing: Option<String>,
+                    action: MenuAction| {
             div()
                 .id(id)
                 .px(px(8.))
                 .py(px(6.))
                 .rounded(px(12.))
+                .flex()
+                .justify_between()
                 .hover(move |s| s.bg(hover))
                 .child(text(label, 14., 20., 430., t.text))
-                .on_click(cx.listener(move |this, e, window, cx| {
+                .children(trailing.map(|s| text(s, 13., 20., 430., t.text_tertiary)))
+                .on_click(cx.listener(move |this, _, window, cx| {
                     this.profile_menu = false;
                     cx.notify();
-                    action(e, window, cx);
+                    action(window, cx);
                 }))
         };
-        let settings = item("profile-settings", "Settings", dispatch::<OpenSettings>);
+        fn send<A: Action + Clone>(action: A) -> MenuAction {
+            Box::new(move |window, cx| window.dispatch_action(Box::new(action.clone()), cx))
+        }
+        let section = |label: &str| {
+            send(screens::settings::subtrees::OpenSection {
+                label: label.into(),
+            })
+        };
+        let settings = item("profile-settings", "Settings", None, send(OpenSettings));
+        let usage = item(
+            "profile-usage",
+            "Usage",
+            remaining.map(|r| format!("{r:.0}% left")),
+            section("Usage & billing"),
+        );
+        let personalization = item(
+            "profile-personalization",
+            "Personalization",
+            None,
+            section("Personalization"),
+        );
+        let config = item(
+            "profile-open-config-toml",
+            "Open config.toml",
+            None,
+            send(OpenUserConfig),
+        );
+        let upgrade = pricing.map(|url| {
+            item(
+                "profile-upgrade",
+                "Upgrade for higher limits",
+                None,
+                Box::new(move |_, cx| cx.open_url(url)),
+            )
+        });
+        let mini = item("profile-mini", "Show Mini", None, send(OpenMini));
+        let log_out = item("profile-log-out", "Log out", None, send(LogOut));
         let mobile = item(
             "profile-set-up-mobile",
             "Set up mobile",
-            dispatch::<OpenMobileSetup>,
+            None,
+            send(OpenMobileSetup),
         );
-        let mini = item("profile-mini", "Show Mini", dispatch::<OpenMini>);
+        let shortcuts = item(
+            "profile-keyboard-shortcuts",
+            "Keyboard Shortcuts",
+            None,
+            send(ShowKeyboardShortcuts),
+        );
         // `profileDropdown`: the signed-in account, then `Add account` (ChatGPT) or
         // `Sign in with ChatGPT`; both open the sign-in screen through `SwitchAccount`.
         let (account, switch) = match &self.account {
@@ -1470,7 +1539,7 @@ impl Shell {
             ),
             None => (None, "Sign in with ChatGPT"),
         };
-        let switch = item("profile-switch-account", switch, dispatch::<SwitchAccount>);
+        let switch = item("profile-switch-account", switch, None, send(SwitchAccount));
         div()
             .absolute()
             .left(px(8.))
@@ -1494,8 +1563,12 @@ impl Shell {
                 })
                 .child(switch)
                 .child(settings)
+                .child(usage)
+                .child(personalization)
+                .child(config)
+                .children(upgrade)
                 .child(mini)
-                .child(item("profile-log-out", "Log out", dispatch::<LogOut>))
+                .child(log_out)
                 .child(div().px(px(8.)).pt(px(8.)).pb(px(4.)).child(text(
                     "Help",
                     12.,
@@ -1504,11 +1577,7 @@ impl Shell {
                     t.text_tertiary,
                 )))
                 .child(mobile)
-                .child(item(
-                    "profile-keyboard-shortcuts",
-                    "Keyboard Shortcuts",
-                    dispatch::<ShowKeyboardShortcuts>,
-                ))
+                .child(shortcuts)
             }))
     }
 

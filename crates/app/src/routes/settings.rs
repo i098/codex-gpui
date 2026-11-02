@@ -14,6 +14,9 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     ))
     .on_action(cx.listener(Root::open_settings_subtree))
     .on_action(cx.listener(Root::open_settings_parent))
+    .on_action(cx.listener(|this, _: &ui::OpenUserConfig, _, cx| {
+        crate::settings_configuration::read_layers(this, true, cx)
+    }))
     .on_action(
         cx.listener(|this, _: &settings::storage::ManageWorktrees, window, cx| {
             this.open_settings_section("Worktrees", window, cx)
