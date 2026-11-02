@@ -165,7 +165,10 @@ fn main() {
     // The flows render through the Metal headless renderer and the CoreText text system;
     // other platforms (Linux CI) have neither.
     if !cfg!(target_os = "macos") {
-        println!("flows: macOS only, skipped");
+        // nextest runs `--list` and rejects any line that is not "<name>: test".
+        if !std::env::args().any(|a| a == "--list") {
+            println!("flows: macOS only, skipped");
+        }
         return;
     }
     let filter = std::env::args().skip(1).find(|a| !a.starts_with('-'));
