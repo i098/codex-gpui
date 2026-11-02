@@ -3010,6 +3010,7 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::CommandExecution { id, .. }
         | ThreadItem::McpToolCall { id, .. }
         | ThreadItem::FileChange { id, .. }
+        | ThreadItem::DynamicToolCall { id, .. }
         | ThreadItem::ContextCompaction { id }
         | ThreadItem::EnteredReviewMode { id, .. }
         | ThreadItem::ExitedReviewMode { id, .. } => Some(id),
