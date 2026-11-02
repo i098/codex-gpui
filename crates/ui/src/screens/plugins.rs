@@ -221,6 +221,8 @@ pub enum Action {
     ReadSkill(String),
     OpenSkill(String),
     ConnectApp(Value),
+    UpdateShareTargets(Arc<Plugin>),
+    DeleteShare(Arc<Plugin>),
     DisconnectApp(String),
 }
 
@@ -251,6 +253,8 @@ pub struct Page {
     pub modal: Option<Modal>,
     pub share_url: Option<String>,
     pub skill_file: Option<Entity<crate::screens::diff::panel::FileView>>,
+    pub share_targets: Vec<Value>,
+    pub share_discoverability: String,
     /// The selected pill under the heading (`Public`, `Personal`, `System`, ...).
     pub section: &'static str,
     /// Lists expanded past their first rows by `See ...`.
@@ -258,6 +262,7 @@ pub struct Page {
     pub generation: u64,
     pub focus: FocusHandle,
     modal_focus: FocusHandle,
+    modal_return_focus: Option<FocusHandle>,
 }
 
 impl EventEmitter<Action> for Page {}
@@ -300,6 +305,8 @@ impl Page {
             modal: None,
             share_url: None,
             skill_file: None,
+            share_targets: Vec::new(),
+            share_discoverability: "PRIVATE".into(),
             section: if tab == Tab::Skills {
                 "Personal"
             } else {
@@ -309,6 +316,7 @@ impl Page {
             generation: 0,
             focus: cx.focus_handle(),
             modal_focus: cx.focus_handle(),
+            modal_return_focus: None,
         }
     }
 
@@ -319,6 +327,7 @@ impl Page {
     }
 
     pub fn show_modal(&mut self, modal: Modal, window: &mut Window, cx: &mut Context<Self>) {
+        self.modal_return_focus = window.focused(cx);
         self.error = None;
         self.modal = Some(modal);
         if let Some(Modal::Skill(skill)) = &self.modal {
@@ -334,7 +343,11 @@ impl Page {
         }
         self.modal = None;
         self.error = None;
-        self.focus.focus(window, cx);
+        if let Some(focus) = self.modal_return_focus.take() {
+            focus.focus(window, cx);
+        } else {
+            self.focus.focus(window, cx);
+        }
         cx.notify();
     }
 }
