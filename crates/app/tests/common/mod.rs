@@ -720,6 +720,16 @@ pub fn recorded_resume(id: &str) -> Result<Value> {
         .with_context(|| format!("no thread/resume of {id}"))
 }
 
+/// The center of profile menu row `id` (`profile-settings`, `profile-help`, ...).
+pub fn profile_row(fx: &mut Fx, id: &str) -> Result<(f32, f32)> {
+    let rect = fx
+        .cx
+        .debug_bounds(fx.window, id)?
+        .with_context(|| format!("no {id} row"))?;
+    let center = rect.center();
+    Ok((f32::from(center.x), f32::from(center.y)))
+}
+
 /// Device pixels that differ inside the CSS-px `rect` (the window is 2x).
 pub fn changed(a: &RgbaImage, b: &RgbaImage, [x, y, w, h]: [f32; 4]) -> usize {
     let (x0, y0) = ((x * 2.) as u32, (y * 2.) as u32);

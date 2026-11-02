@@ -207,10 +207,9 @@ fn capture_cell() -> Result<()> {
     Ok(())
 }
 
-/// Profile menu ▸ Help ▸ `Set up mobile`, as `flows::open_mobile` clicks it.
+/// What Profile menu ▸ Help ▸ `Set up mobile` dispatches, as `flows::open_mobile` does.
 fn open_mobile(fx: &mut Fx) -> Result<()> {
-    fx.click((26., fx.size.1 - 26.))?;
-    fx.click((118., fx.size.1 - 100.))?;
+    fx.action(Box::new(ui::OpenMobileSetup))?;
     ensure!(fx.route() == Route::Mobile, "route {:?}", fx.route());
     Ok(())
 }
