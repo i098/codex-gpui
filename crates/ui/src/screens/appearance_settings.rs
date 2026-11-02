@@ -101,6 +101,14 @@ const ACCENTS: &[(&str, &str)] = &[
     ("custom", "Custom"),
 ];
 
+/// `text-xs px-2`: the accent and font pickers' trigger.
+const COMPACT_TRIGGER: TriggerStyle = TriggerStyle {
+    size: 12.,
+    line_height: 16.,
+    padding: (8., 8.),
+    surface: false,
+};
+
 /// `gba(name, variant).accent`: the ChatGPT accent a chrome theme takes.
 fn chatgpt_accent(name: &str) -> &'static str {
     match name {
@@ -483,6 +491,11 @@ impl SettingsPane {
                     Select::new(current.clone(), choices, None, cx)
                         .with_icons(preset_icon)
                         .with_width(240.)
+                        .with_trigger_style(TriggerStyle {
+                            padding: (3., 12.),
+                            surface: true,
+                            ..TriggerStyle::default()
+                        })
                         .keep_default_visible()
                         .with_submenu("Codex themes", codex_themes_icon)
                 });
@@ -545,6 +558,10 @@ impl SettingsPane {
                     Select::new(current.clone(), choices, None, cx)
                         .with_icons(accent_icon)
                         .with_width(180.)
+                        .with_trigger_style(TriggerStyle {
+                            surface: true,
+                            ..COMPACT_TRIGGER
+                        })
                 });
                 cx.subscribe(&select, move |this, _, selected: &Selected, cx| {
                     let name = selected.0.split_once(':').map_or("", |(_, name)| name);
@@ -744,6 +761,7 @@ impl SettingsPane {
                 let select = cx.new(|cx| {
                     Select::new(current.clone(), choices, Some("Search fonts"), cx)
                         .with_width(240.)
+                        .with_trigger_style(COMPACT_TRIGGER)
                         .keep_default_visible()
                 });
                 cx.subscribe(&select, move |this, _, selected: &Selected, cx| {
