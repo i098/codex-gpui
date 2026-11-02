@@ -1,5 +1,6 @@
 use crate::{Root, Route, host};
 use anyhow::{Context as _, Result};
+use bridge::Bridge;
 use gpui::{
     AppContext as _, Context, Div, Entity, Focusable as _, InteractiveElement as _, Window,
 };
@@ -39,6 +40,13 @@ impl Root {
             self.pull_requests_page = Some(page.clone());
             page
         };
+        page.update(cx, |page, _| {
+            page.link_threads = self
+                .threads
+                .iter()
+                .map(|thread| (thread.id.clone(), crate::thread_title(thread).to_string()))
+                .collect();
+        });
         let changed = page.update(cx, |page, cx| {
             let changed = page.select(selected, cx);
             page.mount_pane_width(window.viewport_size(), inline_inset);
@@ -85,10 +93,70 @@ impl Root {
                 });
             }
             Event::Code => self.load_pull_request_code(page, cx),
+            Event::Links => self.load_pull_request_links(page.clone(), cx),
+            Event::Link { thread, remove } => {
+                let Some(identity) = page.read(cx).selected.clone() else {
+                    return;
+                };
+                let bridge = self.bridge.clone();
+                let thread = thread.clone();
+                let remove = *remove;
+                page.update(cx, |page, cx| {
+                    page.link_generation += 1;
+                    page.linked_threads = None;
+                    cx.notify();
+                });
+                let page = page.clone();
+                cx.spawn(async move |this, cx| {
+                    let result = link_pull_request(&bridge, &thread, &identity, remove).await;
+                    this.update(cx, |this, cx| {
+                        let toast = match result {
+                            Ok(()) => ui::toast::Toast::info(if remove {
+                                "Chat unlinked"
+                            } else {
+                                "Chat linked"
+                            }),
+                            Err(error) => ui::toast::Toast::danger(error.to_string()),
+                        };
+                        this.toast(toast, cx);
+                        this.load_pull_request_links(page, cx);
+                    })
+                    .ok();
+                })
+                .detach();
+            }
             Event::Media { generation, url } => {
                 self.load_pull_request_media(page, *generation, url.clone(), cx)
             }
         }
+    }
+
+    fn load_pull_request_links(&self, page: Entity<Page>, cx: &mut Context<Self>) {
+        let Some(identity) = page.read(cx).selected.clone() else {
+            return;
+        };
+        let bridge = self.bridge.clone();
+        let generation = page.update(cx, |page, cx| {
+            page.link_generation += 1;
+            page.linked_threads = None;
+            cx.notify();
+            page.link_generation
+        });
+        cx.spawn(async move |_, cx| {
+            let result = async {
+                let key = pull_request_key(&identity)?;
+                crate::settings_git::attachment_owners(&bridge, "pull_request", &key).await
+            }
+            .await
+            .map_err(|error| error.to_string());
+            page.update(cx, |page, cx| {
+                if page.selected.as_ref() == Some(&identity) && page.link_generation == generation {
+                    page.linked_threads = Some(result);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     fn prefill_pull_request_chat(
@@ -383,6 +451,42 @@ fn repository_error(login: &str, error: String) -> String {
     } else {
         error
     }
+}
+
+pub(crate) async fn link_pull_request(
+    bridge: &Bridge,
+    thread: &str,
+    identity: &Identity,
+    remove: bool,
+) -> Result<()> {
+    let key = pull_request_key(identity)?;
+    let mut params = json!({
+        "threadId": thread, "attachmentType": "pull_request", "identityKey": key,
+    });
+    if !remove {
+        params["payload"] = json!({"url": identity.url(), "root": null, "headBranch": null});
+    }
+    let _: Value = bridge
+        .request(
+            if remove {
+                "thread/attachment/remove"
+            } else {
+                "thread/attachment/add"
+            },
+            params,
+        )
+        .await?;
+    Ok(())
+}
+
+fn pull_request_key(identity: &Identity) -> Result<String> {
+    anyhow::ensure!(identity.valid(), "Invalid pull request identity");
+    Ok(serde_json::to_string(&(
+        identity.hostname.to_lowercase(),
+        identity.owner.to_lowercase(),
+        identity.repository.to_lowercase(),
+        identity.number,
+    ))?)
 }
 
 #[cfg(test)]
