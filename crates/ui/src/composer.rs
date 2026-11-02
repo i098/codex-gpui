@@ -581,19 +581,25 @@ pub struct Approval {
     permissions: Option<Value>,
     form: Option<requests::Form>,
     computer_use: Option<computer_use::ComputerUseApproval>,
+    /// A command approval, shown as the original's `Terminal` card in place of the composer.
+    command: bool,
     identity: Rc<RequestIdentity>,
 }
 
 impl Approval {
     pub fn command(id: Value, req: &CommandApprovalRequest) -> Self {
         Self {
+            // The original titles the card with the request's reason.
             title: if req.kind == "humanCommand" {
                 "This command requires your approval".into()
             } else {
-                "Allow ChatGPT to run this command?".into()
+                req.reason
+                    .clone()
+                    .unwrap_or_else(|| "Allow ChatGPT to run this command?".into())
+                    .into()
             },
             detail: req.command.clone(),
-            reason: req.reason.clone(),
+            reason: req.reason.clone().filter(|_| req.kind == "humanCommand"),
             scoped_label: "Allow similar commands".into(),
             decisions: {
                 let mut decisions = req.available_decisions.clone();
@@ -605,12 +611,17 @@ impl Approval {
                         .retain(|decision| {
                             matches!(decision.as_str(), Some("accept" | "decline" | "cancel"))
                         });
+                } else if req.proposed_execpolicy_amendment.is_none() {
+                    decisions
+                        .get_or_insert_with(|| vec![json!("decline"), json!("accept")])
+                        .retain(|decision| decision.as_str() != Some("acceptForSession"));
                 }
                 decisions
             },
             permissions: None,
             form: None,
             computer_use: None,
+            command: true,
             identity: Rc::new(RequestIdentity {
                 id,
                 thread: req.thread_id.clone(),
@@ -634,6 +645,7 @@ impl Approval {
             permissions: None,
             form: None,
             computer_use: None,
+            command: false,
             identity: Rc::new(RequestIdentity {
                 id,
                 thread: req.thread_id.clone(),
@@ -672,6 +684,7 @@ impl Approval {
             permissions: Some(req.permissions.clone()),
             form: None,
             computer_use: None,
+            command: false,
             identity: Rc::new(RequestIdentity {
                 id,
                 thread: req.thread_id.clone(),
@@ -2939,7 +2952,8 @@ impl Render for Composer {
         if let Some(approval) = self.approval.as_ref()
             && (approval.form.is_some()
                 || approval.permissions.is_some()
-                || approval.computer_use.is_some())
+                || approval.computer_use.is_some()
+                || approval.command)
         {
             let context = match (
                 approval.form.is_some(),
@@ -2961,6 +2975,8 @@ impl Render for Composer {
                         self.computer_use_card(approval, &t, cx)
                     } else if approval.form.is_some() {
                         self.request_card(approval, &t, cx)
+                    } else if approval.command {
+                        self.command_request_card(approval, &t, cx)
                     } else {
                         self.permission_request_card(approval, &t, window, cx)
                     }),
