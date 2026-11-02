@@ -13,11 +13,11 @@ use bridge::{
 };
 use gpui::{
     Action, AnimationExt as _, AnyView, App, AppContext as _, ClickEvent, ClipboardItem, Context,
-    Corners, CursorStyle, Div, Entity, FocusHandle, Font, FontFeatures, FontWeight, Global,
-    HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Render, ScrollHandle, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black, combine_highlights,
-    deferred, div, font, prelude::FluentBuilder as _, px, rgb,
+    Corners, CursorStyle, Div, Entity, ExternalDragPayload, FileDragPaths, FocusHandle, Font,
+    FontFeatures, FontWeight, Global, HighlightStyle, Hsla, InteractiveElement, IntoElement,
+    KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Render, ScrollHandle,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black,
+    combine_highlights, deferred, div, font, prelude::FluentBuilder as _, px, rgb,
 };
 use shapes::Decoration;
 use std::{
@@ -58,6 +58,8 @@ pub use preview::{PreviewContent, PreviewRequest, PreviewSource};
 #[path = "diff/pdf.rs"]
 mod pdf;
 
+#[path = "diff/artifact_annotations.rs"]
+mod artifact_annotations;
 #[path = "diff/comment_view.rs"]
 mod comment_view;
 #[path = "diff/comments.rs"]
@@ -278,6 +280,9 @@ pub enum DiffRequest {
     },
     CommentsChanged(Vec<comments::Comment>),
     DismissModelComment(String),
+    /// `artifact.sendAnnotations`: send this batch of artifact annotations as its own turn
+    /// (the bundle's `artifact-direct-comment`); answer with `artifact_annotations_sent`.
+    SendAnnotations(Vec<comments::Comment>),
     /// Open this absolute path in the configured editor.
     Open(String),
 }
@@ -378,6 +383,7 @@ pub struct DiffPanel {
     content_generation: u64,
     rich_preview: bool,
     annotations: comment_view::Annotations,
+    artifacts: artifact_annotations::ArtifactAnnotations,
     context: context::State,
     full_view: Option<gpui::WeakEntity<Shell>>,
     viewed_files: serde_json::Map<String, serde_json::Value>,
@@ -540,6 +546,7 @@ impl DiffPanel {
             content_generation: 0,
             rich_preview: false,
             annotations: comment_view::Annotations::default(),
+            artifacts: Default::default(),
             context: context::State::default(),
             full_view: None,
             viewed_files: Default::default(),
@@ -1049,6 +1056,17 @@ impl DiffPanel {
             }
             cx.stop_propagation();
             cx.notify();
+            return;
+        }
+        // A line comment card keeps its own Cmd+Enter.
+        if key.modifiers.platform
+            && key.key == "enter"
+            && !self.comment_draft().is_some_and(|editor| {
+                gpui::Focusable::focus_handle(editor.read(cx), cx).is_focused(window)
+            })
+            && self.artifact_modified_enter(window, cx)
+        {
+            cx.stop_propagation();
             return;
         }
         if key.modifiers.platform && key.key == "f" {
@@ -2856,6 +2874,7 @@ pub struct FileView {
     tree: file_tree::WorkspaceTree,
     revision: u64,
     preview: bool,
+    local_controls: bool,
     /// An image or PDF ([`Self::previews`]) shown instead of text lines.
     media: Option<preview::FileMedia>,
 }
@@ -2881,6 +2900,7 @@ impl FileView {
             tree,
             revision: 0,
             preview: true,
+            local_controls: true,
             media: None,
         }
     }
@@ -2898,6 +2918,11 @@ impl FileView {
 
     pub fn name(&self) -> SharedString {
         self.crumbs.last().cloned().unwrap_or_default()
+    }
+
+    /// Hide controls that use the local workspace.
+    pub fn set_local_controls(&mut self, visible: bool) {
+        self.local_controls = visible;
     }
 
     pub fn is_preview(&self) -> bool {
@@ -2980,69 +3005,72 @@ impl FileView {
                         .children(crumbs),
                 ),
             )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(6.))
-                    .child(
-                        capsule(t, clamped)
-                            .w(px(32.))
-                            .id("file-search")
-                            .role(gpui::Role::Button)
-                            .aria_label("Search in files")
-                            .focusable()
-                            .tab_index(0)
-                            .rounded_full()
-                            .focus_visible(crate::composer::menu::trigger_focus)
-                            .justify_center()
-                            .on_click(
-                                cx.listener(|view, _, window, cx| {
+            .when(self.local_controls, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .gap(px(6.))
+                        .child(
+                            capsule(t, clamped)
+                                .w(px(32.))
+                                .id("file-search")
+                                .role(gpui::Role::Button)
+                                .aria_label("Search in files")
+                                .focusable()
+                                .tab_index(0)
+                                .rounded_full()
+                                .focus_visible(crate::composer::menu::trigger_focus)
+                                .justify_center()
+                                .on_click(cx.listener(|view, _, window, cx| {
                                     view.focus_file_search(window, cx)
-                                }),
-                            )
-                            .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
-                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                    view.focus_file_search(window, cx);
-                                    cx.stop_propagation();
-                                }
-                            }))
-                            .child(icon("diff-jump-to-file", 16., t.text).runtime())
-                            // The `backdrop-filter` button is its own cc layer: its icon
-                            // rasterizes on that layer's tiles.
-                            .layer(),
-                    )
-                    .child(self.file_tree_button(t, clamped, cx))
-                    .child(
-                        capsule(t, clamped).p_0().child(
-                            div()
-                                .h(px(32.))
-                                .pl(px(9.))
-                                .flex()
-                                .items_center()
-                                .child(text("Open", 13., 18., 430., t.text))
-                                .child(
-                                    div()
-                                        .ml(px(4.))
-                                        .w(px(23.))
-                                        .h_full()
-                                        .flex()
-                                        .items_center()
-                                        .pl(px(2.))
-                                        .child(
-                                            menu::backdrop_glyph(
-                                                include_bytes!(
-                                                    "../../../assets/icons/chevron-down.svg"
-                                                ),
-                                                "navigation-open-chevron",
-                                                t.text,
-                                                128,
-                                            )
-                                            .size(px(14.)),
-                                        ),
-                                ),
+                                }))
+                                .on_key_down(cx.listener(
+                                    |view, event: &KeyDownEvent, window, cx| {
+                                        if matches!(event.keystroke.key.as_str(), "enter" | "space")
+                                        {
+                                            view.focus_file_search(window, cx);
+                                            cx.stop_propagation();
+                                        }
+                                    },
+                                ))
+                                .child(icon("diff-jump-to-file", 16., t.text).runtime())
+                                // The `backdrop-filter` button is its own cc layer: its icon
+                                // rasterizes on that layer's tiles.
+                                .layer(),
+                        )
+                        .child(self.file_tree_button(t, clamped, cx))
+                        .child(
+                            capsule(t, clamped).p_0().child(
+                                div()
+                                    .h(px(32.))
+                                    .pl(px(9.))
+                                    .flex()
+                                    .items_center()
+                                    .child(text("Open", 13., 18., 430., t.text))
+                                    .child(
+                                        div()
+                                            .ml(px(4.))
+                                            .w(px(23.))
+                                            .h_full()
+                                            .flex()
+                                            .items_center()
+                                            .pl(px(2.))
+                                            .child(
+                                                menu::backdrop_glyph(
+                                                    include_bytes!(
+                                                        "../../../assets/icons/chevron-down.svg"
+                                                    ),
+                                                    "navigation-open-chevron",
+                                                    t.text,
+                                                    128,
+                                                )
+                                                .size(px(14.)),
+                                            ),
+                                    ),
+                            ),
                         ),
-                    ),
-            )
+                )
+            })
     }
 
     fn file_content(
@@ -3295,6 +3323,17 @@ pub fn stats(added: usize, removed: usize, size: f32, t: &Theme) -> Div {
         .child(tracked(removed, '-', t.git_deleted))
 }
 
+pub(super) fn file_drag_payload(path: &str) -> Option<ExternalDragPayload> {
+    let path = std::path::PathBuf::from(path);
+    path.is_file()
+        .then(|| ExternalDragPayload::Files(FileDragPaths::new([(path, false)])))
+}
+
+pub(super) fn draggable_file_row(row: Stateful<Div>, path: String) -> Stateful<Div> {
+    row.on_drag(path, |_, _, _, cx| cx.new(|_| crate::EmptyMain))
+        .external_drag_payload(|path: &String, _, _| file_drag_payload(path))
+}
+
 fn file_header(
     i: usize,
     file: &FileDiff,
@@ -3303,10 +3342,13 @@ fn file_header(
     cx: &Context<DiffPanel>,
 ) -> Stateful<Div> {
     if panel.standalone {
-        return panel.standalone_file_header(i, file, t, cx);
+        return draggable_file_row(
+            panel.standalone_file_header(i, file, t, cx),
+            file.path_key.clone(),
+        );
     }
     let small = |name| round_icon(name, 20., t);
-    div()
+    let header = div()
         .id(("diff-file", i))
         .flex_none()
         .h(px(38.))
@@ -3416,7 +3458,8 @@ fn file_header(
                             },
                         )),
                 ),
-        )
+        );
+    draggable_file_row(header, file.path_key.clone())
 }
 
 fn line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
@@ -4120,6 +4163,29 @@ fn relative(base: &str, path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_drag_payload_offers_only_existing_files() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let file = directory.path().join("dragged.txt");
+        std::fs::write(&file, "drag me").expect("create drag file");
+
+        assert_eq!(
+            file_drag_payload(file.to_str().expect("UTF-8 path")),
+            Some(ExternalDragPayload::Files(FileDragPaths::new([(
+                file.clone(),
+                false,
+            )])))
+        );
+        assert_eq!(
+            file_drag_payload(directory.path().to_str().expect("UTF-8 path")),
+            None
+        );
+        assert_eq!(
+            file_drag_payload(directory.path().join("missing").to_str().unwrap()),
+            None
+        );
+    }
 
     #[test]
     fn aggregate_changes_do_not_allow_staging() {

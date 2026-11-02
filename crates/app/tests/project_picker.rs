@@ -200,6 +200,20 @@ fn sidebar_project_rows_start_chats_in_their_own_roots_and_leave_open_chats_alon
     let host = Arc::new(LocalHost::new(temp.path().join("codex")));
     let [alpha, beta, gone] = [alpha, beta, gone].map(|root| host.add_project(&root).unwrap());
     fs::remove_dir(&gone)?;
+    // Collapsed folders list no chats, so the rows keep the recorded 31 px stride.
+    let global = temp.path().join("codex/.codex-global-state.json");
+    let mut state: serde_json::Value = serde_json::from_slice(&fs::read(&global)?)?;
+    let ids: Vec<String> = state["local-projects"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    for id in ids {
+        state["electron-persisted-atom-state"][format!("sidebar-project-expanded-v1-codex:{id}")] =
+            json!(false);
+    }
+    fs::write(&global, serde_json::to_vec(&state)?)?;
 
     let mut lines = script(None, |_| {})?;
     let mut existing = recorded_thread(GREETING)?;
@@ -756,5 +770,44 @@ fn home_file_search_receives_its_session_results() -> Result<()> {
     fx.keys("enter")?;
     let prompt = fx.read(|root, cx| root.composer(cx).read(cx).prompt());
     assert!(prompt.contains(beta_file.to_str().unwrap()), "{prompt}");
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn renaming_a_project_preserves_unknown_appearance_metadata() -> Result<()> {
+    use common::{Fx, exchange, script};
+    let metadata = json!({
+        "codex.chatGptBacking": "keep",
+        "appearance.color": "external-color",
+        "appearance.marker": "{\"kind\":\"icon\",\"icon\":\"external-marker\"}"
+    });
+    let project = json!({"id": "project-edit", "name": "Before", "roots": [{"path": "/project"}], "metadata": metadata});
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("project/read", json!({"project": project})));
+    lines.extend(exchange("project/read", json!({"project": project})));
+    lines.extend(exchange("project/update", json!({})));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.action(Box::new(ui::screens::sidebar::ProjectAction {
+        id: "project-edit".into(),
+        command: "edit".into(),
+    }))?;
+    fx.wait("project editor", |fx| {
+        fx.read(|root, _| root.new_project().is_some())
+    })?;
+    fx.keys("cmd-a")?;
+    fx.type_text("After")?;
+    fx.keys("enter")?;
+    fx.wait("project saved", |fx| {
+        fx.read(|root, _| root.new_project().is_none())
+    })?;
+    let requests = fx.sent()?;
+    let update = requests
+        .iter()
+        .find(|request| request["method"] == "project/update")
+        .unwrap();
+    assert_eq!(update["params"]["name"], "After");
+    assert_eq!(update["params"]["metadata"], metadata);
+    assert_eq!(update["params"]["roots"], project["roots"]);
     Ok(())
 }

@@ -1721,6 +1721,56 @@ fn code_symbol(color: Hsla, checked: bool) -> impl IntoElement {
     .size(px(if checked { 16. } else { 20. }))
 }
 
+/// The text of the last fenced or indented code block in `markdown`.
+fn last_code_block(markdown: &str) -> Option<String> {
+    let mut last = None;
+    let mut open = None;
+    for event in Parser::new(markdown) {
+        match event {
+            Event::Start(Tag::CodeBlock(_)) => open = Some(String::new()),
+            Event::Text(text) => {
+                if let Some(code) = &mut open {
+                    code.push_str(&text);
+                }
+            }
+            Event::End(TagEnd::CodeBlock) => last = open.take(),
+            _ => {}
+        }
+    }
+    last
+}
+
+impl ThreadView {
+    /// The last code block of the chat's last assistant message that has one: `Copy last code
+    /// block` (`copyLastCodeBlock`).
+    pub fn last_code_block(&self) -> Option<String> {
+        self.turns
+            .iter()
+            .rev()
+            .flat_map(|turn| turn.items.iter().rev())
+            .find_map(|item| match item {
+                ThreadItem::AgentMessage { text, .. } => last_code_block(text),
+                _ => None,
+            })
+    }
+}
+
+#[cfg(test)]
+mod code_block_tests {
+    use super::last_code_block;
+
+    #[test]
+    fn takes_the_last_block_of_a_message() {
+        let text = "a\n\n```rust\nlet a = 1;\n```\n\ntext\n\n~~~\nfirst\nsecond\n~~~\n\nend";
+        assert_eq!(last_code_block(text).as_deref(), Some("first\nsecond\n"));
+        assert_eq!(last_code_block("no code"), None);
+        assert_eq!(
+            last_code_block("```\nunclosed").as_deref(),
+            Some("unclosed")
+        );
+    }
+}
+
 #[cfg(test)]
 mod table_tests {
     #[test]
