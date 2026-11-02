@@ -46,6 +46,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Install newer macOS releases in the background after the feed check, verify the checksum and app signature, keep the previous app, and relaunch without focus.
 - Add `/memories` and its `Chat memories` dialog while the `memories` feature is on: `Generate memories` sets the open chat's memory mode with `thread/memoryMode/set`, and on Home both switches apply to the next chat.
 - Show `$…$` and `$$…$$` math in agent answers as Unicode math text, with display math centered on its own line; copying a selection keeps the TeX source.
+- Package Linux builds as a `.deb` and an AppImage with a `codex://` URL handler through `tools/package-linux.sh`, and attach both to the GitHub release.
 - Make the model picker's `Reset to default` remove the `model` and `model_reasoning_effort` overrides from `config.toml` and select the recommended model.
 - Self-update the Linux AppImage from a signed `latest.json` release manifest: check every 6 hours, verify SHA-256 and Ed25519, then swap the file and relaunch on install.
 - Open a site's details from its Sites row (`/sites/:projectId`, `GET /websites/{project_id}`), with `Visit`, `Edit` (a new chat that mentions the site) and `Sites` back.
