@@ -236,6 +236,7 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "renameThread" => Box::new(shortcuts::RenameOpenChat),
         "findInThread" => Box::new(FindInThread),
         "copyDeeplink" => Box::new(shortcuts::CopyDeeplink),
+        "copyLastCodeBlock" => Box::new(shortcuts::CopyLastCodeBlock),
         "copyWorkingDirectory" | "copyConversationPath" => {
             Box::new(super::copy_directory::CopyWorkingDirectory)
         }
