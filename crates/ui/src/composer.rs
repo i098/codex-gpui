@@ -121,6 +121,7 @@ mod editor;
 pub use diff_comments::DiffCommentsChanged;
 mod footer;
 mod requests;
+pub use requests::IMPLEMENT_PLAN_METHOD;
 pub(crate) mod menu {
     //! Focus rules for the recorded Radix menus: arrows stop at the ends, Escape returns
     //! focus to the trigger, and Enter or Space activates the focused item.
@@ -806,12 +807,32 @@ struct EmbeddedField {
     font_size: Pixels,
     line_height: Pixels,
 }
-/// A composer's unsent input, carried to its replacement ([`Composer::take_draft`]).
+/// A composer's unsent input, carried to its replacement ([`Composer::take_draft`]) or kept
+/// for a thread the composer left ([`Composer::swap_draft`]).
+#[derive(Default)]
 pub struct Draft {
     content: String,
     mentions: Vec<mention::Mention>,
     attachments: Vec<attach::Attachment>,
     diff_comments: Vec<crate::screens::diff::panel::comments::Comment>,
+}
+
+impl Draft {
+    /// A text-only draft, as `state.json` keeps it across restarts.
+    pub fn from_text(text: String) -> Self {
+        Self {
+            content: text,
+            ..Self::default()
+        }
+    }
+
+    pub fn text(&self) -> &str {
+        &self.content
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.content.trim().is_empty() && self.attachments.is_empty()
+    }
 }
 
 pub struct Composer {
@@ -933,6 +954,8 @@ pub struct Composer {
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,
     embedded_field: Option<EmbeddedField>,
+    /// A field whose frame sets its own text size and line height (`text-xs` hex input).
+    text_metrics: Option<EmbeddedField>,
     on_settings_paste: Option<SettingsPasteHandler>,
     /// Script and command fields use the original code textarea's monospace text.
     monospace: bool,
@@ -1056,6 +1079,7 @@ impl Composer {
             dictation: None,
             dictation_error: None,
             embedded_field: None,
+            text_metrics: None,
             on_settings_paste: None,
             monospace: false,
             input_style: false,
@@ -1197,6 +1221,14 @@ impl Composer {
         self
     }
 
+    pub fn with_text_metrics(mut self, font_size: Pixels, line_height: Pixels) -> Self {
+        self.text_metrics = Some(EmbeddedField {
+            font_size,
+            line_height,
+        });
+        self
+    }
+
     pub fn monospace_field(mut self) -> Self {
         self.monospace = true;
         self
@@ -1230,7 +1262,7 @@ impl Composer {
     fn editor_font_size(&self) -> Pixels {
         if self.document_field {
             px(14.)
-        } else if let Some(field) = self.embedded_field {
+        } else if let Some(field) = self.text_metrics.or(self.embedded_field) {
             field.font_size
         } else if self.compact_text() {
             px(13.)
@@ -1242,7 +1274,7 @@ impl Composer {
     fn editor_line_height(&self) -> Pixels {
         if self.document_field {
             px(23.59375)
-        } else if let Some(field) = self.embedded_field {
+        } else if let Some(field) = self.text_metrics.or(self.embedded_field) {
             field.line_height
         } else if self.search_field || self.textarea() {
             px(18.571_428)
@@ -1874,6 +1906,21 @@ impl Composer {
         cx.emit(DiffCommentsChanged(self.diff_comments.clone()));
     }
 
+    /// Replaces the unsent text, chips and attachments with `next`, a thread's kept draft, and
+    /// returns the ones replaced. Diff comments stay: the app keeps them per thread.
+    pub fn swap_draft(&mut self, next: Draft, cx: &mut Context<Self>) -> Draft {
+        let left = Draft {
+            content: std::mem::take(&mut self.content),
+            mentions: std::mem::take(&mut self.mentions),
+            attachments: std::mem::take(&mut self.attachments),
+            diff_comments: Vec::new(),
+        };
+        self.set_text(&next.content, cx);
+        self.mentions = next.mentions;
+        self.attachments = next.attachments;
+        left
+    }
+
     pub fn restore_text(&mut self, text: &str, cx: &mut Context<Self>) {
         if self.content.is_empty() {
             self.set_text(text, cx);
@@ -2168,6 +2215,7 @@ impl Composer {
         self.focus_handle.focus(window, cx);
         self.menu = None;
         cx.notify();
+        self.follow_plan(&approval, &response, window, cx);
         if let Some(f) = self.on_approval.clone() {
             f(
                 approval.identity.id.clone(),
