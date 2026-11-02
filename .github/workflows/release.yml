@@ -1,5 +1,5 @@
 name: release
-# A `vMAJOR.MINOR.PATCH` tag on a merged `tools/version.sh` bump publishes the universal (arm64 + x86_64) macOS zip and the Windows MSIX.
+# A `vMAJOR.MINOR.PATCH` tag on a merged `tools/version.sh` bump publishes the universal (arm64 + x86_64) macOS zip, the Linux .deb and the Windows MSIX.
 on:
   push:
     tags: ['v*']
@@ -121,7 +121,7 @@ jobs:
           build-essential pkg-config clang cmake libssl-dev libzstd-dev
           libfontconfig-dev libfreetype-dev libasound2-dev libxkbcommon-dev
           libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
-          libvulkan-dev libfuse2t64 xxd
+          libvulkan-dev libfuse2t64 xxd fakeroot
       - if: steps.gate.outputs.run
         uses: dtolnay/rust-toolchain@stable
       - if: steps.gate.outputs.run
@@ -139,3 +139,8 @@ jobs:
           tools/appimage.sh target/release/codex-gpui "$appimage"
           tools/linux-manifest.sh "$appimage" "$version" "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$appimage" latest.json
           gh release upload "$GITHUB_REF_NAME" "$appimage" latest.json
+      - if: steps.gate.outputs.run
+        name: Build the .deb and attach it
+        run: |
+          FORMATS=deb tools/package-linux.sh dist
+          gh release upload "$GITHUB_REF_NAME" dist/*.deb

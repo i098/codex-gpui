@@ -38,6 +38,7 @@ pub use chatgpt::{ChatGptChat, ModeChanged};
 pub use mode::{DEFAULT_MODE, MODES};
 pub use priority::{ActivityOpened, ArchiveActivity};
 
+pub mod projects;
 pub mod sections;
 
 /// `.sidebar-item`: `--radius-lg` (12.5 px) with `corner-shape: superellipse(1.5)`.
@@ -65,9 +66,13 @@ pub struct Project {
     pub new_chat_label: SharedString,
     /// The project's first local root path; the cwd of a chat started in it.
     pub root: Option<SharedString>,
+    /// Every root, primary first: what `Edit` prefills.
+    pub roots: Vec<SharedString>,
     pub worktree: bool,
     pub missing: bool,
     pub expanded: bool,
+    /// In the global state's `pinned-project-ids`; pinned projects list first.
+    pub pinned: bool,
 }
 
 /// Thread name or preview, cut to 80 characters. Views supply their own empty-state label.
@@ -345,7 +350,6 @@ pub struct HomeSidebar {
     cwds: HashMap<String, SharedString>,
     /// Projects whose `Show more` was clicked: they list every loaded chat.
     projects_shown_all: HashSet<SharedString>,
-    project_menu: Option<crate::screens::thread::view::menu::ContextMenu>,
 }
 
 /// Emitted when a Recents row is clicked, with the thread id.
@@ -484,7 +488,6 @@ impl HomeSidebar {
             native_menu_snapshot: None,
             cwds: thread_cwds(threads),
             projects_shown_all: HashSet::new(),
-            project_menu: None,
         }
     }
 
@@ -616,7 +619,8 @@ impl HomeSidebar {
                             .gap(px(8.))
                             .opacity(0.)
                             .group_hover(group.clone(), |style| style.opacity(1.))
-                            .child(
+                            .child({
+                                let id = project.id.to_string();
                                 div()
                                     .id(SharedString::from(format!("project-actions-{project_id}")))
                                     .size(px(20.))
@@ -624,29 +628,21 @@ impl HomeSidebar {
                                     .items_center()
                                     .justify_center()
                                     .role(gpui::Role::Button)
-                                    .aria_label("Project options")
+                                    .aria_label("Project actions")
+                                    .cursor_pointer()
                                     .on_click(cx.listener(
-                                        move |this, event: &gpui::ClickEvent, window, cx| {
-                                            use crate::screens::thread::view::menu::{
-                                                ContextMenu, Item,
-                                            };
+                                        move |this, e: &gpui::ClickEvent, window, cx| {
                                             cx.stop_propagation();
-                                            this.project_menu = Some(ContextMenu::open(
-                                                vec![
-                                                    Item::new("edit", "Edit project", true),
-                                                    Item::new("move-up", "Move up", true),
-                                                    Item::new("delete", "Remove project", true),
-                                                ],
-                                                project_id.clone(),
-                                                event.position(),
+                                            this.open_project_menu(
+                                                id.clone(),
+                                                e.position(),
                                                 window,
                                                 cx,
-                                            ));
-                                            cx.notify();
+                                            );
                                         },
                                     ))
-                                    .child(icon("thread-chat-actions", 14., theme.text_tertiary)),
-                            )
+                                    .child(icon("thread-chat-actions", 14., theme.text_tertiary))
+                            })
                             .child(
                                 div()
                                     .id("project-new-chat")
@@ -702,6 +698,12 @@ impl HomeSidebar {
                     .role(gpui::Role::ListItem)
                     .aria_label(project.label.clone())
                     .child(content)
+                    .on_mouse_down(MouseButton::Right, {
+                        let id = project.id.to_string();
+                        cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
+                            this.open_project_menu(id.clone(), e.position, window, cx)
+                        })
+                    })
                     .when_some(selectable, |row, root| {
                         row.cursor_pointer().on_click(move |_, window, cx| {
                             window.dispatch_action(Box::new(SelectProject(root.to_string())), cx)
@@ -1521,6 +1523,7 @@ impl Render for HomeSidebar {
                     .pb(px(16.))
                     .child(contents),
             )
+            .children(crate::updater::banner(window, cx))
             .children(
                 self.menu
                     .as_ref()
@@ -1528,24 +1531,6 @@ impl Render for HomeSidebar {
                     .map(|_| self.menu_overlay(window, cx)),
             )
             .children(self.activity_menu_overlay(window, cx))
-            .children(self.project_menu.as_ref().map(|menu| {
-                menu.overlay(
-                    "project-menu",
-                    "Project options",
-                    |this| &mut this.project_menu,
-                    |_, command, id, window, cx| {
-                        window.dispatch_action(
-                            Box::new(ProjectAction {
-                                id,
-                                command: command.into(),
-                            }),
-                            cx,
-                        );
-                    },
-                    window,
-                    cx,
-                )
-            }))
             .children(self.worktree_tip.then(|| self.worktree_tooltip_element(cx)))
     }
 }
