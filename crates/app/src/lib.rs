@@ -261,6 +261,8 @@ pub struct State {
     pub confirm_before_close: ConfirmBeforeClose,
     pub project_root: Option<String>,
     pub zoom: f32,
+    /// The composer's sent prompts ([`ui::composer::PromptHistory`]).
+    pub prompt_history: Vec<String>,
     /// The unsent composer text of each thread (`draftKey`), by thread id.
     pub drafts: HashMap<String, String>,
     #[serde(skip)]
@@ -279,6 +281,7 @@ impl Default for State {
             confirm_before_close: ConfirmBeforeClose::default(),
             project_root: None,
             zoom: 1.,
+            prompt_history: Vec::new(),
             drafts: HashMap::new(),
             path: None,
         }
@@ -665,6 +668,14 @@ impl Root {
             }
         }
         host_settings::apply(cx);
+        if !cx.has_global::<ui::composer::PromptHistory>() {
+            cx.set_global(ui::composer::PromptHistory(state.prompt_history.clone()));
+        }
+        cx.observe_global::<ui::composer::PromptHistory>(|this, cx| {
+            this.state.prompt_history = cx.global::<ui::composer::PromptHistory>().0.clone();
+            this.state.save();
+        })
+        .detach();
         features::install_shortcuts(cx);
         let this = cx.weak_entity();
         usage::install(this.clone(), cx);

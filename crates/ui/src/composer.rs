@@ -69,6 +69,26 @@ impl EnterBehavior {
 }
 
 impl gpui::Global for EnterBehavior {}
+
+/// Sent prompts, oldest first, as the original's `prompt-history` atom keeps them: at most
+/// [`PromptHistory::CAP`], blank prompts skipped. The app persists it.
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct PromptHistory(pub Vec<String>);
+
+impl PromptHistory {
+    pub const CAP: usize = 20;
+
+    fn push(&mut self, prompt: &str) {
+        if prompt.trim().is_empty() {
+            return;
+        }
+        self.0.push(prompt.to_owned());
+        let excess = self.0.len().saturating_sub(Self::CAP);
+        self.0.drain(..excess);
+    }
+}
+
+impl gpui::Global for PromptHistory {}
 actions!(
     composer,
     [
@@ -863,6 +883,8 @@ pub struct Composer {
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
     history: editor::History,
+    /// Index into [`PromptHistory`] of the recalled prompt the editor shows.
+    prompt_recall: Option<usize>,
     /// The right-click menu (Electron's native editable-field menu).
     context_menu: Option<crate::screens::thread::view::menu::ContextMenu>,
     context_spelling: Option<(Range<usize>, String)>,
@@ -1015,6 +1037,7 @@ impl Composer {
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
+            prompt_recall: None,
             history: editor::History::default(),
             context_menu: None,
             context_spelling: None,
@@ -1919,6 +1942,36 @@ impl Composer {
         cx.emit(DiffCommentsChanged(self.diff_comments.clone()));
     }
 
+    /// The original's `ArrowUp`/`ArrowDown` prompt history: with the caret at the end, Up in an
+    /// empty composer shows the last sent prompt, then Up/Down cycle through older and newer
+    /// ones; Down past the newest clears the editor. Editing a recalled prompt ends the recall.
+    pub(super) fn recall_prompt(&mut self, up: bool, cx: &mut Context<Self>) -> bool {
+        let at_end = self.plain_field.is_none()
+            && self.selected_range == (self.content.len()..self.content.len());
+        let prompts = cx.try_global::<PromptHistory>().map(|h| h.0.clone());
+        let Some(prompts) = prompts.filter(|p| at_end && !p.is_empty()) else {
+            return false;
+        };
+        let index = match self.prompt_recall {
+            None if !up || !self.content.trim().is_empty() => return false,
+            None => prompts.len() - 1,
+            Some(i) if prompts.get(i) != Some(&self.content) => {
+                self.prompt_recall = None;
+                return false;
+            }
+            Some(i) if !up && i == prompts.len() - 1 => {
+                self.set_text("", cx);
+                self.prompt_recall = None;
+                return true;
+            }
+            Some(i) if up => (i + prompts.len() - 1) % prompts.len(),
+            Some(i) => (i + 1) % prompts.len(),
+        };
+        self.set_text(&prompts[index], cx);
+        self.prompt_recall = Some(index);
+        true
+    }
+
     /// Replaces the unsent text, chips and attachments with `next`, a thread's kept draft, and
     /// returns the ones replaced. Diff comments stay: the app keeps them per thread.
     pub fn swap_draft(&mut self, next: Draft, cx: &mut Context<Self>) -> Draft {
@@ -2089,6 +2142,10 @@ impl Composer {
     fn finish_send_draft(&mut self, background: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_dictation(cx);
         let submission = self.take_submission(background);
+        if !submission.shell_command && self.on_cancel_edit.is_none() {
+            cx.default_global::<PromptHistory>().push(&submission.text);
+        }
+        self.prompt_recall = None;
         if self.on_cancel_edit.is_some() {
             self.edit_pending = true;
         } else {
@@ -3886,6 +3943,39 @@ mod tests {
                 assert!(composer.effort.is_none());
                 assert_eq!(composer.displayed_effort(), "medium");
                 assert!(composer.run_settings().0["settings"]["reasoning_effort"].is_null());
+            });
+        });
+    }
+
+    #[test]
+    fn prompt_history_recalls_and_caps_sent_prompts() {
+        use gpui::{AppContext as _, HeadlessAppContext};
+        let mut history = PromptHistory::default();
+        for i in 0..25 {
+            history.push(&format!("p{i}"));
+        }
+        history.push("  ");
+        assert_eq!(history.0.len(), PromptHistory::CAP);
+        assert_eq!(history.0[0], "p5");
+        let mut app = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        app.update(|cx| {
+            cx.set_global(PromptHistory(vec!["first".into(), "second".into()]));
+            let composer = cx.new(|cx| Composer::new("Do anything", false, cx));
+            composer.update(cx, |composer, cx| {
+                assert!(!composer.recall_prompt(false, cx), "Down starts no recall");
+                assert!(composer.recall_prompt(true, cx));
+                assert_eq!(composer.content, "second");
+                assert!(composer.recall_prompt(true, cx));
+                assert_eq!(composer.content, "first");
+                assert!(composer.recall_prompt(false, cx));
+                assert!(composer.recall_prompt(false, cx), "Down past the newest");
+                assert_eq!(composer.content, "");
+                composer.set_text("typed", cx);
+                assert!(!composer.recall_prompt(true, cx), "a draft is kept");
             });
         });
     }
