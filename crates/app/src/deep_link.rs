@@ -807,7 +807,7 @@ mod tests {
                 Some(Link::Settings(_) | Link::Connections(_) | Link::AddSsh { .. }) => {
                     assert_eq!(expected["kind"], "settings", "{value}")
                 }
-                Some(Link::Launch) | None => {}
+                Some(Link::Launch | Link::Path(_)) | None => {}
             }
         }
         for value in [

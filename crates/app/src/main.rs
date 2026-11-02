@@ -138,7 +138,7 @@ fn main() {
             .filter_map(|arg| {
                 app::deep_link::parse(&arg).or_else(|| {
                     let path = std::path::Path::new(&arg);
-                    (path.is_absolute() && path.exists()).then(|| app::deep_link::Link::Path(arg))
+                    (path.is_absolute() && path.exists()).then_some(app::deep_link::Link::Path(arg))
                 })
             })
             .next_back();

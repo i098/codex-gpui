@@ -132,7 +132,11 @@ impl Root {
         if target.is_dir() {
             self.open_link_project(None, Some(path), None, None, window, cx);
         } else if target.is_file() {
-            self.open_file(&ui::diff::OpenFile { path, line: None }, window, cx);
+            self.open_file(
+                &ui::screens::diff::panel::OpenFile { path, line: None },
+                window,
+                cx,
+            );
         } else {
             self.toast(Toast::danger("Cannot open the dropped item"), cx);
         }
