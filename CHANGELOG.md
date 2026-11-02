@@ -44,6 +44,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Open a site's details from its Sites row (`/sites/:projectId`, `GET /websites/{project_id}`), with `Visit`, `Edit` (a new chat that mentions the site) and `Sites` back.
 - Add named permission profiles, per-category approval settings, writable folder selection, automatic review notices, and `/approve` for one denied retry.
 - Restrict human-only approval cards to the server's offered one-time decisions.
+- Add `scripts/live-preview.sh`, a live preview for the Linux host: it rebuilds on every source change, re-renders Home, Usage and Settings headless, and serves a page that swaps changed images and shows the compile error on a failed build.
 - Send browser annotations with the next turn under `# Browser comments:`, after the diff comments and with the same comment numbers as the original app.
 - Switch the sidebar and Home with the ChatGPT and Work modes: the ChatGPT wordmark, the account's ChatGPT conversations in Recents from `GET /conversations`, the `Chat | Work` tabs, and the Chat or Work headline and composer placeholder.
 - Annotate PDF and image previews in Changes: click a point or drag a region, comment on it, and send the batch with Send or Cmd+Enter as one `artifact-direct-comment` turn.
