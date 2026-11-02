@@ -45,7 +45,7 @@ pub fn prepare() -> Result<()> {
     }
     let home =
         PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?).canonicalize()?;
-    let root = home.join("Library/Application Support/codex-gpui-qa/profile");
+    let root = crate::user_data::user_data_dir("codex-gpui-qa").join("profile");
     let smoke = std::env::args()
         .nth(1)
         .is_some_and(|flag| flag == "--qa-smoke-profile");
@@ -91,6 +91,7 @@ pub fn prepare() -> Result<()> {
     // This runs before GPUI, app-server, or any worker thread starts.
     unsafe {
         std::env::set_var("HOME", root.join("home"));
+        std::env::remove_var("XDG_CONFIG_HOME");
         std::env::set_var("CODEX_HOME", root.join("codex"));
         std::env::set_var("CODEX_GPUI_CWD", root.join("workspace"));
         std::env::set_var("TMPDIR", "/tmp");
