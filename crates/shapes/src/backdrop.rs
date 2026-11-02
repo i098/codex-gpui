@@ -60,6 +60,9 @@ thread_local! {
     /// Composed images by their inputs.
     /// ponytail: cleared wholesale when full; an LRU only if animation ever thrashes it.
     static IMAGES: RefCell<HashMap<String, Arc<RenderImage>>> = Default::default();
+    /// Blurred backdrops and base layers of boxes with nested boxes, by their inputs: the
+    /// blur costs milliseconds, and the backdrop of a still box repeats every frame.
+    static LAYERS: RefCell<HashMap<u64, [Pixmap; 2]>> = Default::default();
 }
 
 pub(crate) fn compositor_rect(window: &Window) -> Option<[i32; 4]> {
@@ -150,12 +153,7 @@ pub(crate) fn paint(
         };
         let (image, out, content) = if let Some(index) = parent {
             let surface = &mut frame.surfaces[index];
-            if surface.layer.is_none() {
-                blur_backdrop(&mut surface.backdrop, &surface.filtered);
-                let mut layer = Pixmap::new(surface.backdrop.r);
-                draw_layer(&mut layer, &surface.filtered);
-                surface.layer = Some(layer);
-            }
+            ensure_layer(surface);
             let layer = surface.layer.as_mut().unwrap();
             for (target, source) in layer.px.iter_mut().zip(pixels) {
                 *target = over(source, *target);
@@ -267,12 +265,7 @@ pub(crate) fn paint_icon(
                 && rect[3] <= r[3]
         })?;
         let surface = &mut frame.surfaces[index];
-        if surface.layer.is_none() {
-            blur_backdrop(&mut surface.backdrop, &surface.filtered);
-            let mut layer = Pixmap::new(surface.backdrop.r);
-            draw_layer(&mut layer, &surface.filtered);
-            surface.layer = Some(layer);
-        }
+        ensure_layer(surface);
         let (origin, contour) = (layer_rect(&surface.filtered), surface.filtered.contour);
         let layer = surface.layer.as_mut().unwrap();
         let out = intersect(rect, layer.r);
@@ -332,6 +325,34 @@ pub(crate) fn paint_icon(
     let checkpoint = window.scene_checkpoint();
     FRAME.with_borrow_mut(|frame| frame.surfaces[index].checkpoint = checkpoint);
     true
+}
+
+/// Blurs `surface`'s backdrop and starts its layer, unless already done this frame.
+fn ensure_layer(surface: &mut Surface) {
+    if surface.layer.is_some() {
+        return;
+    }
+    let mut hasher = DefaultHasher::new();
+    format!("{:?}{:?}", surface.filtered, surface.backdrop.r).hash(&mut hasher);
+    surface.backdrop.px.hash(&mut hasher);
+    let key = hasher.finish();
+    let [blurred, layer] = LAYERS.with_borrow_mut(|layers| {
+        if let Some(hit) = layers.get(&key) {
+            return hit.clone();
+        }
+        // ponytail: cleared wholesale when full, as IMAGES.
+        if layers.len() >= 16 {
+            layers.clear();
+        }
+        let mut backdrop = surface.backdrop.clone();
+        blur_backdrop(&mut backdrop, &surface.filtered);
+        let mut layer = Pixmap::new(backdrop.r);
+        draw_layer(&mut layer, &surface.filtered);
+        layers.insert(key, [backdrop.clone(), layer.clone()]);
+        [backdrop, layer]
+    });
+    surface.backdrop = blurred;
+    surface.layer = Some(layer);
 }
 
 fn cached_image(
