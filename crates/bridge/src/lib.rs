@@ -23,6 +23,7 @@ mod replay;
 pub mod security;
 pub mod storage;
 pub mod types;
+pub mod widget;
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
