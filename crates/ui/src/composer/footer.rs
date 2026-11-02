@@ -331,66 +331,68 @@ impl Composer {
                 // The 1 px trigger border leaves a 4 px visible gap with this content-edge offset.
                 .side_offset(px(5.)),
             )
-            .child(
-                div()
-                    .id("permissions-slot")
-                    .relative()
-                    // The tooltip owns the trigger's hover listener; the slot's matches its bounds.
-                    .on_hover(cx.listener(|this, hovered: &bool, _, _| {
-                        this.menu_trigger_hovered = *hovered
-                    }))
-                    .child({
-                        let trigger = pill("permissions", t)
-                            .role(gpui::Role::Button)
-                            .aria_label("Change permissions")
-                            .track_focus(&self.permissions_focus)
-                            .focus_visible(crate::focus::trigger_focus)
-                            .on_key_down(cx.listener(|this, event, window, cx| {
-                                this.trigger_key(Menu::Permissions, event, window, cx)
-                            }))
-                            .px(px(6.))
-                            .gap(px(4.))
-                            .child(footer_icon(
-                                if self.permission == Permission::Ask {
-                                    "composer-permission-ask"
-                                } else {
-                                    "permissions"
-                                },
-                                t.text_tertiary,
-                            ))
-                            .when(self.footer_width > SM_WIDTH, |d| {
-                                d.child(
-                                    text(
-                                        self.permission.short_label().to_owned(),
-                                        13.,
-                                        18.,
-                                        400.,
-                                        t.text_tertiary,
+            .when(!self.chat, |d| {
+                d.child(
+                    div()
+                        .id("permissions-slot")
+                        .relative()
+                        // The tooltip owns the trigger's hover listener; the slot's matches its bounds.
+                        .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                            this.menu_trigger_hovered = *hovered
+                        }))
+                        .child({
+                            let trigger = pill("permissions", t)
+                                .role(gpui::Role::Button)
+                                .aria_label("Change permissions")
+                                .track_focus(&self.permissions_focus)
+                                .focus_visible(crate::focus::trigger_focus)
+                                .on_key_down(cx.listener(|this, event, window, cx| {
+                                    this.trigger_key(Menu::Permissions, event, window, cx)
+                                }))
+                                .px(px(6.))
+                                .gap(px(4.))
+                                .child(footer_icon(
+                                    if self.permission == Permission::Ask {
+                                        "composer-permission-ask"
+                                    } else {
+                                        "permissions"
+                                    },
+                                    t.text_tertiary,
+                                ))
+                                .when(self.footer_width > SM_WIDTH, |d| {
+                                    d.child(
+                                        text(
+                                            self.permission.short_label().to_owned(),
+                                            13.,
+                                            18.,
+                                            400.,
+                                            t.text_tertiary,
+                                        )
+                                        .when(self.docked, |d| d.top_layer()),
                                     )
-                                    .when(self.docked, |d| d.top_layer()),
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.toggle_menu(Menu::Permissions, window, cx)
+                                }));
+                            if self.menu == Some(Menu::Permissions) {
+                                trigger.into_any_element()
+                            } else {
+                                crate::tooltip::tooltip(
+                                    trigger,
+                                    "Change permissions",
+                                    None,
+                                    crate::tooltip::Side::Top,
                                 )
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_menu(Menu::Permissions, window, cx)
-                            }));
-                        if self.menu == Some(Menu::Permissions) {
-                            trigger.into_any_element()
-                        } else {
-                            crate::tooltip::tooltip(
-                                trigger,
-                                "Change permissions",
-                                None,
-                                crate::tooltip::Side::Top,
-                            )
-                            .focus_handle(&self.permissions_focus)
-                            .into_any_element()
-                        }
-                    })
-                    .when(self.menu == Some(Menu::Permissions), |d| {
-                        d.child(self.anchored_menu(self.permissions_menu(t, cx), None, cx))
-                    }),
-            )
-            .when(self.plan, |d| {
+                                .focus_handle(&self.permissions_focus)
+                                .into_any_element()
+                            }
+                        })
+                        .when(self.menu == Some(Menu::Permissions), |d| {
+                            d.child(self.anchored_menu(self.permissions_menu(t, cx), None, cx))
+                        }),
+                )
+            })
+            .when(self.plan && !self.chat, |d| {
                 // `composer.planModeIndicator`: a divider, then a chip whose click turns plan
                 // mode off; hovering swaps its icon for the close icon.
                 d.child(div().h(px(16.)).w(px(1.)).bg(t.border.opacity(0.7)))
@@ -538,7 +540,25 @@ impl Composer {
             .children(self.hotkey_controls.clone())
             .child(self.dictation_button(t, cx))
             .child(send);
-        // Grid columns: controls, an empty column, then the right group, 5 px apart.
+        // Grid columns: controls, an empty column, then the right group, 5 px apart. The
+        // ChatGPT pill puts the editor in the middle column, 5 px from each side.
+        if self.chat {
+            return div()
+                .flex()
+                .items_center()
+                .gap(px(5.))
+                .p(px(8.))
+                .child(left)
+                .child(
+                    self.card_editor(false, window, cx)
+                        .flex_1()
+                        .min_w_0()
+                        .px_0()
+                        .pb_0()
+                        .min_h(px(20.)),
+                )
+                .child(right.flex_none());
+        }
         div()
             .flex()
             .items_center()
