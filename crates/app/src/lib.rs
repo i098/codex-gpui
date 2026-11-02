@@ -14,6 +14,7 @@ mod automation_notifications;
 pub mod computer_use_requests;
 pub mod connections;
 mod context_status;
+pub mod crash;
 pub mod deep_link;
 mod destinations;
 pub mod dictation;
@@ -26,6 +27,7 @@ mod diff_preview;
 mod diff_repositories;
 mod diff_watch;
 mod features;
+mod goals;
 pub mod host;
 pub mod host_settings;
 pub mod hotkey;
@@ -54,6 +56,7 @@ pub mod settings_import;
 pub(crate) mod settings_integrations;
 mod settings_subtrees;
 mod signin;
+mod sleep;
 mod storage;
 pub mod updater;
 mod usage;
@@ -96,6 +99,8 @@ use ui::screens::diff::panel::{
     SIDE_PANEL_BREAKPOINT, SplitScreen, Tab, with_side_tabs,
 };
 use ui::screens::home::{HomeMain, OpenFolder};
+#[cfg(target_os = "windows")]
+use ui::screens::home::{SetupWindowsSandboxElevated, SetupWindowsSandboxUnelevated};
 use ui::screens::recovery;
 use ui::screens::settings::archived_chats::ArchivedChats as ArchivedSettings;
 use ui::screens::settings::personalization::WritingPreference;
@@ -255,6 +260,8 @@ pub struct State {
     pub confirm_before_close: ConfirmBeforeClose,
     pub project_root: Option<String>,
     pub zoom: f32,
+    /// The unsent composer text of each thread (`draftKey`), by thread id.
+    pub drafts: HashMap<String, String>,
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -271,6 +278,7 @@ impl Default for State {
             confirm_before_close: ConfirmBeforeClose::default(),
             project_root: None,
             zoom: 1.,
+            drafts: HashMap::new(),
             path: None,
         }
     }
@@ -427,6 +435,8 @@ pub struct Root {
     home: Entity<HomeMain>,
     /// Docked under every open thread.
     thread_composer: Entity<Composer>,
+    /// The unsent input of the threads the composer left, by thread id.
+    drafts: HashMap<String, ui::composer::Draft>,
     /// The queued submission `Edit message` took back into the composer, until it is sent.
     queue_edit: Option<QueueEdit>,
     thread: Option<Entity<ThreadView>>,
@@ -468,6 +478,8 @@ pub struct Root {
     plugins_page: Option<Entity<ui::screens::plugins::Page>>,
     sites_page: Option<Entity<ui::screens::sites::Page>>,
     maps_page: Option<Entity<ui::screens::maps::Page>>,
+    images_page: Option<Entity<ui::screens::images::Page>>,
+    gpts_page: Option<Entity<ui::screens::gpts::Page>>,
     cloud_modal: Option<Entity<ui::screens::cloud::CloudModal>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
@@ -564,6 +576,7 @@ pub struct Root {
     /// A commit, push or branch workflow is running (the original's single workflow state).
     git_busy: Option<&'static str>,
     git_status_load: Option<Task<()>>,
+    worktree_statuses: HashMap<String, &'static str>,
     /// The repository the open commit form read; a later chat switch cannot redirect it.
     commit_cwd: Option<String>,
     /// `Include unstaged changes`, kept from one commit form to the next.
@@ -671,9 +684,8 @@ impl Root {
         });
         // Both pickers write the user's `config.toml`, like the original's `writeModel`.
         let on_model = |this: WeakEntity<Self>| {
-            move |model: &str, effort: &str, cx: &mut App| {
-                this.update(cx, |this, cx| this.write_model(model, effort, cx))
-                    .ok();
+            move |pick: Option<(&str, &str)>, cx: &mut App| {
+                this.update(cx, |this, cx| this.write_model(pick, cx)).ok();
             }
         };
         let home_composer = cx.new(|cx| {
@@ -716,7 +728,7 @@ impl Root {
                 match command {
                     ui::composer::SlashCommand::Fast => {
                         // `/fast` toggles, as the CLI's; off removes `service_tier`.
-                        let tier = if composer.read(cx).fast_mode() { json!("priority") } else { Value::Null };
+                        let tier = json!(composer.read(cx).service_tier());
                         this.write_config("config/batchWrite", json!({
                             "edits": [{"keyPath": "service_tier", "value": tier.clone(), "mergeStrategy": "upsert"}],
                             "filePath": null, "expectedVersion": null, "reloadUserConfig": true,
@@ -743,6 +755,12 @@ impl Root {
                     ui::composer::SlashCommand::Feedback => this.open_feedback(window, cx),
                     ui::composer::SlashCommand::Export => this.export_transcript(window, cx),
                     ui::composer::SlashCommand::Recap => this.recap(window, cx),
+                    ui::composer::SlashCommand::Goal { .. }
+                    | ui::composer::SlashCommand::ReadGoal
+                    | ui::composer::SlashCommand::RefreshGoal
+                    | ui::composer::SlashCommand::ClearGoal => this.goal_command(command, window, cx),
+                    ui::composer::SlashCommand::MemoryMode(_)
+                    | ui::composer::SlashCommand::MemoryStatus => this.thread_memory_command(command, window, cx),
                     ui::composer::SlashCommand::Memories => this.open_memories(window, cx),
                     ui::composer::SlashCommand::Rename => {
                         if let Route::Thread(id) = this.state.route.clone() {
@@ -805,7 +823,11 @@ impl Root {
             shell
         });
         cx.observe(&sidebar, |this, sidebar, cx| {
-            let attention = !sidebar.read(cx).unread.is_empty();
+            let unread = sidebar.read(cx).unread.len();
+            if this.host_id() == "local" {
+                windows::set_badge(unread + this.approvals.len());
+            }
+            let attention = unread > 0;
             if this.shell.read(cx).attention != attention {
                 this.shell.update(cx, |shell, cx| {
                     shell.attention = attention;
@@ -837,6 +859,10 @@ impl Root {
             }
             if active {
                 this.sync_native_menus(window, cx);
+                // The original marks the open thread read when its window gains focus.
+                if let Route::Thread(id) = &this.state.route {
+                    this.sidebar.update(cx, |s, cx| s.set_read(id, cx));
+                }
                 // `refetchOnWindowFocus: always`: System Settings may have changed it.
                 if this.settings_page.is_some() {
                     this.notifications_action(
@@ -897,9 +923,12 @@ impl Root {
                 project: state.project_root.as_deref().map(project_name),
                 location: Default::default(),
                 beacon: false,
+                windows_sandbox_setup_needed: false,
+                windows_sandbox_setup_pending: false,
                 headline: None,
             }),
             thread_composer,
+            drafts: HashMap::new(),
             queue_edit: None,
             thread: None,
             history: None,
@@ -927,6 +956,8 @@ impl Root {
             plugins_page: None,
             sites_page: None,
             maps_page: None,
+            images_page: None,
+            gpts_page: None,
             cloud_modal: None,
             settings_section: None,
             settings_page: None,
@@ -1008,6 +1039,7 @@ impl Root {
             interrupting: HashSet::new(),
             git_busy: None,
             git_status_load: None,
+            worktree_statuses: HashMap::new(),
             commit_cwd: None,
             commit_include_unstaged: true,
             generation: None,
@@ -1041,6 +1073,7 @@ impl Root {
                     return false;
                 }
                 if this.state.confirm_before_close != ConfirmBeforeClose::Always {
+                    this.save_draft(cx);
                     this.flush_settings(cx);
                     return windows::allow_close(window, cx);
                 }
@@ -1050,23 +1083,20 @@ impl Root {
             .unwrap_or(true)
         });
         cx.on_system_notification_response(move |response, cx| {
-            let Some(id) = response
-                .tag
-                .strip_prefix("automation:")
-                .filter(|id| !id.is_empty())
-            else {
+            let Some((host_id, id)) = notifications::destination(&response.tag) else {
                 return;
             };
+            cx.dismiss_system_notification(&response.tag);
             for handle in cx.windows() {
                 let Some(handle) = handle.downcast::<Root>() else {
                     continue;
                 };
                 let opened = handle
                     .update(cx, |root, window, cx| {
-                        if root.host_id != "local" {
+                        if root.host_id != host_id {
                             return false;
                         }
-                        root.navigate(Route::Thread(id.to_owned()), window, cx);
+                        root.navigate(Route::Thread(id.clone()), window, cx);
                         window.activate_window();
                         true
                     })
@@ -1077,6 +1107,7 @@ impl Root {
             }
         });
         cx.on_app_quit(|this, cx| {
+            this.save_draft(cx);
             this.flush_settings(cx);
             async {}
         })
@@ -1268,6 +1299,8 @@ impl Root {
                 this.ready = this.login.is_none();
                 hotkey::policy::refresh(this, cx);
                 connections::startup(this, cx);
+                #[cfg(target_os = "windows")]
+                this.check_windows_sandbox_readiness(cx);
                 this.select_route(cx);
                 this.sync(window, cx);
                 this.maybe_onboard(window, cx);
@@ -1344,6 +1377,11 @@ impl Root {
         self.page.as_ref().unwrap_or(&self.shell)
     }
 
+    /// The thread drafts `state.json` keeps, for the tests.
+    pub fn saved_drafts(&self) -> &HashMap<String, String> {
+        &self.state.drafts
+    }
+
     pub fn archived_chats(&self) -> Option<&Entity<ArchivedChats>> {
         self.archive_page.as_ref()
     }
@@ -1366,6 +1404,14 @@ impl Root {
 
     pub fn maps_page(&self) -> Option<&Entity<ui::screens::maps::Page>> {
         self.maps_page.as_ref()
+    }
+
+    pub fn images_page(&self) -> Option<&Entity<ui::screens::images::Page>> {
+        self.images_page.as_ref()
+    }
+
+    pub fn gpts_page(&self) -> Option<&Entity<ui::screens::gpts::Page>> {
+        self.gpts_page.as_ref()
     }
 
     /// The Home route's main panel.
@@ -1510,6 +1556,12 @@ impl Root {
         if let Some(page) = self.maps_page.clone() {
             self.load_maps(page, cx);
         }
+        if let Some(page) = self.images_page.clone() {
+            self.load_images(page, cx);
+        }
+        if let Some(page) = self.gpts_page.clone() {
+            self.load_gpts(page, cx);
+        }
         cx.notify();
     }
 
@@ -1547,7 +1599,15 @@ impl Root {
         self.sidebar
             .update(cx, |s, cx| s.set_projects_state(ListState::Loading, cx));
         let host = self.host.clone();
-        let read = cx.background_spawn(async move { host.projects() });
+        let bridge = self.bridge.clone();
+        let local = self.host_id == "local";
+        let read = cx.background_spawn(async move {
+            if local {
+                host.projects()
+            } else {
+                host::app_server_projects(&bridge, std::path::Path::new(""), json!({}), false).await
+            }
+        });
         self.project_load = Some(cx.spawn(async move |this, cx| {
             let result = read.await;
             this.update(cx, |this, cx| match result {
@@ -1900,6 +1960,7 @@ impl Root {
             | DiffRequest::LoadFullFile(_)
             | DiffRequest::LoadPreview(_)
             | DiffRequest::CommentsChanged(_)
+            | DiffRequest::SendAnnotations(_)
             | DiffRequest::DismissModelComment(_)
             | DiffRequest::Preference(_, _)
             | DiffRequest::ViewedFile { .. } => return,
@@ -1988,23 +2049,41 @@ impl Root {
         let Some(thread) = self.thread.clone() else {
             return;
         };
-        let cwd = thread.read(cx).cwd().to_owned();
+        let (cwd, thread_id) = {
+            let view = thread.read(cx);
+            (view.cwd().to_owned(), view.id().to_owned())
+        };
         let host = self.host.clone();
         let lookup = host.clone();
         thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         self.sync_git_availability(cx);
         let read = cx.background_spawn(async move {
-            git_call(&*lookup, "git-commit-status", json!({"cwd": cwd}))
+            let repository = git_call(&*lookup, "git-commit-status", json!({"cwd": cwd}))
                 .and_then(|status| commit_repository(&status, true, String::new()))
-                .map_err(|error| error.to_string())
+                .map_err(|error| error.to_string());
+            let projectless = lookup
+                .fetch(&host::Request::post(
+                    "get-global-state",
+                    Some(json!({"key": "projectless-thread-ids"})),
+                ))
+                .and_then(|reply| host::json_body(&reply))
+                .is_ok_and(|reply| {
+                    reply["value"]
+                        .as_array()
+                        .is_some_and(|ids| ids.iter().any(|id| id == thread_id.as_str()))
+                });
+            (repository, projectless)
         });
         self.git_status_load = Some(cx.spawn(async move |this, cx| {
-            let repository = read.await;
+            let (repository, projectless) = read.await;
             this.update(cx, |this, cx| {
                 if this.thread.as_ref() != Some(&thread) || !Arc::ptr_eq(&host, &this.host) {
                     return;
                 }
-                thread.update(cx, |view, cx| view.set_git_repository(Some(repository), cx));
+                thread.update(cx, |view, cx| {
+                    view.set_git_repository(Some(repository), cx);
+                    view.set_projectless(projectless, cx);
+                });
                 this.sync_git_availability(cx);
             })
             .ok();
@@ -3745,7 +3824,7 @@ impl Root {
                         reasoning_effort, ..
                     } = outcome
                     {
-                        this.write_model(model, reasoning_effort, cx);
+                        this.write_model(Some((model, reasoning_effort)), cx);
                     }
                     this.remember_model_announcement(model, cx);
                     window.focus(&this.focus, cx);
@@ -3761,6 +3840,7 @@ impl Root {
                         this.config["host"]["confirm-before-close"] = "never".into();
                         this.state.save();
                     }
+                    this.save_draft(cx);
                     this.flush_settings(cx);
                     windows::close(window, cx);
                 }
@@ -4238,6 +4318,51 @@ impl Root {
         })
     }
 
+    /// Keeps the composer's input as the draft of the thread it leaves and puts back the draft
+    /// of thread `id`, as the original's per-thread `draftKey` does. A composer that showed no
+    /// thread yet keeps its input (a restart's carried-over draft).
+    fn swap_draft(&mut self, id: &str, cx: &mut Context<Self>) {
+        let previous = self
+            .thread
+            .as_ref()
+            .map(|view| view.read(cx).id().to_owned());
+        let next = self.drafts.remove(id).unwrap_or_else(|| {
+            ui::composer::Draft::from_text(self.state.drafts.get(id).cloned().unwrap_or_default())
+        });
+        let Some(previous) = previous else {
+            if self.thread_composer.read(cx).field_text().is_empty() {
+                self.thread_composer
+                    .update(cx, |c, cx| c.swap_draft(next, cx));
+            }
+            return;
+        };
+        let left = self
+            .thread_composer
+            .update(cx, |c, cx| c.swap_draft(next, cx));
+        if left.is_empty() {
+            self.state.drafts.remove(&previous);
+        } else {
+            self.state
+                .drafts
+                .insert(previous.clone(), left.text().to_owned());
+            self.drafts.insert(previous, left);
+        }
+        self.state.save();
+    }
+
+    /// Saves the open thread's composer text before quitting, so it returns after a restart.
+    fn save_draft(&mut self, cx: &App) {
+        let Some(view) = &self.thread else { return };
+        let id = view.read(cx).id().to_owned();
+        let text = self.thread_composer.read(cx).field_text();
+        if text.trim().is_empty() {
+            self.state.drafts.remove(&id);
+        } else {
+            self.state.drafts.insert(id, text.to_owned());
+        }
+        self.state.save();
+    }
+
     fn show_thread(&mut self, thread: Thread, window: &mut Window, cx: &mut Context<Self>) {
         if self.signed_out() {
             return;
@@ -4247,11 +4372,16 @@ impl Root {
             .turns
             .iter()
             .any(|turn| turn.status == TurnStatus::InProgress);
+        let interrupted = thread
+            .turns
+            .last()
+            .is_some_and(|turn| turn.status == TurnStatus::Interrupted);
         // The composer is shared; load the selected thread's own queue after navigation. An
         // archived chat cannot have a side chat.
         let side_chat = !self.archived.contains(&thread.id);
         self.thread_composer.update(cx, |c, cx| {
             c.set_running(running, cx);
+            c.set_queue_interrupted(interrupted, cx);
             c.set_queued(Vec::new(), cx);
             c.set_failed_queued(Vec::new(), cx);
             c.set_queue_pending(self.queue_pending, cx);
@@ -4263,6 +4393,7 @@ impl Root {
             .as_ref()
             .is_none_or(|view| view.read(cx).id() != thread.id.as_str())
         {
+            self.swap_draft(&thread.id, cx);
             if let Some(state) = self.thread_run_settings.get(&thread.id) {
                 self.thread_composer.update(cx, |c, cx| {
                     c.restore_run_settings(&state.collaboration_mode, state.permission.clone(), cx)
@@ -4330,6 +4461,9 @@ impl Root {
                     diff_preview::load(panel.clone(), this.host.clone(), request.clone(), cx)
                 }
                 DiffRequest::CommentsChanged(comments) => this.change_diff_comments(comments, cx),
+                DiffRequest::SendAnnotations(comments) => {
+                    this.send_artifact_annotations(panel.clone(), comments, window, cx)
+                }
                 DiffRequest::DismissModelComment(key) => {
                     this.confirm_diff_comment(panel.clone(), key.clone(), window, cx)
                 }
@@ -4357,6 +4491,8 @@ impl Root {
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         view.update(cx, |view, cx| {
             view.set_git_phase(self.git_busy, cx);
+            let status = self.worktree_statuses.get(view.id()).copied();
+            view.set_worktree_status(status, cx);
             view.set_usage_limit_notice(self.usage_limit_notice, cx);
         });
         view.update(cx, |view, cx| {
@@ -4614,6 +4750,9 @@ impl Root {
             QueueAction::Edit(id) => return self.edit_queued(side, id.clone(), window, cx),
             QueueAction::SideChat(id) => return self.open_side_chat(id.clone(), window, cx),
             QueueAction::Queueing(queue) => return self.set_queueing(*queue, cx),
+            QueueAction::Resume | QueueAction::ClearQueue => {
+                return self.paused_queue_action(side, action, window, cx);
+            }
             _ => {}
         }
         if self.queue_pending {
@@ -4732,6 +4871,69 @@ impl Root {
                 if side.is_some() {
                     this.list_queue(thread_id.clone(), cx);
                 }
+            })?;
+            result
+        });
+        log_err(task, cx);
+    }
+
+    /// `Resume` starts the paused queue (`thread/queue/start`); `Clear queue` deletes its
+    /// rows before the new message's turn can drain them.
+    fn paused_queue_action(
+        &mut self,
+        side: Option<usize>,
+        action: &QueueAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((view, composer)) = self.conversation(side) else {
+            return;
+        };
+        let thread_id = view.read(cx).id().to_owned();
+        let ids: Vec<String> = composer
+            .read(cx)
+            .queued()
+            .iter()
+            .filter(|row| !row.failed)
+            .map(|row| row.submission.id.clone())
+            .collect();
+        let resume = matches!(action, QueueAction::Resume);
+        let load = !self.loaded.contains(&thread_id);
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let result = async {
+                resume_if(load, &bridge, &this, &thread_id, cx).await?;
+                if resume {
+                    let params = json!({ "threadId": thread_id });
+                    bridge
+                        .request::<_, Value>("thread/queue/start", params)
+                        .await?;
+                    return Ok(());
+                }
+                for id in &ids {
+                    let params = json!({ "threadId": thread_id, "queuedSubmissionId": id });
+                    bridge
+                        .request::<_, Value>("thread/queue/delete", params)
+                        .await?;
+                }
+                anyhow::Ok(())
+            }
+            .await;
+            this.update(cx, |this, cx| match &result {
+                Ok(()) if !resume => composer.update(cx, |composer, cx| {
+                    for id in &ids {
+                        composer.remove_queued(id, cx);
+                    }
+                }),
+                Ok(()) => {}
+                Err(_) => this.toast(
+                    Toast::danger(if resume {
+                        "Failed to resume queue"
+                    } else {
+                        "Failed to clear queue"
+                    }),
+                    cx,
+                ),
             })?;
             result
         });
@@ -5364,6 +5566,12 @@ impl Root {
         let computer_use = computer_use_overrides(&self.config);
         let host = self.host.clone();
         self.fork_pending = true;
+        let preparing_worktree = options
+            .as_ref()
+            .is_some_and(|options| options.mode == ui::screens::hotkey::Mode::Worktree);
+        if preparing_worktree {
+            self.toast(Toast::info("Creating worktree…"), cx);
+        }
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let forked = async {
                 let prepared = if let Some(options) = options {
@@ -5375,6 +5583,11 @@ impl Root {
                 } else {
                     None
                 };
+                if preparing_worktree {
+                    this.update(cx, |this, cx| {
+                        this.toast(Toast::info("Attaching worktree…"), cx)
+                    })?;
+                }
                 let mut params = json!({ "threadId": id });
                 if let Some(last_turn) = last_turn {
                     params["lastTurnId"] = json!(last_turn);
@@ -5412,16 +5625,29 @@ impl Root {
                 Ok::<_, anyhow::Error>(read)
             }
             .await;
-            this.update(cx, |this, _| this.fork_pending = false)?;
+            this.update(cx, |this, _| {
+                this.fork_pending = false;
+            })?;
             match forked {
                 Ok(read) => this.update_in(cx, |this, window, cx| {
+                    if preparing_worktree {
+                        this.worktree_statuses
+                            .insert(read.thread.id.clone(), "Checkout created");
+                    }
                     this.loaded.insert(read.thread.id.clone());
                     this.add_thread(&read.thread, cx);
                     this.show_thread(read.thread, window, cx);
                 }),
                 Err(error) => {
                     this.update(cx, |this, cx| {
-                        this.toast(Toast::danger("Failed to fork chat"), cx)
+                        this.toast(
+                            Toast::danger(if format!("{error:#}").contains("Setup script") {
+                                "Checkout created; setup failed"
+                            } else {
+                                "Failed to fork chat"
+                            }),
+                            cx,
+                        )
                     })?;
                     Err(error)
                 }
@@ -5919,8 +6145,10 @@ impl Root {
     }
 
     /// A model choice: `config/batchWrite` of `model` and `model_reasoning_effort`
-    /// (the original's `writeModel`).
-    fn write_model(&mut self, model: &str, effort: &str, cx: &mut Context<Self>) {
+    /// (the original's `writeModel`); `None` (`Reset to default`) removes both.
+    fn write_model(&mut self, pick: Option<(&str, &str)>, cx: &mut Context<Self>) {
+        let (model, effort) =
+            pick.map_or((Value::Null, Value::Null), |(m, e)| (m.into(), e.into()));
         let params = json!({
             "edits": [
                 { "keyPath": "model", "value": model, "mergeStrategy": "upsert" },
@@ -5930,7 +6158,6 @@ impl Root {
             "expectedVersion": null,
             "reloadUserConfig": true,
         });
-        let (model, effort) = (model.to_owned(), effort.to_owned());
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             let done = bridge
@@ -5942,11 +6169,23 @@ impl Root {
                     composers.push(this.home.read(cx).composer.clone());
                     for composer in composers {
                         composer.update(cx, |composer, cx| {
-                            composer.set_model_and_effort(&model, &effort, cx);
+                            match (model.as_str(), effort.as_str()) {
+                                (Some(model), Some(effort)) => {
+                                    composer.set_model_and_effort(model, effort, cx)
+                                }
+                                _ => composer.reset_model(cx),
+                            }
                         });
                     }
-                    this.config["model"] = model.into();
-                    this.config["model_reasoning_effort"] = effort.into();
+                    if let Some(config) = this.config.as_object_mut() {
+                        if model.is_null() {
+                            config.remove("model");
+                            config.remove("model_reasoning_effort");
+                        } else {
+                            config.insert("model".into(), model);
+                            config.insert("model_reasoning_effort".into(), effort);
+                        }
+                    }
                 } else {
                     this.toast(Toast::danger("Couldn’t update model settings"), cx);
                 }
@@ -6194,7 +6433,9 @@ impl Root {
                     settings_configuration::ENABLED_EFFORTS => {
                         "Could not save reasoning effort preferences"
                     }
+                    "appshotDestination" => "Could not save Appshot destination",
                     "notifications-sound" => "Couldn't change the notification sound. Try again",
+                    "preferred-file-viewers" => "Could not save your file handler preference",
                     key if key.starts_with("notifications-") => {
                         "Could not save notification preference"
                     }
@@ -6208,6 +6449,16 @@ impl Root {
                 }
                 if matches!(key, "reduced-motion-preference" | "dock-icon-preference") {
                     host_settings::apply(cx);
+                }
+                #[cfg(target_os = "macos")]
+                if key == screenshot::appshot::HOTKEY
+                    && let Err(error) = screenshot::appshot::register(cx)
+                {
+                    self.toast(
+                        Toast::danger("Failed to update appshot hotkey")
+                            .description(error.to_string()),
+                        cx,
+                    );
                 }
                 self.git_setting_saved(key, cx);
                 if key == settings_configuration::ENABLED_EFFORTS {
@@ -6289,6 +6540,7 @@ impl Root {
             (Some("desktop.followUpQueueMode"), false) => "Couldn’t save your changes. Try again",
             _ => "Couldn't save your changes. Try again",
         };
+        let locale_changed = params["keyPath"] == "desktop.localeOverride";
         let queue_mode = params["keyPath"] == "desktop.followUpQueueMode";
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             if let Err(error) = bridge.request::<_, Value>(method, params).await {
@@ -6306,6 +6558,9 @@ impl Root {
             this.update(cx, |this, cx| {
                 apply(&mut this.config);
                 this.refresh_config_globals(cx);
+                if locale_changed {
+                    this.refresh_native_menu_locale(cx);
+                }
             })
         });
         log_err(task, cx);
@@ -6319,6 +6574,7 @@ impl Root {
                 .as_str()
                 .unwrap_or("enter"),
         ));
+        self.sync_prevent_sleep(cx);
         let visibility = ReasoningVisibility::from_config(&self.config);
         if ReasoningVisibility::get(cx) != visibility {
             cx.set_global(visibility);
@@ -6333,6 +6589,41 @@ impl Root {
         }
     }
 
+    /// After a completed turn that ended in a plan: the `Implement this plan?` request, which the
+    /// original's `turn/completed` handler raises as `item/plan/requestImplementation`.
+    fn offer_plan_implementation(&mut self, params: &Value, cx: &mut Context<Self>) {
+        let (Some(thread), Some(turn)) =
+            (params["threadId"].as_str(), params["turn"]["id"].as_str())
+        else {
+            return;
+        };
+        if params["turn"]["status"] != "completed" {
+            return;
+        }
+        let plan = self
+            .owner(thread, cx)
+            .and_then(|side| self.conversation(side))
+            .and_then(|(view, _)| {
+                let view = view.read(cx);
+                let turn = view.turns().iter().find(|t| t.id == turn)?;
+                turn.items.iter().rev().find_map(|item| match item {
+                    ThreadItem::Plan { text, .. } if !text.trim().is_empty() => {
+                        Some(text.trim().to_owned())
+                    }
+                    _ => None,
+                })
+            });
+        let Some(plan) = plan else { return };
+        let id = json!(format!("implement-plan:{turn}"));
+        self.approvals.retain(|p| p.id != id);
+        self.approvals.push(PendingApproval {
+            id,
+            method: ui::composer::IMPLEMENT_PLAN_METHOD.to_owned(),
+            params: json!({ "threadId": thread, "turnId": turn, "planContent": plan }),
+            interrupting: false,
+        });
+    }
+
     /// Settles only the request whose card produced the answer.
     fn answer(&mut self, id: Value, thread: &str, response: Value, cx: &mut Context<Self>) {
         let Some(i) = self
@@ -6343,6 +6634,12 @@ impl Root {
             return;
         };
         if self.approvals[i].interrupting {
+            return;
+        }
+        // Raised here, not by the server: it leaves without a reply (the composer sent the follow-up).
+        if self.approvals[i].method == ui::composer::IMPLEMENT_PLAN_METHOD {
+            self.approvals.remove(i);
+            self.show_approval(cx);
             return;
         }
         if response.is_null() && self.approvals[i].method == "item/tool/requestUserInput" {
@@ -6493,6 +6790,12 @@ impl Root {
             return;
         }
         self.settings_integration_event(&event, cx);
+        #[cfg(target_os = "windows")]
+        if let Event::Notification { method, params } = &event
+            && method == "windowsSandbox/setupCompleted"
+        {
+            self.windows_sandbox_setup_completed(params, cx);
+        }
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             return;
@@ -6559,8 +6862,16 @@ impl Root {
                 .iter()
                 .map(|chat| (&chat.view, &chat.composer));
             for (view, composer) in self.thread.iter().zip([&self.thread_composer]).chain(side) {
-                let running = view.read(cx).is_running();
-                composer.update(cx, |c, cx| c.set_running(running, cx));
+                let view = view.read(cx);
+                let running = view.is_running();
+                let interrupted = view
+                    .turns()
+                    .last()
+                    .is_some_and(|turn| turn.status == TurnStatus::Interrupted);
+                composer.update(cx, |c, cx| {
+                    c.set_running(running, cx);
+                    c.set_queue_interrupted(interrupted, cx);
+                });
             }
             if let Some(split) = &self.split {
                 for (index, side) in self.tabs.iter().enumerate() {
@@ -6597,6 +6908,15 @@ impl Root {
                         view.update(cx, |view, cx| view.set_environment(connected, cx));
                     }
                 }
+                "thread/goal/updated" | "thread/goal/cleared"
+                    if params["threadId"]
+                        .as_str()
+                        .is_some_and(|id| self.state.route == Route::Thread(id.to_owned())) =>
+                {
+                    let goal = params.get("goal").filter(|goal| !goal.is_null()).cloned();
+                    self.thread_composer
+                        .update(cx, |composer, cx| composer.set_goal(goal, cx));
+                }
                 "account/updated" if self.ready => {
                     self.destination_load = None;
                     self.set_unread_destinations(None, cx);
@@ -6622,6 +6942,14 @@ impl Root {
                     ) {
                         self.last_agent_messages
                             .insert(id.to_owned(), (turn.to_owned(), text.to_owned()));
+                    }
+                }
+                // The server named the chat: row and header follow at once.
+                "thread/name/updated" => {
+                    if let (Some(id), Some(name)) =
+                        (params["threadId"].as_str(), params["threadName"].as_str())
+                    {
+                        self.apply_thread_title(id, name, cx);
                     }
                 }
                 "thread/archived" => {
@@ -6657,15 +6985,27 @@ impl Root {
                         }
                         self.sidebar
                             .update(cx, |s, cx| s.set_running(id, active, cx));
+                        self.sync_prevent_sleep(cx);
                     }
                 }
-                // Completion can leave the selected thread unread, including a background terminal.
-                // It also finishes the thread's open automation run, like the original host.
+                // Completion leaves the thread unread unless it is open in the focused window,
+                // where the original marks it read at once. It also finishes the thread's open
+                // automation run, like the original host.
                 "turn/completed" => {
                     if let Some(id) = params["threadId"].as_str()
                         && side_thread.is_none()
                     {
-                        self.sidebar.update(cx, |s, cx| s.set_unread(id, cx));
+                        let viewing = self.state.route == Route::Thread(id.to_owned())
+                            && self
+                                .context_window
+                                .update(cx, |_, window, _| window.is_window_active())
+                                .unwrap_or(false);
+                        self.sidebar.update(cx, |s, cx| {
+                            s.set_unread(id, cx);
+                            if viewing {
+                                s.set_read(id, cx);
+                            }
+                        });
                         self.complete_automation_run(&params, cx);
                     }
                     // Standalone elicitations and nonblocking questions wait for explicit resolution.
@@ -6682,6 +7022,7 @@ impl Root {
                             || p.params["threadId"] != params["threadId"]
                             || p.params["turnId"] != *turn
                     });
+                    self.offer_plan_implementation(&params, cx);
                     self.show_approval(cx);
                     self.refresh_threads(cx)
                 }
@@ -6718,6 +7059,7 @@ impl Root {
                     return;
                 }
                 if self.approval_card(&pending, cx).is_some() {
+                    self.approval_notification(&pending, cx);
                     self.approvals.push(pending);
                     self.show_approval(cx);
                 } else {
@@ -7197,10 +7539,8 @@ Do not modify files, source, git state, permissions, configuration, or workspace
 fn wire_thread_composer(composer: &mut Composer, this: WeakEntity<Root>, side: Option<usize>) {
     composer.enable_shell_commands();
     let (model, send) = (this.clone(), this.clone());
-    composer.on_model(move |m, effort, cx| {
-        model
-            .update(cx, |this, cx| this.write_model(m, effort, cx))
-            .ok();
+    composer.on_model(move |pick, cx| {
+        model.update(cx, |this, cx| this.write_model(pick, cx)).ok();
     });
     composer.on_submit(move |s, window, cx| {
         send.update(cx, |this, cx| this.send(side, s.clone(), None, window, cx))
@@ -7287,8 +7627,8 @@ async fn turn_start(
         params["clientUserMessageId"] = id.into();
     }
     apply_permissions(&mut params, &s.permission);
-    if s.fast {
-        params["serviceTier"] = "priority".into();
+    if let Some(tier) = s.service_tier {
+        params["serviceTier"] = tier.into();
     }
     if let Some(model) = model(s) {
         params["collaborationMode"] = json!({
@@ -7951,6 +8291,11 @@ impl Render for Root {
                     this.open_new_project(window, cx)
                 },
             ))
+            .on_action(cx.listener(
+                |this, action: &ui::screens::sidebar::ProjectAction, window, cx| {
+                    this.project_action(action, window, cx);
+                },
+            ))
             .on_action(cx.listener(|this, _: &ui::composer::Stop, window, cx| {
                 let side = this.focused_side(window, cx);
                 this.stop(side, cx)
@@ -8129,6 +8474,16 @@ impl Render for Root {
                 self.archived_settings
                     .as_ref()
                     .and_then(|page| page.read(cx).confirmation()),
+            );
+        #[cfg(target_os = "windows")]
+        let root = root
+            .on_action(cx.listener(|this, _: &SetupWindowsSandboxElevated, _, cx| {
+                this.start_windows_sandbox_setup("elevated", cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &SetupWindowsSandboxUnelevated, _, cx| {
+                    this.start_windows_sandbox_setup("unelevated", cx)
+                }),
             );
         let root = routes::actions(archived_chats::actions(root, cx), cx);
         let root = hotkey::actions(root, self.popout.is_some(), cx);

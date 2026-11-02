@@ -220,6 +220,10 @@ pub struct VoiceState {
     pub error: Option<String>,
     pub dispatch: Option<Dispatch>,
     pub epoch: u64,
+    /// The recording a dictation failure notice opened the page on; `None` lists them all.
+    pub recording: Option<String>,
+    /// The last failed hotkey change, shown under that hotkey's row.
+    pub hotkey_error: Option<(Hotkey, String)>,
 }
 impl Global for VoiceState {}
 
