@@ -127,7 +127,7 @@ fn slash_menu_keyboard_replay() -> Result<()> {
         "slash activation must send only the recorded requests: {requests:?}"
     );
     ensure!(
-        fx.read(|root, cx| root.composer(cx).read(cx).fast_mode()),
+        fx.read(|root, cx| root.composer(cx).read(cx).service_tier()) == Some("priority"),
         "Fast must enable priority mode"
     );
     Ok(())

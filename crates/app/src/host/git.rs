@@ -290,6 +290,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+#[path = "git/blame.rs"]
+mod blame;
 #[path = "git/contents.rs"]
 mod contents;
 pub(super) use contents::read_file_version;
@@ -873,6 +875,9 @@ pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
     }
     if endpoint == "git-review-patch" {
         return review_patch::read(root, params);
+    }
+    if endpoint == "git-blame-file" {
+        return blame::read(root, params);
     }
     if endpoint == "git-file-url" {
         return file_url::read(root, params);

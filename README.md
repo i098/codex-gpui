@@ -9,7 +9,7 @@ The app drives the real `codex app-server` over stdio, the same JSON-RPC transpo
 
 ## Requirements
 
-- macOS on Apple silicon (arm64).
+- macOS on Apple silicon (arm64) and Intel (x86_64); the release zip is universal.
 - Rust 1.98.1. `rust-toolchain.toml` pins it, so `rustup` installs it on the first build.
 - A `codex` binary. The app uses the first one that it finds:
   1. `$CODEX_BIN`.
@@ -89,6 +89,10 @@ Like the original app, the views keep 1,000 scrollback rows plus the visible scr
 Output follows the bottom only while the view is already at the bottom.
 The recorded PTY stream in `fixtures/sessions/terminal-shell.jsonl` comes from the bundled macOS app-server.
 Run `cargo test -p app --test terminal_states` on macOS for native terminal checks.
+
+Command details include agent input from `item/commandExecution/terminalInteraction`.
+The input remains in the output after the command completes.
+Run `cargo test -p ui --lib command_completion_keeps_streamed_output_and_failure` to check retention.
 
 
 ## Recommended skills
@@ -399,6 +403,9 @@ Diff code and context rows paint in their own opaque scroll layer, as in the ori
 Failed reads retain the patch and provide Retry.
 Only Staged and Unstaged sources show staging actions. Uncommitted combines both states and does not expose those actions.
 
+File-change activity displays `item/fileChange/outputDelta` while a patch runs and keeps that output after completion.
+Run `cargo test -p ui --lib live_patch_output_keeps_item_boundaries` to check streaming and item isolation.
+
 The Plugins rail opens the native plugin directory and the Skills page.
 Both pages load app-server data and support search.
 Plugin installation, removal, enablement, and sharing wait for server responses.
@@ -579,16 +586,16 @@ It then runs `tools/appcast.py` and uploads `appcast.xml` and `<zip>.sha256` bes
 General settings has an `Automatically check for updates` switch that sets Sparkle's `automaticallyChecksForUpdates`.
 The release owner must supply the production feed and complete signing and notarization before distribution.
 
-Until a production feed exists, `tools/install-mac.sh` updates an installed copy in place.
-Run it on the Mac through `tools/mac.sh -l install "nice -n 19 bash tools/install-mac.sh $(git rev-parse HEAD)"`.
+For manual local installation, run `tools/install-mac.sh` on the Mac through `tools/mac.sh -l install "nice -n 19 bash tools/install-mac.sh $(git rev-parse HEAD)"`.
 It builds the normal bundle, replaces `~/Applications/Codex GPUI.app`, and keeps the old bundle as `~/Applications/.Codex GPUI.previous.app`.
 It never opens, activates, or closes the app; a running copy changes at its next launch.
 
-Sparkle checks, downloads, verifies, installs, and relaunches the app.
-The rail shows download progress and enables `Update available` only when installation is ready.
+Sparkle checks the signed appcast and finds a newer release.
+The rail shows its update banner while the embedded installer downloads and installs the release in the background.
+The script downloads the release archive and checksum, verifies the checksum and app signature, keeps the previous bundle, and opens the new app without taking focus.
 The app reads the `in_app_updates` policy through `experimentalFeature/list`.
 A disabled policy removes the update action and shows the read-only `Managed` row in General settings.
-The native Sparkle dialogs show check progress, no-update results, and update errors.
+Sparkle dialogs show check progress, no-update results, and update errors.
 Run `cargo test -p app --lib updater` on macOS for the feed and managed-policy checks.
 Run `cargo test -p app --test updater -- --test-threads=1` for native rail visibility and input checks.
 
@@ -608,8 +615,8 @@ Every crate under `crates/` except `skia-hairline-sys` inherits it.
 `tools/version.sh` prints it.
 `tools/version.sh 0.2.0` bumps it in `Cargo.toml` and `Cargo.lock` and adds a `## [0.2.0]` section under `## [Unreleased]` in `CHANGELOG.md`.
 Merge the bump, then push the tag `v0.2.0`.
-The `release` workflow builds the bundle on a GitHub macOS arm64 runner and stops if the tag is not `v` plus the workspace version.
-It publishes `codex-gpui-0.2.0-macos-arm64.zip` as a GitHub release with that version's changelog section as notes.
+The `release` workflow builds the bundle on a GitHub macOS arm64 runner, cross-compiling the Intel slice into one universal binary, and stops if the tag is not `v` plus the workspace version.
+It publishes `codex-gpui-0.2.0-macos-universal.zip` as a GitHub release with that version's changelog section as notes.
 About Codex shows the version.
 `Codex` > `Check for Updates…` uses the signed update feed when the bundle has one and organization policy permits updates.
 
@@ -891,6 +898,25 @@ It prints a Markdown table for a PR body.
 
 The labs `tools/shapes/run.sh`, `tools/shapes/blur.sh` and `tools/text/measure.sh` compare shapes, blur and text with Chromium case by case.
 
+## Live preview
+
+```sh
+scripts/live-preview.sh 18500
+```
+
+The script watches `crates`, `assets`, `fixtures` and the Cargo files. On a change it runs `cargo build -p ui` for the `shot`, `usage` and `settings_kit` examples under `flock /tmp/cargo-slot.lock`. Then it renders Home, Usage and Settings headless and serves `$LIVE_OUT` (default `/sdc-disk/tmp/cgx/live-preview`) on `127.0.0.1`.
+The page polls `status.json` every second. It shows the build state and the last good build time, swaps only the images that changed, and shows the compiler output instead of the images when the build fails.
+The Cargo target is `/sdc-disk/tmp/cgx/cargo-targets/<checkout path with / as _>`; set `CARGO_TARGET_DIR` to change it.
+
+The host runs it as the `systemd --user` unit `codex-gpui-live-preview` (`ExecStart` is this script in the checkout), published on the tailnet:
+
+```sh
+systemctl --user enable --now codex-gpui-live-preview
+sudo -n tailscale serve --bg --https=18500 http://127.0.0.1:18500
+```
+
+The link is `https://agents.tailc4c9b.ts.net:18500`. The unit watches the checkout that its `ExecStart` names, so point it at a checkout that stays.
+
 ## Live proof
 
 ```sh
@@ -912,6 +938,9 @@ tools/mac.sh 'cargo run -p app --release --example bench'
 
 The example runs the real root view, headless at 1280x832 @2x, on a replayed app-server with 60 Recents and a 40-turn chat.
 It sends key, mouse and scroll-wheel events and prints, for each scenario, the p50, p95 and max milliseconds from an input to the end of its frame.
+The animation scenarios (sidebar and changes-panel toggles in a chat) also count every frame of the animation, at simulated 120 Hz ticks.
+The `fps @120Hz` column gives the frames per second that a 120 Hz display shows when each frame takes its CPU time.
+The bench also prints the time from launch to the first ready frame.
 The 120 Hz frame budget is 8.3 ms.
 With `BENCH_SHOT=<dir>`, it saves every 20th frame, so that you can compare the pixels of two builds.
 
