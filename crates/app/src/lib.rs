@@ -100,7 +100,7 @@ use ui::screens::diff::panel::{
     ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile,
     SIDE_PANEL_BREAKPOINT, SplitScreen, Tab, with_side_tabs,
 };
-use ui::screens::home::{HomeMain, OpenFolder};
+use ui::screens::home::{ClearProject, HomeMain, OpenFolder, ProjectMenu};
 #[cfg(target_os = "windows")]
 use ui::screens::home::{SetupWindowsSandboxElevated, SetupWindowsSandboxUnelevated};
 use ui::screens::recovery;
@@ -929,10 +929,11 @@ impl Root {
             wide,
             layout_before_narrow: None,
             focus: cx.focus_handle(),
-            home: cx.new(|_| HomeMain {
+            home: cx.new(|cx| HomeMain {
                 composer: home_composer,
                 project: state.project_root.as_deref().map(project_name),
                 location: Default::default(),
+                projects: ProjectMenu::new(cx),
                 beacon: false,
                 windows_sandbox_setup_needed: false,
                 windows_sandbox_setup_pending: false,
@@ -1925,6 +1926,19 @@ impl Root {
         self.state.project_root = Some(root);
         hotkey::refresh_home(self, cx);
         self.navigate(Route::Home, window, cx);
+        self.save(window, cx);
+    }
+
+    /// `Don't work in a project`: new chats start without a cwd.
+    fn clear_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.home.update(cx, |home, cx| {
+            home.project = None;
+            home.composer
+                .update(cx, |composer, cx| composer.set_search_roots(Vec::new(), cx));
+            cx.notify();
+        });
+        self.state.project_root = None;
+        hotkey::refresh_home(self, cx);
         self.save(window, cx);
     }
 
