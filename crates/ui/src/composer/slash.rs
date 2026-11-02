@@ -702,6 +702,10 @@ impl Composer {
         self.slash.projects = projects;
     }
 
+    pub fn slash_projects(&self) -> &[(SharedString, String)] {
+        &self.slash.projects
+    }
+
     /// Offers `/memories` while the app-server's `memories` feature is on.
     pub fn set_memories_available(&mut self, available: bool) {
         self.slash.memories = available;
