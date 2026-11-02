@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Write a rotating `logs/app.log` in the user data directory, mirror app diagnostics into it, and add `Export logs` that saves the last three logs as a zip.
+- Show the signed-in account in the profile menu (the ChatGPT email, or `Logged in with API key`) and add `Add account` / `Sign in with ChatGPT`, which opens the sign-in screen with `Cancel` to keep the current account.
 - Choose the integrated terminal shell in Settings from the shells in `/etc/shells`; new terminal tabs start it (`desktop.integratedTerminalShell`).
 - Keep a separate composer draft for each chat: switching chats keeps the text, chips and attachments of each one, and the text returns after a restart.
 - Save panic reports with a backtrace to `last-crash.txt` in the user data directory, and prefill the feedback dialog with the last crash on the next launch.
@@ -33,9 +34,13 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Route shared-thread, ChatGPT, browser, Space, and Codex app links to native destinations.
 - List matching chats in a `Chats` section of the `@` mention list from `thread/search`, and let a sidebar chat dragged onto the composer show `Drop to reference chat`. A chat chip sends its id under `## Referenced chats with Codex:`.
 - Check for updates in the background every hour, send the original's appcast parameters (installation id, architecture, version, beta, macOS version and plan), and add a `Beta updates` setting.
+- Give new chats the `read_thread_terminal` tool, so the model can read the chat's terminal output and prompt, shown as `Reading chat terminal`.
+- Recall sent prompts with Up and Down in an empty composer, as the original's prompt history does; the last 20 prompts persist across restarts.
+- Release builds are signed with the hardened runtime, notarized and stapled when the Developer ID secrets are set, and ship a signed DMG next to the zip.
 - List each expanded sidebar project's chats under its folder, with `Show more` paging, `No chats`, and the unread dot on a collapsed folder; an open thread in the focused window is read at once.
 - Send the `ultrafast` service tier when the `Speed` submenu or `/ultrafast` picks Ultrafast, and show Ultrafast as the current speed.
 - Block sending images with a model whose `inputModalities` has no `image`, with the original's `Remove images or switch models to send this message`.
+- Make the Code Review detail's `Chat` start a projectless chat named after the pull request, open it with the original's prompt in the composer, and link it as `Open chat` through the original's `pull-request-chat-associations-v2` store.
 - Package Windows builds as an MSIX that registers the `codex:` protocol through `tools/package-windows.ps1`, signed when a certificate secret is set, and attach it to the GitHub release.
 - Add the `Toggle rich preview` button to the standalone diff window header.
 - Release the macOS bundle as one universal (arm64 and Intel) zip.
@@ -44,6 +49,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Install newer macOS releases in the background after the feed check, verify the checksum and app signature, keep the previous app, and relaunch without focus.
 - Add `/memories` and its `Chat memories` dialog while the `memories` feature is on: `Generate memories` sets the open chat's memory mode with `thread/memoryMode/set`, and on Home both switches apply to the next chat.
 - Show `$…$` and `$$…$$` math in agent answers as Unicode math text, with display math centered on its own line; copying a selection keeps the TeX source.
+- Package Linux builds as a `.deb` and an AppImage with a `codex://` URL handler through `tools/package-linux.sh`, and attach both to the GitHub release.
 - Make the model picker's `Reset to default` remove the `model` and `model_reasoning_effort` overrides from `config.toml` and select the recommended model.
 - Self-update the Linux AppImage from a signed `latest.json` release manifest: check every 6 hours, verify SHA-256 and Ed25519, then swap the file and relaunch on install.
 - Open a site's details from its Sites row (`/sites/:projectId`, `GET /websites/{project_id}`), with `Visit`, `Edit` (a new chat that mentions the site) and `Sites` back.
@@ -65,6 +71,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Start normal chats and forks in managed worktrees, retain the selected checkout, and fork selected turns with the server's history boundary.
 - Run explicit `!` shell commands in Full access chats after a native warning confirmation; keep sandboxed drafts disabled and separate from the terminal panel.
 - Add plan mode: `/plan-mode`, the `@` menu row and the footer `Plan` chip turn it on and off, turns send the `plan` collaboration mode, a resumed chat keeps it, and plan text and step progress show in the chat. Restore an edited queued message's place across every queue page.
+- Show the original tooltips on the composer's permissions, model, `Dictate`, and `Start new voice chat` buttons, and open each footer tooltip when Tab focuses its button.
 - Notify ordinary chat completion, approval requests, and questions with the saved focus, alert, and sound preferences.
 - Open Space (`/space`) from the rail: the account's Spaces from `GET /spaces/v2`, with search, empty, no-match, and `Could not load spaces` / `Try again` states.
 - Add `/goal` controls to set, inspect, pause, resume, and clear a chat goal, plus per-thread `/memory` controls.
