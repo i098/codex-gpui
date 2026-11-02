@@ -88,7 +88,7 @@ fn selected_host(root: &Root, cx: &App) -> Option<(String, Arc<Bridge>)> {
 
 /// `config/read` with layers on the page's selected host. `open` then opens the user layer's
 /// file, the one native settings write, rather than a locally guessed `$CODEX_HOME`.
-fn read_layers(root: &mut Root, open: bool, cx: &mut Context<Root>) {
+pub(crate) fn read_layers(root: &mut Root, open: bool, cx: &mut Context<Root>) {
     let Some((host, bridge)) = selected_host(root, cx) else {
         return root.toast(Toast::danger("This host is no longer connected"), cx);
     };

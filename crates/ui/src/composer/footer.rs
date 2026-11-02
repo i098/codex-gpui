@@ -79,9 +79,14 @@ fn effort_icon(effort: &str) -> &'static str {
 }
 
 impl Composer {
-    pub(super) fn dictation_button(&self, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+    /// The microphone, with the original's tooltip for its dictation state.
+    pub(super) fn dictation_button(
+        &self,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> crate::tooltip::Tooltip {
         let label = self.dictation_label();
-        pill("dictate", t)
+        let button = pill("dictate", t)
             .justify_center()
             .child(if self.dictation.is_some() {
                 div()
@@ -97,7 +102,7 @@ impl Composer {
             .role(gpui::Role::Button)
             .aria_label(label)
             .aria_disabled(label == "Transcribing")
-            .tab_index(0)
+            .track_focus(&self.dictate_focus)
             .focus_visible(crate::focus::trigger_focus)
             .size(px(28.))
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
@@ -106,7 +111,14 @@ impl Composer {
                     cx.stop_propagation();
                 }
             }))
-            .on_click(cx.listener(|this, _, window, cx| this.dictate(window, cx)))
+            .on_click(cx.listener(|this, _, window, cx| this.dictate(window, cx)));
+        crate::tooltip::tooltip(
+            button,
+            self.dictation_tooltip(),
+            None,
+            crate::tooltip::Side::Top,
+        )
+        .focus_handle(&self.dictate_focus)
     }
     pub(super) fn footer(&self, window: &mut Window, t: &Theme, cx: &mut Context<Self>) -> Div {
         let open = matches!(self.menu, Some(Menu::Effort | Menu::Models));
@@ -212,7 +224,14 @@ impl Composer {
                 .child(icon("chevron-down-small", 16., t.text_tertiary))
         };
         let model_button = div()
+            .id("model-picker-slot")
             .relative()
+            // The tooltip owns the trigger's hover listener; the slot's matches its bounds.
+            .when(!loading, |d| {
+                d.on_hover(
+                    cx.listener(|this, hovered: &bool, _, _| this.menu_trigger_hovered = *hovered),
+                )
+            })
             // Chromium clips the open pill's fill to its 14 px rounded box: a rect under that
             // anti-aliased clip.
             .when(open, |d| {
@@ -228,22 +247,33 @@ impl Composer {
                         })),
                 ))
             })
-            .child(
-                trigger
+            .child({
+                let trigger = trigger
                     .track_focus(&self.model_focus)
                     .focus_visible(crate::focus::trigger_focus)
                     .when(!loading, |d| {
-                        d.on_hover(cx.listener(|this, hovered: &bool, _, _| {
-                            this.menu_trigger_hovered = *hovered
-                        }))
-                        .on_key_down(cx.listener(|this, event, window, cx| {
+                        d.on_key_down(cx.listener(|this, event, window, cx| {
                             this.trigger_key(Menu::Effort, event, window, cx)
                         }))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.toggle_menu(Menu::Effort, window, cx)
                         }))
-                    }),
-            )
+                    });
+                // The original passes the menu's open state to its tooltip, which stays closed.
+                if loading || open {
+                    trigger.into_any_element()
+                } else {
+                    // `codex.command.composer.openModelPicker` (recorded in f1c step 32).
+                    crate::tooltip::tooltip(
+                        trigger,
+                        "Select effort",
+                        Some("⌃⇧M"),
+                        crate::tooltip::Side::Top,
+                    )
+                    .focus_handle(&self.model_focus)
+                    .into_any_element()
+                }
+            })
             .when(open, |d| {
                 d.child(self.anchored_menu(
                     self.picker_menu(t, window, cx),
@@ -276,7 +306,7 @@ impl Composer {
                         .role(gpui::Role::Button)
                         .aria_label("Add files and more")
                         .aria_expanded(self.slash.open && self.slash.mention)
-                        .tab_index(0)
+                        .track_focus(&self.add_focus)
                         .focus_visible(crate::focus::trigger_focus)
                         .w(px(28.))
                         .justify_center()
@@ -297,19 +327,24 @@ impl Composer {
                     Some("@"),
                     crate::tooltip::Side::Top,
                 )
+                .focus_handle(&self.add_focus)
                 // The 1 px trigger border leaves a 4 px visible gap with this content-edge offset.
                 .side_offset(px(5.)),
             )
             .child(
                 div()
+                    .id("permissions-slot")
                     .relative()
-                    .child(
-                        pill("permissions", t)
+                    // The tooltip owns the trigger's hover listener; the slot's matches its bounds.
+                    .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                        this.menu_trigger_hovered = *hovered
+                    }))
+                    .child({
+                        let trigger = pill("permissions", t)
+                            .role(gpui::Role::Button)
+                            .aria_label("Change permissions")
                             .track_focus(&self.permissions_focus)
                             .focus_visible(crate::focus::trigger_focus)
-                            .on_hover(cx.listener(|this, hovered: &bool, _, _| {
-                                this.menu_trigger_hovered = *hovered
-                            }))
                             .on_key_down(cx.listener(|this, event, window, cx| {
                                 this.trigger_key(Menu::Permissions, event, window, cx)
                             }))
@@ -337,8 +372,20 @@ impl Composer {
                             })
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.toggle_menu(Menu::Permissions, window, cx)
-                            })),
-                    )
+                            }));
+                        if self.menu == Some(Menu::Permissions) {
+                            trigger.into_any_element()
+                        } else {
+                            crate::tooltip::tooltip(
+                                trigger,
+                                "Change permissions",
+                                None,
+                                crate::tooltip::Side::Top,
+                            )
+                            .focus_handle(&self.permissions_focus)
+                            .into_any_element()
+                        }
+                    })
                     .when(self.menu == Some(Menu::Permissions), |d| {
                         d.child(self.anchored_menu(self.permissions_menu(t, cx), None, cx))
                     }),
@@ -391,7 +438,7 @@ impl Composer {
                 self.send_label()
             })
             .aria_disabled(waiting_for_model || (hotkey_home && !has_input) || shell_disabled)
-            .tab_index(0)
+            .track_focus(&self.send_focus)
             .rounded(Theme::RADIUS_FULL)
             .focus_visible(move |style| {
                 style.shadow(vec![gpui::BoxShadow {
@@ -456,6 +503,19 @@ impl Composer {
                     this.submit(&Submit, window, cx);
                 }
             }));
+        // The submit labels are accessible names only; the voice start has a tooltip.
+        let send = if voice {
+            crate::tooltip::tooltip(
+                send,
+                "Start new voice chat",
+                None,
+                crate::tooltip::Side::Top,
+            )
+            .focus_handle(&self.send_focus)
+            .into_any_element()
+        } else {
+            send.into_any_element()
+        };
         // The original's right group: the model picker's slot is `flex-1 min-w-0` and takes what
         // the microphone and send (`shrink-0`) leave, so it clips to nothing in a narrow
         // footer; the fixed pair overflows to the left of the footer's end.
