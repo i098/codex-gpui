@@ -116,7 +116,7 @@ pub(super) fn summary(host: &super::LocalHost, params: &Value) -> Result<Value> 
             "pr".into(),
             "list".into(),
             "--head".into(),
-            branch.into(),
+            branch,
             "--state".into(),
             "open".into(),
             "--json".into(),

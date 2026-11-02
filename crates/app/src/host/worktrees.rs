@@ -265,7 +265,7 @@ fn stash_changes(root: &Path) -> Result<Option<String>> {
             "Codex thread handoff",
         ],
     )?)?;
-    Ok(answer(root, &["rev-parse", "refs/stash"])?)
+    answer(root, &["rev-parse", "refs/stash"])
 }
 
 fn apply_stash(root: &Path, stash: Option<&str>) -> Result<()> {
