@@ -31,6 +31,7 @@ mod goals;
 pub mod host;
 pub mod host_settings;
 pub mod hotkey;
+mod logging;
 pub mod native_menus;
 mod new_project;
 mod notifications;
@@ -41,8 +42,11 @@ mod personalization;
 mod pull_requests;
 pub mod qa;
 mod routes;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub mod single_instance;
 pub mod terminal;
 mod thread_patch;
+mod tray;
 pub mod user_data;
 pub use routes::Route;
 mod plugins;
@@ -79,15 +83,16 @@ use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, BorrowAppContext as _,
     Context, Entity, EntityInputHandler as _, FocusHandle, Focusable as _, InteractiveElement as _,
     IntoElement, KeyBinding, KeyDownEvent, ParentElement as _, PathPromptOptions, Pixels, Render,
-    SharedString, Styled as _, Task, WeakEntity, Window, WindowAppearance, actions, div, px,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window,
+    WindowAppearance, actions, div, px,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::PathBuf, sync::Arc, time::Duration};
-use theme::Theme;
+use theme::{ActiveTheme as _, Theme};
 use ui::browser::{BrowserEvent, BrowserTab};
-use ui::composer::{Approval, Composer, Permission, QueueAction, Submission};
+use ui::composer::{Approval, Composer, LiveSettingsChange, Permission, QueueAction, Submission};
 use ui::dialog::{
     CommitRepository, CommitStep, Dialog, Kind as DialogKind, Outcome as DialogOutcome, Selection,
 };
@@ -99,7 +104,7 @@ use ui::screens::diff::panel::{
     ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile,
     SIDE_PANEL_BREAKPOINT, SplitScreen, Tab, with_side_tabs,
 };
-use ui::screens::home::{HomeMain, OpenFolder};
+use ui::screens::home::{ClearProject, HomeMain, OpenFolder, ProjectMenu};
 #[cfg(target_os = "windows")]
 use ui::screens::home::{SetupWindowsSandboxElevated, SetupWindowsSandboxUnelevated};
 use ui::screens::recovery;
@@ -147,8 +152,17 @@ actions!(
         NextChat,
         /// `⌘⇧A`: archive the open chat (`archiveThread`).
         ArchiveChat,
+        ExportLogs,
     ]
 );
+
+macro_rules! eprintln {
+    ($($arg:tt)*) => {{
+        let message = format!($($arg)*);
+        logging::write(&message);
+        std::eprintln!("{message}");
+    }};
+}
 
 /// `thread1..9`: open the Nth Recents row (0-based).
 #[derive(Clone, PartialEq, Action)]
@@ -165,6 +179,7 @@ const SIDEBAR_BREAKPOINT: Pixels = px(720.);
 
 /// Fixed platform bindings and app-level commands; configurable bindings are installed by the keymap module.
 pub fn init(cx: &mut App) {
+    logging::write("codex-gpui session started");
     cx.set_app_identity(
         if qa::ENABLED {
             "dev.codexgpui.qa"
@@ -188,6 +203,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-shift-p", OpenCommandMenu, None),
         KeyBinding::new("alt-cmd-b", ToggleChangesPanel, None),
         KeyBinding::new("cmd-shift-a", ArchiveChat, None),
+        KeyBinding::new("alt-cmd-shift-l", ExportLogs, None),
     ]);
     ui::composer::bind_keys(cx);
     features::init(cx);
@@ -261,6 +277,8 @@ pub struct State {
     pub confirm_before_close: ConfirmBeforeClose,
     pub project_root: Option<String>,
     pub zoom: f32,
+    /// The composer's sent prompts ([`ui::composer::PromptHistory`]).
+    pub prompt_history: Vec<String>,
     /// The unsent composer text of each thread (`draftKey`), by thread id.
     pub drafts: HashMap<String, String>,
     #[serde(skip)]
@@ -279,6 +297,7 @@ impl Default for State {
             confirm_before_close: ConfirmBeforeClose::default(),
             project_root: None,
             zoom: 1.,
+            prompt_history: Vec::new(),
             drafts: HashMap::new(),
             path: None,
         }
@@ -515,6 +534,8 @@ pub struct Root {
     /// The signed-in ChatGPT account's email (`account/read`), shown in the logout dialog.
     account_email: Option<String>,
     chatgpt_account: bool,
+    /// The sign-in screen came from the profile menu over a signed-in account: it offers `Cancel`.
+    switching_account: bool,
     usage_limit_notice: UsageLimitNotice,
     bridge: Arc<Bridge>,
     host_id: String,
@@ -550,6 +571,7 @@ pub struct Root {
     config: Value,
     permission_profiles: Value,
     guardian_denials: HashMap<String, Value>,
+    thread_settings_updates: HashMap<String, Receiver<()>>,
     skills: Value,
     /// `collaborationMode/list` answer (`Null` before it loads or on older servers).
     collaboration_modes: Value,
@@ -665,6 +687,14 @@ impl Root {
             }
         }
         host_settings::apply(cx);
+        if !cx.has_global::<ui::composer::PromptHistory>() {
+            cx.set_global(ui::composer::PromptHistory(state.prompt_history.clone()));
+        }
+        cx.observe_global::<ui::composer::PromptHistory>(|this, cx| {
+            this.state.prompt_history = cx.global::<ui::composer::PromptHistory>().0.clone();
+            this.state.save();
+        })
+        .detach();
         features::install_shortcuts(cx);
         let this = cx.weak_entity();
         usage::install(this.clone(), cx);
@@ -763,6 +793,14 @@ impl Root {
                     ui::composer::SlashCommand::MemoryMode(_)
                     | ui::composer::SlashCommand::MemoryStatus => this.thread_memory_command(command, window, cx),
                     ui::composer::SlashCommand::Memories => this.open_memories(window, cx),
+                    ui::composer::SlashCommand::Status => this.show_status(window, cx),
+                    ui::composer::SlashCommand::Init => this.init_agents(window, cx),
+                    ui::composer::SlashCommand::Side => this.start_side_chat(window, cx),
+                    ui::composer::SlashCommand::ReviewBranches => this.load_review_branches(composer.clone(), cx),
+                    ui::composer::SlashCommand::Review(branch) => this.start_review(branch.clone(), window, cx),
+                    ui::composer::SlashCommand::Personality(name) => this.set_personality(name, cx),
+                    ui::composer::SlashCommand::Chat => this.new_special_chat(features::shortcuts::NewChatMode::Standalone, window, cx),
+                    ui::composer::SlashCommand::Worktree => this.toggle_worktree_run(cx),
                     ui::composer::SlashCommand::Rename => {
                         if let Route::Thread(id) = this.state.route.clone() {
                             this.open_rename(id, true, window, cx);
@@ -919,10 +957,11 @@ impl Root {
             wide,
             layout_before_narrow: None,
             focus: cx.focus_handle(),
-            home: cx.new(|_| HomeMain {
+            home: cx.new(|cx| HomeMain {
                 composer: home_composer,
                 project: state.project_root.as_deref().map(project_name),
                 location: Default::default(),
+                projects: ProjectMenu::new(cx),
                 beacon: false,
                 windows_sandbox_setup_needed: false,
                 windows_sandbox_setup_pending: false,
@@ -986,6 +1025,7 @@ impl Root {
             logout_pending: false,
             account_email: None,
             chatgpt_account: false,
+            switching_account: false,
             usage_limit_notice: UsageLimitNotice::RetryLater,
             host: host::thread_host(
                 &host_id,
@@ -1021,6 +1061,7 @@ impl Root {
             config: Value::Null,
             permission_profiles: Value::Null,
             guardian_denials: HashMap::new(),
+            thread_settings_updates: HashMap::new(),
             skills: Value::Null,
             collaboration_modes: Value::Null,
             models: Vec::new(),
@@ -1856,6 +1897,43 @@ impl Root {
         .detach();
     }
 
+    fn export_logs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Export logs".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                let paths = paths
+                    .await
+                    .map_err(|error| std::io::Error::other(error.to_string()))?
+                    .map_err(std::io::Error::other)?;
+                let Some(directory) = paths.and_then(|paths| paths.into_iter().next()) else {
+                    return Ok(None);
+                };
+                cx.background_spawn(async move { logging::export(&directory) })
+                    .await
+                    .map(Some)
+            }
+            .await;
+            this.update_in(cx, |this, _window, cx| match result {
+                Ok(Some(path)) => this.toast(
+                    Toast::success("Logs exported").description(path.display().to_string()),
+                    cx,
+                ),
+                Ok(None) => {}
+                Err(error) => {
+                    eprintln!("codex-gpui: cannot export logs: {error:#}");
+                    this.toast(Toast::danger("Unable to export logs"), cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn create_onboarding_workspace(&mut self, window: &Window, cx: &mut Context<Self>) {
         if self.workspace.read(cx).busy() || self.picking_project {
             return;
@@ -1915,6 +1993,19 @@ impl Root {
         self.state.project_root = Some(root);
         hotkey::refresh_home(self, cx);
         self.navigate(Route::Home, window, cx);
+        self.save(window, cx);
+    }
+
+    /// `Don't work in a project`: new chats start without a cwd.
+    fn clear_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.home.update(cx, |home, cx| {
+            home.project = None;
+            home.composer
+                .update(cx, |composer, cx| composer.set_search_roots(Vec::new(), cx));
+            cx.notify();
+        });
+        self.state.project_root = None;
+        hotkey::refresh_home(self, cx);
         self.save(window, cx);
     }
 
@@ -2914,6 +3005,18 @@ impl Root {
             menu.update(cx, |menu, cx| menu.update_catalog(threads, &unread, cx));
         }
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
+        if self.host_id() == "local" {
+            let recents: Vec<_> = threads
+                .iter()
+                .map(|thread| {
+                    (
+                        thread.id.clone(),
+                        ui::screens::sidebar::title(thread).to_string(),
+                    )
+                })
+                .collect();
+            tray::set_recents(&recents, cx);
+        }
         self.refresh_automation_editor_options(None, cx);
     }
 
@@ -3297,11 +3400,9 @@ impl Root {
         let unread = self.sidebar.read(cx).unread.clone();
         let thread_open = matches!(self.state.route, Route::Thread(_));
         let cloud = self.chatgpt_account && self.host.supports_cloud_search();
-        let navigation = native_menus::navigation::available(self, cx);
         let menu = cx.new(|cx| {
             CommandMenu::with_threads(&self.threads, &unread, thread_open, "", cx)
                 .with_cloud_search(cloud)
-                .with_navigation_panel(navigation)
         });
         menu.update(cx, |menu, cx| {
             menu.set_activity_available(self.sidebar.read(cx).activity_available, cx)
@@ -4381,6 +4482,7 @@ impl Root {
         // archived chat cannot have a side chat.
         let side_chat = !self.archived.contains(&thread.id);
         self.thread_composer.update(cx, |c, cx| {
+            c.bind_thread(&thread.id);
             c.set_running(running, cx);
             c.set_queue_interrupted(interrupted, cx);
             c.set_queued(Vec::new(), cx);
@@ -4594,8 +4696,12 @@ impl Root {
         if retrying {
             self.begin_queue_action(cx);
         }
+        let settings_update = self.thread_settings_updates.get(&id).cloned();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let result = async {
+                if let Some(pending) = settings_update {
+                    let _ = pending.recv().await;
+                }
                 resume_if(resume, &bridge, &this, &id, cx).await?;
                 let input = &message.submission.input;
                 let Some(turn_id) = running.as_ref() else {
@@ -5292,6 +5398,7 @@ impl Root {
         let composer = cx.new(|cx| {
             let mut composer = Composer::thread(window, cx);
             composer.bind_connection(self.bridge.clone());
+            composer.bind_thread(&thread.id);
             composer.set_models(&self.models, &self.config, cx);
             composer.set_permission_profiles(&self.permission_profiles, cx);
             composer.restore_run_settings(
@@ -6196,6 +6303,49 @@ impl Root {
         log_err(task, cx);
     }
 
+    fn update_live_settings(
+        &mut self,
+        side: Option<usize>,
+        change: LiveSettingsChange,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((view, _)) = self.conversation(side) else {
+            return;
+        };
+        let view = view.read(cx);
+        let id = view.id().to_owned();
+        let turn_id = view
+            .turns()
+            .iter()
+            .rev()
+            .find(|turn| turn.status == TurnStatus::InProgress)
+            .map(|turn| turn.id.clone());
+        let (finished, pending) = async_channel::bounded::<()>(1);
+        let previous = self.thread_settings_updates.insert(id.clone(), pending);
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            if let Some(previous) = previous {
+                let _ = previous.recv().await;
+            }
+            let mut params = json!({
+                "threadId": id, "model": change.model, "effort": change.effort,
+            });
+            apply_permissions(&mut params, &change.permission);
+            let result = update_thread_settings(&bridge, params, turn_id.as_deref()).await;
+            if let Err(error) = &result {
+                this.update(cx, |this, cx| {
+                    this.toast(
+                        Toast::danger(format!("Could not update thread settings: {error}")),
+                        cx,
+                    );
+                })?;
+            }
+            drop(finished);
+            result
+        });
+        log_err(task, cx);
+    }
+
     fn instructions_changed(&self, cx: &App) -> bool {
         self.personal_instructions(cx)
             .is_some_and(|editor| editor.read(cx).saving() || editor.read(cx).dirty(cx))
@@ -6451,6 +6601,9 @@ impl Root {
                 if matches!(key, "reduced-motion-preference" | "dock-icon-preference") {
                     host_settings::apply(cx);
                 }
+                if key == "mac-menu-bar-enabled" {
+                    tray::refresh(cx);
+                }
                 #[cfg(target_os = "macos")]
                 if key == screenshot::appshot::HOTKEY
                     && let Err(error) = screenshot::appshot::register(cx)
@@ -6574,6 +6727,11 @@ impl Root {
             self.config["desktop"]["composerEnterBehavior"]
                 .as_str()
                 .unwrap_or("enter"),
+        ));
+        cx.set_global(terminal::TerminalShell(
+            self.config["desktop"]["integratedTerminalShell"]
+                .as_str()
+                .map(str::to_owned),
         ));
         self.sync_prevent_sleep(cx);
         let visibility = ReasoningVisibility::from_config(&self.config);
@@ -6898,6 +7056,29 @@ impl Root {
         };
         match event {
             Event::Notification { method, params } => match method.as_str() {
+                "project/changed" | "thread/project/updated" => {
+                    self.load_projects(cx);
+                    self.refresh_threads(cx);
+                }
+                "thread/settings/updated" => {
+                    if let Some(id) = params["threadId"].as_str()
+                        && let Some(owner) = self.owner(id, cx)
+                        && let Some((_, composer)) = self.conversation(owner)
+                    {
+                        let (collaboration_mode, permission) =
+                            composer.update(cx, |composer, cx| {
+                                composer.apply_thread_settings(&params["threadSettings"], cx);
+                                composer.run_settings()
+                            });
+                        self.thread_run_settings.insert(
+                            id.to_owned(),
+                            host::run_now::heartbeat::RendererState {
+                                collaboration_mode,
+                                permission,
+                            },
+                        );
+                    }
+                }
                 "item/autoApprovalReview/started" | "item/autoApprovalReview/completed" => {
                     self.guardian_review(&method, &params, cx);
                 }
@@ -7065,10 +7246,12 @@ impl Root {
                     self.show_approval(cx);
                 } else {
                     let response = match pending.method.as_str() {
-                        "item/tool/call" => json!({
-                            "success": false,
-                            "contentItems": [{ "type": "inputText", "text": format!("Unsupported dynamic tool: {}", pending.params["tool"].as_str().unwrap_or_default()) }]
-                        }),
+                        "item/tool/call" => self
+                            .read_thread_terminal(&pending.params, cx)
+                            .unwrap_or_else(|| json!({
+                                "success": false,
+                                "contentItems": [{ "type": "inputText", "text": format!("Unsupported dynamic tool: {}", pending.params["tool"].as_str().unwrap_or_default()) }]
+                            })),
                         "mcpServer/elicitation/request" => json!({
                             "action": "decline", "content": null, "_meta": null
                         }),
@@ -7162,10 +7345,35 @@ impl Root {
 
     fn finish_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.login = None;
+        self.switching_account = false;
         self.read_account(Some(window), cx);
         self.refresh_threads(cx);
         self.load_projects(cx);
         self.load_sections(cx);
+        cx.notify();
+    }
+
+    /// Profile menu `Add account` / `Sign in with ChatGPT`: the app-server holds one account, so
+    /// a new sign-in replaces the current one; until it finishes, `Cancel` keeps the current one.
+    pub fn switch_account(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.login.is_some() || self.logout_pending {
+            return;
+        }
+        cx.set_global(AppServer(self.bridge.clone()));
+        self.switching_account = true;
+        self.login = Some(self.new_login(window, cx));
+        cx.notify();
+    }
+
+    pub fn cancel_switch_account(&mut self, cx: &mut Context<Self>) {
+        if !self.switching_account {
+            return;
+        }
+        self.switching_account = false;
+        if let Some(login) = self.login.take() {
+            login.update(cx, |login, cx| login.cancel_pending(cx));
+        }
+        self.ready = true;
         cx.notify();
     }
 
@@ -7175,6 +7383,17 @@ impl Root {
         self.account_email = account.and_then(chatgpt_email);
         self.chatgpt_account =
             account.is_some_and(|account| matches!(account.account, Some(Account::Chatgpt { .. })));
+        let profile = account.and_then(|account| match &account.account {
+            Some(Account::Chatgpt { email, .. }) => Some(ui::ProfileAccount::Chatgpt(
+                email.clone().map(SharedString::from),
+            )),
+            Some(Account::ApiKey) => Some(ui::ProfileAccount::ApiKey),
+            _ => None,
+        });
+        self.shell.update(cx, |shell, cx| {
+            shell.account = profile;
+            cx.notify();
+        });
         let plan = account.and_then(|account| match &account.account {
             Some(Account::Chatgpt { plan_type, .. }) => Some(plan_type.as_str()),
             _ => None,
@@ -7538,6 +7757,20 @@ Do not modify files, source, git state, permissions, configuration, or workspace
 /// The handlers of a thread composer: the open chat's (`side: None`) or side chat `side`'s.
 /// Both pickers write the user's `config.toml`, like the original's `writeModel`.
 fn wire_thread_composer(composer: &mut Composer, this: WeakEntity<Root>, side: Option<usize>) {
+    let settings = this.clone();
+    composer.on_live_settings(move |id, change, cx| {
+        let settings = settings.clone();
+        let id = id.to_owned();
+        cx.defer(move |cx| {
+            settings
+                .update(cx, |this, cx| {
+                    if let Some(owner) = this.owner(&id, cx) {
+                        this.update_live_settings(owner, change, cx);
+                    }
+                })
+                .ok();
+        });
+    });
     composer.enable_shell_commands();
     let (model, send) = (this.clone(), this.clone());
     composer.on_model(move |pick, cx| {
@@ -7639,6 +7872,41 @@ async fn turn_start(
     }
     bridge.request::<_, Value>("turn/start", params).await?;
     Ok(())
+}
+
+async fn update_thread_settings(
+    bridge: &Bridge,
+    params: Value,
+    turn_id: Option<&str>,
+) -> Result<()> {
+    if let Err(error) = bridge
+        .request::<_, Value>("thread/settings/update", &params)
+        .await
+        && !unsupported_method(&error, "thread/settings/update")
+    {
+        return Err(error);
+    }
+    if let Some(turn_id) = turn_id
+        && let Some(reviewer) = params.get("approvalsReviewer")
+        && let Err(error) = bridge.request::<_, Value>("turn/settings/update", json!({
+            "threadId": params["threadId"], "turnId": turn_id, "approvalsReviewer": reviewer,
+        })).await
+        && !unsupported_method(&error, "turn/settings/update")
+    {
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn unsupported_method(error: &anyhow::Error, method: &str) -> bool {
+    let Some(error) = error.downcast_ref::<bridge::RpcError>() else {
+        return false;
+    };
+    let message = error.message.to_ascii_lowercase();
+    error.code == -32601
+        || message.contains("method not found")
+        || ((message.contains("unknown method") || message.contains("unknown variant"))
+            && message.contains(method))
 }
 
 async fn take_queued(bridge: &Bridge, thread_id: &str, id: &str, local: bool) -> Result<bool> {
@@ -8208,6 +8476,26 @@ impl Render for Root {
                     .on_action(|_: &Minimize, window, _| window.minimize_window())
                     .on_action(|_: &Zoom, window, _| window.zoom_window())
                     .child(exclusive)
+                    .when(self.switching_account && self.login.is_some(), |d| {
+                        let t = cx.theme().clone();
+                        d.child(
+                            div()
+                                .id("switch-account-cancel")
+                                .absolute()
+                                .top(px(44.))
+                                .right(px(16.))
+                                .px(px(12.))
+                                .py(px(6.))
+                                .rounded(px(8.))
+                                .border_1()
+                                .border_color(t.border)
+                                .hover(move |s| s.bg(t.ghost_hover))
+                                .child(ui::text("Cancel", 14., 20., 500., t.text))
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.cancel_switch_account(cx)),
+                                ),
+                        )
+                    })
                     .children(self.dialog.clone()),
                 self,
                 cx,
@@ -8340,6 +8628,9 @@ impl Render for Root {
                     this.show_dialog(dialog, window, cx);
                 }
             }))
+            .on_action(cx.listener(|this, _: &ui::SwitchAccount, window, cx| {
+                this.switch_account(window, cx)
+            }))
             .on_action(cx.listener(|this, _: &OpenScheduled, window, cx| {
                 this.navigate(Route::Scheduled, window, cx)
             }))
@@ -8386,6 +8677,7 @@ impl Render for Root {
             .on_action(cx.listener(|this, _: &OpenCommandMenu, window, cx| {
                 this.open_command_menu(window, cx)
             }))
+            .on_action(cx.listener(|this, _: &ExportLogs, window, cx| this.export_logs(window, cx)))
             .on_action(cx.listener(|this, a: &SetTheme, window, cx| {
                 let theme = serde_json::from_value(json!(a.0)).unwrap_or_default();
                 this.set_theme(theme, window, cx)

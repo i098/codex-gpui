@@ -3008,9 +3008,12 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::Plan { id, .. }
         | ThreadItem::Reasoning { id, .. }
         | ThreadItem::CommandExecution { id, .. }
-        | ThreadItem::FileChange { id, .. }
         | ThreadItem::McpToolCall { id, .. }
-        | ThreadItem::ContextCompaction { id } => Some(id),
+        | ThreadItem::FileChange { id, .. }
+        | ThreadItem::DynamicToolCall { id, .. }
+        | ThreadItem::ContextCompaction { id }
+        | ThreadItem::EnteredReviewMode { id, .. }
+        | ThreadItem::ExitedReviewMode { id, .. } => Some(id),
         ThreadItem::Other => None,
     }
 }
