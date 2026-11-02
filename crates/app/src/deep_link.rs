@@ -40,11 +40,18 @@ pub enum Link {
     },
     OAuth(String),
     Launch,
+    Browser(Url),
+    Space,
+    CloudEnvironmentCreate,
+    Onboarding,
 }
 
 /// Parses the original native URL grammar without accepting excluded products.
 pub fn parse(value: &str) -> Option<Link> {
     let url = Url::parse(value).ok()?;
+    if url.scheme() == "https" {
+        return https_link(&url);
+    }
     if !matches!(url.scheme(), "codex" | "codex-dev")
         || !url.username().is_empty()
         || url.password().is_some()
@@ -68,6 +75,11 @@ pub fn parse(value: &str) -> Option<Link> {
         "automations" if sub.len() == 1 => automation(sub[0], &params),
         "connector" if sub.as_slice() == ["oauth_callback"] => Some(Link::OAuth(value.to_owned())),
         "launch" if sub.is_empty() => Some(Link::Launch),
+        "shared-thread" => shared_snapshot(&url, &sub),
+        "chatgpt" => chatgpt_link(&url, &sub),
+        "browser" => browser_link(&params),
+        "codex-app" => codex_app_link(&sub),
+        "space" if sub.is_empty() => Some(Link::Space),
         _ => None,
     }
 }
@@ -80,6 +92,130 @@ fn plugin_route(sub: &[&str]) -> Option<String> {
             (!id.contains('/')).then(|| format!("/plugins/{id}"))
         }
         ["install", _] => Some("/plugins".into()),
+        _ => None,
+    }
+}
+
+fn shared_snapshot(url: &Url, sub: &[&str]) -> Option<Link> {
+    let [id] = sub else { return None };
+    if !id.strip_prefix("cx_").is_some_and(|value| {
+        value.len() == 32
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    }) || url.fragment().is_some()
+    {
+        return None;
+    }
+    let params: Vec<_> = url.query_pairs().collect();
+    if params.len() > 1
+        || params
+            .iter()
+            .any(|(key, value)| key != "handoff_id" || !uuid(value))
+    {
+        return None;
+    }
+    Some(Link::Thread {
+        id: (*id).to_owned(),
+        prompt: None,
+        host_id: None,
+        shared: true,
+    })
+}
+
+fn chatgpt_link(url: &Url, sub: &[&str]) -> Option<Link> {
+    if url.query_pairs().next().is_some() || url.fragment().is_some() {
+        return None;
+    }
+    let id = match sub {
+        ["share", id] | ["share", "e", id] => id,
+        _ => return None,
+    };
+    let id = component(id)?;
+    if id.contains('/') {
+        return None;
+    }
+    let mut url = Url::parse("https://chatgpt.com/share/").ok()?;
+    url.path_segments_mut().ok()?.pop_if_empty().push(&id);
+    Some(Link::Browser(url))
+}
+
+fn browser_link(params: &Params<'_>) -> Option<Link> {
+    if params.0.iter().any(|(key, _)| key.as_ref() != "browserUrl")
+        || params
+            .0
+            .iter()
+            .filter(|(key, _)| key.as_ref() == "browserUrl")
+            .count()
+            != 1
+    {
+        return None;
+    }
+    params.browser()?;
+    let url = Url::parse(params.text("browserUrl")?).ok()?;
+    (matches!(url.scheme(), "http" | "https")
+        && url.username().is_empty()
+        && url.password().is_none())
+    .then_some(Link::Browser(url))
+}
+fn codex_app_link(sub: &[&str]) -> Option<Link> {
+    match sub {
+        ["apply-config"] | ["config"] => Some(Link::Settings(Some("Configuration"))),
+        ["join-team"] => Some(Link::Settings(Some("Account"))),
+        ["experience-activation"] => Some(Link::Settings(Some("Account"))),
+        ["agent-onboarding"] => Some(Link::Onboarding),
+        ["cloud-environments", "new"] => Some(Link::CloudEnvironmentCreate),
+        ["space"] => Some(Link::Space),
+        _ => None,
+    }
+}
+
+fn https_link(url: &Url) -> Option<Link> {
+    if url.host_str() != Some("chatgpt.com")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+    {
+        return None;
+    }
+    let sub: Vec<_> = url
+        .path()
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    match sub.as_slice() {
+        ["share", _] | ["share", "e", _] => chatgpt_link(url, &sub),
+        ["cloud-environments", "new"] if url.query().is_none() && url.fragment().is_none() => {
+            Some(Link::CloudEnvironmentCreate)
+        }
+        ["codex", "deeplink"]
+            if url.fragment().is_none()
+                && url.query_pairs().count() == 1
+                && url
+                    .query_pairs()
+                    .any(|(key, value)| key == "target" && value == "apply-config") =>
+        {
+            Some(Link::Settings(Some("Configuration")))
+        }
+        ["codex", "deeplink"]
+            if url.query_pairs().filter(|(key, _)| key == "target").count() == 1
+                && url
+                    .query_pairs()
+                    .any(|(key, value)| key == "target" && value == "team-join")
+                && url.query_pairs().count() == 2
+                && url
+                    .query_pairs()
+                    .find(|(key, _)| key == "team_id")
+                    .is_some_and(|(_, value)| !value.trim().is_empty())
+                && url
+                    .query_pairs()
+                    .filter(|(key, _)| key == "team_id")
+                    .count()
+                    == 1
+                && url.fragment().is_none() =>
+        {
+            Some(Link::Settings(Some("Account")))
+        }
         _ => None,
     }
 }
@@ -337,6 +473,30 @@ impl Root {
                 self.receive_oauth_redirect(value, window, cx);
                 return;
             }
+            Link::Browser(url) => {
+                self.open_browser_tab(Some(url.clone()), window, cx);
+                return;
+            }
+            Link::Space => {
+                self.navigate(Route::Space, window, cx);
+                return;
+            }
+            Link::CloudEnvironmentCreate => {
+                self.navigate(
+                    Route::CloudEnvironments("/cloud-environments/new".into()),
+                    window,
+                    cx,
+                );
+                return;
+            }
+            Link::Onboarding => {
+                self.navigate(
+                    Route::Onboarding(ui::screens::onboarding::Page::Welcome),
+                    window,
+                    cx,
+                );
+                return;
+            }
             Link::Launch => {}
         }
         if let Some(prompt) = prompt.filter(|p| !p.is_empty()) {
@@ -502,6 +662,126 @@ mod tests {
     }
 
     #[test]
+    fn routes_shared_snapshots_and_browser_links() {
+        assert_eq!(
+            parse("codex://shared-thread/cx_0123456789abcdef0123456789abcdef"),
+            Some(Link::Thread {
+                id: "cx_0123456789abcdef0123456789abcdef".into(),
+                prompt: None,
+                host_id: None,
+                shared: true,
+            })
+        );
+        assert_eq!(
+            parse(
+                "codex://shared-thread/cx_0123456789abcdef0123456789abcdef?handoff_id=00000000-0000-4000-8000-000000000001"
+            ),
+            Some(Link::Thread {
+                id: "cx_0123456789abcdef0123456789abcdef".into(),
+                prompt: None,
+                host_id: None,
+                shared: true,
+            })
+        );
+        assert!(
+            parse("codex://shared-thread/cx_0123456789abcdef0123456789abcdef#fragment").is_none()
+        );
+        assert!(
+            parse("codex://shared-thread/cx_0123456789abcdef0123456789abcdef?handoff_id=bad")
+                .is_none()
+        );
+        assert_eq!(
+            parse("codex://browser?browserUrl=https%3A%2F%2Fexample.com%2F"),
+            Some(Link::Browser(Url::parse("https://example.com/").unwrap()))
+        );
+        assert_eq!(
+            parse("codex://chatgpt/share/abc123"),
+            Some(Link::Browser(
+                Url::parse("https://chatgpt.com/share/abc123").unwrap()
+            ))
+        );
+        assert_eq!(
+            parse("codex://chatgpt/share/e/abc%3Fdef"),
+            Some(Link::Browser(
+                Url::parse("https://chatgpt.com/share/abc%3Fdef").unwrap()
+            ))
+        );
+        assert_eq!(
+            parse("https://chatgpt.com/share/abc123"),
+            Some(Link::Browser(
+                Url::parse("https://chatgpt.com/share/abc123").unwrap()
+            ))
+        );
+        assert_eq!(
+            parse("https://chatgpt.com/share/e/abc123"),
+            Some(Link::Browser(
+                Url::parse("https://chatgpt.com/share/abc123").unwrap()
+            ))
+        );
+        assert!(parse("https://chatgpt.com/share/abc123?tracking=1").is_none());
+        assert!(parse("https://chatgpt.com/share/abc123#fragment").is_none());
+        assert!(parse("codex://chatgpt/abc123").is_none());
+        assert!(parse("codex://chatgpt/share/abc123?extra=1").is_none());
+        assert!(parse("codex://browser?browserUrl=javascript%3Aalert(1)").is_none());
+        assert!(
+            parse("codex://browser?browserUrl=https%3A%2F%2Ffirst.test&browserUrl=https%3A%2F%2Fsecond.test")
+                .is_none()
+        );
+        assert!(
+            parse("codex://browser?browserUrl=https%3A%2F%2Fexample.com%2F&browserTabId=tab-1")
+                .is_none()
+        );
+        assert!(
+            parse("codex://browser?browserUrl=https%3A%2F%2Fexample.com%2F&browserActive=true")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn routes_app_configuration_and_native_destinations() {
+        assert_eq!(
+            parse("codex://codex-app/apply-config"),
+            Some(Link::Settings(Some("Configuration")))
+        );
+        assert_eq!(
+            parse("codex://codex-app/agent-onboarding"),
+            Some(Link::Onboarding)
+        );
+        assert_eq!(
+            parse("codex://codex-app/cloud-environments/new"),
+            Some(Link::CloudEnvironmentCreate)
+        );
+        assert_eq!(parse("codex://space"), Some(Link::Space));
+        assert!(parse("codex://space/extra").is_none());
+        assert_eq!(
+            parse("codex://codex-app/join-team"),
+            Some(Link::Settings(Some("Account")))
+        );
+        assert_eq!(
+            parse("codex://codex-app/experience-activation"),
+            Some(Link::Settings(Some("Account")))
+        );
+        assert_eq!(
+            parse("https://chatgpt.com/cloud-environments/new"),
+            Some(Link::CloudEnvironmentCreate)
+        );
+        assert_eq!(
+            parse("https://chatgpt.com/codex/deeplink?target=apply-config"),
+            Some(Link::Settings(Some("Configuration")))
+        );
+        assert_eq!(
+            parse("https://chatgpt.com/codex/deeplink?target=team-join&team_id=team-1"),
+            Some(Link::Settings(Some("Account")))
+        );
+        assert!(parse("https://chatgpt.com/codex/deeplink?target=team-join&team_id=").is_none());
+        assert!(parse("https://chatgpt.com/codex/deeplink?target=apply-config&extra=1").is_none());
+        assert!(
+            parse("https://chatgpt.com/codex/deeplink?target=team-join&team_id=team-1&extra=1")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn matches_original_native_acceptance() {
         let cases: serde_json::Value =
             serde_json::from_str(include_str!("../tests/fixtures/deep_links.json")).unwrap();
@@ -553,9 +833,14 @@ mod tests {
                     assert_eq!(url, expected["fullRedirectUrl"].as_str().unwrap())
                 }
                 Some(Link::Scheduled) => assert_eq!(expected["kind"], "automations", "{value}"),
-                Some(Link::Plugins(_) | Link::PetInstall) => {
-                    assert!(!expected.is_null(), "{value}")
-                }
+                Some(
+                    Link::Plugins(_)
+                    | Link::PetInstall
+                    | Link::Browser(_)
+                    | Link::Space
+                    | Link::CloudEnvironmentCreate
+                    | Link::Onboarding,
+                ) => assert!(!expected.is_null(), "{value}"),
                 Some(Link::Settings(_) | Link::Connections(_) | Link::AddSsh { .. }) => {
                     assert_eq!(expected["kind"], "settings", "{value}")
                 }
@@ -563,9 +848,7 @@ mod tests {
             }
         }
         for value in [
-            "codex://space",
             "codex://sites/edit",
-            "codex://shared-thread/cx_0123456789abcdef0123456789abcdef",
             "codex://connector/callback",
             "https://chatgpt.com/",
             "codex://launch/x",
