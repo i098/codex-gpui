@@ -1,5 +1,5 @@
 name: release
-# A `vMAJOR.MINOR.PATCH` tag on a merged `tools/version.sh` bump publishes the universal (arm64 + x86_64) macOS zip and the Linux .deb.
+# A `vMAJOR.MINOR.PATCH` tag on a merged `tools/version.sh` bump publishes the universal (arm64 + x86_64) macOS zip, the Linux .deb and the Windows MSIX.
 on:
   push:
     tags: ['v*']
@@ -49,6 +49,32 @@ jobs:
           fi
           awk -v heading="## [$VERSION]" 'index($0, heading) == 1 { found = 1; next } found && /^## \[/ { exit } found' CHANGELOG.md >notes.md
           gh release create "$GITHUB_REF_NAME" "${assets[@]}" --title "Codex GPUI $VERSION" --notes-file notes.md --verify-tag
+  windows:
+    # Runs after the macOS job so the release exists to receive the upload.
+    needs: macos
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # With WINDOWS_SIGN_PFX_BASE64, WINDOWS_SIGN_PFX_PASSWORD and WINDOWS_MSIX_PUBLISHER (the
+      # certificate subject) set, the MSIX is signed; without them it ships unsigned.
+      CODEX_GPUI_SIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
+      CODEX_GPUI_MSIX_PUBLISHER: ${{ secrets.WINDOWS_MSIX_PUBLISHER }}
+      PFX_BASE64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Decode the signing certificate
+        if: ${{ env.PFX_BASE64 != '' }}
+        shell: pwsh
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'codex-gpui.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
+          "CODEX_GPUI_SIGN_PFX=$pfx" >> $env:GITHUB_ENV
+      - name: Build the MSIX
+        shell: pwsh
+        run: tools/package-windows.ps1 dist
+      - name: Attach it to the release
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.msix
   linux-x86_64:
     # The AppImage self-updates from latest.json, which is signed with an Ed25519 key.
     # Without the three secrets below the release ships no Linux build.

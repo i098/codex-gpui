@@ -7,6 +7,9 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Save panic reports with a backtrace to `last-crash.txt` in the user data directory, and prefill the feedback dialog with the last crash on the next launch.
+
+- Add Windows sandbox readiness, setup actions, and completion feedback on Home.
 - Drag existing files from the Changes file list and workspace file tree to other apps with their native file icon.
 - Show the New Window, Full view, Browser, and Send Feedback actions in the native menu.
 - Add a `newWindow` action that opens a new primary window on Home.
@@ -22,20 +25,29 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Open the Maps page from the Explore menu: the ChatGPT backend `/local/home` prompt suggestions and map, with loading, error with Try again, and empty states.
 - Store app state, host settings, notification sounds and the QA profile in the per-OS user data directory (`%APPDATA%` on Windows, XDG config on Linux).
 - Add `Toggle Git blame` to the command menu: the file viewer shows the author, commit summary, short SHA and date for the active (clicked or cited) line from the host's `git blame`.
+- Show `Queue paused because you interrupted` with `Resume` over a queue that an interrupted turn left, and ask to clear the queue or keep it when a new message is sent.
 - List installed plugins in the `@` mention list's `Plugins` section, with `Loading plugins...` while `plugin/list` runs; a picked plugin becomes a chip and sends `[@name](plugin://id)`.
+- List matching chats in a `Chats` section of the `@` mention list from `thread/search`, and let a sidebar chat dragged onto the composer show `Drop to reference chat`. A chat chip sends its id under `## Referenced chats with Codex:`.
 - Check for updates in the background every hour, send the original's appcast parameters (installation id, architecture, version, beta, macOS version and plan), and add a `Beta updates` setting.
+- Send the `ultrafast` service tier when the `Speed` submenu or `/ultrafast` picks Ultrafast, and show Ultrafast as the current speed.
 - Block sending images with a model whose `inputModalities` has no `image`, with the original's `Remove images or switch models to send this message`.
+- Package Windows builds as an MSIX that registers the `codex:` protocol through `tools/package-windows.ps1`, signed when a certificate secret is set, and attach it to the GitHub release.
+- Add the `Toggle rich preview` button to the standalone diff window header.
 - Release the macOS bundle as one universal (arm64 and Intel) zip.
 - Build the Linux app with the Wayland and X11 window backends, and smoke-open the primary window in CI.
 - Publish a signed Sparkle `appcast.xml` and SHA-256 checksum with each release, and add an Automatically check for updates switch to General settings.
+- Install newer macOS releases in the background after the feed check, verify the checksum and app signature, keep the previous app, and relaunch without focus.
 - Add `/memories` and its `Chat memories` dialog while the `memories` feature is on: `Generate memories` sets the open chat's memory mode with `thread/memoryMode/set`, and on Home both switches apply to the next chat.
 - Show `$…$` and `$$…$$` math in agent answers as Unicode math text, with display math centered on its own line; copying a selection keeps the TeX source.
 - Package Linux builds as a `.deb` and an AppImage with a `codex://` URL handler through `tools/package-linux.sh`, and attach both to the GitHub release.
+- Make the model picker's `Reset to default` remove the `model` and `model_reasoning_effort` overrides from `config.toml` and select the recommended model.
 - Self-update the Linux AppImage from a signed `latest.json` release manifest: check every 6 hours, verify SHA-256 and Ed25519, then swap the file and relaunch on install.
+- Open a site's details from its Sites row (`/sites/:projectId`, `GET /websites/{project_id}`), with `Visit`, `Edit` (a new chat that mentions the site) and `Sites` back.
 - Add named permission profiles, per-category approval settings, writable folder selection, automatic review notices, and `/approve` for one denied retry.
 - Restrict human-only approval cards to the server's offered one-time decisions.
 - Send browser annotations with the next turn under `# Browser comments:`, after the diff comments and with the same comment numbers as the original app.
 - Switch the sidebar and Home with the ChatGPT and Work modes: the ChatGPT wordmark, the account's ChatGPT conversations in Recents from `GET /conversations`, the `Chat | Work` tabs, and the Chat or Work headline and composer placeholder.
+- Annotate PDF and image previews in Changes: click a point or drag a region, comment on it, and send the batch with Send or Cmd+Enter as one `artifact-direct-comment` turn.
 - Open an in-app browser tab in the thread side panel with ⌘T or a link's `Open in` ▸ `New tab`: an address bar (URL, host or web search) over a real WKWebView page, with the page title as the tab label.
 - Keep file change cards after Undo and add Reapply through the host Git worker, without changing conversation history.
 - Add a background macOS check for minimize, zoom, hide, quit, and the 480×600 window minimum, with safe call-level checks for Hide Others and Show All.
@@ -44,10 +56,13 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Wire the Recents row context menu: Section (with custom sections and New section…), Fork chat, Copy deeplink, Copy as Markdown, Copy working directory, Open in new window, and Permanently delete with its `Delete task?` confirmation.
 - Prove that the rail `Code Review` item opens the Code Review page with a native flow test.
 - Keep refused follow-up messages in the queue tray with Retry, preserving their input, chat, draft and local row actions.
+- Manage plugin sharing: set discoverability, edit access targets, copy the share link, update a shared version, and unshare.
 - Start normal chats and forks in managed worktrees, retain the selected checkout, and fork selected turns with the server's history boundary.
 - Run explicit `!` shell commands in Full access chats after a native warning confirmation; keep sandboxed drafts disabled and separate from the terminal panel.
 - Add plan mode: `/plan-mode`, the `@` menu row and the footer `Plan` chip turn it on and off, turns send the `plan` collaboration mode, a resumed chat keeps it, and plan text and step progress show in the chat. Restore an edited queued message's place across every queue page.
+- Notify ordinary chat completion, approval requests, and questions with the saved focus, alert, and sound preferences.
 - Open Space (`/space`) from the rail: the account's Spaces from `GET /spaces/v2`, with search, empty, no-match, and `Could not load spaces` / `Try again` states.
+- Add `/goal` controls to set, inspect, pause, resume, and clear a chat goal, plus per-thread `/memory` controls.
 - Show `Unable to send message` with the reason and `OK` when a composer submit waits for file uploads.
 - Draw the 2 px keyboard focus ring on the mobile setup buttons.
 - Draw the 2 px keyboard focus ring on the diff card's `Undo` and `View changes` buttons in a chat.
@@ -62,6 +77,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add working Notifications settings: system permission, turn mode, alert switches, sound with import and preview, and ChatGPT channels.
 - Show the crash page with Try again when the app-server cannot start, and keep unsent composer drafts when Try again restarts it.
 - Show scheduled previous runs with saved read state, mark-all-as-read, and confirmed bulk archive with partial-failure reporting.
+- Preview remote plugin skills from server markdown and reconcile plugin suggestions when connectors connect.
 - Add the native `File` > `New Project…` form with a name, marker, ordered source folders, and a device picker.
 - A contributing guide, issue and pull request templates, a security policy, and this changelog.
 - Add one workspace version, a version bump script, and a tag release workflow that publishes the macOS arm64 zip.
@@ -73,6 +89,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add the native Security workbench for scans, repository history, finding triage, remediation, and source viewing.
 - Add Settings > Connections with saved SSH hosts, SSH discovery, remote-control setup, and `codex://settings/connections/<tab>` deep links.
 - Add the searchable General `Language` menu, which saves `desktop.localeOverride` and clears it with `Auto detect`.
+- Localize native menus using the selected app language or the system locale.
 - Add the Git settings page controls and the Worktrees settings page with General and Environments tabs, saved worktree preferences, and local environment editing.
 - Show the Plugins and Skills directories in the original `Customize` sidebar, with the original header, scope pills, and two-column skill rows.
 - Add the Cloud environment UI with repository selection and saved setup flows
@@ -81,15 +98,22 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Restore `View` > `Toggle Bottom Panel` and `View` > `Open Terminal` in the macOS menu bar, in the original order.
 
 ### Fixed
+- Open and close the thread's activity groups, reasoning, MCP and command rows over the original's 300 ms `ease-enter` height and opacity track, instead of at once.
 - Put the site's favicon before an external markdown link, with the original's globe until the image loads, and fetch remote images such as favicons and avatars over HTTP.
+- Match the original fill, text size and padding of the Appearance theme, accent and font pickers.
 - Use the original's compact 44 px rows in the Appearance theme cards.
 - Show the text overflow icon on a code block's `Enable word wrap` button, and the wrap icon only while wrap is on, as the original does.
 - Show the Appearance theme picker's Codex themes in a `Codex themes` flyout submenu beside `ChatGPT`, with 24 px theme icons, as the original does.
 - Fold a running turn's interim messages under `Working for` once its final answer starts, as the original does.
+- Match the original `Work in` menu: the `Work in` label, row icons, `Cloud` above `Remote`, the 280 px width and position, and `New worktree` only while a project is selected.
+- Show `Mark as unread` in the Search palette only while a chat is open, as the original does; Home no longer lists it.
 - Show tool activity labels in full when they fit, as the original does, instead of `Read math....`.
+- Show the original's two rows in the `Codex ⌄` mode menu, `ChatGPT` and `Codex` with their descriptions and no shortcut text, and fill the trigger while the menu is open.
 - Keep the macOS window buttons centred in the top bar at every zoom level, as the original does; they stayed at the 100% position.
 - Use the original icons in the composer `+` menu: the gray paperclip, folder, target, light bulb and green scribble.
+- Show the original slash menu icons for Goal, MCP, Model, Pet, Plan mode, Reasoning, Sketch and Ultrafast, and a right chevron on the commands that open a submenu.
 - Show reads of a skill's `SKILL.md` as `Loaded a tool` or `Loaded tools` with the wrench icon in the activity group summary, as the original does.
+- Show the `menu` vibrancy material behind the rail, titlebar and sidebar of the focused macOS main window, as the original app does, and keep the opaque surface while the window is not focused.
 - Raster moving shapes about twice as fast and remove GPUI's 30 fps cap on unfocused windows, so the sidebar animation runs at 87–107 fps after its first toggle (was 35–54).
 - Ignore app list updates while the Plugins page is loading, so large account catalogs can finish loading.
 - Connect MCP and skill commands to the existing settings and mention actions, and refresh skill lists after changes.
