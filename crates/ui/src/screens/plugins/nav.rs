@@ -1,5 +1,5 @@
-//! The Customize sidebar of the Plugins and Skills pages: the title, search and the two
-//! directories. The original's `Installed` apps section is not ported yet.
+//! The Customize sidebar of the Plugins and Skills pages: the title, search, the two
+//! directories and the `Installed` plugins from `plugin/list`.
 
 use super::*;
 use crate::focus;
@@ -11,7 +11,8 @@ pub struct Nav {
 }
 
 impl Nav {
-    pub fn new(page: Entity<Page>) -> Self {
+    pub fn new(page: Entity<Page>, cx: &mut Context<Self>) -> Self {
+        cx.observe(&page, |_, _, cx| cx.notify()).detach();
         Self { page }
     }
 
@@ -33,6 +34,7 @@ impl Nav {
                 .role(gpui::Role::Button)
                 .aria_label(label.clone())
                 .h(px(30.))
+                .flex_none()
                 .flex()
                 .items_center()
                 .gap(px(8.))
@@ -85,6 +87,50 @@ impl Nav {
             }
         })
     }
+
+    /// The original's `Installed` sidebar group: every installed, visible plugin; a row opens it.
+    fn installed(&self, window: &mut Window, cx: &mut Context<Self>) -> Vec<Stateful<Div>> {
+        let installed: Vec<_> = self
+            .page
+            .read(cx)
+            .data
+            .plugins
+            .value()
+            .into_iter()
+            .flatten()
+            .flat_map(|market| &market.plugins)
+            .filter(|plugin| plugin.installed() && plugin.visible())
+            .cloned()
+            .collect();
+        installed
+            .into_iter()
+            .map(|plugin| {
+                let page = self.page.clone();
+                let key_page = page.clone();
+                let selected = plugin.clone();
+                let key_selected = plugin.clone();
+                self.row(
+                    format!("customize-installed-{}", plugin.id()).into(),
+                    plugin.title().to_owned().into(),
+                    "plugins",
+                    false,
+                    window,
+                    cx,
+                )
+                .on_click(move |_, _, cx| {
+                    page.update(cx, |page, cx| page.act(Action::Read(selected.clone()), cx))
+                })
+                .on_key_down(move |event: &KeyDownEvent, _, cx| {
+                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                        key_page.update(cx, |page, cx| {
+                            page.act(Action::Read(key_selected.clone()), cx)
+                        });
+                        cx.stop_propagation();
+                    }
+                })
+            })
+            .collect()
+    }
 }
 
 impl Render for Nav {
@@ -92,6 +138,7 @@ impl Render for Nav {
         let t = cx.theme().clone();
         let search = focus::handle("customize-search", 0, window, cx);
         let page = self.page.clone();
+        let installed = self.installed(window, cx);
         div()
             .size_full()
             .flex()
@@ -143,7 +190,20 @@ impl Render for Nav {
                     .px(px(8.))
                     .gap(px(1.))
                     .child(self.directory(Tab::Plugins, "sidebar-cmd-plugins", window, cx))
-                    .child(self.directory(Tab::Skills, "customize-skills", window, cx)),
+                    .child(self.directory(Tab::Skills, "customize-skills", window, cx))
+                    .when(!installed.is_empty(), |nav| {
+                        nav.child(
+                            div()
+                                .mt(px(16.))
+                                .px(px(8.))
+                                .h(px(30.))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .child(text("Installed", 13., 18., 430., t.text_tertiary)),
+                        )
+                        .children(installed)
+                    }),
             )
     }
 }
