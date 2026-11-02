@@ -57,6 +57,14 @@ const STATES = {
     await d.click(row("Add a subtract"));
     await d.waitFor(`document.body.innerText.includes("Worked for") && document.body.innerText.includes("View changes")`, "subtract thread");
   },
+  // The subtract thread with s015's first command approval request pending in the composer.
+  "thread-approval": async (d) => {
+    await STATES.thread(d);
+    await d.click(`document.querySelector(".ProseMirror")`, "composer");
+    const data = JSON.parse(read("../../refs/interactions/s015.json")).steps[8].message;
+    await d.evaluate(`window.dispatchEvent(new MessageEvent("message", { data: ${JSON.stringify(data)} }))`);
+    await d.waitFor(`document.body.innerText.includes("Allow once")`, "approval card");
+  },
   // The subtract thread with its `Worked for` activity expanded, then its tool summary row too.
   "thread-worked": async (d) => {
     await STATES.thread(d);
@@ -96,6 +104,11 @@ const STATES = {
     await d.type("Refactor src/math.py");
     await d.click(`[...document.querySelectorAll("button")].find((b) => b.offsetParent !== null && b.innerText.trim().startsWith("GPT-6 Astra"))`, "model picker");
     await d.waitFor(`document.querySelector("[role=menu]")`, "model menu");
+  },
+  // The sidebar's `Switch mode` dropdown (ChatGPT / Codex).
+  "mode-menu": async (d) => {
+    await d.click(`[...document.querySelectorAll("button")].find((b) => b.offsetParent !== null && (b.getAttribute("aria-label") || "").startsWith("Switch mode"))`, "mode switch");
+    await d.waitFor(`document.querySelector("[role=menu]")`, "mode menu");
   },
   diff: async (d) => {
     await STATES.thread(d);
