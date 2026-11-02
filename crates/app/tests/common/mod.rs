@@ -673,6 +673,33 @@ pub fn script(session: Option<&str>, edit: fn(&mut Value)) -> Result<Vec<Value>>
             lines.push(v);
         }
     }
+    // The app opens a chat with a header read and a newest-first turns page; the recording
+    // holds the original's single full read. Exact params: the replay otherwise answers in
+    // recording order per method.
+    let threads: Vec<Value> = lines
+        .iter()
+        .filter_map(|l| l.pointer("/msg/result/thread"))
+        .filter(|t| t["turns"].is_array())
+        .cloned()
+        .collect();
+    for mut thread in threads {
+        let id = thread["id"].clone();
+        let mut turns = thread["turns"].take();
+        thread["turns"] = json!([]);
+        let mut read = exchange("thread/read", json!({ "thread": thread }));
+        read[0]["msg"]["params"] = json!({"threadId": id, "includeTurns": false});
+        turns.as_array_mut().expect("turns").reverse();
+        let mut page = exchange(
+            "thread/turns/list",
+            json!({"data": turns, "nextCursor": null}),
+        );
+        page[0]["msg"]["params"] = json!({
+            "threadId": id, "cursor": null, "limit": 10,
+            "itemsView": "full", "sortDirection": "desc",
+        });
+        lines.extend(read);
+        lines.extend(page);
+    }
     Ok(lines)
 }
 

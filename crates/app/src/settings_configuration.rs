@@ -31,7 +31,7 @@ pub(super) fn attach(
 
 /// `config/read` with layers on this window's host. `open` then opens the user layer's
 /// file, the one native settings write, rather than a locally guessed `$CODEX_HOME`.
-fn read_layers(root: &mut Root, open: bool, cx: &mut Context<Root>) {
+pub(crate) fn read_layers(root: &mut Root, open: bool, cx: &mut Context<Root>) {
     let bridge = root.bridge.clone();
     let host = (root.host_id != "local").then(|| root.host_id.clone());
     cx.spawn(async move |this, cx| {

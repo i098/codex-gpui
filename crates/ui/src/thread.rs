@@ -6,7 +6,9 @@
 //! User-message controls appear on hover or focus without moving the transcript.
 //! Copy writes plain text and HTML on macOS and shows a checkmark for 1500 ms.
 //! Answer text is selectable by drag (`thread/select.rs`); `Copy` writes the selection.
-//! Find searches user and agent messages, including collapsed activity, without server requests.
+//! Find searches user and agent messages, including collapsed activity. While older turns are
+//! unloaded, the app asks `thread/searchOccurrences` and pages them in until the matches show.
+//! Opening loads the newest page of turns; `Load earlier messages` fetches the one before.
 //! The last text message opens an inline editor. Send reverts that turn before resending it.
 //! Response copy adds HTML. Response actions use the shared delayed tooltip.
 //! A failed resume or revert leaves the draft open and shows `Failed to edit message`.
@@ -79,6 +81,34 @@ pub struct OpenAutomationCard {
 }
 
 impl gpui::EventEmitter<OpenAutomationCard> for ThreadView {}
+
+/// The `Load earlier messages` row was pressed (or find needs older turns).
+pub struct LoadOlderTurns;
+
+impl gpui::EventEmitter<LoadOlderTurns> for ThreadView {}
+
+/// The realtime voice session shown under the transcript.
+pub struct VoiceCard {
+    pub status: SharedString,
+    /// Starting or live: the card offers `End voice chat`; otherwise `Dismiss`.
+    pub live: bool,
+    pub lines: Vec<VoiceLine>,
+}
+
+pub struct VoiceLine {
+    pub user: bool,
+    pub text: SharedString,
+}
+
+/// The voice card's end or dismiss button was pressed.
+pub struct EndVoice;
+
+impl gpui::EventEmitter<EndVoice> for ThreadView {}
+
+/// The find query changed while older turns are unloaded: ask the server where it occurs.
+pub struct SearchHistory(pub String);
+
+impl gpui::EventEmitter<SearchHistory> for ThreadView {}
 
 use items::{activity, cache_automation_result, diff_card, disclosure, user_bubble, wrap_row};
 use markdown::{markdown, tones};
@@ -230,6 +260,12 @@ pub struct ThreadView {
     /// press that focuses it).
     press_focus: Option<gpui::FocusHandle>,
     find: Option<FindState>,
+    /// `thread/turns/list` cursor of the turns before `turns`; `None` once all are loaded.
+    older_cursor: Option<String>,
+    loading_older: bool,
+    voice: Option<VoiceCard>,
+    /// The turn that stays put when older turns are prepended, and its top in the viewport.
+    older_anchor: Rc<RefCell<Option<(String, Pixels)>>>,
     /// The link menu (`menu.rs`): `subject` is the right-clicked link.
     menu: Option<menu::ContextMenu>,
     context_image: Option<crate::image_context::ImageContext>,
@@ -726,6 +762,10 @@ impl ThreadView {
             carets: Carets::default(),
             press_focus: None,
             find: None,
+            older_cursor: thread.older_cursor,
+            loading_older: false,
+            voice: None,
+            older_anchor: Rc::default(),
             menu: None,
             context_image: None,
         }
@@ -745,6 +785,109 @@ impl ThreadView {
 
     pub fn id(&self) -> &str {
         &self.thread_id
+    }
+
+    pub fn set_voice(&mut self, voice: Option<VoiceCard>, cx: &mut Context<Self>) {
+        self.voice = voice;
+        cx.notify();
+    }
+
+    fn voice_card(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
+        let voice = self.voice.as_ref()?;
+        let t = cx.theme().clone();
+        let button = recovery::retry_button(
+            "end-voice",
+            if voice.live {
+                "End voice chat"
+            } else {
+                "Dismiss"
+            },
+            window,
+            cx,
+        )
+        .on_click(cx.listener(|_, _, _, cx| cx.emit(EndVoice)));
+        let lines = voice.lines.iter().map(|line| {
+            let who = if line.user { "You" } else { "Codex" };
+            text(format!("{who}: {}", line.text), 14., 21., 400., t.text)
+        });
+        Some(
+            div()
+                .mx_auto()
+                .w_full()
+                .max_w(CONTENT_MAX_WIDTH)
+                .px(px(16.))
+                .pb(px(12.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .p(px(12.))
+                        .rounded(Theme::RADIUS_XL_BASE)
+                        .border_1()
+                        .border_color(t.border)
+                        .bg(t.surface_secondary)
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(text(voice.status.clone(), 14., 21., 500., t.text_secondary))
+                                .child(button),
+                        )
+                        .children(lines),
+                ),
+        )
+    }
+
+    pub fn has_turn(&self, id: &str) -> bool {
+        self.turns.iter().any(|turn| turn.id == id)
+    }
+
+    /// The cursor to fetch the next older page with, once; `None` while one is in flight.
+    pub fn begin_older(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        if self.loading_older {
+            return None;
+        }
+        let cursor = self.older_cursor.clone()?;
+        self.loading_older = true;
+        cx.notify();
+        Some(cursor)
+    }
+
+    /// Adds a fetched older page above the loaded turns without moving what is on screen.
+    pub fn prepend_turns(
+        &mut self,
+        mut turns: Vec<Turn>,
+        cursor: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        for item in turns.iter_mut().flat_map(|turn| &mut turn.items) {
+            cache_automation_result(item);
+        }
+        if let Some(first) = self.turns.first() {
+            let top = self
+                .laid_out
+                .borrow()
+                .turns
+                .get(&first.id)
+                .map(|&(top, _)| top);
+            *self.older_anchor.borrow_mut() =
+                top.map(|top| (first.id.clone(), top + self.scroll.offset().y));
+        }
+        turns.append(&mut self.turns);
+        self.turns = turns;
+        self.older_cursor = cursor;
+        self.loading_older = false;
+        if let Some(find) = &mut self.find {
+            find.dirty = true;
+        }
+        cx.notify();
+    }
+
+    pub fn older_failed(&mut self, cx: &mut Context<Self>) {
+        self.loading_older = false;
+        cx.notify();
     }
 
     /// The thread's working directory, as the server reports it.
@@ -911,6 +1054,10 @@ impl ThreadView {
         let cursor = find.selection.start + text.len();
         find.selection = cursor..cursor;
         find.dirty = true;
+        let query = find.query.trim().to_owned();
+        if self.older_cursor.is_some() && !query.is_empty() {
+            cx.emit(SearchHistory(query));
+        }
         cx.notify();
     }
 
@@ -2640,6 +2787,7 @@ impl Render for ThreadView {
             .as_ref()
             .map(|find| (find.target.clone(), find.scroll_pending.clone()));
         let view_id = cx.entity().entity_id();
+        let older_anchor = self.older_anchor.clone();
         let measure = move |bounds: Vec<Bounds<Pixels>>, window: &mut Window, cx: &mut App| {
             let origin = scroll.bounds().top() + scroll.offset().y;
             let width = bounds.first().map_or(px(0.), |b| b.size.width);
@@ -2668,6 +2816,14 @@ impl Render for ThreadView {
                 .zip(&bounds)
                 .map(|(id, b)| (id.clone(), (b.top() - origin, b.size.height)))
                 .collect();
+            if let Some((id, viewport_top)) = older_anchor.borrow_mut().take()
+                && let Some(&(top, _)) = l.turns.get(&id)
+            {
+                let mut offset = scroll.offset();
+                offset.y = (viewport_top - top).clamp(-scroll.max_offset().y, px(0.));
+                scroll.set_offset(offset);
+                window.defer(cx, move |_, cx| cx.notify(view_id));
+            }
             if let Some((target, pending)) = &find_scroll
                 && pending.replace(false)
                 && let Some((layout, index)) = target.borrow().as_ref()
@@ -2877,6 +3033,22 @@ impl Render for ThreadView {
                             .size_0(),
                     )
                     .children(tracker)
+                    .children(self.older_cursor.is_some().then(|| {
+                        let label = if self.loading_older {
+                            "Loading earlier messages"
+                        } else {
+                            "Load earlier messages"
+                        };
+                        div().mx_auto().max_w(CONTENT_MAX_WIDTH).pb(px(12.)).child(
+                            recovery::retry_button("load-older", label, window, cx).on_click(
+                                cx.listener(|view, _, _, cx| {
+                                    if !view.loading_older {
+                                        cx.emit(LoadOlderTurns);
+                                    }
+                                }),
+                            ),
+                        )
+                    }))
                     .child(
                         div()
                             .mx_auto()
@@ -2896,6 +3068,7 @@ impl Render for ThreadView {
                             .children(turns)
                             .on_children_prepainted(measure),
                     )
+                    .children(self.voice_card(window, cx))
                     // Room for the docked composer.
                     .child(div().h(px(114.)))
                     .child(top_fade),
@@ -3054,6 +3227,7 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::CommandExecution { id, .. }
         | ThreadItem::McpToolCall { id, .. }
         | ThreadItem::FileChange { id, .. }
+        | ThreadItem::DynamicToolCall { id, .. }
         | ThreadItem::ContextCompaction { id }
         | ThreadItem::WebSearch { id, .. }
         | ThreadItem::EnteredReviewMode { id, .. }

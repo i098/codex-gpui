@@ -237,9 +237,8 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "findInThread" => Box::new(FindInThread),
         "copyDeeplink" => Box::new(shortcuts::CopyDeeplink),
         "copyLastCodeBlock" => Box::new(shortcuts::CopyLastCodeBlock),
-        "copyWorkingDirectory" | "copyConversationPath" => {
-            Box::new(super::copy_directory::CopyWorkingDirectory)
-        }
+        "copyWorkingDirectory" => Box::new(super::copy_directory::CopyWorkingDirectory),
+        "copyConversationPath" => Box::new(super::copy_directory::CopyConversationPath),
         "composer.submit" => Box::new(ui::composer::Submit),
         "composer.submitInBackground" => Box::new(ui::composer::SubmitInBackground),
         id => {
