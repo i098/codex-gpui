@@ -22,8 +22,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bridge::Event;
 use bridge::types::{
-    AgentMessageDeltaNotification, CommandAction, FileUpdateChange, ItemNotification, Thread,
-    ThreadItem, Turn, TurnNotification, TurnStatus, UserInput,
+    AgentMessageDeltaNotification, CommandAction, FileUpdateChange, HookNotification, HookRun,
+    ItemNotification, Thread, ThreadItem, Turn, TurnNotification, TurnStatus, UserInput,
 };
 use gpui::{
     Action, AnyView, App, Bounds, ClipboardItem, Context, Corners, Div, FontWeight, Hsla,
@@ -47,6 +47,8 @@ mod actions;
 mod context;
 #[path = "thread/header.rs"]
 mod header;
+#[path = "thread/hook_stats.rs"]
+pub(crate) mod hook_stats;
 #[path = "thread/items.rs"]
 mod items;
 #[path = "thread/markdown.rs"]
@@ -63,6 +65,7 @@ pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
 pub use actions::{EditMessage, ForkThread, PatchTurn, RevertTurn, ThreadPressed};
 use actions::{TurnFocus, action_row};
+pub use hook_stats::{HookStats, OpenHookStats};
 pub enum GitAction {
     Refresh,
     OpenForm,
@@ -208,6 +211,8 @@ pub struct ThreadView {
     manual_compacted: HashSet<String>,
     /// The latest `turn/plan/updated` steps of each turn: `(step, status)`.
     todo_plans: HashMap<String, Vec<(String, String)>>,
+    /// Each turn's `hook/started` and `hook/completed` runs.
+    hook_runs: HashMap<String, Vec<HookRun>>,
     patch_output: HashMap<String, String>,
     /// A turn's `Undo`, `View changes`, copy and fork focus handles. They belong to the view,
     /// not to its place in the element tree: the view moves when a side panel opens, and a
@@ -714,6 +719,7 @@ impl ThreadView {
             manual_compactions: 0,
             manual_compacted: HashSet::new(),
             todo_plans: HashMap::new(),
+            hook_runs: HashMap::new(),
             patch_output: HashMap::new(),
             turn_focus: RefCell::default(),
             mcp_images: RefCell::default(),
@@ -1752,6 +1758,12 @@ impl ThreadView {
                     aggregated_output.get_or_insert_default().push_str(stdin);
                 }
             }
+            "hook/started" | "hook/completed" => {
+                let Ok(n) = serde_json::from_value::<HookNotification>(params.clone()) else {
+                    return;
+                };
+                hook_stats::upsert(self.hook_runs.entry(n.turn_id).or_default(), n.run);
+            }
             "turn/started" | "turn/completed" => {
                 let Ok(mut n) = serde_json::from_value::<TurnNotification>(params.clone()) else {
                     return;
@@ -2250,9 +2262,13 @@ impl ThreadView {
             let hover = cx.listener(|view, hovered: &bool, _, _| {
                 view.turn_menu_trigger_hovered = *hovered;
             });
+            let hooks = self
+                .hook_runs
+                .get(&turn.id)
+                .and_then(|runs| HookStats::new(runs));
             return col.when(!self.embedded, |col| {
                 col.child(action_row(
-                    last, &group, answer, sent_at, menu, toggle, hover, &focus, t,
+                    last, &group, answer, sent_at, menu, toggle, hover, hooks, &focus, t,
                 ))
             });
         }

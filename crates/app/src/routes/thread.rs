@@ -232,6 +232,12 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     }))
     .on_action(cx.listener(|this, a: &RevertTurn, window, cx| this.revert(a.0.clone(), window, cx)))
     .on_action(cx.listener(
+        |this, a: &ui::screens::thread::view::OpenHookStats, window, cx| {
+            let dialog = cx.new(|cx| Dialog::hook_stats(a.0.clone(), cx));
+            this.show_dialog(dialog, window, cx);
+        },
+    ))
+    .on_action(cx.listener(
         |this, action: &ui::screens::thread::view::PatchTurn, _, cx| {
             this.patch_turn(action, cx);
         },
