@@ -1069,19 +1069,98 @@ impl Page {
                     let url = url.clone();
                     content = content.child(button("Copy link", t.text_alpha_5, None, &t).id("copy-share-link")
                         .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(url.clone()))));
+                    content = content.child(self.action_button(
+                        "update-shared-version",
+                        "Update shared version",
+                        Action::UpdateSharedVersion(plugin.clone()),
+                        true,
+                        window,
+                        cx,
+                    ));
+                    content = content.child(text("Discoverability", 14., 20., 500., t.text));
+                    for discoverability in ["PRIVATE", "UNLISTED", "LISTED"] {
+                        let selected = self.share_discoverability == discoverability;
+                        content = content.child(
+                            button(
+                                discoverability,
+                                if selected {
+                                    t.surface_secondary
+                                } else {
+                                    t.text_alpha_5
+                                },
+                                None,
+                                &t,
+                            )
+                            .id(format!("share-discoverability-{discoverability}"))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.share_discoverability = discoverability.to_owned();
+                                cx.notify();
+                            })),
+                        );
+                    }
+                    content =
+                        content.child(text("People and teams with access", 14., 20., 500., t.text));
+                    for (index, target) in self.share_targets.iter().enumerate() {
+                        let label = target["name"]
+                            .as_str()
+                            .unwrap_or("Unknown target")
+                            .to_owned();
+                        content = content.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(text(label, 13., 18., 400., t.text_secondary))
+                                .child(
+                                    button("Remove", t.text_alpha_5, None, &t)
+                                        .id(format!("remove-share-target-{index}"))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            if index < this.share_targets.len() {
+                                                this.share_targets.remove(index);
+                                                cx.notify();
+                                            }
+                                        })),
+                                ),
+                        );
+                    }
+                    if self.pending {
+                        content = content.child(text("Loading access settings…", 13., 18., 400., t.text_secondary));
+                    }
+                    if let Some(error) = &self.error {
+                        content = content.child(text(error.clone(), 13., 18., 400., t.text_secondary));
+                    }
+                    content = content.child(self.action_button(
+                        "delete-share",
+                        "Unshare",
+                        Action::DeleteShare(plugin.clone()),
+                        true,
+                        window,
+                        cx,
+                    ));
+                    let update = self.error.is_none().then(|| {
+                        ("Save access", Action::UpdateShareTargets(plugin.clone()), true)
+                    });
+                    (format!("Share {}", plugin.title()), content.into_any_element(), update)
                 } else {
                     content = content.child(self.action_button("create-share-link", "Copy link",
                         Action::CreateShare(plugin.clone()), true, window, cx));
+                    (format!("Share {}", plugin.title()), content.into_any_element(), None)
                 }
-                let update = self.share_url.as_ref().map(|_| ("Update shared version",
-                    Action::UpdateSharedVersion(plugin.clone()), true));
-                (format!("Share {}", plugin.title()), content.into_any_element(), update)
             }
-            Modal::Skill(skill) => (string(skill, "name").to_owned(),
-                div().flex().flex_col().gap(px(12.))
-                    .child(text(string(skill, "description").to_owned(), 14., 20., 400., t.text_secondary).whitespace_normal())
-                    .child(div().h(px(360.)).children(self.skill_file.clone())).into_any_element(),
-                Some(("Open", Action::OpenSkill(string(skill, "path").to_owned()), true))),
+            Modal::Skill(skill) => {
+                let open_action = if is_remote_skill(skill) {
+                    None
+                } else {
+                    Some(("Open", Action::OpenSkill(string(skill, "path").to_owned()), true))
+                };
+                (
+                    string(skill, "name").to_owned(),
+                    div().flex().flex_col().gap(px(12.))
+                        .child(text(string(skill, "description").to_owned(), 14., 20., 400., t.text_secondary).whitespace_normal())
+                        .child(div().h(px(360.)).children(self.skill_file.clone())).into_any_element(),
+                    open_action,
+                )
+            }
             Modal::Connect(app) => (format!("Connect {}", string(app, "name")),
                 text(string(app, "description").to_owned(), 14., 20., 400., t.text_secondary).into_any_element(),
                 Some(("Connect", Action::ConnectApp(app.clone()), true))),
@@ -1170,8 +1249,28 @@ fn skill_description(skill: &Value) -> &str {
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| string(skill, "description"))
 }
+fn is_remote_skill(skill: &Value) -> bool {
+    skill
+        .get("remotePluginSkill")
+        .is_some_and(|remote| !remote.is_null())
+        || !skill["remotePluginId"].is_null()
+        || !skill["remoteMarketplaceName"].is_null()
+}
 
 #[cfg(test)]
+#[test]
+fn remote_skills_do_not_offer_local_open_action() {
+    assert!(is_remote_skill(
+        &serde_json::json!({"remotePluginSkill": {"remotePluginId": "remote"}})
+    ));
+    assert!(is_remote_skill(
+        &serde_json::json!({"remotePluginId": "remote-plugin"})
+    ));
+    assert!(!is_remote_skill(
+        &serde_json::json!({"path": "/tmp/SKILL.md"})
+    ));
+}
+
 #[test]
 fn skill_titles_fall_back_to_title_cased_names() {
     let title = |name: &str| skill_title(&serde_json::json!({ "name": name }));
