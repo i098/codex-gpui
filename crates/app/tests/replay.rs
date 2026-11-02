@@ -446,6 +446,7 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
                 Route::Onboarding(page) => page.path().trim_start_matches('/').to_owned(),
                 Route::Sites => "sites".to_owned(),
                 Route::Maps => "maps".to_owned(),
+                Route::Site(id) => format!("sites/{id}"),
                 Route::Images => "images".to_owned(),
                 Route::Gpts(None) => "gpts".to_owned(),
                 Route::Gpts(Some(id)) => format!("g/{id}"),
