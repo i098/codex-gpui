@@ -7,6 +7,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Settings ▸ `Filter settings by host`: while a remote host is connected, a dropdown beside the Settings title picks the host whose `config.toml` the Configuration page reads and writes.
+- Add the internal debug panel on Ctrl+D or Help ▸ `Show Local Trace` with build revision, trace state and uptime, and Help ▸ `Start Performance Trace` to toggle trace recording.
 - Forward a second launch's deep links and supported paths to the running Linux or Windows app, then focus its window.
 - Write a rotating `logs/app.log` in the user data directory, mirror app diagnostics into it, and add `Export logs` that saves the last three logs as a zip.
 - Show the signed-in account in the profile menu (the ChatGPT email, or `Logged in with API key`) and add `Add account` / `Sign in with ChatGPT`, which opens the sign-in screen with `Cancel` to keep the current account.
@@ -33,6 +35,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Show `Queue paused because you interrupted` with `Resume` over a queue that an interrupted turn left, and ask to clear the queue or keep it when a new message is sent.
 - List installed plugins in the `@` mention list's `Plugins` section, with `Loading plugins...` while `plugin/list` runs; a picked plugin becomes a chip and sends `[@name](plugin://id)`.
 - Add `Sketch` to `/` and `@`: a drawing canvas over the composer that attaches the drawing as a PNG image.
+- Add the sidebar project row menu (`...` button or right-click): `Pin`/`Unpin` (pinned projects list first), `Mark all as read` and `Archive chats` next to the existing `Edit`, `Move up` and `Remove project`.
 - Route plugin, skill, MCP app, and pet-install deep links to their native pages.
 - Route shared-thread, ChatGPT, browser, Space, and Codex app links to native destinations.
 - List matching chats in a `Chats` section of the `@` mention list from `thread/search`, and let a sidebar chat dragged onto the composer show `Drop to reference chat`. A chat chip sends its id under `## Referenced chats with Codex:`.
@@ -57,6 +60,10 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Package Linux builds as a `.deb` and an AppImage with a `codex://` URL handler through `tools/package-linux.sh`, and attach both to the GitHub release.
 - Make the model picker's `Reset to default` remove the `model` and `model_reasoning_effort` overrides from `config.toml` and select the recommended model.
 - Self-update the Linux AppImage from a signed `latest.json` release manifest: check every 6 hours, verify SHA-256 and Ed25519, then swap the file and relaunch on install.
+- Start a text realtime voice chat on the open thread (`thread/realtime/start`, `appendText`, `stop`) with a transcript card and error and closed states.
+- Watch the repository and read its root through the host bridge (`fs/watch`, `fs/changed`, `command/exec`) in windows on a remote host.
+- Bridge MCP App widget `tools/call` and event subscriptions to `mcpServer/tool/call` and `mcpServer/event/stream/*`, and route stream notifications back to the widget.
+- Open long threads with their newest turns, page older ones with `Load earlier messages`, and make find call `thread/searchOccurrences` to page in matching turns.
 - Open a site's details from its Sites row (`/sites/:projectId`, `GET /websites/{project_id}`), with `Visit`, `Edit` (a new chat that mentions the site) and `Sites` back.
 - Add named permission profiles, per-category approval settings, writable folder selection, automatic review notices, and `/approve` for one denied retry.
 - Restrict human-only approval cards to the server's offered one-time decisions.
@@ -110,7 +117,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add the Git settings page controls and the Worktrees settings page with General and Environments tabs, saved worktree preferences, and local environment editing.
 - Show the Plugins and Skills directories in the original `Customize` sidebar, with the original header, scope pills, and two-column skill rows.
 - Add the Cloud environment UI with repository selection and saved setup flows
-- Bind `⇧⌘C` and `⌥⇧⌘C` to copy the open chat's newest managed worktree root, else its working directory, and route `⇧⌘F` and `⇧⌘B` through the editable keymap.
+- Bind `⇧⌘C` to copy the open chat's newest managed worktree root, else its working directory; bind `⌥⇧⌘C` to copy the conversation file path from `thread/read`.
 - Add signed native updates with download progress, installation, relaunch, and organization policy controls.
 - Restore `View` > `Toggle Bottom Panel` and `View` > `Open Terminal` in the macOS menu bar, in the original order.
 - Add `Group by` (`Project` or `None`) to the Archived chats filter menu; `None` shows every archived chat in one list without project headers.
@@ -126,6 +133,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Show the text overflow icon on a code block's `Enable word wrap` button, and the wrap icon only while wrap is on, as the original does.
 - Show the Appearance theme picker's Codex themes in a `Codex themes` flyout submenu beside `ChatGPT`, with 24 px theme icons, as the original does.
 - Fold a running turn's interim messages under `Working for` once its final answer starts, as the original does.
+- Show the full `Auto diff: switch to unified diff` label in the Changes options menu, as the original does; it lost its last letters to an ellipsis.
 - List `Toggle navigation panel` in the Search palette on every route, as the original does; it showed only while a navigation panel was open.
 - Start the text of a Search palette command that has no icon at the group heading, as the original does; it was indented by an empty icon slot.
 - Match the original `Work in` menu: the `Work in` label, row icons, `Cloud` above `Remote`, the 280 px width and position, and `New worktree` only while a project is selected.
