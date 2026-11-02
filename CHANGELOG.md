@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Add Back, Next and Reload to the in-app browser toolbar with `⌘←`, `⌘→`, `⌘R`, `⌘⇧R` and `⌘L`, a load indicator, and the original's `This site can't be reached` error page with Reload.
+- Choose the integrated terminal shell in Settings from the shells in `/etc/shells`; new terminal tabs start it (`desktop.integratedTerminalShell`).
 - Keep a separate composer draft for each chat: switching chats keeps the text, chips and attachments of each one, and the text returns after a restart.
 - Save panic reports with a backtrace to `last-crash.txt` in the user data directory, and prefill the feedback dialog with the last crash on the next launch.
 
@@ -29,6 +30,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add `Toggle Git blame` to the command menu: the file viewer shows the author, commit summary, short SHA and date for the active (clicked or cited) line from the host's `git blame`.
 - Show `Queue paused because you interrupted` with `Resume` over a queue that an interrupted turn left, and ask to clear the queue or keep it when a new message is sent.
 - List installed plugins in the `@` mention list's `Plugins` section, with `Loading plugins...` while `plugin/list` runs; a picked plugin becomes a chip and sends `[@name](plugin://id)`.
+- Route shared-thread, ChatGPT, browser, Space, and Codex app links to native destinations.
 - List matching chats in a `Chats` section of the `@` mention list from `thread/search`, and let a sidebar chat dragged onto the composer show `Drop to reference chat`. A chat chip sends its id under `## Referenced chats with Codex:`.
 - Check for updates in the background every hour, send the original's appcast parameters (installation id, architecture, version, beta, macOS version and plan), and add a `Beta updates` setting.
 - List each expanded sidebar project's chats under its folder, with `Show more` paging, `No chats`, and the unread dot on a collapsed folder; an open thread in the focused window is read at once.
@@ -102,6 +104,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add `Group by` (`Project` or `None`) to the Archived chats filter menu; `None` shows every archived chat in one list without project headers.
 
 ### Fixed
+- Show a command approval as the original's `Terminal` card in place of the composer: the reason as title, the command in a code box, and `Deny` and `Allow once` with their `Esc` and return keys. Offer `Allow similar commands` only when the request proposes a command prefix.
 - Draw the Appearance Background and Foreground hex inputs at 12 px, as the original does.
 - Open and close the thread's activity groups, reasoning, MCP and command rows over the original's 300 ms `ease-enter` height and opacity track, instead of at once.
 - Put the site's favicon before an external markdown link, with the original's globe until the image loads, and fetch remote images such as favicons and avatars over HTTP.
@@ -110,6 +113,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Show the text overflow icon on a code block's `Enable word wrap` button, and the wrap icon only while wrap is on, as the original does.
 - Show the Appearance theme picker's Codex themes in a `Codex themes` flyout submenu beside `ChatGPT`, with 24 px theme icons, as the original does.
 - Fold a running turn's interim messages under `Working for` once its final answer starts, as the original does.
+- List `Toggle navigation panel` in the Search palette on every route, as the original does; it showed only while a navigation panel was open.
 - Start the text of a Search palette command that has no icon at the group heading, as the original does; it was indented by an empty icon slot.
 - Match the original `Work in` menu: the `Work in` label, row icons, `Cloud` above `Remote`, the 280 px width and position, and `New worktree` only while a project is selected.
 - Show `Mark as unread` in the Search palette only while a chat is open, as the original does; Home no longer lists it.
