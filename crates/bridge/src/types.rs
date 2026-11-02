@@ -169,6 +169,16 @@ pub enum ThreadItem {
     ContextCompaction {
         id: String,
     },
+    /// `/review` began: `review` names what is reviewed.
+    EnteredReviewMode {
+        id: String,
+        review: String,
+    },
+    /// `/review` finished: `review` is the review text.
+    ExitedReviewMode {
+        id: String,
+        review: String,
+    },
     #[serde(other)]
     Other,
 }
@@ -352,6 +362,9 @@ pub struct CommandApprovalRequest {
     #[serde(default)]
     pub kind: String,
     pub available_decisions: Option<Vec<Value>>,
+    /// The command prefix a session-wide approval would cover; the original offers
+    /// `Allow similar commands` only with it.
+    pub proposed_execpolicy_amendment: Option<Value>,
 }
 
 /// `item/fileChange/requestApproval`
