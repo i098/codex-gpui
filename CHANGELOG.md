@@ -120,6 +120,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Show the original's two rows in the `Codex ⌄` mode menu, `ChatGPT` and `Codex` with their descriptions and no shortcut text, and fill the trigger while the menu is open.
 - Keep the macOS window buttons centred in the top bar at every zoom level, as the original does; they stayed at the 100% position.
 - Use the original icons in the composer `+` menu: the gray paperclip, folder, target, light bulb and green scribble.
+- Space the Skills page sections as the original does, and show the See-more label in the original weight and color.
 - List `Show Mini` in the Search palette on Home too, as the original does; it showed only while a chat was open.
 - Show the original slash menu icons for Goal, MCP, Model, Pet, Plan mode, Reasoning, Sketch and Ultrafast, and a right chevron on the commands that open a submenu.
 - Show reads of a skill's `SKILL.md` as `Loaded a tool` or `Loaded tools` with the wrench icon in the activity group summary, as the original does.
