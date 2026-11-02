@@ -50,6 +50,7 @@ mod tray;
 pub mod user_data;
 pub use routes::Route;
 mod plugins;
+mod project_actions;
 pub mod screenshot;
 mod search;
 mod section_actions;
@@ -8863,7 +8864,10 @@ impl Render for Root {
         let root = routes::actions(archived_chats::actions(root, cx), cx);
         let root = hotkey::actions(root, self.popout.is_some(), cx);
         native_menus::actions(
-            section_actions::actions(features::actions(root, self, cx), cx),
+            section_actions::actions(
+                project_actions::actions(features::actions(root, self, cx), cx),
+                cx,
+            ),
             self,
             cx,
         )
