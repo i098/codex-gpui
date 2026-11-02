@@ -43,6 +43,7 @@ pub mod qa;
 mod routes;
 pub mod terminal;
 mod thread_patch;
+mod tray;
 pub mod user_data;
 pub use routes::Route;
 mod plugins;
@@ -2921,6 +2922,18 @@ impl Root {
             menu.update(cx, |menu, cx| menu.update_catalog(threads, &unread, cx));
         }
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
+        if self.host_id() == "local" {
+            let recents: Vec<_> = threads
+                .iter()
+                .map(|thread| {
+                    (
+                        thread.id.clone(),
+                        ui::screens::sidebar::title(thread).to_string(),
+                    )
+                })
+                .collect();
+            tray::set_recents(&recents, cx);
+        }
         self.refresh_automation_editor_options(None, cx);
     }
 
@@ -6455,6 +6468,9 @@ impl Root {
                 }
                 if matches!(key, "reduced-motion-preference" | "dock-icon-preference") {
                     host_settings::apply(cx);
+                }
+                if key == "mac-menu-bar-enabled" {
+                    tray::refresh(cx);
                 }
                 #[cfg(target_os = "macos")]
                 if key == screenshot::appshot::HOTKEY
