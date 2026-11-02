@@ -36,7 +36,6 @@ actions!(
         CloseWholeWindow,
         CloseOtherSideTabs,
         OpenCurrentSideChat,
-        CopyLastCodeBlock,
         CopyPageLink,
         ForkCurrentThread,
         DeleteCurrentChat,
@@ -224,9 +223,6 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
     .on_action(cx.listener(|this, _: &ActualSize, window, cx| this.change_zoom(None, window, cx)))
     .on_action(cx.listener(|this, _: &OpenCurrentSideChat, window, cx| {
         this.open_current_side_chat(window, cx);
-    }))
-    .on_action(cx.listener(|this, _: &CopyLastCodeBlock, _, cx| {
-        this.copy_last_code_block(cx);
     }))
     .on_action(cx.listener(|this, _: &CopyPageLink, _, cx| {
         if let Some(url) = this
@@ -857,33 +853,6 @@ impl Root {
         log_err(task, cx);
     }
 
-    fn copy_last_code_block(&mut self, cx: &mut Context<Self>) {
-        let Route::Thread(id) = self.state.route.clone() else {
-            return;
-        };
-        let bridge = self.bridge.clone();
-        let task = cx.spawn(async move |this, cx| -> Result<()> {
-            let read = bridge
-                .request::<_, ThreadReadResponse>(
-                    "thread/read",
-                    json!({"threadId": id, "includeTurns": true}),
-                )
-                .await;
-            this.update(cx, |this, cx| match &read {
-                Ok(read) => match last_assistant_code_block(&read.thread) {
-                    Some(code) => {
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(code));
-                        this.toast(Toast::success("Copied code block"), cx);
-                    }
-                    None => this.toast(Toast::danger("No code block to copy"), cx),
-                },
-                Err(_) => this.toast(Toast::danger("Failed to copy code block"), cx),
-            })?;
-            read.map(drop)
-        });
-        log_err(task, cx);
-    }
-
     fn focus_side_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let key = match self.side {
             Some(SidePanel::SideChat(key)) if self.chat(key).is_some() => Some(key),
@@ -896,125 +865,5 @@ impl Root {
         if let Some(chat) = self.chat(key) {
             window.focus(&chat.composer.focus_handle(cx), cx);
         }
-    }
-}
-
-fn last_code_block(markdown: &str) -> Option<String> {
-    let mut fence: Option<(char, usize, usize)> = None;
-    let mut indented = Vec::new();
-    let mut blank_lines = 0;
-    let mut last = None;
-    let mut offset = 0;
-    for chunk in markdown.split_inclusive('\n') {
-        let line = chunk
-            .strip_suffix('\n')
-            .unwrap_or(chunk)
-            .strip_suffix('\r')
-            .unwrap_or_else(|| chunk.strip_suffix('\n').unwrap_or(chunk));
-        if let Some((marker, minimum, start)) = fence {
-            if closes_fence(line, marker, minimum) {
-                let mut code = &markdown[start..offset];
-                code = code.strip_suffix('\n').unwrap_or(code);
-                code = code.strip_suffix('\r').unwrap_or(code);
-                last = Some(code.to_owned());
-                fence = None;
-            }
-        } else {
-            if !indented.is_empty() {
-                if line.trim().is_empty() {
-                    blank_lines += 1;
-                    offset += chunk.len();
-                    continue;
-                }
-                if let Some(code) = line
-                    .strip_prefix("    ")
-                    .or_else(|| line.strip_prefix('\t'))
-                {
-                    indented.extend((0..blank_lines).map(|_| String::new()));
-                    indented.push(code.to_owned());
-                    blank_lines = 0;
-                    offset += chunk.len();
-                    continue;
-                }
-                last = Some(std::mem::take(&mut indented).join("\n"));
-                blank_lines = 0;
-            }
-            if let Some((marker, length)) = opens_fence(line) {
-                fence = Some((marker, length, offset + chunk.len()));
-            } else if let Some(code) = line
-                .strip_prefix("    ")
-                .or_else(|| line.strip_prefix('\t'))
-            {
-                indented.push(code.to_owned());
-            }
-        }
-        offset += chunk.len();
-    }
-    if let Some((_, _, start)) = fence {
-        let mut code = &markdown[start..];
-        code = code.strip_suffix('\n').unwrap_or(code);
-        code = code.strip_suffix('\r').unwrap_or(code);
-        last = Some(code.to_owned());
-    } else if !indented.is_empty() {
-        last = Some(indented.join("\n"));
-    }
-    last
-}
-
-fn opens_fence(line: &str) -> Option<(char, usize)> {
-    let indent = line.bytes().take_while(|byte| *byte == b' ').count();
-    if indent > 3 {
-        return None;
-    }
-    let rest = &line[indent..];
-    let marker = rest.chars().next()?;
-    if !matches!(marker, '`' | '~') {
-        return None;
-    }
-    let length = rest.chars().take_while(|char| *char == marker).count();
-    (length >= 3 && !(marker == '`' && rest[length..].contains('`'))).then_some((marker, length))
-}
-
-fn closes_fence(line: &str, marker: char, minimum: usize) -> bool {
-    let indent = line.bytes().take_while(|byte| *byte == b' ').count();
-    if indent > 3 {
-        return false;
-    }
-    let rest = &line[indent..];
-    let length = rest.chars().take_while(|char| *char == marker).count();
-    length >= minimum && rest[length..].trim().is_empty()
-}
-
-fn last_assistant_code_block(thread: &Thread) -> Option<String> {
-    thread
-        .turns
-        .iter()
-        .rev()
-        .flat_map(|turn| turn.items.iter().rev())
-        .find_map(|item| match item {
-            ThreadItem::AgentMessage { text, .. } => last_code_block(text),
-            _ => None,
-        })
-}
-
-#[cfg(test)]
-mod last_code_block_tests {
-    use super::last_code_block;
-
-    #[test]
-    fn copies_the_last_fenced_or_indented_block() {
-        assert_eq!(
-            last_code_block("```rust\nfirst\n```\n~~~text\nlast\n~~~"),
-            Some("last".into())
-        );
-        assert_eq!(
-            last_code_block("````\nnot closed\n```"),
-            Some("not closed\n```".into())
-        );
-        assert_eq!(
-            last_code_block("    first\n\n    second\n"),
-            Some("first\n\nsecond".into())
-        );
-        assert_eq!(last_code_block("No code"), None);
     }
 }
