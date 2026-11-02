@@ -198,6 +198,15 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "nextRecentThread" => Box::new(shortcuts::NextRecentChat),
         "toggleBottomPanel" => Box::new(shortcuts::ToggleBottomPanel),
         "toggleTerminal" => Box::new(shortcuts::OpenInteractiveTerminal),
+        "environmentAction1" => Box::new(shortcuts::EnvironmentAction1),
+        "environmentAction2" => Box::new(shortcuts::EnvironmentAction2),
+        "environmentAction3" => Box::new(shortcuts::EnvironmentAction3),
+        "environmentAction4" => Box::new(shortcuts::EnvironmentAction4),
+        "environmentAction5" => Box::new(shortcuts::EnvironmentAction5),
+        "environmentAction6" => Box::new(shortcuts::EnvironmentAction6),
+        "environmentAction7" => Box::new(shortcuts::EnvironmentAction7),
+        "environmentAction8" => Box::new(shortcuts::EnvironmentAction8),
+        "environmentAction9" => Box::new(shortcuts::EnvironmentAction9),
         "openReviewTab" => Box::new(OpenChangesPanel),
         "openBrowserTab" => Box::new(ui::browser::OpenBrowserTab::default()),
         "toggleSidePanel" => Box::new(ToggleChangesPanel),
@@ -217,6 +226,7 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "markThreadUnread" => Box::new(shortcuts::MarkOpenChatUnread),
         "manageTasks" => Box::new(OpenScheduled),
         "openThreadInNewWindow" => Box::new(super::OpenThreadInNewWindow),
+        "newWindow" => Box::new(crate::windows::NewWindow),
         "closeTab" => Box::new(CloseWindow),
         "closeWindow" => Box::new(shortcuts::CloseWholeWindow),
         "closeOtherTabs" => Box::new(shortcuts::CloseOtherSideTabs),
@@ -227,6 +237,7 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "renameThread" => Box::new(shortcuts::RenameOpenChat),
         "findInThread" => Box::new(FindInThread),
         "copyDeeplink" => Box::new(shortcuts::CopyDeeplink),
+        "copyLastCodeBlock" => Box::new(shortcuts::CopyLastCodeBlock),
         "copyWorkingDirectory" | "copyConversationPath" => {
             Box::new(super::copy_directory::CopyWorkingDirectory)
         }
