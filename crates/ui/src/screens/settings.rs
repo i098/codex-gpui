@@ -914,6 +914,43 @@ const SEND_OPTIONS: &[(&str, &str)] = &[
     ("cmdAlways", "⌘ + Enter always"),
 ];
 
+/// The integrated terminal's shell when none is chosen: `$SHELL`, else `/bin/sh`.
+pub fn default_shell() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .filter(|s| s.starts_with('/'))
+        .unwrap_or_else(|| "/bin/sh".into())
+}
+
+/// The absolute paths `/etc/shells` lists, in order, without comments, blanks or repeats.
+fn parse_shells(text: &str) -> Vec<&str> {
+    let mut shells = Vec::new();
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('/') && !shells.contains(&line) {
+            shells.push(line);
+        }
+    }
+    shells
+}
+
+/// `Integrated terminal shell` options `(path, basename)`: the existing shells `/etc/shells`
+/// lists, one per real file (`/bin/bash` and a merged `/usr/bin/bash` show once).
+static SHELL_OPTIONS: std::sync::LazyLock<Vec<(&str, &str)>> = std::sync::LazyLock::new(|| {
+    let text = std::fs::read_to_string("/etc/shells").unwrap_or_default();
+    let mut seen = std::collections::HashSet::new();
+    parse_shells(&text)
+        .into_iter()
+        .filter(|path| {
+            std::fs::canonicalize(path).is_ok_and(|real| real.is_file() && seen.insert(real))
+        })
+        .map(|path| {
+            // Leaked once per process: the select menu takes `'static` options.
+            let path: &'static str = path.to_owned().leak();
+            (path, path.rsplit('/').next().unwrap_or(path))
+        })
+        .collect()
+});
+
 impl SettingsPane {
     fn new(page: Entity<SettingsPage>, cx: &mut Context<Self>) -> Self {
         cx.observe(&page, |_, page, cx| {
@@ -1244,6 +1281,23 @@ impl SettingsPane {
                             window,
                             cx,
                         ),
+                    ),
+                    row(
+                        "Integrated terminal shell",
+                        Some("Choose which shell opens in the integrated terminal."),
+                        if SHELL_OPTIONS.is_empty() {
+                            select("No shells available", 430., None, true, false, t)
+                                .into_any_element()
+                        } else {
+                            self.select_menu_or(
+                                "desktop.integratedTerminalShell",
+                                SHELL_OPTIONS.as_slice(),
+                                &default_shell(),
+                                None,
+                                |select| select,
+                                cx,
+                            )
+                        },
                     ),
                     row(
                         "Prevent sleep while running",
@@ -2027,5 +2081,14 @@ mod tests {
             "/Users/user/D…uments/Codex"
         );
         assert_eq!(super::middle_truncate("/Users/user", fits), "/Users/user");
+    }
+
+    #[test]
+    fn etc_shells_parse_to_unique_paths() {
+        let text = "# /etc/shells: valid login shells\n/bin/sh\n\n  /bin/bash \n/bin/sh\n# /bin/zsh\nnologin\n/usr/bin/fish\n";
+        assert_eq!(
+            super::parse_shells(text),
+            ["/bin/sh", "/bin/bash", "/usr/bin/fish"]
+        );
     }
 }
