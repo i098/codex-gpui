@@ -1295,7 +1295,7 @@ pub(super) fn activity(
                     ))
                     .children(content)
             }
-            Activity::Review(words) => row("code-review", plain(label(words.clone(), text60))),
+            Activity::Review(words) => row(glyph("code-review"), plain(label(words.clone(), text60))),
             Activity::Compaction(words) => row(
                 glyph("thread-compaction"),
                 plain(label(words.to_owned(), text60)),
@@ -1315,9 +1315,9 @@ pub(super) fn activity(
                 let (words, w) = label(item.label, color);
                 let words = (words, w.max(unkerned));
                 let head = if opens {
-                    disclosure(item.key.clone(), item.icon, words, is_open).into_any_element()
+                    disclosure(item.key.clone(), glyph(item.icon), words, is_open).into_any_element()
                 } else {
-                    row(item.icon, plain(words)).into_any_element()
+                    row(glyph(item.icon), plain(words)).into_any_element()
                 };
                 div()
                     .w_full()
