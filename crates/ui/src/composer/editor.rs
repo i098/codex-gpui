@@ -306,6 +306,9 @@ impl Composer {
         if self.move_slash(false, cx) {
             return;
         }
+        if self.recall_prompt(true, cx) {
+            return;
+        }
         let to = self.vertical(-1.).unwrap_or(0);
         self.move_to(to, cx);
     }
@@ -316,6 +319,9 @@ impl Composer {
             return;
         }
         if self.move_slash(true, cx) {
+            return;
+        }
+        if self.recall_prompt(false, cx) {
             return;
         }
         let to = self.vertical(1.).unwrap_or(self.content.len());
