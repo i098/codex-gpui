@@ -105,6 +105,11 @@ const STATES = {
     await d.click(`[...document.querySelectorAll("button")].find((b) => b.offsetParent !== null && b.innerText.trim().startsWith("GPT-6 Astra"))`, "model picker");
     await d.waitFor(`document.querySelector("[role=menu]")`, "model menu");
   },
+  // The sidebar's `Switch mode` dropdown (ChatGPT / Codex).
+  "mode-menu": async (d) => {
+    await d.click(`[...document.querySelectorAll("button")].find((b) => b.offsetParent !== null && (b.getAttribute("aria-label") || "").startsWith("Switch mode"))`, "mode switch");
+    await d.waitFor(`document.querySelector("[role=menu]")`, "mode menu");
+  },
   diff: async (d) => {
     await STATES.thread(d);
     await d.click(byText("View changes"));
