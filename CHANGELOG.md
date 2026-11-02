@@ -57,6 +57,10 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Package Linux builds as a `.deb` and an AppImage with a `codex://` URL handler through `tools/package-linux.sh`, and attach both to the GitHub release.
 - Make the model picker's `Reset to default` remove the `model` and `model_reasoning_effort` overrides from `config.toml` and select the recommended model.
 - Self-update the Linux AppImage from a signed `latest.json` release manifest: check every 6 hours, verify SHA-256 and Ed25519, then swap the file and relaunch on install.
+- Start a text realtime voice chat on the open thread (`thread/realtime/start`, `appendText`, `stop`) with a transcript card and error and closed states.
+- Watch the repository and read its root through the host bridge (`fs/watch`, `fs/changed`, `command/exec`) in windows on a remote host.
+- Bridge MCP App widget `tools/call` and event subscriptions to `mcpServer/tool/call` and `mcpServer/event/stream/*`, and route stream notifications back to the widget.
+- Open long threads with their newest turns, page older ones with `Load earlier messages`, and make find call `thread/searchOccurrences` to page in matching turns.
 - Open a site's details from its Sites row (`/sites/:projectId`, `GET /websites/{project_id}`), with `Visit`, `Edit` (a new chat that mentions the site) and `Sites` back.
 - Add named permission profiles, per-category approval settings, writable folder selection, automatic review notices, and `/approve` for one denied retry.
 - Restrict human-only approval cards to the server's offered one-time decisions.

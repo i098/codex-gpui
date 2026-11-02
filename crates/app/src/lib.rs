@@ -65,6 +65,7 @@ mod storage;
 pub mod updater;
 mod usage;
 mod voice;
+mod voice_chat;
 mod window_shell;
 pub mod windows;
 
@@ -119,8 +120,9 @@ use ui::screens::sidebar::{
 use ui::screens::signin::Login;
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
-    Clock, EditMessage, ForkThread, GitAction, History, OpenAutomationCard, ReasoningVisibility,
-    RetryHistory, RevertTurn, ThreadPressed, ThreadView, UsageLimitNotice,
+    Clock, EditMessage, EndVoice, ForkThread, GitAction, History, LoadOlderTurns,
+    OpenAutomationCard, ReasoningVisibility, RetryHistory, RevertTurn, SearchHistory,
+    ThreadPressed, ThreadView, UsageLimitNotice,
 };
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
@@ -495,6 +497,7 @@ pub struct Root {
     cloud: Option<cloud_task::Session>,
     pull_requests_page: Option<Entity<ui::screens::pull_requests::Page>>,
     plugins_page: Option<Entity<ui::screens::plugins::Page>>,
+    voice_chat: Option<voice_chat::VoiceChat>,
     sites_page: Option<Entity<ui::screens::sites::Page>>,
     maps_page: Option<Entity<ui::screens::maps::Page>>,
     images_page: Option<Entity<ui::screens::images::Page>>,
@@ -993,6 +996,7 @@ impl Root {
             cloud: None,
             pull_requests_page: None,
             plugins_page: None,
+            voice_chat: None,
             sites_page: None,
             maps_page: None,
             images_page: None,
@@ -4410,6 +4414,66 @@ impl Root {
         view
     }
 
+    /// Pages older turns into `view`; with `until`, keeps paging until every listed turn is loaded.
+    fn load_older_turns(
+        &mut self,
+        view: Entity<ThreadView>,
+        until: Vec<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |_, cx| -> Result<()> {
+            loop {
+                let Some((id, cursor)) = view.update(cx, |view, cx| {
+                    let id = view.id().to_owned();
+                    view.begin_older(cx).map(|cursor| (id, cursor))
+                }) else {
+                    return Ok(());
+                };
+                let page = routes::turns_page(&bridge, &id, Some(&cursor)).await;
+                let more = match page {
+                    Ok((turns, next)) => {
+                        ensure!(next.as_ref() != Some(&cursor), "unchanged turns cursor");
+                        view.update(cx, |view, cx| view.prepend_turns(turns, next, cx));
+                        view.update(cx, |view, _| until.iter().any(|turn| !view.has_turn(turn)))
+                    }
+                    Err(error) => {
+                        view.update(cx, |view, cx| view.older_failed(cx));
+                        return Err(error);
+                    }
+                };
+                if !more {
+                    return Ok(());
+                }
+            }
+        });
+        log_err(task, cx);
+    }
+
+    /// Finds, on the server, the unloaded turns that match `query` and pages them in.
+    fn search_history(&mut self, view: Entity<ThreadView>, query: String, cx: &mut Context<Self>) {
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let id = view.read_with(cx, |view, _| view.id().to_owned());
+            let turns = routes::search_turns(&bridge, &id, &query).await?;
+            let current = view.read_with(cx, |view, _| {
+                view.find_state()
+                    .is_some_and(|(now, ..)| now.trim() == query)
+            });
+            let unloaded = view.read_with(cx, |view, _| {
+                turns
+                    .into_iter()
+                    .filter(|turn| !view.has_turn(turn))
+                    .collect::<Vec<_>>()
+            });
+            if current && !unloaded.is_empty() {
+                this.update(cx, |this, cx| this.load_older_turns(view, unloaded, cx))?;
+            }
+            Ok(())
+        });
+        log_err(task, cx);
+    }
+
     /// The transcript clock: the pinned one, else the local wall clock.
     fn clock(&self) -> Clock {
         self.clock.unwrap_or_else(|| Clock {
@@ -4518,6 +4582,7 @@ impl Root {
         diff_repositories::load(
             diff.clone(),
             self.host.clone(),
+            (self.host_id != "local").then(|| self.bridge.clone()),
             thread.id.clone(),
             thread.cwd.clone(),
             cx,
@@ -4617,6 +4682,18 @@ impl Root {
             },
         )
         .detach();
+        cx.subscribe_in(&view, window, |this, _, _: &EndVoice, _, cx| {
+            this.end_voice_chat(cx);
+        })
+        .detach();
+        cx.subscribe_in(&view, window, |this, view, _: &LoadOlderTurns, _, cx| {
+            this.load_older_turns(view.clone(), Vec::new(), cx);
+        })
+        .detach();
+        cx.subscribe_in(&view, window, |this, view, event: &SearchHistory, _, cx| {
+            this.search_history(view.clone(), event.0.clone(), cx);
+        })
+        .detach();
         cx.subscribe_in(
             &view,
             window,
@@ -4629,6 +4706,7 @@ impl Root {
         )
         .detach();
         self.thread = Some(view);
+        self.sync_voice(cx);
         self.sync_context_usage(cx);
         self.show_approval(cx);
         hotkey::thread_shown(self, window, cx);
@@ -4659,11 +4737,17 @@ impl Root {
             self.send_shell(side, s, window, cx);
             return;
         }
+        let Some((view, _)) = self.conversation(side) else {
+            return;
+        };
+        let id = view.read(cx).id().to_owned();
+        if side.is_none() && self.voice_text(&id, &s.text, cx) {
+            return;
+        }
         let Some((view, composer)) = self.conversation(side) else {
             return;
         };
         let view = view.read(cx);
-        let id = view.id().to_owned();
         let resume = !self.loaded.contains(&id);
         let bridge = self.bridge.clone();
         let running = view
@@ -6940,6 +7024,8 @@ impl Root {
         }
         self.on_import_event(&event, cx);
         self.plugins_event(&event, cx);
+        self.diff_watch_event(&event, cx);
+        self.voice_event(&event, cx);
         self.oauth_account_event(&event, cx);
         usage::on_event(&event, cx);
         if matches!(event, Event::Closed) {
@@ -8715,11 +8801,8 @@ impl Render for Root {
                     this.load_projects(cx);
                 }
             }))
-            // BOUNDARY: realtime voice (`thread/realtime/*` audio) has no native backend yet;
-            // the request is answered with a visible notice (flows.md Home rows 5 and 14).
-            .on_action(cx.listener(|this, _: &StartVoiceChat, _, cx| {
-                this.toast(Toast::info("Realtime voice chat isn't available yet"), cx);
-            }))
+            // Text realtime session on the open thread; audio capture has no native backend.
+            .on_action(cx.listener(|this, _: &StartVoiceChat, _, cx| this.start_voice_chat(cx)))
             .on_action(cx.listener(|this, _: &ShowKeyboardShortcuts, window, cx| {
                 if this
                     .dialog
