@@ -342,7 +342,7 @@ impl Root {
                     },
                     cx,
                 ),
-                Err(_) => this.toast(Toast::danger("Failed to start review"), cx),
+                Err(_) => this.toast(Toast::danger("Failed to start code review"), cx),
             })?;
             started.map(drop)
         });
