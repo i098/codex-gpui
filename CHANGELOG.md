@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Add the internal debug panel on Ctrl+D or Help ▸ `Show Local Trace` with build revision, trace state and uptime, and Help ▸ `Start Performance Trace` to toggle trace recording.
 - Forward a second launch's deep links and supported paths to the running Linux or Windows app, then focus its window.
 - Write a rotating `logs/app.log` in the user data directory, mirror app diagnostics into it, and add `Export logs` that saves the last three logs as a zip.
 - Show the signed-in account in the profile menu (the ChatGPT email, or `Logged in with API key`) and add `Add account` / `Sign in with ChatGPT`, which opens the sign-in screen with `Cancel` to keep the current account.
