@@ -339,6 +339,11 @@ pub fn handles(kind: Kind, cx: &App) -> Vec<AnyWindowHandle> {
         .collect()
 }
 
+/// Sets the Dock badge to `count`; zero clears it.
+pub(crate) fn set_badge(count: usize) {
+    platform::set_badge(count);
+}
+
 pub(crate) fn set_kind(window: &Window, kind: Kind, cx: &mut App) {
     if let Some(entry) = cx
         .try_global::<Windows>()

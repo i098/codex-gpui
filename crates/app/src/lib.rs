@@ -823,7 +823,11 @@ impl Root {
             shell
         });
         cx.observe(&sidebar, |this, sidebar, cx| {
-            let attention = !sidebar.read(cx).unread.is_empty();
+            let unread = sidebar.read(cx).unread.len();
+            if this.host_id() == "local" {
+                windows::set_badge(unread + this.approvals.len());
+            }
+            let attention = unread > 0;
             if this.shell.read(cx).attention != attention {
                 this.shell.update(cx, |shell, cx| {
                     shell.attention = attention;
