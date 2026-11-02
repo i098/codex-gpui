@@ -762,6 +762,14 @@ impl Root {
                     ui::composer::SlashCommand::MemoryMode(_)
                     | ui::composer::SlashCommand::MemoryStatus => this.thread_memory_command(command, window, cx),
                     ui::composer::SlashCommand::Memories => this.open_memories(window, cx),
+                    ui::composer::SlashCommand::Status => this.show_status(window, cx),
+                    ui::composer::SlashCommand::Init => this.init_agents(window, cx),
+                    ui::composer::SlashCommand::Side => this.start_side_chat(window, cx),
+                    ui::composer::SlashCommand::ReviewBranches => this.load_review_branches(composer.clone(), cx),
+                    ui::composer::SlashCommand::Review(branch) => this.start_review(branch.clone(), window, cx),
+                    ui::composer::SlashCommand::Personality(name) => this.set_personality(name, cx),
+                    ui::composer::SlashCommand::Chat => this.new_special_chat(features::shortcuts::NewChatMode::Standalone, window, cx),
+                    ui::composer::SlashCommand::Worktree => this.toggle_worktree_run(cx),
                     ui::composer::SlashCommand::Rename => {
                         if let Route::Thread(id) = this.state.route.clone() {
                             this.open_rename(id, true, window, cx);

@@ -3067,13 +3067,15 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::Plan { id, .. }
         | ThreadItem::Reasoning { id, .. }
         | ThreadItem::CommandExecution { id, .. }
-        | ThreadItem::FileChange { id, .. }
         | ThreadItem::McpToolCall { id, .. }
+        | ThreadItem::FileChange { id, .. }
         | ThreadItem::ContextCompaction { id }
         | ThreadItem::WebSearch { id, .. }
         | ThreadItem::CollabAgentToolCall { id, .. }
         | ThreadItem::ImageGeneration { id, .. }
-        | ThreadItem::ImageView { id, .. } => Some(id),
+        | ThreadItem::ImageView { id, .. }
+        | ThreadItem::EnteredReviewMode { id, .. }
+        | ThreadItem::ExitedReviewMode { id, .. } => Some(id),
         ThreadItem::Other => None,
     }
 }

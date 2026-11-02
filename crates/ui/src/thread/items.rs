@@ -552,6 +552,8 @@ pub(super) enum Activity<'a> {
     },
     /// A `contextCompaction` item: `Compacting context`, `Context compacted`, …
     Compaction(&'static str),
+    /// An `enteredReviewMode` item: `Reviewing <what>`.
+    Review(String),
     /// Consecutive finished commands and file changes behind one summary
     /// (`agent-activity-group`, keyed by its first item): `Edited a file, read files, ran
     /// commands`.
@@ -639,6 +641,7 @@ impl Activity<'_> {
                         .cloned(),
                 )
                 .collect(),
+            Activity::Review(label) => vec![label.clone()],
             Activity::Group {
                 key, summary, rows, ..
             } => std::iter::once(summary.clone())
@@ -719,7 +722,13 @@ pub(super) fn activities<'a>(
             ThreadItem::CommandExecution { .. } | ThreadItem::FileChange { .. } => {
                 group.push(item);
             }
-            ThreadItem::AgentMessage { id, text, .. } | ThreadItem::Plan { id, text, .. }
+            ThreadItem::EnteredReviewMode { review, .. } => {
+                flush(&mut out, &mut group);
+                out.push(Activity::Review(format!("Reviewing {review}")));
+            }
+            ThreadItem::AgentMessage { id, text, .. }
+            | ThreadItem::Plan { id, text, .. }
+            | ThreadItem::ExitedReviewMode { id, review: text }
                 if !text.is_empty() =>
             {
                 flush(&mut out, &mut group);
@@ -1286,6 +1295,7 @@ pub(super) fn activity(
                     ))
                     .children(content)
             }
+            Activity::Review(words) => row("code-review", plain(label(words.clone(), text60))),
             Activity::Compaction(words) => row(
                 glyph("thread-compaction"),
                 plain(label(words.to_owned(), text60)),
