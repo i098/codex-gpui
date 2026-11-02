@@ -91,6 +91,172 @@ pub struct Comment {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+/// `localArtifactAnnotationContext` of an artifact annotation (bundle `Rbt`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactContext {
+    pub title: String,
+    pub path: String,
+    pub annotation_id: String,
+    pub artifact_kind: String,
+    pub label: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PagePoint {
+    pub x: f32,
+    pub y: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PageRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PageSize {
+    pub width: f32,
+    pub height: f32,
+}
+
+/// `localArtifactAnnotationMetadata.target` of a page annotation (docx panel `Ft`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum ArtifactTarget {
+    DocumentPagePoint {
+        page_count: usize,
+        page_number: usize,
+        page_size: PageSize,
+        point: PagePoint,
+    },
+    DocumentPageRegion {
+        anchor_point: PagePoint,
+        page_count: usize,
+        page_number: usize,
+        page_size: PageSize,
+        rect: PageRect,
+    },
+}
+
+impl ArtifactTarget {
+    /// A drag of at least `min` page units is a region; anything smaller is a point.
+    pub fn new(
+        start: PagePoint,
+        end: PagePoint,
+        min: f32,
+        page_number: usize,
+        page_count: usize,
+        page_size: PageSize,
+    ) -> Self {
+        let rect = PageRect {
+            x: start.x.min(end.x),
+            y: start.y.min(end.y),
+            width: (start.x - end.x).abs(),
+            height: (start.y - end.y).abs(),
+        };
+        if rect.width < min && rect.height < min {
+            return Self::DocumentPagePoint {
+                page_count,
+                page_number,
+                page_size,
+                point: end,
+            };
+        }
+        Self::DocumentPageRegion {
+            anchor_point: PagePoint {
+                x: rect.x + rect.width,
+                y: rect.y,
+            },
+            page_count,
+            page_number,
+            page_size,
+            rect,
+        }
+    }
+
+    pub fn page_number(&self) -> usize {
+        match self {
+            Self::DocumentPagePoint { page_number, .. }
+            | Self::DocumentPageRegion { page_number, .. } => *page_number,
+        }
+    }
+
+    pub fn page_size(&self) -> PageSize {
+        match self {
+            Self::DocumentPagePoint { page_size, .. }
+            | Self::DocumentPageRegion { page_size, .. } => *page_size,
+        }
+    }
+
+    /// Where the numbered pin sits: the point, or a region's top-right corner.
+    pub fn anchor(&self) -> (f32, f32) {
+        match self {
+            Self::DocumentPagePoint { point, .. } => (point.x, point.y),
+            Self::DocumentPageRegion { anchor_point, .. } => (anchor_point.x, anchor_point.y),
+        }
+    }
+
+    /// Where the comment card opens: under the point, or under a region's bottom-left corner.
+    pub fn bottom_left(&self) -> (f32, f32) {
+        match self {
+            Self::DocumentPagePoint { point, .. } => (point.x, point.y),
+            Self::DocumentPageRegion { rect, .. } => (rect.x, rect.y + rect.height),
+        }
+    }
+
+    /// The annotation label (docx panel `It`).
+    pub fn label(&self) -> String {
+        match self {
+            Self::DocumentPagePoint { page_number, .. } => format!("Page {page_number} point"),
+            Self::DocumentPageRegion { page_number, .. } => format!("Page {page_number} region"),
+        }
+    }
+
+    /// The `Artifact annotation:` prompt value (bundle `Fcn`).
+    fn describe(&self) -> String {
+        let round = |value: f32| value.round() as i64;
+        let point = |p: &PagePoint| format!("({}, {})", round(p.x), round(p.y));
+        let size = |s: &PageSize| format!("{}x{}", round(s.width), round(s.height));
+        match self {
+            Self::DocumentPagePoint {
+                page_count,
+                page_number,
+                page_size,
+                point: at,
+            } => format!(
+                "point on page {page_number}/{page_count} at {} on {} page",
+                point(at),
+                size(page_size)
+            ),
+            Self::DocumentPageRegion {
+                anchor_point,
+                page_count,
+                page_number,
+                page_size,
+                rect,
+            } => format!(
+                "region on page {page_number}/{page_count} at ({}, {}) sized {}x{} on {} page; anchor point: {}",
+                round(rect.x),
+                round(rect.y),
+                round(rect.width),
+                round(rect.height),
+                size(page_size),
+                point(anchor_point)
+            ),
+        }
+    }
+}
+
+const ARTIFACT_CONTEXT: &str = "localArtifactAnnotationContext";
+const ARTIFACT_METADATA: &str = "localArtifactAnnotationMetadata";
+
 impl Comment {
     pub fn new(
         position: Position,
@@ -111,6 +277,57 @@ impl Comment {
             local_browser_comment_metadata: None,
             extra: Default::default(),
         }
+    }
+
+    /// An artifact annotation as the bundle's `Rbt` builds it: its `line` numbers it in the batch.
+    pub fn artifact(
+        context: ArtifactContext,
+        target: ArtifactTarget,
+        line: NonZeroU32,
+        text: String,
+    ) -> Self {
+        let title = context.title.trim();
+        let title = if title.is_empty() {
+            context.path.trim()
+        } else {
+            title
+        };
+        let mut comment = Self::new(
+            Position {
+                path: format!(
+                    "artifact:{}",
+                    if title.is_empty() {
+                        "Selected artifact annotation"
+                    } else {
+                        title
+                    }
+                ),
+                side: Side::Right,
+                line,
+                start_line: None,
+                start_side: None,
+            },
+            text,
+            None,
+            None,
+        );
+        comment.extra.insert(
+            ARTIFACT_CONTEXT.into(),
+            serde_json::to_value(context).expect("artifact context serializes"),
+        );
+        comment.extra.insert(
+            ARTIFACT_METADATA.into(),
+            serde_json::json!({ "target": target }),
+        );
+        comment
+    }
+
+    pub fn artifact_context(&self) -> Option<ArtifactContext> {
+        serde_json::from_value(self.extra.get(ARTIFACT_CONTEXT)?.clone()).ok()
+    }
+
+    pub fn artifact_target(&self) -> Option<ArtifactTarget> {
+        serde_json::from_value(self.extra.get(ARTIFACT_METADATA)?.get("target")?.clone()).ok()
     }
 
     pub fn text(&self) -> String {
@@ -176,6 +393,17 @@ impl Comment {
             && !hunk.trim().is_empty()
         {
             out.push_str(&format!("Diff hunk:\n```diff\n{hunk}\n```\n"));
+        }
+        if let Some(context) = self.artifact_context() {
+            out.push_str(&format!(
+                "Artifact path: {}\nArtifact annotation ID: {}\nArtifact type: {}\nAnnotation target: {}\n",
+                context.path, context.annotation_id, context.artifact_kind, context.label
+            ));
+            out.push_str(&format!(
+                "Artifact annotation: {}\n",
+                self.artifact_target()
+                    .map_or_else(|| "unknown".to_owned(), |target| target.describe())
+            ));
         }
         out.push_str(&format!("Comment:\n{}\n", self.text()));
         out
@@ -409,9 +637,13 @@ pub fn with_comments(comments: &[Comment], prompt: String) -> String {
     combined
 }
 
-/// The user's own text of a sent prompt, without the diff and browser comment blocks.
+/// The user's own text of a sent prompt, without the diff and browser comment blocks and the
+/// referenced chats.
 pub fn prompt_body(text: &str) -> &str {
-    if text.starts_with("# Diff comments:\n") || text.starts_with("# Browser comments:\n") {
+    if text.starts_with("# Diff comments:\n")
+        || text.starts_with("# Browser comments:\n")
+        || text.starts_with("\n## Referenced chats with Codex:\n")
+    {
         text.rsplit_once("\n## My request:\n")
             .map_or(text, |(_, body)| body)
     } else {
@@ -533,5 +765,50 @@ mod tests {
             kind: browser::SelectionKind::Region,
         });
         comment
+    }
+    #[test]
+    fn artifact_annotations_are_points_or_regions_and_round_trip_into_the_prompt() {
+        let size = PageSize {
+            width: 600.,
+            height: 800.,
+        };
+        let point = ArtifactTarget::new(
+            PagePoint { x: 10., y: 20. },
+            PagePoint { x: 12., y: 21. },
+            4.,
+            2,
+            3,
+            size,
+        );
+        assert_eq!(point.label(), "Page 2 point");
+        let region = ArtifactTarget::new(
+            PagePoint { x: 300., y: 200. },
+            PagePoint { x: 100.4, y: 50. },
+            4.,
+            1,
+            3,
+            size,
+        );
+        assert_eq!(region.anchor(), (300., 50.));
+        assert_eq!(region.bottom_left(), (100.4, 200.));
+        let comment = Comment::artifact(
+            ArtifactContext {
+                title: String::new(),
+                path: "/repo/report.pdf".into(),
+                annotation_id: "a1".into(),
+                artifact_kind: "pdf".into(),
+                label: region.label(),
+            },
+            region,
+            NonZeroU32::new(1).unwrap(),
+            "Tighten this".into(),
+        );
+        let comment: Comment =
+            serde_json::from_value(serde_json::to_value(&comment).unwrap()).unwrap();
+        assert_eq!(comment.artifact_target(), Some(region));
+        assert_eq!(
+            with_comments(&[comment], String::new()),
+            "# Diff comments:\n\n## User Comment 1\nFile: artifact:/repo/report.pdf\nSide: R\nLines: 1\nArtifact path: /repo/report.pdf\nArtifact annotation ID: a1\nArtifact type: pdf\nAnnotation target: Page 1 region\nArtifact annotation: region on page 1/3 at (100, 50) sized 200x150 on 600x800 page; anchor point: (300, 50)\nComment:\nTighten this\n\n## My request:\n"
+        );
     }
 }

@@ -215,6 +215,8 @@ impl FileView {
         self.path = path;
         self.line = line;
         self.contents = None;
+        self.media = None;
+        self.blame.clear();
         self.go_to_line = None;
         self.line_count = 0;
         self.scroll.set_offset(gpui::point(px(0.), px(0.)));
@@ -749,6 +751,7 @@ impl FileView {
                 let row = &self.tree.rows[index];
                 let path = row.path.clone();
                 let directory = row.kind == EntryKind::Directory;
+                let drag_path = row.path.to_string();
                 let selected = self.tree.selected() == Some(&row.path);
                 let hovered_path = row.path.clone();
                 let fill = if selected {
@@ -766,6 +769,9 @@ impl FileView {
                     .aria_selected(selected)
                     .when(directory, |row_element| {
                         row_element.aria_expanded(self.tree.expanded(row.path.as_ref()))
+                    })
+                    .when(!directory, |row_element| {
+                        super::draggable_file_row(row_element, drag_path)
                     })
                     .h(px(28.))
                     .w_full()

@@ -86,9 +86,16 @@ Writes other than the favorite-status reads have no exchange, so `ReplayHost` re
 
 ## Owned Space and Sites fixture
 
-`space-sites.json` holds synthetic offline HTTP exchanges for Sites (`/websites`, `/websites/shared`) and Space (`/files/library/nodes`, `/pages/{id}`).
+`space-sites.json` holds synthetic offline HTTP exchanges for Sites (`/websites`, `/websites/shared`) and Space (`/files/library/nodes`, `/pages/{id}`, and two `/spaces/v2` list pages joined by `next_cursor`).
 The shapes come from the original zod schemas in Codex 26.1007.30912. No account call was made. Replay refuses every other request, including mutations.
 The clock is frozen at 2026-10-15T17:00:00-07:00. `crates/app/tests/space_sites.rs` replays each exchange.
+`site-detail.json` adds `GET /websites/{project_id}` for the first owned site, with the same list exchange; `crates/app/tests/rail_sites.rs` opens it from a Sites row.
+
+## Owned Maps fixture
+
+`maps-home.json` holds one synthetic `/local/home` exchange for Maps, plus an empty `/conversations` page that gives `ReplayHost` its identity.
+The request is the one the original sends; the body follows the original's `maps-home` reader in Codex 26.1007.30912. No account call was made.
+`crates/app/tests/rail_maps.rs` replays it.
 
 ## Conversation streams
 

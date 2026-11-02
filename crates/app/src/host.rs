@@ -571,6 +571,101 @@ fn project_rows(
     Ok(rows)
 }
 
+pub(crate) fn project_metadata(mut metadata: Value, appearance: Option<Value>) -> Result<Value> {
+    if metadata.is_null() {
+        metadata = json!({});
+    }
+    let fields = metadata
+        .as_object_mut()
+        .context("Invalid project metadata")?;
+    fields.remove("appearance.color");
+    fields.remove("appearance.marker");
+    if let Some(appearance) = appearance {
+        fields.insert("appearance.color".into(), appearance["color"].clone());
+        fields.insert(
+            "appearance.marker".into(),
+            appearance["marker"].to_string().into(),
+        );
+    }
+    Ok(metadata)
+}
+
+pub(crate) async fn create_server_project(
+    bridge: &Bridge,
+    name: &str,
+    paths: &[String],
+    appearance: Option<Value>,
+) -> Result<String> {
+    let root = paths.first().context("Add a project folder")?;
+    let fallback = root
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(root);
+    let name = if name.trim().is_empty() {
+        fallback
+    } else {
+        name.trim()
+    };
+    let _: Value = bridge
+        .request(
+            "project/create",
+            json!({
+                "name": name,
+                "roots": paths.iter().map(|path| json!({"path": path})).collect::<Vec<_>>(),
+                "metadata": project_metadata(json!({}), appearance)?,
+                "idempotencyKey": crate::uuid_v4(),
+            }),
+        )
+        .await?;
+    Ok(root.clone())
+}
+
+pub(crate) async fn app_server_projects(
+    bridge: &Bridge,
+    home: &Path,
+    mut state: Value,
+    local: bool,
+) -> Result<Vec<Project>> {
+    let mut cursor: Option<String> = None;
+    let mut seen = HashSet::new();
+    let mut projects = serde_json::Map::new();
+    let mut order = Vec::new();
+    loop {
+        let page: Value = bridge
+            .request("project/list", json!({"cursor": cursor, "limit": 100}))
+            .await?;
+        for project in page["data"].as_array().context("missing project list")? {
+            let id = project["id"].as_str().context("missing project ID")?;
+            let roots = project["roots"]
+                .as_array()
+                .context("missing project roots")?
+                .iter()
+                .map(|root| root["path"].as_str().context("missing project root path"))
+                .collect::<Result<Vec<_>>>()?;
+            projects.insert(
+                id.into(),
+                json!({
+                    "id": id, "name": project["name"], "rootPaths": roots,
+                    "createdAt": project["createdAt"], "updatedAt": project["updatedAt"],
+                }),
+            );
+            order.push(Value::from(id));
+        }
+        cursor = page["nextCursor"].as_str().map(str::to_owned);
+        let Some(next) = &cursor else { break };
+        ensure!(
+            seen.insert(next.clone()),
+            "App-server repeated a project cursor"
+        );
+    }
+    state["local-projects"] = projects.into();
+    state["project-order"] = order.into();
+    project_rows(&state, home, |path, _| {
+        Ok(local.then(|| Path::new(path).exists()))
+    })
+}
+
 fn is_windows_path(path: &str) -> bool {
     let bytes = path.as_bytes();
     path.starts_with("//")
@@ -691,8 +786,8 @@ impl LocalHost {
             #[cfg(target_os = "macos")]
             app_tools: Mutex::new(None),
             opener: "/usr/bin/open".into(),
-            host_settings_path: PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                .join("Library/Application Support/codex-gpui/host-settings.json"),
+            host_settings_path: crate::user_data::user_data_dir("codex-gpui")
+                .join("host-settings.json"),
             settings: None,
             context_files: context_files::ContextFiles::default(),
         }
@@ -1542,6 +1637,14 @@ impl Host for LocalHost {
     }
 
     fn projects(&self) -> Result<Vec<Project>> {
+        if let Some(bridge) = &self.bridge {
+            return pollster::block_on(app_server_projects(
+                bridge,
+                &self.home,
+                self.read_global_state()?,
+                true,
+            ));
+        }
         let state = self.read_global_state()?;
         project_rows(&state, &self.home, |path, _| {
             Ok(Some(Path::new(path).exists()))
@@ -1600,6 +1703,23 @@ impl Host for LocalHost {
             .context("resolve selected project folder")?;
         ensure!(root.is_dir(), "selected project must be a folder");
         let root = root.to_str().context("project path must be UTF-8")?;
+        if let Some(bridge) = &self.bridge {
+            let projects = self.projects()?;
+            if !projects
+                .iter()
+                .any(|project| project.root.as_deref() == Some(root))
+            {
+                let name = Path::new(root)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(root);
+                let _: Value = pollster::block_on(bridge.request(
+                    "project/import",
+                    json!({"name": name, "roots": [{"path": root}], "idempotencyKey": crate::uuid_v4()}),
+                ))?;
+            }
+            return Ok(root.to_owned());
+        }
         self.update_global_state(|state| {
             if state["local-projects"].is_null() {
                 state["local-projects"] = json!({});
@@ -1678,6 +1798,9 @@ impl Host for LocalHost {
                 if !paths.contains(&root) {
                     paths.push(root);
                 }
+            }
+            if let Some(bridge) = &self.bridge {
+                return pollster::block_on(create_server_project(bridge, name, &paths, appearance));
             }
             let threads: Vec<_> = threads
                 .iter()
@@ -1917,7 +2040,7 @@ impl Host for LocalHost {
             "git-root" | "git-changes" | "git-stage" | "git-unstage" | "git-revert"
             | "git-init-repo" | "git-commit-status" | "git-commit-diff" | "git-commit"
             | "git-push" | "git-checkout" | "git-cat-file" | "git-review-patch"
-            | "git-file-url" => git::fetch(endpoint, &params)?,
+            | "git-file-url" | "git-blame-file" => git::fetch(endpoint, &params)?,
             "gh-cli-status" | "gh-current-user" | "gh-pr-search" | "gh-pr-detail"
             | "gh-pr-patch" | "gh-pr-media" | "gh-thread-pr" | "gh-create-pr"
             | "gh-thread-compare" | "gh-pr-repair" => {
@@ -3082,5 +3205,70 @@ mod pending_archive_tests {
             .map(|a| a.root)
             .collect();
         assert_eq!(roots, ["/w/live", "/w/live2"]);
+    }
+}
+
+#[cfg(test)]
+mod app_server_project_tests {
+    use super::*;
+
+    #[test]
+    fn server_pages_preserve_order_and_remote_paths() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let fixture = directory.path().join("projects.jsonl");
+        let mut records = String::new();
+        for (index, id) in ["second", "first"].iter().enumerate() {
+            for (dir, msg) in [
+                (
+                    "send",
+                    json!({"id": index, "method": "project/list", "params": {"cursor": if index == 0 { Value::Null } else { json!("next") }, "limit": 100}}),
+                ),
+                (
+                    "recv",
+                    json!({"id": index, "result": {"data": [{
+                    "id": id, "name": id, "roots": [{"path": format!("/remote/{id}")}],
+                    "createdAt": 1, "updatedAt": 2
+                }], "nextCursor": if index == 0 { json!("next") } else { Value::Null }}}),
+                ),
+            ] {
+                records.push_str(&json!({"dir": dir, "msg": msg}).to_string());
+                records.push('\n');
+            }
+        }
+        fs::write(&fixture, records)?;
+        let (bridge, _) = Bridge::replay(&fixture)?;
+        let projects = pollster::block_on(app_server_projects(
+            &bridge,
+            directory.path(),
+            json!({}),
+            false,
+        ))?;
+        assert_eq!(
+            projects
+                .iter()
+                .map(|project| project.id.as_ref())
+                .collect::<Vec<_>>(),
+            ["second", "first"]
+        );
+        assert!(projects.iter().all(|project| !project.missing));
+        Ok(())
+    }
+
+    #[test]
+    fn editing_appearance_preserves_other_metadata() -> Result<()> {
+        let metadata = project_metadata(
+            json!({"codex.chatGptBacking": "keep", "appearance.color": "old", "appearance.marker": "old"}),
+            Some(json!({"color": "blue", "marker": {"icon": "folder"}})),
+        )?;
+        assert_eq!(metadata["codex.chatGptBacking"], "keep");
+        assert_eq!(metadata["appearance.color"], "blue");
+        assert_eq!(
+            serde_json::from_str::<Value>(metadata["appearance.marker"].as_str().unwrap())?,
+            json!({"icon": "folder"})
+        );
+        let cleared = project_metadata(metadata, None)?;
+        assert_eq!(cleared["codex.chatGptBacking"], "keep");
+        assert!(cleared.get("appearance.marker").is_none());
+        Ok(())
     }
 }
