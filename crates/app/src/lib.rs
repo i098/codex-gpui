@@ -7004,6 +7004,10 @@ impl Root {
         };
         match event {
             Event::Notification { method, params } => match method.as_str() {
+                "project/changed" | "thread/project/updated" => {
+                    self.load_projects(cx);
+                    self.refresh_threads(cx);
+                }
                 "thread/settings/updated" => {
                     if let Some(id) = params["threadId"].as_str()
                         && let Some(owner) = self.owner(id, cx)
@@ -7190,10 +7194,12 @@ impl Root {
                     self.show_approval(cx);
                 } else {
                     let response = match pending.method.as_str() {
-                        "item/tool/call" => json!({
-                            "success": false,
-                            "contentItems": [{ "type": "inputText", "text": format!("Unsupported dynamic tool: {}", pending.params["tool"].as_str().unwrap_or_default()) }]
-                        }),
+                        "item/tool/call" => self
+                            .read_thread_terminal(&pending.params, cx)
+                            .unwrap_or_else(|| json!({
+                                "success": false,
+                                "contentItems": [{ "type": "inputText", "text": format!("Unsupported dynamic tool: {}", pending.params["tool"].as_str().unwrap_or_default()) }]
+                            })),
                         "mcpServer/elicitation/request" => json!({
                             "action": "decline", "content": null, "_meta": null
                         }),
