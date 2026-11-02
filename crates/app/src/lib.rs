@@ -260,6 +260,8 @@ pub struct State {
     pub confirm_before_close: ConfirmBeforeClose,
     pub project_root: Option<String>,
     pub zoom: f32,
+    /// The unsent composer text of each thread (`draftKey`), by thread id.
+    pub drafts: HashMap<String, String>,
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -276,6 +278,7 @@ impl Default for State {
             confirm_before_close: ConfirmBeforeClose::default(),
             project_root: None,
             zoom: 1.,
+            drafts: HashMap::new(),
             path: None,
         }
     }
@@ -432,6 +435,8 @@ pub struct Root {
     home: Entity<HomeMain>,
     /// Docked under every open thread.
     thread_composer: Entity<Composer>,
+    /// The unsent input of the threads the composer left, by thread id.
+    drafts: HashMap<String, ui::composer::Draft>,
     /// The queued submission `Edit message` took back into the composer, until it is sent.
     queue_edit: Option<QueueEdit>,
     thread: Option<Entity<ThreadView>>,
@@ -818,7 +823,11 @@ impl Root {
             shell
         });
         cx.observe(&sidebar, |this, sidebar, cx| {
-            let attention = !sidebar.read(cx).unread.is_empty();
+            let unread = sidebar.read(cx).unread.len();
+            if this.host_id() == "local" {
+                windows::set_badge(unread + this.approvals.len());
+            }
+            let attention = unread > 0;
             if this.shell.read(cx).attention != attention {
                 this.shell.update(cx, |shell, cx| {
                     shell.attention = attention;
@@ -850,6 +859,10 @@ impl Root {
             }
             if active {
                 this.sync_native_menus(window, cx);
+                // The original marks the open thread read when its window gains focus.
+                if let Route::Thread(id) = &this.state.route {
+                    this.sidebar.update(cx, |s, cx| s.set_read(id, cx));
+                }
                 // `refetchOnWindowFocus: always`: System Settings may have changed it.
                 if this.settings_page.is_some() {
                     this.notifications_action(
@@ -915,6 +928,7 @@ impl Root {
                 headline: None,
             }),
             thread_composer,
+            drafts: HashMap::new(),
             queue_edit: None,
             thread: None,
             history: None,
@@ -1059,6 +1073,7 @@ impl Root {
                     return false;
                 }
                 if this.state.confirm_before_close != ConfirmBeforeClose::Always {
+                    this.save_draft(cx);
                     this.flush_settings(cx);
                     return windows::allow_close(window, cx);
                 }
@@ -1092,6 +1107,7 @@ impl Root {
             }
         });
         cx.on_app_quit(|this, cx| {
+            this.save_draft(cx);
             this.flush_settings(cx);
             async {}
         })
@@ -1359,6 +1375,11 @@ impl Root {
     /// The shell on screen: the route's own shell, else the main shell.
     pub fn shell(&self) -> &Entity<Shell> {
         self.page.as_ref().unwrap_or(&self.shell)
+    }
+
+    /// The thread drafts `state.json` keeps, for the tests.
+    pub fn saved_drafts(&self) -> &HashMap<String, String> {
+        &self.state.drafts
     }
 
     pub fn archived_chats(&self) -> Option<&Entity<ArchivedChats>> {
@@ -3819,6 +3840,7 @@ impl Root {
                         this.config["host"]["confirm-before-close"] = "never".into();
                         this.state.save();
                     }
+                    this.save_draft(cx);
                     this.flush_settings(cx);
                     windows::close(window, cx);
                 }
@@ -4296,6 +4318,51 @@ impl Root {
         })
     }
 
+    /// Keeps the composer's input as the draft of the thread it leaves and puts back the draft
+    /// of thread `id`, as the original's per-thread `draftKey` does. A composer that showed no
+    /// thread yet keeps its input (a restart's carried-over draft).
+    fn swap_draft(&mut self, id: &str, cx: &mut Context<Self>) {
+        let previous = self
+            .thread
+            .as_ref()
+            .map(|view| view.read(cx).id().to_owned());
+        let next = self.drafts.remove(id).unwrap_or_else(|| {
+            ui::composer::Draft::from_text(self.state.drafts.get(id).cloned().unwrap_or_default())
+        });
+        let Some(previous) = previous else {
+            if self.thread_composer.read(cx).field_text().is_empty() {
+                self.thread_composer
+                    .update(cx, |c, cx| c.swap_draft(next, cx));
+            }
+            return;
+        };
+        let left = self
+            .thread_composer
+            .update(cx, |c, cx| c.swap_draft(next, cx));
+        if left.is_empty() {
+            self.state.drafts.remove(&previous);
+        } else {
+            self.state
+                .drafts
+                .insert(previous.clone(), left.text().to_owned());
+            self.drafts.insert(previous, left);
+        }
+        self.state.save();
+    }
+
+    /// Saves the open thread's composer text before quitting, so it returns after a restart.
+    fn save_draft(&mut self, cx: &App) {
+        let Some(view) = &self.thread else { return };
+        let id = view.read(cx).id().to_owned();
+        let text = self.thread_composer.read(cx).field_text();
+        if text.trim().is_empty() {
+            self.state.drafts.remove(&id);
+        } else {
+            self.state.drafts.insert(id, text.to_owned());
+        }
+        self.state.save();
+    }
+
     fn show_thread(&mut self, thread: Thread, window: &mut Window, cx: &mut Context<Self>) {
         if self.signed_out() {
             return;
@@ -4326,6 +4393,7 @@ impl Root {
             .as_ref()
             .is_none_or(|view| view.read(cx).id() != thread.id.as_str())
         {
+            self.swap_draft(&thread.id, cx);
             if let Some(state) = self.thread_run_settings.get(&thread.id) {
                 self.thread_composer.update(cx, |c, cx| {
                     c.restore_run_settings(&state.collaboration_mode, state.permission.clone(), cx)
@@ -6940,13 +7008,24 @@ impl Root {
                         self.sync_prevent_sleep(cx);
                     }
                 }
-                // Completion can leave the selected thread unread, including a background terminal.
-                // It also finishes the thread's open automation run, like the original host.
+                // Completion leaves the thread unread unless it is open in the focused window,
+                // where the original marks it read at once. It also finishes the thread's open
+                // automation run, like the original host.
                 "turn/completed" => {
                     if let Some(id) = params["threadId"].as_str()
                         && side_thread.is_none()
                     {
-                        self.sidebar.update(cx, |s, cx| s.set_unread(id, cx));
+                        let viewing = self.state.route == Route::Thread(id.to_owned())
+                            && self
+                                .context_window
+                                .update(cx, |_, window, _| window.is_window_active())
+                                .unwrap_or(false);
+                        self.sidebar.update(cx, |s, cx| {
+                            s.set_unread(id, cx);
+                            if viewing {
+                                s.set_read(id, cx);
+                            }
+                        });
                         self.complete_automation_run(&params, cx);
                     }
                     // Standalone elicitations and nonblocking questions wait for explicit resolution.
