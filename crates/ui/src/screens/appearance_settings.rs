@@ -681,7 +681,15 @@ impl SettingsPane {
             .fields
             .entry((variant, name))
             .or_insert_with(|| {
-                let field = cx.new(|cx| Composer::dialog_field(label, "", value, cx));
+                let field = cx.new(|cx| {
+                    let field = Composer::dialog_field(label, "", value, cx);
+                    // `text-xs` for a theme's hex input; the size fields (no variant) keep theirs.
+                    if variant.is_empty() {
+                        field
+                    } else {
+                        field.with_text_metrics(px(12.), px(16.))
+                    }
+                });
                 // A rejected edit shows the saved value again.
                 let done =
                     move |this: &mut Self, field: &Entity<Composer>, cx: &mut Context<Self>| {

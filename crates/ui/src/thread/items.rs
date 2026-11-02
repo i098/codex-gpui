@@ -1,4 +1,5 @@
 use super::*;
+use crate::icon::Icon;
 use base64::Engine as _;
 use gpui::{Image, ImageFormat};
 
@@ -1175,19 +1176,20 @@ pub(super) fn activity(
     };
     let plain = |(label, w): (Div, Pixels)| boxed(label.into_any_element(), w);
     // A 21 px line: a 16 px icon, then its words.
-    let row = |icon_name: &'static str, words: Div| {
+    let glyph = |name: &'static str| icon(name, 16., text60);
+    let row = |glyph: Icon, words: Div| {
         div()
             .h(px(21.))
             .min_w_0()
             .flex()
             .items_center()
             .gap(px(6.))
-            .child(icon(icon_name, 16., text60))
+            .child(glyph)
             .child(words)
     };
     // A row that opens `key`: its label whitens on hover, its 14 px chevron shows on hover and
     // points down while open.
-    let disclosure = |key: String, icon_name: &'static str, (label, w): (Div, Pixels), is_open| {
+    let disclosure = |key: String, glyph: Icon, (label, w): (Div, Pixels), is_open| {
         let group = SharedString::from(format!("activity-group-{key}"));
         // Group hover recolours text only on a stateful element: the run colour is fixed at
         // layout, before this frame's group hitbox exists.
@@ -1208,7 +1210,7 @@ pub(super) fn activity(
             .flex()
             .items_center()
             .gap(px(4.))
-            .child(row(icon_name, boxed(label.into_any_element(), w)))
+            .child(row(glyph, boxed(label.into_any_element(), w)))
             .child(
                 // `Icon` folds its opacity into the color, so the hover sets the color.
                 icon(chevron, 14., text60.opacity(if is_open { 1. } else { 0. }))
@@ -1244,7 +1246,7 @@ pub(super) fn activity(
                 markdown(text, window, t, segments)
             }
             Activity::Running(command) => {
-                row("thread-terminal", plain(label(command.to_owned(), text60)))
+                row(glyph("thread-terminal"), plain(label(command.to_owned(), text60)))
             }
             Activity::PatchOutput(id, output) => mcp_output(
                 format!("patch-output-{id}"), "text", output, t,
@@ -1260,7 +1262,7 @@ pub(super) fn activity(
                 .flex_col()
                 .items_start()
                 .gap(px(4.))
-                .child(row("thread-summary", plain(label(words, text60))))
+                .child(row(glyph("thread-summary"), plain(label(words, text60))))
                 .when(!text.is_empty(), |d| d.child(text60_block(text, t))),
             Activity::Reasoning {
                 key,
@@ -1278,14 +1280,14 @@ pub(super) fn activity(
                     .items_start()
                     .child(disclosure(
                         key,
-                        "thread-summary",
+                        glyph("thread-summary"),
                         label(words, text60),
                         is_open,
                     ))
                     .children(content)
             }
             Activity::Compaction(words) => row(
-                "thread-compaction",
+                glyph("thread-compaction"),
                 plain(label(words.to_owned(), text60)),
             ),
             Activity::Row(item) => {
@@ -1361,7 +1363,7 @@ pub(super) fn activity(
                 } else {
                     text60
                 };
-                let header = disclosure(key.clone(), "thread-mcp", label(mcp_label(item), color), is_open);
+                let header = disclosure(key.clone(), glyph("thread-mcp"), label(mcp_label(item), color), is_open);
                 let body = || {
                     let mut content = div().w_full().pt(px(4.)).flex().flex_col().gap(px(4.));
                     for update in progress {
@@ -1464,9 +1466,14 @@ pub(super) fn activity(
                 rows,
             } => {
                 let is_open = open.contains(key);
-                let header = disclosure(key.to_owned(), icon_name, label(summary, text60), is_open);
+                let header = disclosure(key.to_owned(), glyph(icon_name), label(summary, text60), is_open);
+                // Fitted icon images paint outside layers, so the fade would skip them.
+                let faded = |name| glyph(name).runtime();
                 let content = || {
-                    body().children(rows.into_iter().map(|r| {
+                    // `vertical-scroll-fade-mask` with `--edge-fade-distance: 1.5rem`: rows that
+                    // fit show a 24 px top fade from the header's foot.
+                    // shortcut: no `max-h-56` scroll, so a list past 224 px grows unclipped.
+                    let list = body().children(rows.into_iter().map(|r| {
                         if let Some(shell) = r.shell {
                             let is_open = open.contains(&shell.key);
                             let key = shell.key.clone();
@@ -1476,7 +1483,7 @@ pub(super) fn activity(
                                 .flex()
                                 .flex_col()
                                 .items_start()
-                                .child(disclosure(key, r.icon, label(r.verb, text60), is_open))
+                                .child(disclosure(key, faded(r.icon), label(r.verb, text60), is_open))
                                 .children(view.expansion(&shell.key, is_open, shell_body, window, cx));
                         }
                         let mut words = div()
@@ -1498,8 +1505,9 @@ pub(super) fn activity(
                         if let Some((added, removed)) = r.stats {
                             words = words.children(stats(added, removed, text60));
                         }
-                        row(r.icon, words)
-                    }))
+                        row(faded(r.icon), words)
+                    }));
+                    list.layer().child(shapes::top_fade(px(24.)))
                 };
                 div()
                     .flex()
