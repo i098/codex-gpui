@@ -1521,6 +1521,7 @@ impl Render for HomeSidebar {
                     .pb(px(16.))
                     .child(contents),
             )
+            .children(crate::updater::banner(window, cx))
             .children(
                 self.menu
                     .as_ref()

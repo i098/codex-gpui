@@ -35,6 +35,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Route shared-thread, ChatGPT, browser, Space, and Codex app links to native destinations.
 - List matching chats in a `Chats` section of the `@` mention list from `thread/search`, and let a sidebar chat dragged onto the composer show `Drop to reference chat`. A chat chip sends its id under `## Referenced chats with Codex:`.
 - Check for updates in the background every hour, send the original's appcast parameters (installation id, architecture, version, beta, macOS version and plan), and add a `Beta updates` setting.
+- Show the update banner in the sidebar: the new version, download progress, `Restart to update` once the update is ready, `Read more` for the release notes, and a dismiss button.
 - Give new chats the `read_thread_terminal` tool, so the model can read the chat's terminal output and prompt, shown as `Reading chat terminal`.
 - Recall sent prompts with Up and Down in an empty composer, as the original's prompt history does; the last 20 prompts persist across restarts.
 - Release builds are signed with the hardened runtime, notarized and stapled when the Developer ID secrets are set, and ship a signed DMG next to the zip.
