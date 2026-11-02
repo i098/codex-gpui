@@ -558,6 +558,36 @@ pub fn open(url: &str, cx: &mut App) {
     }
 }
 
+/// Opens a supported path in the primary window.
+pub fn open_path(path: &str, cx: &mut App) -> bool {
+    let Some(route) = Route::remote_path(path)
+        .or_else(|| Route::pull_request_path(path))
+        .or_else(|| crate::onboarding::route(path))
+    else {
+        return false;
+    };
+    if let Some(handle) = windows::primary(cx).and_then(|window| window.downcast::<Root>()) {
+        let result = handle
+            .update(cx, |root, window, cx| root.navigate(route, window, cx))
+            .and_then(|()| windows::show(handle.into(), windows::Presentation::Foreground, cx));
+        if let Err(error) = result {
+            eprintln!("codex-gpui: cannot open launch path: {error:#}");
+        }
+        return true;
+    }
+
+    let mut state = State::load();
+    state.route = route;
+    let cwd = std::env::current_dir()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    if let Err(error) = windows::open_primary(state, cwd, cx) {
+        eprintln!("codex-gpui: cannot open launch path: {error:#}");
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
