@@ -469,6 +469,13 @@ fn configuration_efforts_and_open_config_follow_the_host() -> Result<()> {
         layered_reads(&mut fx)? == opened + 1,
         "Open config.toml reads once"
     );
+    // Profile menu ▸ `Open config.toml` takes the same path from any route.
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        window.dispatch_action(Box::new(ui::OpenUserConfig), cx)
+    })?;
+    fx.wait("profile menu config read", |fx| {
+        layered_reads(fx).is_ok_and(|n| n == opened + 2)
+    })?;
 
     page.update(&mut fx.cx, |page, cx| {
         page.set("host.enabled-reasoning-efforts", json!(["max"]), cx)
