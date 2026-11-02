@@ -1052,7 +1052,7 @@ pub(super) fn activity(
                     ))
                     .children(content)
             }
-            Activity::Review(words) => row("code-review", plain(label(words.clone(), text60))),
+            Activity::Review(words) => row(glyph("code-review"), plain(label(words.clone(), text60))),
             Activity::Compaction(words) => row(
                 glyph("thread-compaction"),
                 plain(label(words.to_owned(), text60)),
