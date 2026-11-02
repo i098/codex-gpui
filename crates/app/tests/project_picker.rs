@@ -238,6 +238,20 @@ fn sidebar_project_rows_start_chats_in_their_own_roots_and_leave_open_chats_alon
     let host = Arc::new(LocalHost::new(temp.path().join("codex")));
     let [alpha, beta, gone] = [alpha, beta, gone].map(|root| host.add_project(&root).unwrap());
     fs::remove_dir(&gone)?;
+    // Collapsed folders list no chats, so the rows keep the recorded 31 px stride.
+    let global = temp.path().join("codex/.codex-global-state.json");
+    let mut state: serde_json::Value = serde_json::from_slice(&fs::read(&global)?)?;
+    let ids: Vec<String> = state["local-projects"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    for id in ids {
+        state["electron-persisted-atom-state"][format!("sidebar-project-expanded-v1-codex:{id}")] =
+            json!(false);
+    }
+    fs::write(&global, serde_json::to_vec(&state)?)?;
 
     let mut lines = script(None, |_| {})?;
     let mut existing = recorded_thread(GREETING)?;
