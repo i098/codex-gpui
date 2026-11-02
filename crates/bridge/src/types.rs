@@ -157,6 +157,16 @@ pub enum ThreadItem {
     ContextCompaction {
         id: String,
     },
+    /// `/review` began: `review` names what is reviewed.
+    EnteredReviewMode {
+        id: String,
+        review: String,
+    },
+    /// `/review` finished: `review` is the review text.
+    ExitedReviewMode {
+        id: String,
+        review: String,
+    },
     #[serde(other)]
     Other,
 }
@@ -237,6 +247,9 @@ pub struct Model {
     pub default_reasoning_effort: String,
     pub supported_reasoning_efforts: Vec<Value>,
     pub is_default: bool,
+    /// `inputModalities`; absent means the server default, text and image.
+    #[serde(default)]
+    pub input_modalities: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

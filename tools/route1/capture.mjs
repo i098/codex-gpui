@@ -57,6 +57,32 @@ const STATES = {
     await d.click(row("Add a subtract"));
     await d.waitFor(`document.body.innerText.includes("Worked for") && document.body.innerText.includes("View changes")`, "subtract thread");
   },
+  // The subtract thread with its `Worked for` activity expanded, then its tool summary row too.
+  "thread-worked": async (d) => {
+    await STATES.thread(d);
+    await d.click(byText("Worked for 17s"));
+    await d.waitFor(`document.body.innerText.includes("Edited a file, read files, ran commands")`, "expanded activity");
+  },
+  "thread-tools": async (d) => {
+    await STATES["thread-worked"](d);
+    // The `Worked for` disclosure still animates; s015 waits 800 ms before the next click.
+    await d.sleep(800);
+    const before = await d.evaluate(`document.body.innerText.length`);
+    // The summary row is a plain element; s015 clicks its text box, the innermost match.
+    const label = "Edited a file, read files, ran commands";
+    await d.click(`[...document.querySelectorAll("*")].filter((e) => e.offsetParent !== null && e.innerText?.trim() === ${JSON.stringify(label)}).at(-1)`, "tool summary row");
+    await d.waitFor(`document.body.innerText.length > ${before}`, "expanded tool rows");
+    // The rows grow open; shoot after the motion ends, as the port's 400 ms advance does.
+    await d.sleep(800);
+  },
+  // The greeting chat after s008's bridge step: its final answer becomes a Python code block.
+  "thread-code": async (d) => {
+    await d.click(row("Change the greeting"));
+    await d.waitFor(`document.body.innerText.includes("Edited hello.py")`, "greeting thread");
+    const data = JSON.parse(read("../../refs/interactions/s008.json")).steps[1].message;
+    await d.evaluate(`window.dispatchEvent(new MessageEvent("message", { data: ${JSON.stringify(data)} }))`);
+    await d.waitFor(`!!document.querySelector('[data-markdown-copy="code-block"]')`, "code block");
+  },
   // The Home composer with its focus, empty and with a typed draft.
   "composer-rest": async (d) => {
     await d.click(`document.querySelector(".ProseMirror")`, "composer");
@@ -70,6 +96,11 @@ const STATES = {
     await d.type("Refactor src/math.py");
     await d.click(`[...document.querySelectorAll("button")].find((b) => b.offsetParent !== null && b.innerText.trim().startsWith("GPT-6 Astra"))`, "model picker");
     await d.waitFor(`document.querySelector("[role=menu]")`, "model menu");
+  },
+  // The sidebar's `Switch mode` dropdown (ChatGPT / Codex).
+  "mode-menu": async (d) => {
+    await d.click(`[...document.querySelectorAll("button")].find((b) => b.offsetParent !== null && (b.getAttribute("aria-label") || "").startsWith("Switch mode"))`, "mode switch");
+    await d.waitFor(`document.querySelector("[role=menu]")`, "mode menu");
   },
   diff: async (d) => {
     await STATES.thread(d);

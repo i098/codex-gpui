@@ -343,7 +343,7 @@ impl Composer {
         cx.notify();
     }
 
-    pub(super) fn add_files(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn add_files(&mut self, cx: &mut Context<Self>) {
         let generation = self.attachment_generation;
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -402,13 +402,24 @@ impl Composer {
         }
     }
 
-    /// The status line above the editor: `Files uploading…` while a paste saves, else the
-    /// upload failure (`composer.submit.waitForFileUploads`, `composer.fileAttachment.uploadError`).
+    /// The status line above the editor and the reason a send is blocked: `Files uploading…`
+    /// while a paste saves, the upload failure (`composer.submit.waitForFileUploads`,
+    /// `composer.fileAttachment.uploadError`), or images for a text-only model
+    /// (`composer.submit.imageInputsUnsupported`).
     pub fn upload_status(&self) -> Option<&'static str> {
         if self.pending_attachments > 0 {
             Some("Files uploading…")
-        } else {
+        } else if self.attachment_error.is_some() {
             self.attachment_error
+        } else if self.current_model().is_some_and(|model| !model.images)
+            && self
+                .attachments
+                .iter()
+                .any(|a| matches!(a.content, Content::Image(_)))
+        {
+            Some("Remove images or switch models to send this message")
+        } else {
+            None
         }
     }
 
@@ -1032,6 +1043,36 @@ mod tests {
             composer.remove_attachment(5, cx);
             assert_eq!(composer.attachments.len(), 1);
             assert_eq!(composer.attachments[0].path, Path::new("/work/b.rs"));
+        });
+    }
+
+    #[test]
+    fn text_only_model_blocks_images() {
+        let mut cx = gpui::HeadlessAppContext::new(textsys::text_system());
+        let composer = cx.new(|cx| Composer::new("Work with Codex", true, cx));
+        composer.update(&mut cx, |composer, _| {
+            let model = |id: &str, images| super::super::ModelOption {
+                id: id.into(),
+                label: id.into(),
+                efforts: Vec::new(),
+                images,
+            };
+            composer.models = vec![model("text", false), model("vision", true)];
+            composer
+                .attachments
+                .push(Attachment::file("/work/notes.md".into()));
+            assert_eq!(composer.upload_status(), None, "files do not need images");
+            composer.attachments.push(Attachment {
+                path: "/work/shot.png".into(),
+                content: Content::Image(Arc::new(gpui::Image::empty())),
+                persisted: false,
+            });
+            assert_eq!(
+                composer.upload_status(),
+                Some("Remove images or switch models to send this message")
+            );
+            composer.model = 1;
+            assert_eq!(composer.upload_status(), None);
         });
     }
 }
