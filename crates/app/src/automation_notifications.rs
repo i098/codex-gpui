@@ -163,6 +163,7 @@ impl Root {
             return;
         };
         let turn = params["turn"].clone();
+        let completed = turn["status"] == "completed";
         let cached = self
             .last_agent_messages
             .remove(id)
@@ -190,15 +191,16 @@ impl Root {
             let (host, id) = (host.clone(), id.clone());
             async move {
                 // The run owner persists completion and archive results before this read.
-                let Some(failed_only) = host.finish_automation_run(&id, &turn)? else {
-                    return Ok(None);
-                };
+                let failed_only = host.finish_automation_run(&id, &turn)?;
                 let inbox = host::json_body(&host.fetch(&host::Request::post(
                     "inbox-items",
                     Some(json!({"threadId": id})),
                 ))?)?;
                 let Some(_) = inbox["items"].as_array().and_then(|items| items.first()) else {
-                    return Ok(None);
+                    return Ok(failed_only.map(|_| None));
+                };
+                let Some(failed_only) = failed_only else {
+                    return Ok(Some(None));
                 };
                 let notice =
                     body(&message, turn["status"] == "completed", failed_only).map(|body| {
@@ -226,7 +228,12 @@ impl Root {
                         let Some(notice) = notice else { return };
                         notice
                     }
-                    Ok(None) => return,
+                    Ok(None) => {
+                        if completed {
+                            this.chat_notification("completion", &id, "Your turn is complete.", cx);
+                        }
+                        return;
+                    }
                     Err(error) => {
                         eprintln!(
                             "codex-gpui: failed to finish automation notification: {error:#}"

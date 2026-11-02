@@ -113,6 +113,15 @@ struct Disclosure {
     height: Rc<Cell<f32>>,
 }
 
+/// An activity row body's open/close track and its last measured natural height. The original
+/// (`sites-end-resource` chunk, transition `no`) animates height and opacity over 300 ms
+/// `ease-enter` both ways; motion values are set at once under reduced motion.
+struct Expansion {
+    epoch: Instant,
+    fade: HoverFade,
+    height: Rc<Cell<f32>>,
+}
+
 /// Timestamp clock: live wall time, a fixed fixture time, or a base plus monotonic elapsed time.
 #[derive(Clone, Copy)]
 pub struct Clock {
@@ -141,10 +150,16 @@ impl Clock {
 
 pub struct ThreadView {
     thread_id: String,
+    /// Branch recorded by `thread/metadata/update`; the header shows it once known.
+    branch: Option<SharedString>,
+    /// Remote environment link (`thread/environment/connected` / `disconnected`).
+    environment_connected: Option<bool>,
     /// Workspace folder; its name heads the summary panel.
     cwd: String,
     /// The `Toggle summary` panel is open.
     pub summary_open: bool,
+    /// A projectless chat (`projectless-thread-ids`): the summary shows `Sources`.
+    projectless: bool,
     /// The view fills the main surface (no side panel): it draws its px at the surface's
     /// rounded right corners through the clip (`Shell::main_clips_right`).
     pub clip_right: bool,
@@ -163,6 +178,10 @@ pub struct ThreadView {
     pull_request: Option<Value>,
     worktree_status: Option<&'static str>,
     git_actions: Option<(gpui::FocusHandle, Option<usize>)>,
+    /// The open More actions menu under a turn: its turn id and focus.
+    turn_menu: Option<(String, gpui::FocusHandle)>,
+    /// The pointer is over a More actions trigger, whose click toggles the menu itself.
+    turn_menu_trigger_hovered: bool,
     git_trigger: Option<gpui::FocusHandle>,
     terminal_item: Option<String>,
     pub terminals_stopping: bool,
@@ -171,12 +190,18 @@ pub struct ThreadView {
     patch_pending: bool,
     render_errors: RefCell<HashMap<String, String>>,
     stream_errors: HashMap<String, Vec<(bridge::types::TurnError, bool)>>,
+    /// Inline notices of each turn (model reroute, verification) and the turns whose safety
+    /// buffering banner shows (`context.rs`).
+    notices: HashMap<String, Vec<String>>,
+    safety_buffering: HashSet<String>,
     usage_limit_notice: UsageLimitNotice,
     clock: Clock,
     composer: AnyView,
     embedded: bool,
     _tick: Option<Task<()>>,
     running_since: HashMap<String, Instant>,
+    /// A running turn's worked seconds, frozen when its final answer started streaming.
+    answer_secs: HashMap<String, i64>,
     /// Reasoning items seen starting, and the seconds each took once completed. The protocol
     /// carries no per-item duration; a loaded history has none, and the original draws no
     /// header for such an item.
@@ -191,6 +216,7 @@ pub struct ThreadView {
     manual_compacted: HashSet<String>,
     /// The latest `turn/plan/updated` steps of each turn: `(step, status)`.
     todo_plans: HashMap<String, Vec<(String, String)>>,
+    patch_output: HashMap<String, String>,
     /// A turn's `Undo`, `View changes`, copy and fork focus handles. They belong to the view,
     /// not to its place in the element tree: the view moves when a side panel opens, and a
     /// pressed control must keep its focus across that.
@@ -199,6 +225,8 @@ pub struct ThreadView {
     /// Open disclosures: turns whose `Worked for` is expanded, by turn id, and activity groups
     /// whose rows show, by the id of their first item.
     expanded: HashSet<String>,
+    /// Activity disclosure bodies' open/close tracks and heights, by key (`items::activity`).
+    expansions: RefCell<HashMap<String, Expansion>>,
     pending_question: Option<String>,
     scroll: ScrollHandle,
     /// The turns as last laid out, to stand in for the ones far off screen.
@@ -335,6 +363,11 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) {
         self.git_repository = repository;
+        cx.notify();
+    }
+
+    pub fn set_projectless(&mut self, projectless: bool, cx: &mut Context<Self>) {
+        self.projectless = projectless;
         cx.notify();
     }
 
@@ -700,12 +733,17 @@ impl ThreadView {
             pull_request: None,
             worktree_status: None,
             git_actions: None,
+            turn_menu: None,
+            turn_menu_trigger_hovered: false,
             git_trigger: None,
             terminal_item: None,
             terminals_stopping: false,
             thread_id: thread.id,
+            branch: None,
+            environment_connected: None,
             cwd: thread.cwd,
             summary_open: false,
+            projectless: false,
             clip_right: false,
             clip_top_left: false,
             docked_below: false,
@@ -714,12 +752,15 @@ impl ThreadView {
             patch_pending: false,
             render_errors: RefCell::default(),
             stream_errors: HashMap::new(),
+            notices: HashMap::new(),
+            safety_buffering: HashSet::new(),
             usage_limit_notice: UsageLimitNotice::RetryLater,
             clock,
             composer,
             embedded: false,
             _tick: None,
             running_since: HashMap::new(),
+            answer_secs: HashMap::new(),
             reasoning_since: HashMap::new(),
             reasoning_secs: HashMap::new(),
             stream_fades: HashMap::new(),
@@ -728,9 +769,11 @@ impl ThreadView {
             manual_compactions: 0,
             manual_compacted: HashSet::new(),
             todo_plans: HashMap::new(),
+            patch_output: HashMap::new(),
             turn_focus: RefCell::default(),
             mcp_images: RefCell::default(),
             expanded: HashSet::new(),
+            expansions: RefCell::default(),
             pending_question: None,
             scroll: ScrollHandle::new(),
             laid_out: Rc::default(),
@@ -1311,36 +1354,7 @@ impl ThreadView {
     /// `Toggle summary` panel: project changes and background processes.
     fn summary(&mut self, window: &mut Window, t: &Theme, cx: &mut Context<Self>) -> Div {
         let project = self.cwd.rsplit('/').next().unwrap_or(&self.cwd).to_owned();
-        // `sticky` headers: their background (and their `before:` 8 px above) paints again in
-        // the panel's rounded `overflow: hidden` clip, over the panel's corner.
-        let header = |label: String| {
-            div()
-                .relative()
-                .child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .top(px(-8.))
-                        .child(shapes::decoration(shapes::Decoration {
-                            fill: Some(t.surface_elevated_secondary),
-                            ..Default::default()
-                        })),
-                )
-                .h(px(28.))
-                .pb(px(2.))
-                .pl(px(20.))
-                .pr(px(14.))
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .child(div().flex_1().min_w_0().py(px(2.)).child(text(
-                    label,
-                    13.,
-                    18.5714,
-                    400.,
-                    t.text_secondary,
-                )))
-        };
+        let header = |label: String| summary_header(label.into(), t);
         // `trailing`: the row's hover-only actions keep their space. A label that overflows its
         // viewport gets the marquee's mask (`_overflowingViewport`: 0.571429em left fade over
         // the track's padding, 1.14286em right fade), a masked box in its own layer.
@@ -1391,42 +1405,63 @@ impl ThreadView {
         let row_hover = t.ghost_hover;
         let git_control = self.git_control(cx);
         let has_terminals = self.background_terminal_items().next().is_some();
-        let mut sections = vec![
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(2.))
-                .child(
-                    header(project).child(
-                        div()
-                            .size(px(24.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(icon("thread-summary-actions", 18., t.text_tertiary)),
-                    ),
-                )
-                .when(has_changes, |d| {
-                    d.child(
-                        row("thread-summary-changes", "Changes".into(), 32., 0, window)
-                            .relative()
-                            .group("summary-changes")
-                            .mx(px(12.))
-                            .px(px(8.))
-                            .rounded(Theme::RADIUS_SM)
-                            .when(git_row_active, |d| d.bg(row_hover))
-                            .hover(move |style| style.bg(row_hover))
-                            .child(
-                                div()
-                                    .absolute()
-                                    .right(px(2.))
-                                    .top(px(2.))
-                                    .child(git_control),
-                            )
-                            .on_click(crate::dispatch::<crate::OpenChangesPanel>),
+        // The original drops the project section (name and `Changes`) in a projectless chat.
+        let mut sections: Vec<Div> = (!self.projectless)
+            .then(|| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        header(project).child(
+                            div()
+                                .size(px(24.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(icon("thread-summary-actions", 18., t.text_tertiary)),
+                        ),
                     )
-                }),
-        ];
+                    .when(has_changes, |d| {
+                        d.child(
+                            row("thread-summary-changes", "Changes".into(), 32., 0, window)
+                                .relative()
+                                .group("summary-changes")
+                                .mx(px(12.))
+                                .px(px(8.))
+                                .rounded(Theme::RADIUS_SM)
+                                .when(git_row_active, |d| d.bg(row_hover))
+                                .hover(move |style| style.bg(row_hover))
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .right(px(2.))
+                                        .top(px(2.))
+                                        .child(git_control),
+                                )
+                                .on_click(crate::dispatch::<crate::OpenChangesPanel>),
+                        )
+                    })
+            })
+            .into_iter()
+            .collect();
+        // `Outputs` stays empty here (`Create a file or site`) in a projectless or non-git
+        // workspace; `Sources` (`Attach files or connect apps`) in a projectless chat.
+        // shortcut: produced outputs and used sources are not listed yet, so the empty rows always show.
+        // `Outputs` is the one section the original draws without its rule (`divider: false`).
+        let mut outputs = None;
+        if self.projectless || matches!(self.git_repository, Some(Err(_))) {
+            outputs = Some(sections.len());
+            let button = self.summary_bounds("summary-outputs-add", window, cx);
+            let row_bounds = self.summary_bounds("summary-outputs-row", window, cx);
+            sections.push(self.summary_section(
+                ("Outputs", "Create a file or site"),
+                &CREATE_ITEMS,
+                (button, row_bounds),
+                t,
+                cx,
+            ));
+        }
         if has_terminals {
             sections.push(
                 div()
@@ -1542,6 +1577,35 @@ impl ThreadView {
                     )),
             );
         }
+        if let Some((_, plan)) = crate::screens::plan::latest_plan(&self.turns) {
+            let title = crate::screens::plan::plan_title(plan);
+            sections.push(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(header("Plan".into()))
+                    .child(
+                        row("context-file-document", title, 16., 0, window)
+                            .mx(px(12.))
+                            .px(px(8.))
+                            .rounded(Theme::RADIUS_SM)
+                            .hover(move |style| style.bg(row_hover))
+                            .aria_label("Open plan")
+                            .on_click(crate::dispatch::<crate::OpenPlanPanel>),
+                    ),
+            );
+        }
+        if self.projectless {
+            let button = self.summary_bounds("summary-sources-add", window, cx);
+            sections.push(self.summary_section(
+                ("Sources", "Attach files or connect apps"),
+                &SOURCE_ITEMS,
+                (button.clone(), button),
+                t,
+                cx,
+            ));
+        }
         let n = sections.len();
         // A fixed popover: its own composited layer, whose rect (and tile grid) starts at the
         // widest shadow's ink, 1.5 blur = 30 px out.
@@ -1583,18 +1647,127 @@ impl ThreadView {
                             .children(sections.into_iter().enumerate().map(|(i, s)| {
                                 s.when(i + 1 < n, |s| {
                                     // Half-px rule under every section but the last.
-                                    s.relative().pb(px(8.)).child(
-                                        div()
-                                            .absolute()
-                                            .bottom_0()
-                                            .left(px(20.))
-                                            .right(px(20.))
-                                            .h(px(0.5))
-                                            .bg(over(t.border, t.surface_elevated_secondary)),
-                                    )
+                                    s.relative().pb(px(8.)).when(outputs != Some(i), |s| {
+                                        s.child(
+                                            div()
+                                                .absolute()
+                                                .bottom_0()
+                                                .left(px(20.))
+                                                .right(px(20.))
+                                                .h(px(0.5))
+                                                .bg(over(t.border, t.surface_elevated_secondary)),
+                                        )
+                                    })
                                 })
                             })),
                     )),
+            )
+    }
+
+    fn summary_bounds(
+        &self,
+        key: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Entity<Bounds<Pixels>> {
+        window.use_keyed_state(
+            SharedString::from(format!("{key}-{:?}", cx.entity().entity_id())),
+            cx,
+            |_, _| Bounds::default(),
+        )
+    }
+
+    /// A summary section with nothing to list: its title, a `+` that opens `items` under itself
+    /// (`align: end`), and a dimmed row (`tone: conversation-summary`, `text-text/40`, hover
+    /// `text-default`) that opens them under `anchors.1`.
+    fn summary_section(
+        &self,
+        (title, prompt): (&'static str, &'static str),
+        items: &'static [(&'static str, &'static str, &'static [u8])],
+        (button, row): (gpui::Entity<Bounds<Pixels>>, gpui::Entity<Bounds<Pixels>>),
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let measure = |bounds: &gpui::Entity<Bounds<Pixels>>| {
+            let bounds = bounds.clone();
+            canvas(
+                move |rect, _, cx| bounds.update(cx, |stored, _| *stored = rect),
+                |_, (), _, _| {},
+            )
+            .absolute()
+            .size_full()
+        };
+        let open = |anchor: gpui::Entity<Bounds<Pixels>>| {
+            cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+                let items = items
+                    .iter()
+                    .map(|&(id, label, icon)| menu::Item {
+                        icon: Some(icon),
+                        ..menu::Item::new(id, label, true)
+                    })
+                    .collect();
+                let anchor = *anchor.read(cx);
+                this.menu = Some(menu::ContextMenu::dropdown(
+                    items,
+                    String::new(),
+                    anchor,
+                    window,
+                    cx,
+                ));
+                cx.notify();
+            })
+        };
+        let dim = t.text.opacity(0.4);
+        let hover_text = t.text;
+        let label = format!("Add {}", title.to_lowercase());
+        let group = SharedString::from(format!("summary-{title}-row"));
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .child(
+                summary_header(title.into(), t).child(tooltip(
+                    div()
+                        .id(SharedString::from(format!("summary-{title}-add")))
+                        .relative()
+                        .child(measure(&button))
+                        .size(px(24.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(10.))
+                        .role(gpui::Role::Button)
+                        .aria_label(SharedString::from(label.clone()))
+                        .tab_index(0)
+                        .cursor_pointer()
+                        .hover(|style| style.bg(t.ghost_hover))
+                        .child(icon("automations-plus", 18., dim))
+                        .on_click(open(button.clone())),
+                    label,
+                    None,
+                    Side::Bottom,
+                )),
+            )
+            .child(
+                div()
+                    .id(group.clone())
+                    .group(group.clone())
+                    .relative()
+                    .child(measure(&row))
+                    .h(px(28.))
+                    .px(px(20.))
+                    .py(px(4.))
+                    .flex()
+                    .items_center()
+                    .role(gpui::Role::Button)
+                    .aria_label(prompt)
+                    .tab_index(0)
+                    .cursor_pointer()
+                    .child(
+                        text(prompt, 13., 18.5714, 430., dim)
+                            .group_hover(group, move |style| style.text_color(hover_text)),
+                    )
+                    .on_click(open(row)),
             )
     }
 
@@ -1610,6 +1783,30 @@ impl ThreadView {
             find.dirty = true;
         }
         match method.as_str() {
+            "item/fileChange/outputDelta" => {
+                let (Some(id), Some(delta)) = (params["itemId"].as_str(), params["delta"].as_str())
+                else {
+                    return;
+                };
+                if matches!(self.item_mut(id), Some(ThreadItem::FileChange { .. })) {
+                    self.patch_output
+                        .entry(id.to_owned())
+                        .or_default()
+                        .push_str(delta);
+                }
+            }
+            "item/commandExecution/terminalInteraction" => {
+                let (Some(id), Some(stdin)) = (params["itemId"].as_str(), params["stdin"].as_str())
+                else {
+                    return;
+                };
+                if let Some(ThreadItem::CommandExecution {
+                    aggregated_output, ..
+                }) = self.item_mut(id)
+                {
+                    aggregated_output.get_or_insert_default().push_str(stdin);
+                }
+            }
             "turn/started" | "turn/completed" => {
                 let Ok(mut n) = serde_json::from_value::<TurnNotification>(params.clone()) else {
                     return;
@@ -1620,6 +1817,7 @@ impl ThreadView {
                         .or_insert_with(|| cx.background_executor().now());
                 } else {
                     self.running_since.remove(&n.turn.id);
+                    self.answer_secs.remove(&n.turn.id);
                 }
                 match self.turns.iter_mut().find(|t| t.id == n.turn.id) {
                     Some(turn) => {
@@ -1800,10 +1998,11 @@ impl ThreadView {
                     return;
                 };
                 match self.item_mut(&n.item_id) {
-                    Some(ThreadItem::AgentMessage { text, .. }) => {
+                    Some(ThreadItem::AgentMessage { text, phase, .. }) => {
                         let start = text.len();
                         text.push_str(&n.delta);
                         let end = text.len();
+                        let answer = start == 0 && phase.as_deref() == Some("final_answer");
                         if start != end && !cx.reduce_motion() {
                             self.stream_fades
                                 .entry(n.item_id)
@@ -1813,6 +2012,14 @@ impl ThreadView {
                                     started_at: cx.background_executor().now(),
                                     alpha: 0.,
                                 });
+                        }
+                        // The original's `Worked for` stops at the final answer's first text.
+                        if answer && end > 0 {
+                            let now = cx.background_executor().now();
+                            if let Some(turn) = self.turns.iter().find(|t| t.id == n.turn_id) {
+                                let secs = self.running_seconds(turn, now);
+                                self.answer_secs.entry(n.turn_id).or_insert(secs);
+                            }
                         }
                     }
                     Some(ThreadItem::CommandExecution {
@@ -1907,8 +2114,8 @@ impl ThreadView {
                 })
                 .clone()
         };
-        let [undo, view, copy, fork] = ["undo", "view", "copy", "fork"].map(&mut button_focus);
-        let mut focus = TurnFocus::new(self.thread_id.clone(), undo, view, copy, fork, window, cx);
+        let [undo, view, copy, more] = ["undo", "view", "copy", "more"].map(&mut button_focus);
+        let mut focus = TurnFocus::new(self.thread_id.clone(), undo, view, copy, more, window, cx);
         focus.reverted = self.reverted_turns.contains(&turn.id);
         focus.patch_pending = self.patch_pending;
         let user = turn.items.iter().find_map(|i| match i {
@@ -1979,7 +2186,18 @@ impl ThreadView {
                     self.fades(item),
                 ));
             }
-            let secs = turn.duration_ms.unwrap_or(0) / 1000;
+            // The final answer folds the work while it still streams, as `Worked for` the time
+            // until the answer started.
+            let running = turn.status == TurnStatus::InProgress;
+            let secs = if running {
+                self.answer_secs
+                    .get(&turn.id)
+                    .copied()
+                    .unwrap_or_else(|| self.running_seconds(turn, cx.background_executor().now()))
+            } else {
+                turn.duration_ms.unwrap_or(0) / 1000
+            };
+            let label = format!("Worked for {}", duration(secs));
             let open = self.expanded.contains(&turn.id)
                 || self.find.as_ref().is_some_and(|find| {
                     turn.items[..turn.items.len() - 1].iter().any(|item| {
@@ -2013,35 +2231,30 @@ impl ThreadView {
                 )
             };
             col = col.child(div().h(px(16.))).child(
-                disclosure(
-                    format!("Worked for {}", duration(secs)),
-                    Some(angle),
-                    window,
-                    t,
-                )
-                .id(group.clone())
-                // `select-none` in the original: a press here leaves the text selection.
-                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |view, _, _, cx| {
-                    let open = !view.expanded.remove(&id);
-                    if open {
-                        view.expanded.insert(id.clone());
-                    }
-                    let instant = motion::reduced(cx);
-                    state.update(cx, |(epoch, d), cx| {
-                        let now = cx.background_executor().now() - *epoch;
-                        let target = open as u8 as f32;
-                        d.chevron
-                            .transition(target, now, motion::BASIC, motion::EASE_IN_OUT);
-                        let (duration, ease) = match (instant, open) {
-                            (true, _) => (Duration::ZERO, motion::EASE_ENTER),
-                            (false, true) => (motion::RELAXED, motion::EASE_ENTER),
-                            (false, false) => (motion::BASIC, motion::EASE_ENTER_SNAPPY),
-                        };
-                        d.content.transition(target, now, duration, ease);
-                    });
-                    cx.notify();
-                })),
+                disclosure(label, Some(angle), window, t)
+                    .id(group.clone())
+                    // `select-none` in the original: a press here leaves the text selection.
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |view, _, _, cx| {
+                        let open = !view.expanded.remove(&id);
+                        if open {
+                            view.expanded.insert(id.clone());
+                        }
+                        let instant = motion::reduced(cx);
+                        state.update(cx, |(epoch, d), cx| {
+                            let now = cx.background_executor().now() - *epoch;
+                            let target = open as u8 as f32;
+                            d.chevron
+                                .transition(target, now, motion::BASIC, motion::EASE_IN_OUT);
+                            let (duration, ease) = match (instant, open) {
+                                (true, _) => (Duration::ZERO, motion::EASE_ENTER),
+                                (false, true) => (motion::RELAXED, motion::EASE_ENTER),
+                                (false, false) => (motion::BASIC, motion::EASE_ENTER_SNAPPY),
+                            };
+                            d.content.transition(target, now, duration, ease);
+                        });
+                        cx.notify();
+                    })),
             );
             if progress > 0. {
                 let natural = height.get();
@@ -2074,12 +2287,27 @@ impl ThreadView {
                 self.find_paint(item).as_ref(),
                 self.fades(item),
             ));
+            if running {
+                return col;
+            }
             if let Some(card) = diff_card(&turn.id, &turn.items, &focus, window, t, cx) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
             }
+            let menu = self
+                .turn_menu
+                .as_ref()
+                .filter(|(id, _)| *id == turn.id)
+                .map(|_| self.turn_menu_popup(turn.started_at, cx));
+            let id = turn.id.clone();
+            let toggle = cx.listener(move |view, _: &gpui::ClickEvent, window, cx| {
+                view.toggle_turn_menu(&id, window, cx)
+            });
+            let hover = cx.listener(|view, hovered: &bool, _, _| {
+                view.turn_menu_trigger_hovered = *hovered;
+            });
             return col.when(!self.embedded, |col| {
                 col.child(action_row(
-                    last, &group, &turn.id, answer, sent_at, &focus, t,
+                    last, &group, answer, sent_at, menu, toggle, hover, &focus, t,
                 ))
             });
         }
@@ -2135,6 +2363,92 @@ impl ThreadView {
             .get(item)
             .map(Vec::as_slice)
             .unwrap_or_default()
+    }
+
+    /// Toggles activity disclosure `key` and starts its body's height and opacity track.
+    fn toggle_activity(&mut self, key: String, cx: &App) {
+        let open = !self.expanded.remove(&key);
+        if open {
+            self.expanded.insert(key.clone());
+        }
+        let now = cx.background_executor().now();
+        let duration = if motion::reduced(cx) {
+            Duration::ZERO
+        } else {
+            motion::RELAXED
+        };
+        let mut expansions = self.expansions.borrow_mut();
+        let expansion = expansions.entry(key).or_insert_with(|| Expansion {
+            epoch: now,
+            fade: HoverFade::settled(!open as u8 as f32),
+            height: Rc::default(),
+        });
+        expansion.fade.transition(
+            open as u8 as f32,
+            now - expansion.epoch,
+            duration,
+            motion::EASE_ENTER,
+        );
+    }
+
+    /// `body` of activity disclosure `key`, clipped to its track's height and faded with it;
+    /// `None` once closed, without building the body.
+    fn expansion(
+        &self,
+        key: &str,
+        open: bool,
+        body: impl FnOnce() -> Div,
+        window: &Window,
+        cx: &App,
+    ) -> Option<Div> {
+        let now = cx.background_executor().now();
+        // Released before `body` runs: a body can hold disclosures of its own.
+        let (progress, height) = {
+            let mut expansions = self.expansions.borrow_mut();
+            if !open && !expansions.contains_key(key) {
+                return None;
+            }
+            let expansion = expansions
+                .entry(key.to_owned())
+                .or_insert_with(|| Expansion {
+                    epoch: now,
+                    fade: HoverFade::settled(1.),
+                    height: Rc::default(),
+                });
+            let at = now - expansion.epoch;
+            let progress = if expansion.fade.is_animating(at) {
+                window.request_animation_frame();
+                expansion.fade.value(at)
+            } else {
+                open as u8 as f32
+            };
+            (progress, expansion.height.clone())
+        };
+        if progress <= 0. {
+            return None;
+        }
+        let natural = height.get();
+        let content = div()
+            .relative()
+            .w_full()
+            .child(
+                canvas(
+                    move |b, _, _| height.set(b.size.height.into()),
+                    |_, (), _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .child(body());
+        Some(if progress < 1. {
+            div()
+                .w_full()
+                .overflow_hidden()
+                .h(px(natural * progress))
+                .child(content.opacity(progress))
+        } else {
+            content
+        })
     }
 
     /// [`activity`], with find highlights painted over the agent messages while find has
@@ -2300,7 +2614,9 @@ impl Render for ThreadView {
                             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                 self.turn(turn, i + 1 == n, window, &t, cx)
                             })) {
-                                Ok(body) => body.children(self.turn_errors(turn, window, cx)),
+                                Ok(body) => body
+                                    .children(self.turn_errors(turn, window, cx))
+                                    .children(self.turn_notices(turn, cx)),
                                 Err(error) => {
                                     let error = error
                                         .downcast_ref::<String>()
@@ -2701,6 +3017,75 @@ impl Render for ThreadView {
     }
 }
 
+/// A summary section's title row. `sticky`: its background (and its `before:` 8 px above)
+/// paints again in the panel's rounded `overflow: hidden` clip, over the panel's corner.
+fn summary_header(label: SharedString, t: &Theme) -> Div {
+    div()
+        .relative()
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .top(px(-8.))
+                .child(shapes::decoration(shapes::Decoration {
+                    fill: Some(t.surface_elevated_secondary),
+                    ..Default::default()
+                })),
+        )
+        .h(px(28.))
+        .pb(px(2.))
+        .pl(px(20.))
+        .pr(px(14.))
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .child(div().flex_1().min_w_0().py(px(2.)).child(text(
+            label,
+            13.,
+            18.5714,
+            400.,
+            t.text_secondary,
+        )))
+}
+
+/// `summary-panel-create-output-menu`: `(id, label, icon)`.
+const CREATE_ITEMS: [(&str, &str, &[u8]); 4] = [
+    (
+        "create-document",
+        "Create document",
+        include_bytes!("../../../assets/icons/summary-create-document.svg"),
+    ),
+    (
+        "create-presentation",
+        "Create presentation",
+        include_bytes!("../../../assets/icons/summary-create-presentation.svg"),
+    ),
+    (
+        "create-spreadsheet",
+        "Create spreadsheet",
+        include_bytes!("../../../assets/icons/summary-create-spreadsheet.svg"),
+    ),
+    (
+        "create-site",
+        "Create site",
+        include_bytes!("../../../assets/icons/summary-create-site.svg"),
+    ),
+];
+
+/// `add-source-menu` with plugins off: `Use plugins`, then `Attach files or folders`.
+const SOURCE_ITEMS: [(&str, &str, &[u8]); 2] = [
+    (
+        "use-plugins",
+        "Use plugins",
+        include_bytes!("../../../assets/icons/sidebar-cmd-plugins.svg"),
+    ),
+    (
+        "attach-files",
+        "Attach files or folders",
+        include_bytes!("../../../assets/icons/summary-attach-files.svg"),
+    ),
+];
+
 pub(crate) fn render_comment_markdown(source: &str, window: &Window, theme: &Theme) -> Div {
     markdown::markdown(source, window, theme, &[])
 }
@@ -2727,21 +3112,28 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::Plan { id, .. }
         | ThreadItem::Reasoning { id, .. }
         | ThreadItem::CommandExecution { id, .. }
-        | ThreadItem::FileChange { id, .. }
         | ThreadItem::McpToolCall { id, .. }
-        | ThreadItem::ContextCompaction { id } => Some(id),
+        | ThreadItem::FileChange { id, .. }
+        | ThreadItem::ContextCompaction { id }
+        | ThreadItem::EnteredReviewMode { id, .. }
+        | ThreadItem::ExitedReviewMode { id, .. } => Some(id),
         ThreadItem::Other => None,
     }
 }
 
-/// A finished turn's items before its final answer, and that answer as `(item id, text)`:
-/// the work its `Worked for` disclosure hides. A plan-mode turn's answer is its final plan. A
-/// running turn is all work.
+/// A turn's items before its final answer, and that answer as `(item id, text)`: the work its
+/// `Worked for` disclosure hides. A finished turn's answer is its last agent message or plan. A
+/// running turn has one only once its `final_answer` message has text, as in the original
+/// (`hasFinalAssistantStarted`): its interim commentary then folds while the answer streams.
 fn work(turn: &Turn) -> (&[ThreadItem], Option<(&str, &str)>) {
+    let running = turn.status == TurnStatus::InProgress;
     match turn.items.last() {
-        Some(ThreadItem::AgentMessage { id, text, .. } | ThreadItem::Plan { id, text, .. })
-            if turn.status != TurnStatus::InProgress =>
-        {
+        Some(ThreadItem::AgentMessage {
+            id, text, phase, ..
+        }) if !running || (phase.as_deref() == Some("final_answer") && !text.trim().is_empty()) => {
+            (&turn.items[..turn.items.len() - 1], Some((id, text)))
+        }
+        Some(ThreadItem::Plan { id, text }) if !running => {
             (&turn.items[..turn.items.len() - 1], Some((id, text)))
         }
         _ => (&turn.items, None),
@@ -2795,6 +3187,18 @@ fn day_and_time(at: i64, now: i64, utc_offset: i64) -> (String, String) {
 /// Exact layout width of a single-line run. GPUI rounds measured text boxes up to whole px;
 /// inline runs placed after one another need the fractional advances Chromium uses.
 fn width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>) -> Pixels {
+    crate::run_width(shaped_width(window, s, size, weight, family), window)
+}
+
+/// The width of a box that holds a single-line run without truncating it: the shaped width
+/// rounded up to the layout unit, as Blink sizes a `w-fit` box. [`width`] rounds to the
+/// nearest unit, so a `truncate` box of that width can cut the run's last glyphs.
+fn fit_width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>) -> Pixels {
+    let unit = window.scale_factor() * 64.;
+    px((f32::from(shaped_width(window, s, size, weight, family)) * unit).ceil() / unit)
+}
+
+fn shaped_width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>) -> Pixels {
     let family = SharedString::from(family.unwrap_or(SANS));
     let run = TextRun {
         len: s.len(),
@@ -2807,13 +3211,10 @@ fn width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>)
         underline: None,
         strikethrough: None,
     };
-    crate::run_width(
-        window
-            .text_system()
-            .layout_line(s, px(size), &[run], None)
-            .width,
-        window,
-    )
+    window
+        .text_system()
+        .layout_line(s, px(size), &[run], None)
+        .width
 }
 
 /// Text of a known run width (see [`width`]) as one text item (`markdown::ItemPen`).
@@ -3084,6 +3485,9 @@ mod tests {
             view.apply(&notification("item/commandExecution/outputDelta", serde_json::json!({
                 "threadId": "retention", "turnId": "turn", "itemId": "command", "delta": "actual output\n",
             })), cx);
+            view.apply(&notification("item/commandExecution/terminalInteraction", serde_json::json!({
+                "threadId": "retention", "turnId": "turn", "itemId": "command", "stdin": "yes\n",
+            })), cx);
             item["status"] = "failed".into();
             item["exitCode"] = 17.into();
             view.apply(&notification("item/completed", serde_json::json!({
@@ -3094,7 +3498,80 @@ mod tests {
             assert!(view.background_terminals().is_empty());
             assert!(matches!(&view.turns[0].items[0],
                 ThreadItem::CommandExecution { status, exit_code: Some(17), aggregated_output: Some(output), .. }
-                    if status == "failed" && output == "actual output\n"));
+                    if status == "failed" && output == "actual output\nyes\n"));
+        });
+    }
+
+    /// The original folds a running turn's commentary once its `final_answer` has text.
+    #[test]
+    fn running_turn_folds_work_once_the_final_answer_streams() {
+        let turn = |answer: serde_json::Value| -> Turn {
+            serde_json::from_value(serde_json::json!({"id": "t", "status": "inProgress", "items": [
+                {"type": "agentMessage", "id": "c", "phase": "commentary", "text": "I'll load the rules."},
+                answer,
+            ]}))
+            .unwrap()
+        };
+        let interim = turn(serde_json::json!(
+            {"type": "agentMessage", "id": "c2", "phase": "commentary", "text": "Reading."}
+        ));
+        assert!(work(&interim).1.is_none());
+        let started = turn(serde_json::json!(
+            {"type": "agentMessage", "id": "a", "phase": "final_answer", "text": ""}
+        ));
+        assert!(work(&started).1.is_none());
+        let streaming = turn(serde_json::json!(
+            {"type": "agentMessage", "id": "a", "phase": "final_answer", "text": "Done"}
+        ));
+        let (hidden, answer) = work(&streaming);
+        assert_eq!(answer, Some(("a", "Done")));
+        assert_eq!(hidden.len(), 1);
+    }
+
+    #[gpui::test]
+    fn live_patch_output_keeps_item_boundaries(cx: &mut gpui::TestAppContext) {
+        let thread = serde_json::from_value(serde_json::json!({
+            "id": "live", "preview": "", "modelProvider": "test", "cwd": "/tmp",
+            "createdAt": 0, "updatedAt": 0, "status": {"type": "idle"},
+            "turns": [{"id": "turn", "items": [
+                {"type": "fileChange", "id": "patch", "changes": [], "status": "inProgress"}
+            ], "status": "inProgress"}]
+        }))
+        .unwrap();
+        let composer = cx.new(|_| gpui::EmptyView).into();
+        let view = cx.new(|_| {
+            ThreadView::new(
+                thread,
+                Clock {
+                    utc_offset: 0,
+                    pinned_now: Some(0),
+                    elapsed_since: None,
+                },
+                composer,
+            )
+        });
+        view.update(cx, |view, cx| {
+            let mut send = |method: &str, params| view.apply(&Event::Notification {
+                method: method.into(), params,
+            }, cx);
+            for delta in ["Applying ", "patch\n"] {
+                send("item/fileChange/outputDelta", serde_json::json!({
+                    "threadId": "live", "turnId": "turn", "itemId": "patch", "delta": delta,
+                }));
+            }
+            send("item/fileChange/outputDelta", serde_json::json!({
+                "threadId": "other", "turnId": "turn", "itemId": "patch", "delta": "foreign",
+            }));
+            send("item/fileChange/outputDelta", serde_json::json!({
+                "threadId": "live", "turnId": "turn", "itemId": "unknown", "delta": "unknown",
+            }));
+            send("item/completed", serde_json::json!({
+                "threadId": "live", "turnId": "turn",
+                "item": {"type": "fileChange", "id": "patch", "changes": [], "status": "completed"},
+            }));
+            assert_eq!(view.patch_output["patch"], "Applying patch\n");
+            assert_eq!(view.patch_output.len(), 1);
+            assert!(view.activity_labels("turn", cx).unwrap().iter().any(|label| label == "Applying patch\n"));
         });
     }
 
@@ -3348,9 +3825,35 @@ mod tests {
             );
             assert_eq!(view.turns[0].started_at, None);
         });
+        // `Worked for` stops when the final answer's first text arrives.
+        let item = |method: &str, params: serde_json::Value| Event::Notification {
+            method: method.into(),
+            params,
+        };
+        view.update(cx, |view, cx| {
+            view.apply(
+                &item(
+                    "item/started",
+                    serde_json::json!({"threadId": "timing", "turnId": "turn", "item": {
+                        "type": "agentMessage", "id": "answer", "text": "",
+                        "phase": "final_answer",
+                    }}),
+                ),
+                cx,
+            );
+            let delta = item(
+                "item/agentMessage/delta",
+                serde_json::json!({"threadId": "timing", "turnId": "turn",
+                    "itemId": "answer", "delta": "Done"}),
+            );
+            view.apply(&delta, cx);
+        });
+        cx.executor().advance_clock(Duration::from_secs(5));
+        view.read_with(cx, |view, _| assert_eq!(view.answer_secs["turn"], 1));
         view.update(cx, |view, cx| view.apply(&event("completed"), cx));
         view.read_with(cx, |view, _| {
-            assert!(!view.running_since.contains_key("turn"))
+            assert!(!view.running_since.contains_key("turn"));
+            assert!(!view.answer_secs.contains_key("turn"));
         });
     }
 
