@@ -7,8 +7,8 @@ use gpui::{
 use std::path::PathBuf;
 
 fn main() {
-    #[cfg(target_os = "macos")]
     std::panic::set_hook(Box::new(|info| {
+        app::crash::save(&app::crash::report(info));
         eprintln!("{info}");
         std::process::exit(101);
     }));

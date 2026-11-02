@@ -3,6 +3,8 @@ use anyhow::{Context as _, Result, ensure};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Focusable as _, Global, WindowHandle, actions};
 use std::{collections::BTreeMap, path::Path, process::Command};
 
+#[cfg(target_os = "macos")]
+pub mod appshot;
 mod platform;
 use platform::{Native, Shortcut};
 
@@ -106,6 +108,10 @@ pub fn register(cx: &mut App) {
         .and_then(|values| replace_global_bindings(&values.unwrap_or_default(), cx));
     if let Err(error) = result {
         eprintln!("codex-gpui: cannot register screenshot shortcuts: {error}");
+    }
+    #[cfg(target_os = "macos")]
+    if let Err(error) = appshot::register(cx) {
+        eprintln!("codex-gpui: cannot register the appshot hotkey: {error:#}");
     }
 }
 

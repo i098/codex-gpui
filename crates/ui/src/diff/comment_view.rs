@@ -1006,7 +1006,7 @@ fn local_comment(entry: &Entry, file: usize, cx: &Context<DiffPanel>) -> Div {
     div().w_full().max_w(px(768.)).p(px(6.)).child(card)
 }
 
-fn comment_button(
+pub(super) fn comment_button(
     label: &'static str,
     primary: bool,
     t: &Theme,

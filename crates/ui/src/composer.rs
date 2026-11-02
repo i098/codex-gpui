@@ -121,6 +121,7 @@ mod editor;
 pub use diff_comments::DiffCommentsChanged;
 mod footer;
 mod requests;
+pub use requests::IMPLEMENT_PLAN_METHOD;
 pub(crate) mod menu {
     //! Focus rules for the recorded Radix menus: arrows stop at the ends, Escape returns
     //! focus to the trigger, and Enter or Space activates the focused item.
@@ -221,6 +222,7 @@ pub(crate) mod menu {
     }
 }
 mod mention;
+pub use mention::ChatDrag;
 mod menus;
 mod slash;
 pub use slash::SlashCommand;
@@ -518,8 +520,8 @@ pub struct Submission {
     pub model: String,
     pub effort: Option<String>,
     pub permission: Permission,
-    /// Fast mode (bolt toggle in the model picker).
-    pub fast: bool,
+    /// `turn/start`'s `serviceTier` from the `Speed` submenu: `None` for Standard.
+    pub service_tier: Option<&'static str>,
     /// Plan mode (`collaborationMode.mode` `plan`).
     pub plan: bool,
     /// `composer.submitInBackground`: create the chat and start its turn without opening it.
@@ -559,19 +561,25 @@ pub struct Approval {
     permissions: Option<Value>,
     form: Option<requests::Form>,
     computer_use: Option<computer_use::ComputerUseApproval>,
+    /// A command approval, shown as the original's `Terminal` card in place of the composer.
+    command: bool,
     identity: Rc<RequestIdentity>,
 }
 
 impl Approval {
     pub fn command(id: Value, req: &CommandApprovalRequest) -> Self {
         Self {
+            // The original titles the card with the request's reason.
             title: if req.kind == "humanCommand" {
                 "This command requires your approval".into()
             } else {
-                "Allow ChatGPT to run this command?".into()
+                req.reason
+                    .clone()
+                    .unwrap_or_else(|| "Allow ChatGPT to run this command?".into())
+                    .into()
             },
             detail: req.command.clone(),
-            reason: req.reason.clone(),
+            reason: req.reason.clone().filter(|_| req.kind == "humanCommand"),
             scoped_label: "Allow similar commands".into(),
             decisions: {
                 let mut decisions = req.available_decisions.clone();
@@ -583,12 +591,17 @@ impl Approval {
                         .retain(|decision| {
                             matches!(decision.as_str(), Some("accept" | "decline" | "cancel"))
                         });
+                } else if req.proposed_execpolicy_amendment.is_none() {
+                    decisions
+                        .get_or_insert_with(|| vec![json!("decline"), json!("accept")])
+                        .retain(|decision| decision.as_str() != Some("acceptForSession"));
                 }
                 decisions
             },
             permissions: None,
             form: None,
             computer_use: None,
+            command: true,
             identity: Rc::new(RequestIdentity {
                 id,
                 thread: req.thread_id.clone(),
@@ -612,6 +625,7 @@ impl Approval {
             permissions: None,
             form: None,
             computer_use: None,
+            command: false,
             identity: Rc::new(RequestIdentity {
                 id,
                 thread: req.thread_id.clone(),
@@ -650,6 +664,7 @@ impl Approval {
             permissions: Some(req.permissions.clone()),
             form: None,
             computer_use: None,
+            command: false,
             identity: Rc::new(RequestIdentity {
                 id,
                 thread: req.thread_id.clone(),
@@ -741,12 +756,14 @@ const SPEEDS: [(&str, &str); 3] = [
         "The fastest available responses for latency-sensitive work.",
     ),
 ];
+/// `turn/start`'s `serviceTier` per [`SPEEDS`] item, as the original's `xjt`/`Cjt`.
+const SERVICE_TIERS: [Option<&str>; 3] = [None, Some("priority"), Some("ultrafast")];
 
 type SubmitHandler = Rc<dyn Fn(&Submission, &mut Window, &mut App)>;
 type CancelEditHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 type ApprovalHandler = Rc<dyn Fn(Value, String, Value, &mut Window, &mut App)>;
-/// `(model id, effort)` after the user picks them.
-type ModelHandler = Rc<dyn Fn(&str, &str, &mut App)>;
+/// `(model id, effort)` after the user picks them; `None` for `Reset to default`.
+type ModelHandler = Rc<dyn Fn(Option<(&str, &str)>, &mut App)>;
 type SettingsPasteHandler = Rc<dyn Fn(&str, &mut App) -> bool>;
 
 /// What a queued row's buttons and `Queued message actions` menu ask of the app.
@@ -761,6 +778,10 @@ pub enum QueueAction {
     SideChat(String),
     /// `Turn off queueing` / `Turn on queueing`: the new `Follow-up behavior` is queue (`true`).
     Queueing(bool),
+    /// `Resume` on the `Queue paused because you interrupted` banner (`thread/queue/start`).
+    Resume,
+    /// `Clear queue` in the paused-queue send dialog: delete every queued (not failed) row.
+    ClearQueue,
 }
 
 impl gpui::EventEmitter<QueueAction> for Composer {}
@@ -799,12 +820,32 @@ struct EmbeddedField {
     font_size: Pixels,
     line_height: Pixels,
 }
-/// A composer's unsent input, carried to its replacement ([`Composer::take_draft`]).
+/// A composer's unsent input, carried to its replacement ([`Composer::take_draft`]) or kept
+/// for a thread the composer left ([`Composer::swap_draft`]).
+#[derive(Default)]
 pub struct Draft {
     content: String,
     mentions: Vec<mention::Mention>,
     attachments: Vec<attach::Attachment>,
     diff_comments: Vec<crate::screens::diff::panel::comments::Comment>,
+}
+
+impl Draft {
+    /// A text-only draft, as `state.json` keeps it across restarts.
+    pub fn from_text(text: String) -> Self {
+        Self {
+            content: text,
+            ..Self::default()
+        }
+    }
+
+    pub fn text(&self) -> &str {
+        &self.content
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.content.trim().is_empty() && self.attachments.is_empty()
+    }
 }
 
 pub struct Composer {
@@ -845,11 +886,14 @@ pub struct Composer {
     blocked: Option<Entity<Confirmation>>,
     /// A file drag is over the composer's drop target (`data-composer-drag-active`).
     drag_active: bool,
+    /// The drag over the drop target is a sidebar chat (`Drop to reference chat`).
+    drag_chat: bool,
     models: Vec<ModelOption>,
     model: usize,
     effort: Option<String>,
     default_selection: (usize, Option<String>),
-    fast: bool,
+    /// Index into [`SPEEDS`] and [`SERVICE_TIERS`].
+    speed: usize,
     /// Plan mode: the next turns run in the `plan` collaboration mode.
     plan: bool,
     /// `collaborationMode/list` masks: each names a `mode` and may preset `model` and
@@ -899,6 +943,9 @@ pub struct Composer {
     /// chat`, as the original does when its host passes `onOpenSideChatMessage`.
     side_chat: bool,
     queue_pending: bool,
+    /// The thread's last turn was interrupted: the app-server holds its queue until
+    /// `thread/queue/start` or a new turn.
+    queue_interrupted: bool,
     on_submit: Option<SubmitHandler>,
     on_cancel_edit: Option<CancelEditHandler>,
     edit_pending: bool,
@@ -920,6 +967,8 @@ pub struct Composer {
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,
     embedded_field: Option<EmbeddedField>,
+    /// A field whose frame sets its own text size and line height (`text-xs` hex input).
+    text_metrics: Option<EmbeddedField>,
     on_settings_paste: Option<SettingsPasteHandler>,
     /// Script and command fields use the original code textarea's monospace text.
     monospace: bool,
@@ -984,11 +1033,12 @@ impl Composer {
             attachment_error: None,
             blocked: None,
             drag_active: false,
+            drag_chat: false,
             models: Vec::new(),
             model: 0,
             effort: Some("medium".into()),
             default_selection: (0, Some("medium".into())),
-            fast: false,
+            speed: 0,
             plan: false,
             collaboration_modes: Vec::new(),
             permission: Permission::Custom,
@@ -1022,6 +1072,7 @@ impl Composer {
             queued: Vec::new(),
             side_chat: false,
             queue_pending: false,
+            queue_interrupted: false,
             on_submit: None,
             on_cancel_edit: None,
             edit_pending: false,
@@ -1041,6 +1092,7 @@ impl Composer {
             dictation: None,
             dictation_error: None,
             embedded_field: None,
+            text_metrics: None,
             on_settings_paste: None,
             monospace: false,
             input_style: false,
@@ -1182,6 +1234,14 @@ impl Composer {
         self
     }
 
+    pub fn with_text_metrics(mut self, font_size: Pixels, line_height: Pixels) -> Self {
+        self.text_metrics = Some(EmbeddedField {
+            font_size,
+            line_height,
+        });
+        self
+    }
+
     pub fn monospace_field(mut self) -> Self {
         self.monospace = true;
         self
@@ -1215,7 +1275,7 @@ impl Composer {
     fn editor_font_size(&self) -> Pixels {
         if self.document_field {
             px(14.)
-        } else if let Some(field) = self.embedded_field {
+        } else if let Some(field) = self.text_metrics.or(self.embedded_field) {
             field.font_size
         } else if self.compact_text() {
             px(13.)
@@ -1227,7 +1287,7 @@ impl Composer {
     fn editor_line_height(&self) -> Pixels {
         if self.document_field {
             px(23.59375)
-        } else if let Some(field) = self.embedded_field {
+        } else if let Some(field) = self.text_metrics.or(self.embedded_field) {
             field.line_height
         } else if self.search_field || self.textarea() {
             px(18.571_428)
@@ -1313,30 +1373,35 @@ impl Composer {
             .filter(|m| !m.hidden)
             .map(|m| ModelOption::new(m, enabled))
             .collect();
+        let recommended = models
+            .iter()
+            .filter(|m| !m.hidden)
+            .position(|m| m.is_default)
+            .unwrap_or(0);
         let configured = config["model"].as_str();
         self.model = self
             .models
             .iter()
             .position(|m| Some(m.id.as_str()) == configured)
-            .or_else(|| {
-                models
-                    .iter()
-                    .filter(|m| !m.hidden)
-                    .position(|m| m.is_default)
-            })
-            .unwrap_or(0);
+            .unwrap_or(recommended);
+        let default_effort = |index: usize| {
+            let id = &self.models.get(index)?.id;
+            let m = models.iter().find(|m| &m.id == id)?;
+            Some(m.default_reasoning_effort.clone())
+        };
         self.effort = config["model_reasoning_effort"]
             .as_str()
             .map(String::from)
-            .or_else(|| {
-                let id = &self.models.get(self.model)?.id;
-                let m = models.iter().find(|m| &m.id == id)?;
-                Some(m.default_reasoning_effort.clone())
-            });
-        self.default_selection = (self.model, self.effort.clone());
+            .or_else(|| default_effort(self.model));
+        // `Reset to default`: the recommended model, as with no `model` override.
+        self.default_selection = (recommended, default_effort(recommended));
         self.permission = Permission::from_config(config);
         self.queue_mode = config["desktop"]["followUpQueueMode"] == "queue";
-        self.fast = config["service_tier"] == "priority";
+        self.speed = match config["service_tier"].as_str() {
+            Some("priority" | "fast") => 1,
+            Some("ultrafast") => 2,
+            _ => 0,
+        };
         if self.menu == Some(Menu::Models) {
             self.menu_focus.prepare(self.models.len(), cx);
         }
@@ -1370,6 +1435,11 @@ impl Composer {
     pub fn on_submit(&mut self, f: impl Fn(&Submission, &mut Window, &mut App) + 'static) {
         self.on_submit = Some(Rc::new(f));
     }
+    /// `Reset to default` saved: the recommended model and its default effort.
+    pub fn reset_model(&mut self, cx: &mut Context<Self>) {
+        (self.model, self.effort) = self.default_selection.clone();
+        cx.notify();
+    }
 
     pub fn on_approval(
         &mut self,
@@ -1378,8 +1448,9 @@ impl Composer {
         self.on_approval = Some(Rc::new(f));
     }
 
-    /// Called when the user picks a model or an effort in the picker.
-    pub fn on_model(&mut self, f: impl Fn(&str, &str, &mut App) + 'static) {
+    /// Called when the user picks a model or an effort in the picker, or `None` when
+    /// `Reset to default` clears the override.
+    pub fn on_model(&mut self, f: impl Fn(Option<(&str, &str)>, &mut App) + 'static) {
         self.on_model = Some(Rc::new(f));
     }
 
@@ -1570,6 +1641,16 @@ impl Composer {
         cx.notify();
     }
 
+    pub fn set_queue_interrupted(&mut self, interrupted: bool, cx: &mut Context<Self>) {
+        self.queue_interrupted = interrupted;
+        cx.notify();
+    }
+
+    /// The original's `isPaused` queue: the last turn was interrupted and queued rows wait.
+    pub fn queue_paused(&self) -> bool {
+        self.queue_interrupted && !self.running && self.queued.iter().any(|row| !row.failed)
+    }
+
     pub fn remove_queued(&mut self, id: &str, cx: &mut Context<Self>) {
         self.queued.retain(|row| row.submission.id != id);
         cx.notify();
@@ -1598,6 +1679,7 @@ impl Composer {
         let kind = match &action {
             QueueAction::Steer(_) => "queued-steer",
             QueueAction::Retry(_) => "queued-retry",
+            QueueAction::Resume => "queued-resume",
             _ => "queued-delete",
         };
         let key_action = action.clone();
@@ -1607,7 +1689,10 @@ impl Composer {
                 .h(px(24.))
                 .min_w(px(24.))
                 .px(px(
-                    if matches!(action, QueueAction::Steer(_) | QueueAction::Retry(_)) {
+                    if matches!(
+                        action,
+                        QueueAction::Steer(_) | QueueAction::Retry(_) | QueueAction::Resume
+                    ) {
                         8.
                     } else {
                         0.
@@ -1642,6 +1727,13 @@ impl Composer {
                         .gap(px(4.))
                         .child(icon("diff-refresh", 14., t.text_tertiary))
                         .child(text("Retry", 13., 18., 430., t.text_tertiary))
+                        .into_any_element(),
+                    QueueAction::Resume => div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(icon("automation-resume", 14., t.text_tertiary))
+                        .child(text("Resume", 13., 18., 430., t.text_tertiary))
                         .into_any_element(),
                     _ => icon("queue-delete", 14., t.text_tertiary).into_any_element(),
                 })
@@ -1757,6 +1849,21 @@ impl Composer {
         }
     }
 
+    /// Appends `prompt` after the draft and focuses the input (the original's
+    /// `appendPromptText`), keeping the draft's mention chips.
+    pub fn append_prompt(&mut self, prompt: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let end = self.content.len();
+        self.selected_range = end..end;
+        self.marked_range = None;
+        let gap = if self.content.is_empty() || self.content.ends_with(char::is_whitespace) {
+            ""
+        } else {
+            " "
+        };
+        self.insert(&format!("{gap}{prompt}"), window, cx);
+        self.focus_handle.focus(window, cx);
+    }
+
     pub fn set_text(&mut self, s: &str, cx: &mut Context<Self>) {
         self.cancel_dictation(cx);
         self.dictation_error = None;
@@ -1812,6 +1919,21 @@ impl Composer {
         cx.emit(DiffCommentsChanged(self.diff_comments.clone()));
     }
 
+    /// Replaces the unsent text, chips and attachments with `next`, a thread's kept draft, and
+    /// returns the ones replaced. Diff comments stay: the app keeps them per thread.
+    pub fn swap_draft(&mut self, next: Draft, cx: &mut Context<Self>) -> Draft {
+        let left = Draft {
+            content: std::mem::take(&mut self.content),
+            mentions: std::mem::take(&mut self.mentions),
+            attachments: std::mem::take(&mut self.attachments),
+            diff_comments: Vec::new(),
+        };
+        self.set_text(&next.content, cx);
+        self.mentions = next.mentions;
+        self.attachments = next.attachments;
+        left
+    }
+
     pub fn restore_text(&mut self, text: &str, cx: &mut Context<Self>) {
         if self.content.is_empty() {
             self.set_text(text, cx);
@@ -1861,7 +1983,7 @@ impl Composer {
     /// Reports the picked model and effort to [`Self::on_model`].
     fn picked(&self, cx: &mut App) {
         if let (Some(f), Some(model)) = (self.on_model.clone(), self.current_model()) {
-            f(&model.id, self.displayed_effort(), cx);
+            f(Some((&model.id, self.displayed_effort())), cx);
         }
     }
 
@@ -1902,7 +2024,10 @@ impl Composer {
     }
 
     fn modified_enter(&mut self, _: &ModifiedSubmit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.plain_field.is_some() {
+        if self.plain_field.is_some() && self.on_cancel_edit.is_some() {
+            // A comment card's owner decides: the artifact card adds its annotation.
+            cx.propagate();
+        } else if self.plain_field.is_some() {
             self.enter(&Submit, window, cx);
         } else {
             self.submit(&Submit, window, cx);
@@ -1923,6 +2048,9 @@ impl Composer {
     ) {
         if !self.docked && self.approval.is_none() && self.plain_field.is_none() {
             self.send_draft(true, window, cx);
+        } else if self.plain_field.is_some() {
+            // Same Cmd+Enter: a plain field's `ModifiedSubmit` owns it.
+            cx.propagate();
         }
     }
 
@@ -1945,6 +2073,10 @@ impl Composer {
             && self.attachments.is_empty()
             && self.diff_comments.is_empty()
         {
+            return;
+        }
+        if self.queue_paused() && self.on_cancel_edit.is_none() {
+            self.confirm_paused_send(background, window, cx);
             return;
         }
         if self.shell_commands && self.content.starts_with('!') {
@@ -1995,6 +2127,43 @@ impl Composer {
         cx.notify();
     }
 
+    /// The original's `pausedQueueSubmit` dialog: a send while the queue is paused asks whether
+    /// to clear it first. Either choice sends; the new turn resumes what stays queued.
+    fn confirm_paused_send(
+        &mut self,
+        background: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::confirmation::Outcome;
+        use gpui::AppContext as _;
+        let count = self.queued.iter().filter(|row| !row.failed).count();
+        let description = format!(
+            "You are about to send a message. Do you want to clear the {count} {} previously queued?",
+            if count == 1 { "message" } else { "messages" }
+        );
+        let dialog =
+            cx.new(|cx| {
+                Confirmation::new("Send message?", description, "Send message", window, cx)
+                    .alternate("Clear queue", window, cx)
+            });
+        cx.subscribe_in(&dialog, window, move |this, _, outcome, window, cx| {
+            this.blocked = None;
+            this.focus_handle.focus(window, cx);
+            match outcome {
+                Outcome::Cancel => cx.notify(),
+                Outcome::Alternate => {
+                    cx.emit(QueueAction::ClearQueue);
+                    this.finish_send_draft(background, window, cx);
+                }
+                Outcome::Confirm => this.finish_send_draft(background, window, cx),
+            }
+        })
+        .detach();
+        self.blocked = Some(dialog);
+        cx.notify();
+    }
+
     fn take_submission(&mut self, background: bool) -> Submission {
         self.submitted = std::mem::take(&mut self.attachments);
         let mut attachments = Vec::new();
@@ -2021,7 +2190,7 @@ impl Composer {
             model: self.mode_settings().0,
             effort: self.mode_settings().1,
             permission: self.permission.clone(),
-            fast: self.fast,
+            service_tier: SERVICE_TIERS[self.speed],
             plan: self.plan,
             background,
         }
@@ -2059,6 +2228,7 @@ impl Composer {
         self.focus_handle.focus(window, cx);
         self.menu = None;
         cx.notify();
+        self.follow_plan(&approval, &response, window, cx);
         if let Some(f) = self.on_approval.clone() {
             f(
                 approval.identity.id.clone(),
@@ -2263,8 +2433,7 @@ impl Composer {
 
     /// A speed picked in the submenu closes it and focuses the `Speed` trigger.
     pub(super) fn pick_speed(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        // ponytail: Ultrafast shares the `fast` flag; add a tier when `turn/start` sends it.
-        self.fast = index > 0;
+        self.speed = index;
         self.close_speed();
         self.menu_focus.items[SPEED_ITEM].focus(window, cx);
         cx.notify();
@@ -2314,7 +2483,9 @@ impl Composer {
                 SPEED_ITEM => self.open_speed(window, cx),
                 2 => {
                     (self.model, self.effort) = self.default_selection.clone();
-                    self.picked(cx);
+                    if let Some(f) = self.on_model.clone() {
+                        f(None, cx);
+                    }
                 }
                 _ => {}
             },
@@ -2433,8 +2604,9 @@ impl Composer {
         self.stop_armed.is_some()
     }
 
-    pub fn fast_mode(&self) -> bool {
-        self.fast
+    /// `turn/start`'s `serviceTier` for the picked speed: `None` for Standard.
+    pub fn service_tier(&self) -> Option<&'static str> {
+        SERVICE_TIERS[self.speed]
     }
 
     /// The server's `collaborationMode/list` answer; its presets drive the turn settings and
@@ -2561,26 +2733,52 @@ pub(crate) fn card_decoration(t: &Theme, narrow: bool) -> shapes::Decoration {
 }
 
 /// `target` as `composer`'s file drop target (the original's drag handlers on the page
-/// column): while a file drag is over its box the card surface switches and the `Drop to
-/// attach` overlay (`bg-codex-drop-overlay/60`, `z-40`: a centred pill on
-/// `bg-codex-drop-prompt`, `rounded-md`, `border-border/50`, `shadow`, 13 px text) covers it;
-/// a drop attaches the files. Call it last: the overlay paints over the children added so far.
+/// column): while a file or sidebar chat drag is over its box the card surface switches and
+/// the `Drop to attach` (`Drop to reference chat`) overlay (`bg-codex-drop-overlay/60`,
+/// `z-40`: a centred pill on `bg-codex-drop-prompt`, `rounded-md`, `border-border/50`,
+/// `shadow`, 13 px text) covers it; a drop attaches the files or adds a chat chip. Call it
+/// last: the overlay paints over the children added so far.
 pub fn drop_target(target: Div, composer: &Entity<Composer>, cx: &App) -> Div {
     let t = cx.theme();
-    let over = composer.read(cx).drag_active(cx);
+    let (over, chat) = {
+        let composer = composer.read(cx);
+        (composer.drag_active(cx), composer.drag_chat)
+    };
     let (moved, dropped) = (composer.clone(), composer.clone());
+    let (chat_moved, chat_dropped) = (composer.clone(), composer.clone());
     let target = target
         .relative()
         .on_drag_move::<ExternalPaths>(move |e, _, cx| {
             let over = e.bounds.contains(&e.event.position);
-            moved.update(cx, |c, cx| c.set_drag_active(over, cx));
+            moved.update(cx, |c, cx| {
+                c.drag_chat = false;
+                c.set_drag_active(over, cx)
+            });
         })
         .on_drop::<ExternalPaths>(move |paths, _, cx| {
             dropped.update(cx, |c, cx| c.drop_files(paths.paths(), cx));
+        })
+        .on_drag_move::<ChatDrag>(move |e, _, cx| {
+            let over = e.bounds.contains(&e.event.position);
+            chat_moved.update(cx, |c, cx| {
+                c.drag_chat = true;
+                c.set_drag_active(over, cx)
+            });
+        })
+        .on_drop::<ChatDrag>(move |chat, window, cx| {
+            chat_dropped.update(cx, |c, cx| {
+                c.drop_chat(chat, cx);
+                c.focus_handle.focus(window, cx);
+            });
         });
     if !over {
         return target;
     }
+    let prompt = if chat {
+        "Drop to reference chat"
+    } else {
+        "Drop to attach"
+    };
     let black = |a: u32| -> Hsla { gpui::rgba(a).into() };
     let pill = shapes::Decoration {
         border: Some((px(1.), t.border.opacity(0.5))),
@@ -2608,7 +2806,7 @@ pub fn drop_target(target: Div, composer: &Entity<Composer>, cx: &App) -> Div {
                     .px(px(13.))
                     .py(px(5.))
                     .child(shapes::decoration(pill))
-                    .child(text("Drop to attach", 13., 18.5714, 430., t.text)),
+                    .child(text(prompt, 13., 18.5714, 430., t.text)),
             ),
     )
 }
@@ -2697,7 +2895,8 @@ impl Render for Composer {
         if let Some(approval) = self.approval.as_ref()
             && (approval.form.is_some()
                 || approval.permissions.is_some()
-                || approval.computer_use.is_some())
+                || approval.computer_use.is_some()
+                || approval.command)
         {
             let context = match (
                 approval.form.is_some(),
@@ -2719,6 +2918,8 @@ impl Render for Composer {
                         self.computer_use_card(approval, &t, cx)
                     } else if approval.form.is_some() {
                         self.request_card(approval, &t, cx)
+                    } else if approval.command {
+                        self.command_request_card(approval, &t, cx)
                     } else {
                         self.permission_request_card(approval, &t, window, cx)
                     }),
@@ -3251,6 +3452,31 @@ impl Render for Composer {
                 .flex()
                 .flex_col()
                 .gap(px(1.))
+                .when(self.queue_paused(), |d| {
+                    d.child(
+                        div()
+                            .h(px(32.))
+                            .px(px(10.))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(icon("automation-pause", 14., t.text_tertiary))
+                            .child(div().flex_1().min_w_0().overflow_hidden().child(text(
+                                "Queue paused because you interrupted",
+                                13.,
+                                18.,
+                                430.,
+                                t.text_secondary,
+                            )))
+                            .child(self.queue_button(
+                                QueueAction::Resume,
+                                "Resume",
+                                "Resume",
+                                &t,
+                                cx,
+                            )),
+                    )
+                })
                 .children(self.queued.iter().map(|row| {
                     div()
                         .id(row.key.clone())
