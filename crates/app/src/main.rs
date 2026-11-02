@@ -214,29 +214,6 @@ fn open_browser_url(url: url::Url, cx: &mut App) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::web_url;
-
-    #[test]
-    fn browser_links_accept_only_http_and_https() {
-        assert_eq!(
-            web_url("https://example.com/path?q=1")
-                .as_ref()
-                .map(url::Url::as_str),
-            Some("https://example.com/path?q=1")
-        );
-        assert_eq!(
-            web_url("http://localhost:8080/")
-                .as_ref()
-                .map(url::Url::as_str),
-            Some("http://localhost:8080/")
-        );
-        assert!(web_url("codex://threads/new").is_none());
-        assert!(web_url("file:///tmp/page.html").is_none());
-    }
-}
-
 /// Fetches GPUI `img(url)` sources: link favicons and account avatars, as the original's
 /// `<img src>` does.
 struct ImageHttpClient(ureq::Agent);
@@ -274,5 +251,28 @@ impl http_client::HttpClient for ImageHttpClient {
             let _ = sender.send_blocking(result);
         });
         Box::pin(async move { receiver.recv().await? })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::web_url;
+
+    #[test]
+    fn browser_links_accept_only_http_and_https() {
+        assert_eq!(
+            web_url("https://example.com/path?q=1")
+                .as_ref()
+                .map(url::Url::as_str),
+            Some("https://example.com/path?q=1")
+        );
+        assert_eq!(
+            web_url("http://localhost:8080/")
+                .as_ref()
+                .map(url::Url::as_str),
+            Some("http://localhost:8080/")
+        );
+        assert!(web_url("codex://threads/new").is_none());
+        assert!(web_url("file:///tmp/page.html").is_none());
     }
 }
