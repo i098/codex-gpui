@@ -106,6 +106,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Show the text overflow icon on a code block's `Enable word wrap` button, and the wrap icon only while wrap is on, as the original does.
 - Show the Appearance theme picker's Codex themes in a `Codex themes` flyout submenu beside `ChatGPT`, with 24 px theme icons, as the original does.
 - Fold a running turn's interim messages under `Working for` once its final answer starts, as the original does.
+- Start the text of a Search palette command that has no icon at the group heading, as the original does; it was indented by an empty icon slot.
 - Match the original `Work in` menu: the `Work in` label, row icons, `Cloud` above `Remote`, the 280 px width and position, and `New worktree` only while a project is selected.
 - Show `Mark as unread` in the Search palette only while a chat is open, as the original does; Home no longer lists it.
 - Show tool activity labels in full when they fit, as the original does, instead of `Read math....`.

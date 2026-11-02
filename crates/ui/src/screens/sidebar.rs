@@ -4517,8 +4517,9 @@ fn menu_row(
                 ..Default::default()
             }))
         })
+        // The original draws no slot for icon-less commands; chat rows keep it for the unread dot.
         .when(
-            (!item.note || item.icon.is_some()) && item.label != "Commit or push",
+            item.icon.is_some() || item.thread.is_some() || item.url.is_some(),
             |d| {
                 d.child(div().size(px(16.)).flex_none().map(|slot| {
                     if item.unread {
