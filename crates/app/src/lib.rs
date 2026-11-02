@@ -43,6 +43,7 @@ pub mod qa;
 mod routes;
 pub mod terminal;
 mod thread_patch;
+mod tray;
 pub mod user_data;
 pub use routes::Route;
 mod plugins;
@@ -98,7 +99,7 @@ use ui::screens::diff::panel::{
     ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile,
     SIDE_PANEL_BREAKPOINT, SplitScreen, Tab, with_side_tabs,
 };
-use ui::screens::home::{HomeMain, OpenFolder};
+use ui::screens::home::{ClearProject, HomeMain, OpenFolder, ProjectMenu};
 #[cfg(target_os = "windows")]
 use ui::screens::home::{SetupWindowsSandboxElevated, SetupWindowsSandboxUnelevated};
 use ui::screens::recovery;
@@ -926,10 +927,11 @@ impl Root {
             wide,
             layout_before_narrow: None,
             focus: cx.focus_handle(),
-            home: cx.new(|_| HomeMain {
+            home: cx.new(|cx| HomeMain {
                 composer: home_composer,
                 project: state.project_root.as_deref().map(project_name),
                 location: Default::default(),
+                projects: ProjectMenu::new(cx),
                 beacon: false,
                 windows_sandbox_setup_needed: false,
                 windows_sandbox_setup_pending: false,
@@ -1922,6 +1924,19 @@ impl Root {
         self.state.project_root = Some(root);
         hotkey::refresh_home(self, cx);
         self.navigate(Route::Home, window, cx);
+        self.save(window, cx);
+    }
+
+    /// `Don't work in a project`: new chats start without a cwd.
+    fn clear_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.home.update(cx, |home, cx| {
+            home.project = None;
+            home.composer
+                .update(cx, |composer, cx| composer.set_search_roots(Vec::new(), cx));
+            cx.notify();
+        });
+        self.state.project_root = None;
+        hotkey::refresh_home(self, cx);
         self.save(window, cx);
     }
 
@@ -2921,6 +2936,18 @@ impl Root {
             menu.update(cx, |menu, cx| menu.update_catalog(threads, &unread, cx));
         }
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
+        if self.host_id() == "local" {
+            let recents: Vec<_> = threads
+                .iter()
+                .map(|thread| {
+                    (
+                        thread.id.clone(),
+                        ui::screens::sidebar::title(thread).to_string(),
+                    )
+                })
+                .collect();
+            tray::set_recents(&recents, cx);
+        }
         self.refresh_automation_editor_options(None, cx);
     }
 
@@ -3304,11 +3331,9 @@ impl Root {
         let unread = self.sidebar.read(cx).unread.clone();
         let thread_open = matches!(self.state.route, Route::Thread(_));
         let cloud = self.chatgpt_account && self.host.supports_cloud_search();
-        let navigation = native_menus::navigation::available(self, cx);
         let menu = cx.new(|cx| {
             CommandMenu::with_threads(&self.threads, &unread, thread_open, "", cx)
                 .with_cloud_search(cloud)
-                .with_navigation_panel(navigation)
         });
         menu.update(cx, |menu, cx| {
             menu.set_activity_available(self.sidebar.read(cx).activity_available, cx)
@@ -6473,6 +6498,9 @@ impl Root {
                 if matches!(key, "reduced-motion-preference" | "dock-icon-preference") {
                     host_settings::apply(cx);
                 }
+                if key == "mac-menu-bar-enabled" {
+                    tray::refresh(cx);
+                }
                 #[cfg(target_os = "macos")]
                 if key == screenshot::appshot::HOTKEY
                     && let Err(error) = screenshot::appshot::register(cx)
@@ -6596,6 +6624,11 @@ impl Root {
             self.config["desktop"]["composerEnterBehavior"]
                 .as_str()
                 .unwrap_or("enter"),
+        ));
+        cx.set_global(terminal::TerminalShell(
+            self.config["desktop"]["integratedTerminalShell"]
+                .as_str()
+                .map(str::to_owned),
         ));
         self.sync_prevent_sleep(cx);
         let visibility = ReasoningVisibility::from_config(&self.config);
