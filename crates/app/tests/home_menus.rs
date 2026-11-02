@@ -23,6 +23,7 @@ fn mode_switch_menu_picks_with_keys_and_click_outside_closes() -> Result<()> {
     // the first Down picks ChatGPT and the first Up picks Codex.
     app.click(trigger)?;
     assert!(mode_menu(&app));
+    app.capture_evidence("CGX_MODE_MENU_SHOTS", "mode-menu")?;
     app.keys("down enter")?;
     assert_eq!(mode(&app), 0);
     assert!(!mode_menu(&app));
@@ -88,5 +89,56 @@ fn work_in_menu_toggles_and_dismisses() -> Result<()> {
     app.click(chip)?;
     app.click((chip.0, chip.1 - 200.))?;
     assert!(!location_menu(&app), "outside click closes");
+    Ok(())
+}
+
+fn project_menu(app: &Fx) -> bool {
+    app.read(|root, cx| root.home().read(cx).projects.open)
+}
+
+fn project(app: &Fx) -> Option<String> {
+    app.read(|root, cx| root.home().read(cx).project.as_ref().map(|p| p.to_string()))
+}
+
+#[test]
+fn choose_project_menu_searches_picks_and_clears() -> Result<()> {
+    let mut app = Fx::new()?;
+    let composer = app.read(|root, cx| root.home().read(cx).composer.clone());
+    app.cx.update(|cx| {
+        composer.update(cx, |composer, _| {
+            composer.set_slash_projects(vec![
+                ("alpha".into(), "/tmp/alpha".into()),
+                ("beta".into(), "/tmp/beta".into()),
+            ])
+        })
+    });
+    let chip = app.at("home", "Choose project")?;
+
+    app.click(chip)?;
+    assert!(project_menu(&app));
+    app.keys("escape")?;
+    assert!(!project_menu(&app));
+
+    // The search field has focus: a query without matches leaves Enter with nothing to pick.
+    app.click(chip)?;
+    app.type_text("zzz")?;
+    app.keys("enter")?;
+    assert_eq!(project(&app), None);
+    assert!(
+        project_menu(&app),
+        "Enter without a match keeps the menu open"
+    );
+    app.keys("escape")?;
+    assert!(!project_menu(&app));
+
+    // Reopening clears the query; Enter picks the first match.
+    app.click(chip)?;
+    app.type_text("bet")?;
+    app.keys("enter")?;
+    assert!(!project_menu(&app));
+    assert_eq!(project(&app).as_deref(), Some("beta"));
+
+    app.action(Box::new(ui::screens::home::ClearProject))?;
+    assert_eq!(project(&app), None);
     Ok(())
 }
