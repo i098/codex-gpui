@@ -2,6 +2,7 @@
 //! shows: header, Projects, and Recents from `thread/list`. Numbers are CSS px from
 //! refs/home and refs/sidebar.
 
+use crate::composer::ChatDrag;
 use crate::{
     Shell, blit, fixture, focus, home_sidebar_header,
     icon::icon,
@@ -47,6 +48,10 @@ pub const PINNED_SECTION_ID: &str = "01984de2-8f74-7c91-a3b2-5c5e937cf318";
 /// Recents shows this many rows first and `PAGE` more each time its end comes into view
 /// (the original's `maxItems: 10`, `infiniteScroll` paging of the last section).
 const PAGE: usize = 10;
+/// Chats an expanded project lists before its `Show more` (the original's `maxItems`).
+const PROJECT_PAGE: usize = 5;
+/// A project chat's label starts under its folder's label.
+const PROJECT_INDENT: f32 = 24.;
 
 const WORKTREE_TOOLTIP: &str = "This is a git worktree";
 const MISSING_PROJECT_TOOLTIP: &str = "This project folder was deleted or moved";
@@ -336,6 +341,11 @@ pub struct HomeSidebar {
     /// The open row context menu.
     menu: Option<ThreadMenu>,
     native_menu_snapshot: Option<serde_json::Value>,
+    /// Thread id to the `cwd` it runs in: a project lists the chats in its root.
+    cwds: HashMap<String, SharedString>,
+    /// Projects whose `Show more` was clicked: they list every loaded chat.
+    projects_shown_all: HashSet<SharedString>,
+    project_menu: Option<crate::screens::thread::view::menu::ContextMenu>,
 }
 
 /// Emitted when a Recents row is clicked, with the thread id.
@@ -359,6 +369,13 @@ pub struct ArchiveThread(pub String);
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = sidebar, no_json)]
 pub struct SelectProject(pub String);
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = sidebar, no_json)]
+pub struct ProjectAction {
+    pub id: String,
+    pub command: String,
+}
 
 /// A row's `Pin chat` / `Unpin chat`: `thread/section/move` of the thread (its id) into the
 /// Pinned section (`true`) or out of it (`false`).
@@ -410,6 +427,13 @@ fn pinned_ids(threads: &[Thread]) -> HashSet<String> {
         .collect()
 }
 
+fn thread_cwds(threads: &[Thread]) -> HashMap<String, SharedString> {
+    threads
+        .iter()
+        .map(|t| (t.id.clone(), t.cwd.clone().into()))
+        .collect()
+}
+
 impl HomeSidebar {
     /// Recents from a live `thread/list`; `selected` is the open thread, highlighted.
     pub fn new(threads: &[Thread], selected: Option<&str>) -> Self {
@@ -458,6 +482,9 @@ impl HomeSidebar {
             scroll: ScrollHandle::new(),
             menu: None,
             native_menu_snapshot: None,
+            cwds: thread_cwds(threads),
+            projects_shown_all: HashSet::new(),
+            project_menu: None,
         }
     }
 
@@ -511,16 +538,14 @@ impl HomeSidebar {
         .detach();
     }
 
-    fn project_rows(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn project_rows(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        div()
-            .id("project-rows")
-            .w_full()
-            .flex()
-            .flex_col()
-            .gap(px(1.))
-            .children(self.projects.iter().map(|project| {
+        let rows: Vec<AnyElement> = self
+            .projects
+            .iter()
+            .map(|project| {
                 let group = project.id.clone();
+                let project_id = project.id.to_string();
                 let color = theme.text_default_nav;
                 let label_width = if project.worktree { 204. } else { 240. };
                 // A deleted or moved folder cannot host a chat.
@@ -593,10 +618,33 @@ impl HomeSidebar {
                             .group_hover(group.clone(), |style| style.opacity(1.))
                             .child(
                                 div()
+                                    .id(SharedString::from(format!("project-actions-{project_id}")))
                                     .size(px(20.))
                                     .flex()
                                     .items_center()
                                     .justify_center()
+                                    .role(gpui::Role::Button)
+                                    .aria_label("Project options")
+                                    .on_click(cx.listener(
+                                        move |this, event: &gpui::ClickEvent, window, cx| {
+                                            use crate::screens::thread::view::menu::{
+                                                ContextMenu, Item,
+                                            };
+                                            cx.stop_propagation();
+                                            this.project_menu = Some(ContextMenu::open(
+                                                vec![
+                                                    Item::new("edit", "Edit project", true),
+                                                    Item::new("move-up", "Move up", true),
+                                                    Item::new("delete", "Remove project", true),
+                                                ],
+                                                project_id.clone(),
+                                                event.position(),
+                                                window,
+                                                cx,
+                                            ));
+                                            cx.notify();
+                                        },
+                                    ))
                                     .child(icon("thread-chat-actions", 14., theme.text_tertiary)),
                             )
                             .child(
@@ -621,6 +669,28 @@ impl HomeSidebar {
                                     .opacity(if project.missing { 0.4 } else { 1. })
                                     .child(icon("new-chat", 14., theme.text_tertiary)),
                             ),
+                    )
+                    // A collapsed folder carries the dot of its unread chats.
+                    .when(
+                        !project.expanded
+                            && self
+                                .project_chats(project)
+                                .any(|(id, _, _)| self.unread.contains(id)),
+                        |row| {
+                            row.child(
+                                div()
+                                    .absolute()
+                                    .top(px(11.))
+                                    .right(px(14.))
+                                    .size(px(8.))
+                                    .group_hover(group.clone(), |s| s.invisible())
+                                    .child(shapes::decoration(shapes::Decoration {
+                                        radius: Corners::all(Theme::RADIUS_FULL),
+                                        fill: Some(theme.info_solid),
+                                        ..Default::default()
+                                    })),
+                            )
+                        },
                     );
                 let row = div()
                     .id(project.id.clone())
@@ -654,8 +724,99 @@ impl HomeSidebar {
                             Side::Top,
                         ))
                     });
-                crate::rounded_clip(RADIUS_ROW, shapes::Corner::Squircle, row)
-            }))
+                crate::rounded_clip(RADIUS_ROW, shapes::Corner::Squircle, row).into_any_element()
+            })
+            .collect();
+        let mut children = Vec::with_capacity(rows.len());
+        for (project, row) in self.projects.iter().zip(rows) {
+            children.push(row);
+            if project.expanded {
+                children.push(self.project_chat_list(project, window, cx));
+            }
+        }
+        div()
+            .id("project-rows")
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(1.))
+            .children(children)
+            .into_any_element()
+    }
+
+    /// The loaded chats that run in `project`'s root, in `thread/list` order.
+    // shortcut: matches the first root only; the original also reads `thread-project-assignments`
+    // and every root. Upgrade when a project must list chats started outside its first root.
+    fn project_chats<'a>(
+        &'a self,
+        project: &'a Project,
+    ) -> impl Iterator<Item = &'a (String, SharedString, i64)> {
+        self.threads.iter().filter(move |(id, _, _)| {
+            project
+                .root
+                .as_ref()
+                .is_some_and(|root| self.cwds.get(id) == Some(root))
+        })
+    }
+
+    /// An expanded project's chats: [`PROJECT_PAGE`] rows, then `Show more` while rows are
+    /// hidden or `thread/list` has more pages; `No chats` when it has none.
+    fn project_chat_list(
+        &self,
+        project: &Project,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let chats: Vec<_> = self.project_chats(project).collect();
+        let mut shown = if self.projects_shown_all.contains(&project.id) {
+            chats.len()
+        } else {
+            chats.len().min(PROJECT_PAGE)
+        };
+        // The original shows a single hidden row instead of `Show more`.
+        if !self.has_more && chats.len() == shown + 1 {
+            shown += 1;
+        }
+        let tail = if shown < chats.len() || self.has_more {
+            let id = project.id.clone();
+            let paging_id = SharedString::from(format!("project-paging:{id}"));
+            div()
+                .py(px(4.))
+                .pl(px(24.))
+                .flex()
+                .child(
+                    self.paging_button(paging_id, "Show more", window, cx)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.projects_shown_all.insert(id.clone());
+                            if this.has_more && !this.loading {
+                                this.loading = true;
+                                this.page_error = false;
+                                cx.emit(LoadMore);
+                            }
+                            cx.notify();
+                        })),
+                )
+                .into_any_element()
+        } else if chats.is_empty() {
+            sidebar_empty("No chats", cx)
+                .px(px(32.))
+                .py(px(4.))
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        };
+        let rows: Vec<_> = chats[..shown]
+            .iter()
+            .map(|(id, label, _)| self.chat_row(id, label.clone(), PROJECT_INDENT, window, cx))
+            .collect();
+        div()
+            .id(SharedString::from(format!("project-chats:{}", project.id)))
+            .flex()
+            .flex_col()
+            .pb(px(8.))
+            .role(gpui::Role::List)
+            .child(div().flex().flex_col().gap(px(1.)).children(rows))
+            .child(tail)
             .into_any_element()
     }
 
@@ -724,6 +885,7 @@ impl HomeSidebar {
             .map(|t| (t.id.clone(), display_title(title(t)), t.updated_at))
             .collect();
         self.threads_state = ListState::Ready;
+        self.cwds = thread_cwds(threads);
         self.pinned = pinned_ids(threads);
         for thread in threads {
             if thread.status == ThreadStatus::Active {
@@ -751,6 +913,8 @@ impl HomeSidebar {
         });
         self.threads
             .insert(0, (thread.id.clone(), label, thread.updated_at));
+        self.cwds
+            .insert(thread.id.clone(), thread.cwd.clone().into());
         self.reindex_sections();
         self.set_running(&thread.id, thread.status == ThreadStatus::Active, cx);
         if self.activity_clock.is_some() && thread.created_at >= self.activity_started_at {
@@ -781,6 +945,10 @@ impl HomeSidebar {
             self.running.remove(id);
         }
         cx.notify();
+    }
+
+    pub fn any_running(&self) -> bool {
+        !self.running.is_empty()
     }
 
     pub fn is_running(&self, id: &str) -> bool {
@@ -950,7 +1118,7 @@ impl HomeSidebar {
             .flex()
             .flex_col()
             .gap(px(1.))
-            .children(rows.map(|(id, label, _)| self.chat_row(id, label.clone(), window, cx)))
+            .children(rows.map(|(id, label, _)| self.chat_row(id, label.clone(), 0., window, cx)))
             .when(recents, |d| d.children(self.page_tail(cx)))
             .into_any_element()
     }
@@ -1014,6 +1182,7 @@ impl HomeSidebar {
         &self,
         id: &str,
         label: SharedString,
+        indent: f32,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
@@ -1047,9 +1216,13 @@ impl HomeSidebar {
                     .any(|unread| unread == id)
                     .then_some(RowEnd::Dot)
             });
+        let drag = ChatDrag {
+            id: id.to_owned(),
+            title: label.clone(),
+        };
         thread_row(
             id,
-            label,
+            (label, indent),
             self.selected.as_deref() == Some(id),
             end,
             cx,
@@ -1078,6 +1251,8 @@ impl HomeSidebar {
             )
         })
         .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenThread(open.clone()))))
+        // `Drop to reference chat`: dragged onto a composer, the row becomes a chat chip.
+        .on_drag(drag, |drag: &ChatDrag, _, _, cx| cx.new(|_| drag.clone()))
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
@@ -1130,42 +1305,54 @@ impl HomeSidebar {
             } else {
                 "Show more"
             };
-            let handle = focus::handle(section.paging_id.clone(), 0, window, cx);
-            let color = Hsla {
-                a: if cx.theme().appearance == Appearance::Dark {
-                    0.498
-                } else {
-                    0.5
-                },
-                ..cx.theme().text_tertiary
-            };
-            let hover = cx.theme().ghost_hover;
-            let radius = px(9.375);
-            let button = focus::ring(
-                div()
-                    .id(section.paging_id.clone())
-                    .role(gpui::Role::Button)
-                    .aria_label(label)
-                    .h(px(24.))
-                    .px(px(8.))
-                    .flex()
-                    .items_center()
-                    .rounded(radius)
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(hover))
-                    .child(text(label, 14., 21., 400., color).top_layer()),
-                &handle,
-                radius,
-                px(2.),
-                cx,
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.sections[index].expanded ^= true;
-                cx.notify();
-            }));
+            let button = self
+                .paging_button(section.paging_id.clone(), label, window, cx)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.sections[index].expanded ^= true;
+                    cx.notify();
+                }));
             body = body.child(div().py(px(4.)).flex().child(button));
         }
         body.into_any_element()
+    }
+
+    /// A list's `Show more` / `Show less` text button, `focus` keyed by `id`.
+    fn paging_button(
+        &self,
+        id: SharedString,
+        label: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let handle = focus::handle(id.clone(), 0, window, cx);
+        let color = Hsla {
+            a: if cx.theme().appearance == Appearance::Dark {
+                0.498
+            } else {
+                0.5
+            },
+            ..cx.theme().text_tertiary
+        };
+        let hover = cx.theme().ghost_hover;
+        let radius = px(9.375);
+        focus::ring(
+            div()
+                .id(id)
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .h(px(24.))
+                .px(px(8.))
+                .flex()
+                .items_center()
+                .rounded(radius)
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover))
+                .child(text(label, 14., 21., 400., color).top_layer()),
+            &handle,
+            radius,
+            px(2.),
+            cx,
+        )
     }
 }
 
@@ -1280,7 +1467,7 @@ impl Render for HomeSidebar {
                 ListState::Ready if self.projects.is_empty() => {
                     sidebar_empty("No projects", cx).into_any_element()
                 }
-                ListState::Ready => self.project_rows(cx),
+                ListState::Ready => self.project_rows(window, cx),
             };
             let projects = section(0, "Projects".into(), project_rows, window, cx);
             let recents = section(1, "Recents".into(), recents, window, cx);
@@ -1341,6 +1528,24 @@ impl Render for HomeSidebar {
                     .map(|_| self.menu_overlay(window, cx)),
             )
             .children(self.activity_menu_overlay(window, cx))
+            .children(self.project_menu.as_ref().map(|menu| {
+                menu.overlay(
+                    "project-menu",
+                    "Project options",
+                    |this| &mut this.project_menu,
+                    |_, command, id, window, cx| {
+                        window.dispatch_action(
+                            Box::new(ProjectAction {
+                                id,
+                                command: command.into(),
+                            }),
+                            cx,
+                        );
+                    },
+                    window,
+                    cx,
+                )
+            }))
             .children(self.worktree_tip.then(|| self.worktree_tooltip_element(cx)))
     }
 }
@@ -1394,7 +1599,7 @@ enum RowEnd {
 /// ([`RowEnd`]); either takes 28 px off the label and hides on hover.
 fn thread_row(
     id: &str,
-    label: SharedString,
+    (label, indent): (SharedString, f32),
     selected: bool,
     end: Option<RowEnd>,
     cx: &App,
@@ -1475,7 +1680,7 @@ fn thread_row(
                         s.w(px(if activity { 187. } else { 216. }))
                     })
                     .h(px(20.))
-                    .pl(px(8.))
+                    .pl(px(8. + indent))
                     .overflow_hidden()
                     .when(activity, |d| d.saved_layer())
                     .when(!activity, |d| d.layer())
@@ -2344,7 +2549,7 @@ const COMMANDS: &[Command] = &[
         "Mark as unread",
         "Mark the current chat as unread",
         "⇧⌘U",
-        false,
+        true,
     ),
     (
         "Chat",
@@ -2665,7 +2870,7 @@ const COMMANDS: &[Command] = &[
         "Show Mini",
         "Show Mini from anywhere",
         "⌥Space",
-        true,
+        false,
     ),
     (
         "App",
@@ -4312,8 +4517,9 @@ fn menu_row(
                 ..Default::default()
             }))
         })
+        // The original draws no slot for icon-less commands; chat rows keep it for the unread dot.
         .when(
-            (!item.note || item.icon.is_some()) && item.label != "Commit or push",
+            item.icon.is_some() || item.thread.is_some() || item.url.is_some(),
             |d| {
                 d.child(div().size(px(16.)).flex_none().map(|slot| {
                     if item.unread {

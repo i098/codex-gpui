@@ -543,6 +543,15 @@ impl Worktrees {
                             .rounded(px(8.))
                             .hover(move |s| s.bg(hover))
                             .child(text(title, 14., 20., 430., t.text))
+                            .when(thread["isAttachmentOwner"] == true, |row| {
+                                row.child(text(
+                                    "Attachment owner",
+                                    12.,
+                                    16.,
+                                    430.,
+                                    t.text_secondary,
+                                ))
+                            })
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.dispatch(Action::OpenThread(id.clone()), window, cx)
                             }))
