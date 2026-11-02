@@ -32,6 +32,7 @@ actions!(
         NextSideTab,
         PreviousSideTab,
         CopyDeeplink,
+        CopyLastCodeBlock,
         CloseWholeWindow,
         CloseOtherSideTabs
     ]
@@ -139,6 +140,15 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
             cx.write_to_clipboard(ClipboardItem::new_string(format!("codex://threads/{id}")));
         }
     }))
+    .on_action(cx.listener(|this, _: &CopyLastCodeBlock, _, cx| {
+        let code = this
+            .thread
+            .as_ref()
+            .and_then(|view| view.read(cx).last_code_block());
+        if let Some(code) = code {
+            cx.write_to_clipboard(ClipboardItem::new_string(code));
+        }
+    }))
     .on_action(
         cx.listener(|this, _: &CloseWholeWindow, window, cx| this.close_whole_window(window, cx)),
     )
@@ -223,7 +233,12 @@ impl Root {
         self.toast(Toast::danger("Error starting chat"), cx);
     }
 
-    fn new_special_chat(&mut self, mode: NewChatMode, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn new_special_chat(
+        &mut self,
+        mode: NewChatMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.new_chat(window, cx);
         self.shortcut_state.new_chat_mode = mode;
         self.home.update(cx, |home, cx| {
@@ -640,6 +655,7 @@ impl Root {
             if let Some(config) = computer_use {
                 params["config"] = config;
             }
+            params["dynamicTools"] = json!([crate::terminal::read_thread_terminal_tool()]);
             if let Some(memory) = memory {
                 memory.apply(&mut params);
             }

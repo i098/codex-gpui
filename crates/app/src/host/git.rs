@@ -880,8 +880,8 @@ pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
     if endpoint == "git-file-url" {
         return file_url::read(root, params);
     }
-    if endpoint == "git-review-targets" {
-        return review_targets(root);
+    if endpoint == "git-review-commits" {
+        return review_commits(root);
     }
     if let Some(result) = commit_flow(endpoint, root, params) {
         return result;
@@ -963,25 +963,8 @@ fn commit_flow(endpoint: &str, root: &Path, params: &Value) -> Option<Result<Val
     })
 }
 
-/// `Code review` targets: local branches newest first (`main` or `master` leading, as the
-/// original's default target), without the current one, and the 50 latest commits.
-fn review_targets(root: &Path) -> Result<Value> {
-    let current = current_branch(root)?;
-    let names = checked(run(
-        root,
-        &[
-            "for-each-ref",
-            "--sort=-committerdate",
-            "--format=%(refname:short)",
-            "refs/heads",
-        ],
-    )?)?;
-    let mut branches: Vec<_> = String::from_utf8(names)?
-        .lines()
-        .filter(|name| Some(*name) != current.as_deref())
-        .map(str::to_owned)
-        .collect();
-    branches.sort_by_key(|name| !matches!(name.as_str(), "main" | "master"));
+/// The 50 latest commits of `HEAD` that `Code review` can target, newest first.
+fn review_commits(root: &Path) -> Result<Value> {
     let log = if commit_id(root, "HEAD")?.is_some() {
         String::from_utf8(checked(run(
             root,
@@ -997,7 +980,7 @@ fn review_targets(root: &Path) -> Result<Value> {
             Some(json!({"sha": sha, "subject": subject}))
         })
         .collect();
-    Ok(json!({"branches": branches, "commits": commits}))
+    Ok(json!({"commits": commits}))
 }
 
 fn current_branch(root: &Path) -> Result<Option<String>> {
