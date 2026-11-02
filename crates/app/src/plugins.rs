@@ -41,7 +41,7 @@ impl Root {
             && let Route::Plugins(route) = &self.state.route
             && should_reload_plugins(&page.read(cx).data.plugins)
         {
-            self.load_plugins(page, route.clone(), cx);
+            self.load_plugins(page, route.clone(), false, cx);
         }
     }
 
@@ -87,9 +87,9 @@ impl Root {
             this.plugin_action(page.clone(), action, window, cx);
         })
         .detach();
-        self.load_plugins(page.clone(), route, cx);
+        self.load_plugins(page.clone(), route, false, cx);
         self.plugins_page = Some(page.clone());
-        let nav = cx.new(|_| plugins::Nav::new(page.clone())).into();
+        let nav = cx.new(|cx| plugins::Nav::new(page.clone(), cx)).into();
         cx.new(|_| {
             let mut shell = Shell::new(nav, page.into());
             shell.selected_rail = Some("plugins");
@@ -98,26 +98,33 @@ impl Root {
         })
     }
 
-    fn load_plugins(&self, page: Entity<Page>, route: String, cx: &mut Context<Self>) {
-        let generation = page.update(cx, |page, cx| {
-            page.generation += 1;
-            page.data = Data::default();
-            page.error = None;
-            cx.notify();
-            page.generation
-        });
-        let bridge = self.bridge.clone();
-        let cwd = self.cwd.clone();
+    /// Starts the page's three reads at once and shows each as it arrives, so Skills does not
+    /// wait for the slow remote plugin catalog or app list. `force` refetches the remote
+    /// catalogs (~40 s each when signed in); opening a page reads the app-server's cache, as
+    /// the original does.
+    fn load_plugins(&self, page: Entity<Page>, route: String, force: bool, cx: &mut Context<Self>) {
         let personal_marketplace = std::env::var_os("HOME")
             .or_else(|| std::env::var_os("USERPROFILE"))
             .map(|home| PathBuf::from(home).join(".agents/plugins/marketplace.json"));
-        let available = page.read(cx).available;
+        let (generation, available) = page.update(cx, |page, cx| {
+            page.generation += 1;
+            page.data = Data {
+                personal_marketplace,
+                ..Data::default()
+            };
+            page.error = None;
+            cx.notify();
+            (page.generation, page.available)
+        });
+        let (bridge, cwd) = (self.bridge.clone(), self.cwd.clone());
+        let skills = cx.background_spawn(async move { read_skills(&bridge, &cwd).await });
+        let bridge = self.bridge.clone();
         let connecting_app_id = page.read(cx).modal.as_ref().and_then(|modal| match modal {
             Modal::Connecting(app) => app["id"].as_str().map(str::to_owned),
             _ => None,
         });
-        let task = cx.background_spawn(async move {
-            let apps = read_apps(&bridge).await;
+        let apps = cx.background_spawn(async move {
+            let apps = read_apps(&bridge, force).await;
             let connected_app_id = connecting_app_id.filter(|id| {
                 apps.value()
                     .into_iter()
@@ -132,37 +139,65 @@ impl Root {
             } else {
                 None
             };
-            let plugins = if available {
-                match bridge
-                    .request::<_, Value>("plugin/list", json!({"cwds":[cwd],"forceRefetch":true}))
-                    .await
-                {
-                    Ok(value) => Resource::Ready(plugins::marketplaces(&value)),
-                    Err(error) => Resource::Failed(error.to_string()),
-                }
-            } else {
-                Resource::Ready(Vec::new())
-            };
-            let skills = read_skills(&bridge, &cwd).await;
-            (
-                Data {
-                    plugins,
-                    skills,
-                    apps,
-                    personal_marketplace,
-                },
-                connected_app_id,
-                reconciliation_error,
-            )
+            (apps, connected_app_id, reconciliation_error)
         });
+        let (bridge, cwd) = (self.bridge.clone(), self.cwd.clone());
+        let plugins = cx.background_spawn(async move {
+            if !available {
+                return Resource::Ready(Vec::new());
+            }
+            match bridge
+                .request::<_, Value>("plugin/list", json!({"cwds":[cwd],"forceRefetch":force}))
+                .await
+            {
+                Ok(value) => Resource::Ready(plugins::marketplaces(&value)),
+                Err(error) => Resource::Failed(error.to_string()),
+            }
+        });
+        let skills_page = page.clone();
+        cx.spawn(async move |_, cx| {
+            let skills = skills.await;
+            skills_page.update(cx, |page, cx| {
+                if page.generation == generation {
+                    page.data.skills = skills;
+                    cx.notify();
+                }
+            })
+        })
+        .detach();
+        let apps_page = page.clone();
+        cx.spawn(async move |_, cx| {
+            let (apps, connected_app_id, reconciliation_error) = apps.await;
+            apps_page.update(cx, |page, cx| {
+                if page.generation != generation {
+                    return;
+                }
+                if connected_app_id.as_deref().is_some_and(|id| {
+                    matches!(
+                        &page.modal,
+                        Some(Modal::Connecting(app)) if app["id"].as_str() == Some(id)
+                    )
+                }) {
+                    if let Some(error) = reconciliation_error {
+                        page.error =
+                            Some(format!("Could not reconcile plugin suggestions: {error}"));
+                    } else {
+                        page.modal = None;
+                    }
+                }
+                page.data.apps = apps;
+                cx.notify();
+            })
+        })
+        .detach();
         cx.spawn(async move |this, cx| {
-            let (data, connected_app_id, reconciliation_error) = task.await;
+            let plugins = plugins.await;
             let _ = this.update(cx, |this, cx| {
                 if page.read(cx).generation != generation {
                     return;
                 }
                 let selected = route_plugin_id(&route).and_then(|id| {
-                    data.plugins
+                    plugins
                         .value()
                         .into_iter()
                         .flatten()
@@ -171,20 +206,7 @@ impl Root {
                         .cloned()
                 });
                 page.update(cx, |page, cx| {
-                    if connected_app_id.as_deref().is_some_and(|id| {
-                        matches!(
-                            &page.modal,
-                            Some(Modal::Connecting(app)) if app["id"].as_str() == Some(id)
-                        )
-                    }) {
-                        if let Some(error) = reconciliation_error {
-                            page.error =
-                                Some(format!("Could not reconcile plugin suggestions: {error}"));
-                        } else {
-                            page.modal = None;
-                        }
-                    }
-                    page.data = data;
+                    page.data.plugins = plugins;
                     cx.notify();
                 });
                 if let Some(plugin) = selected {
@@ -465,6 +487,7 @@ impl Root {
                     Route::Plugins(route) => route.clone(),
                     _ => "/plugins".into(),
                 },
+                true,
                 cx,
             ),
             Action::ReadSkill(path) => self.read_skill(page, path.clone(), cx),
@@ -561,7 +584,7 @@ impl Root {
                     Action::Install(plugin) => {
                         let apps = plugins::array(&value, "appsNeedingAuth").to_vec();
                         let route = format!("/plugins/{}", plugin.id());
-                        this.load_plugins(page.clone(), route, cx);
+                        this.load_plugins(page.clone(), route, true, cx);
                         if !apps.is_empty() {
                             page.update(cx, |page, cx| {
                                 page.modal = Some(Modal::Connections { plugin, apps });
@@ -583,7 +606,7 @@ impl Root {
                             Route::Plugins(route) => route.clone(),
                             _ => "/plugins".into(),
                         };
-                        this.load_plugins(page, route, cx);
+                        this.load_plugins(page, route, true, cx);
                     }
                 }
             });
@@ -954,15 +977,16 @@ fn reconcile_plugin_suggestions_result(result: &Value) -> Result<()> {
     Ok(())
 }
 
-async fn read_apps(bridge: &Bridge) -> Resource<Vec<Value>> {
+async fn read_apps(bridge: &Bridge, force: bool) -> Resource<Vec<Value>> {
     let result = async {
         let mut apps = Vec::new();
         let mut cursor = Value::Null;
         loop {
+            // Each forced page refetches the whole catalog (~30 s); later pages read that cache.
             let value: Value = bridge
                 .request(
                     "app/list",
-                    json!({"cursor":cursor,"limit":1000,"forceRefetch":true}),
+                    json!({"cursor":cursor,"limit":1000,"forceRefetch":force && cursor.is_null()}),
                 )
                 .await?;
             let data = value["data"].as_array().context("App list has no data")?;

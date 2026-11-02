@@ -33,6 +33,14 @@ pub(super) fn configure(window: &Window, kind: Kind) {
     let _ = (window, kind);
 }
 
+/// The Dock tile badge: unread threads and pending approvals; zero clears it.
+pub(super) fn set_badge(count: usize) {
+    #[cfg(target_os = "macos")]
+    native::set_badge(count);
+    #[cfg(not(target_os = "macos"))]
+    let _ = count;
+}
+
 pub(super) fn is_visible(window: &Window) -> anyhow::Result<bool> {
     #[cfg(target_os = "macos")]
     return native::with_window(window, |window| unsafe {
@@ -142,6 +150,19 @@ mod native {
             let view = handle.ns_view.cast::<AnyObject>().as_ref();
             let native: *mut AnyObject = msg_send![view, window];
             native.as_ref().map(action)
+        }
+    }
+
+    pub(super) fn set_badge(count: usize) {
+        let label = (count > 0).then(|| objc2_foundation::NSString::from_str(&count.to_string()));
+        // Runs on the main thread (a GPUI entity update); NSApp and its Dock tile live as long
+        // as the process.
+        unsafe {
+            let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+            let tile: *mut AnyObject = msg_send![app, dockTile];
+            if let Some(tile) = tile.as_ref() {
+                let _: () = msg_send![tile, setBadgeLabel: label.as_deref()];
+            }
         }
     }
 
