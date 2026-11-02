@@ -1067,12 +1067,12 @@ pub(super) fn activity(
                     ))
                     .children(content)
             }
-            Activity::Review(words) => row("code-review", plain(label(words.clone(), text60))),
+            Activity::Review(words) => row(glyph("code-review"), plain(label(words.clone(), text60))),
             Activity::Compaction(words) => row(
                 glyph("thread-compaction"),
                 plain(label(words.to_owned(), text60)),
             ),
-            Activity::Tool(icon, words) => row(icon, plain(label(words.clone(), text60))),
+            Activity::Tool(icon, words) => row(glyph(icon), plain(label(words.clone(), text60))),
             Activity::Mcp(item) => {
                 let ThreadItem::McpToolCall {
                     id,

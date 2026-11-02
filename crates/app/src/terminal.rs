@@ -403,8 +403,8 @@ impl Root {
             .as_str()
             .and_then(|id| self.terminal.panels.get(id))
             .map(|panel| panel.read(cx))
-            .and_then(|panel| Some((panel.sessions.get(panel.active)?, &panel.shell)));
-        let Some((session, shell)) = session else {
+            .and_then(|panel| panel.sessions.get(panel.active));
+        let Some(session) = session else {
             return Some(tool_failure(
                 "No app terminal session is attached to this thread yet.",
             ));
@@ -423,7 +423,7 @@ impl Root {
         let mut lines = vec![
             "App terminal snapshot for this thread:".to_owned(),
             format!("cwd: {}", session.cwd),
-            format!("shell: {shell}"),
+            format!("shell: {}", configured_shell(cx)),
         ];
         if buffer.truncated() {
             lines.push(
@@ -575,6 +575,14 @@ struct Session {
     pending_size: Option<(u16, u16)>,
 }
 
+/// The Settings shell when it still exists, else the platform default.
+fn configured_shell(cx: &App) -> String {
+    cx.try_global::<TerminalShell>()
+        .and_then(|shell| shell.0.clone())
+        .filter(|shell| std::path::Path::new(shell).is_file())
+        .unwrap_or_else(ui::screens::settings::default_shell)
+}
+
 pub struct PanelChanged;
 impl EventEmitter<PanelChanged> for TerminalPanel {}
 
@@ -678,12 +686,7 @@ impl TerminalPanel {
         })
         .detach();
         // Read per tab so a changed setting applies to the next new terminal.
-        let shell = cx
-            .try_global::<TerminalShell>()
-            .and_then(|shell| shell.0.clone())
-            .filter(|shell| std::path::Path::new(shell).is_file())
-            .unwrap_or_else(ui::screens::settings::default_shell);
-        let mut command = CommandBuilder::new(shell);
+        let mut command = CommandBuilder::new(configured_shell(cx));
         command.arg("-l");
         command.cwd(&self.cwd);
         command.env("TERM", "xterm-256color");
