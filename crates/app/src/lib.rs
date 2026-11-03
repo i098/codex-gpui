@@ -154,6 +154,12 @@ actions!(
         NextChat,
         /// `⌘⇧A`: archive the open chat (`archiveThread`).
         ArchiveChat,
+        ForceReloadSkills,
+        OpenSkills,
+        McpSettings,
+        PersonalitySettings,
+        ImportExternalAgent,
+        OpenFeedback,
         ExportLogs,
     ]
 );
@@ -4336,9 +4342,15 @@ impl Root {
                 "Toggle pin" => {
                     window.dispatch_action(Box::new(features::shortcuts::ToggleThreadPin), cx)
                 }
-                "Go to skills" => {
-                    self.open_plugins("/skills", window, cx);
+                "Force reload skills" => window.dispatch_action(Box::new(ForceReloadSkills), cx),
+                "Go to skills" => window.dispatch_action(Box::new(OpenSkills), cx),
+                "Import from other AI apps" => {
+                    window.dispatch_action(Box::new(ImportExternalAgent), cx)
                 }
+                "MCP servers" => window.dispatch_action(Box::new(McpSettings), cx),
+                "Personalization" => window.dispatch_action(Box::new(PersonalitySettings), cx),
+                "Feedback" => window.dispatch_action(Box::new(OpenFeedback), cx),
+                "Codex Micro setup" => window.dispatch_action(Box::new(OpenMobileSetup), cx),
                 "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 "Log out" => window.dispatch_action(Box::new(LogOut), cx),
@@ -9042,11 +9054,25 @@ impl Render for Root {
             );
         let root = routes::actions(archived_chats::actions(root, cx), cx);
         let root = hotkey::actions(root, self.popout.is_some(), cx);
+        let root = features::actions(root, self, cx)
+            .on_action(cx.listener(|this, _: &ForceReloadSkills, _, cx| this.refresh_skills(cx)))
+            .on_action(cx.listener(|this, _: &OpenSkills, window, cx| {
+                this.open_plugins("/skills", window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &McpSettings, window, cx| {
+                this.open_settings_section("MCP servers", window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &PersonalitySettings, window, cx| {
+                this.open_settings_section("Personalization", window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ImportExternalAgent, window, cx| {
+                this.open_settings_section("Import", window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &OpenFeedback, window, cx| {
+                this.open_feedback(window, cx);
+            }));
         native_menus::actions(
-            section_actions::actions(
-                project_actions::actions(features::actions(root, self, cx), cx),
-                cx,
-            ),
+            section_actions::actions(project_actions::actions(root, cx), cx),
             self,
             cx,
         )
