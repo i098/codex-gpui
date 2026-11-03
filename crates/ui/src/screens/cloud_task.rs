@@ -46,6 +46,8 @@ pub struct CloudTask {
     pub clone_url: Option<String>,
     pub environment_label: Option<String>,
     pub working: bool,
+    /// `pull_request_data.url` of the diff turn, once Codex opened its pull request.
+    pub pull_request: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -70,7 +72,13 @@ pub struct LocalTarget {
 
 pub enum CloudAction {
     Retry,
-    Apply { revert: bool },
+    Apply {
+        revert: bool,
+    },
+    /// `Create PR` / `Create draft PR`: opens a pull request from the diff turn.
+    CreatePullRequest {
+        draft: bool,
+    },
     LoadImage(String),
     OpenMain,
     Cancel,
@@ -91,6 +99,8 @@ pub struct CloudTaskPage {
     pub data: Option<CloudTask>,
     pub target: Option<LocalTarget>,
     pub applying: bool,
+    /// A `Create PR` request is in flight.
+    pub creating_pr: bool,
     pub hotkey: bool,
     pub error: Option<String>,
     transcripts: HashMap<String, Entity<ThreadView>>,
@@ -120,6 +130,7 @@ impl CloudTaskPage {
             data: None,
             target: None,
             applying: false,
+            creating_pr: false,
             hotkey,
             error: None,
             transcripts: HashMap::new(),
@@ -318,6 +329,31 @@ impl CloudTaskPage {
             cx.emit(CloudAction::Apply { revert });
             cx.notify();
         }
+    }
+
+    /// `Create PR` (`draft: false`) or `Create draft PR`: ignored while the turn runs or a
+    /// request is in flight.
+    pub fn request_pull_request(&mut self, draft: bool, cx: &mut Context<Self>) {
+        let ready = self
+            .data
+            .as_ref()
+            .is_some_and(|data| !data.working && data.diff_turn.is_some());
+        if ready && !self.creating_pr {
+            self.creating_pr = true;
+            cx.emit(CloudAction::CreatePullRequest { draft });
+            cx.notify();
+        }
+    }
+
+    /// Ends a `Create PR` request; `url` is the opened pull request, `None` when it failed.
+    pub fn finish_pull_request(&mut self, url: Option<String>, cx: &mut Context<Self>) {
+        self.creating_pr = false;
+        if let Some(data) = &mut self.data
+            && url.is_some()
+        {
+            data.pull_request = url;
+        }
+        cx.notify();
     }
 
     fn open_web(&self, cx: &mut App) {
@@ -579,6 +615,37 @@ impl CloudTaskPage {
                     self.button("cloud-open-main", "Open in Main Window", cx)
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(CloudAction::OpenMain))),
                 );
+        }
+        if let Some(data) = self.data.as_ref().filter(|data| !data.diff.is_empty()) {
+            if let Some(url) = data.pull_request.clone() {
+                header = header.child(
+                    self.button("cloud-view-pr", "View PR", cx)
+                        .h(px(28.))
+                        .py(px(3.))
+                        .on_click(move |_, _, cx| cx.open_url(&url)),
+                );
+            } else {
+                let creating = self.creating_pr;
+                for (id, label, draft) in [
+                    ("cloud-create-pr", "Create PR", false),
+                    ("cloud-create-draft-pr", "Create draft PR", true),
+                ] {
+                    let label = if creating && !draft {
+                        "Creating PR…"
+                    } else {
+                        label
+                    };
+                    header = header.child(
+                        self.button(id, label, cx)
+                            .h(px(28.))
+                            .py(px(3.))
+                            .when(creating || data.working, |button| button.opacity(0.5))
+                            .on_click(cx.listener(move |page, _, _, cx| {
+                                page.request_pull_request(draft, cx)
+                            })),
+                    );
+                }
+            }
         }
         if self.data.as_ref().is_some_and(|data| !data.diff.is_empty()) {
             header = header.child(
@@ -939,7 +1006,7 @@ mod tests {
             older_cursor: None,
         };
         app.update(|cx| page.update(cx, |page, cx| {
-            page.set_data(CloudTask { id:"task".into(),title:"Cloud".into(),turns:vec![CloudTurn {id:"turn".into(),thread,phase:Phase::SettingUp,error:None,logs:vec![],images:vec![]}],active_turn:Some("turn".into()),diff_turn:None,diff:String::new(),clone_url:None,environment_label:None,working:true },cx);
+            page.set_data(CloudTask { id:"task".into(),title:"Cloud".into(),turns:vec![CloudTurn {id:"turn".into(),thread,phase:Phase::SettingUp,error:None,logs:vec![],images:vec![]}],active_turn:Some("turn".into()),diff_turn:None,diff:String::new(),clone_url:None,environment_label:None,working:true,pull_request:None },cx);
             page.apply_event("turn",json!({"item_type":"log","key":{"type":"UserSetupScript"},"line":"ready"}),cx);
             assert_eq!(page.data.as_ref().unwrap().turns[0].logs,["ready"]);
             page.apply_event("turn",json!({"item_type":"thread_event","event":{"method":"item/completed","params":{"threadId":"remote","turnId":"turn","item":{"type":"agentMessage","id":"answer","text":"Done"}}}}),cx);
