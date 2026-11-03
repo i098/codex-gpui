@@ -669,6 +669,7 @@ pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             confirm_before_close: this.state.confirm_before_close,
             project_root: this.state.project_root.clone(),
             zoom: this.state.zoom,
+            prompt_history: this.state.prompt_history.clone(),
             drafts: this.state.drafts.clone(),
             path: this.state.path.clone(),
         };
