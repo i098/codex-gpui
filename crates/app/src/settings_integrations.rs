@@ -193,13 +193,19 @@ impl Root {
                     state.suppressed_servers.extend(removed_name);
                     None
                 }
-                Err(error) => integration_failed(state, &action, error),
+                Err(error) => integration_failed(state, &action, error).map(Toast::danger),
             };
             cx.notify();
             (notice, refresh_requested)
         });
+        let notice = match &action {
+            Action::UpgradeMarketplace(name) if notice.is_none() => {
+                Some(Toast::success(format!("{name} marketplace upgraded")))
+            }
+            _ => notice,
+        };
         if let Some(notice) = notice {
-            self.toast(Toast::danger(notice), cx);
+            self.toast(notice, cx);
         }
         if refresh_skills {
             self.refresh_skills(cx);
@@ -357,6 +363,16 @@ fn integration_failed(state: &mut State, action: &Action, error: anyhow::Error) 
     }
     if matches!(action, Action::SaveServer { .. } | Action::RemoveServer(_)) {
         state.form_error = Some(error.to_string());
+        return Some(
+            if matches!(action, Action::SaveServer { .. }) {
+                "Could not save MCP server"
+            } else {
+                "Could not uninstall MCP server"
+            }
+            .to_owned(),
+        );
+    } else if let Action::UpgradeMarketplace(_) = action {
+        return Some(format!("Failed to upgrade marketplace: {error}"));
     } else if matches!(
         action,
         Action::TrustHooks(_)
@@ -1104,7 +1120,10 @@ for line in sys.stdin:
         let error = result.expect_err("a stale form must not replace newer settings");
         assert!(error.to_string().contains("Configuration version mismatch"));
         let mut state = State::default();
-        assert!(integration_failed(&mut state, &stale, error).is_none());
+        assert_eq!(
+            integration_failed(&mut state, &stale, error).as_deref(),
+            Some("Could not save MCP server")
+        );
         assert_eq!(state.form_saved, 0);
         assert!(
             state
