@@ -893,6 +893,25 @@ It prints a Markdown table for a PR body.
 
 The labs `tools/shapes/run.sh`, `tools/shapes/blur.sh` and `tools/text/measure.sh` compare shapes, blur and text with Chromium case by case.
 
+## Live preview
+
+```sh
+scripts/live-preview.sh 18500
+```
+
+The script watches `crates`, `assets`, `fixtures` and the Cargo files. On a change it runs `cargo build -p ui` for the `shot`, `usage` and `settings_kit` examples under `flock /tmp/cargo-slot.lock`. Then it renders Home, Usage and Settings headless and serves `$LIVE_OUT` (default `/sdc-disk/tmp/cgx/live-preview`) on `127.0.0.1`.
+The page polls `status.json` every second. It shows the build state and the last good build time, swaps only the images that changed, and shows the compiler output instead of the images when the build fails.
+The Cargo target is `/sdc-disk/tmp/cgx/cargo-targets/<checkout path with / as _>`; set `CARGO_TARGET_DIR` to change it.
+
+The host runs it as the `systemd --user` unit `codex-gpui-live-preview` (`ExecStart` is this script in the checkout), published on the tailnet:
+
+```sh
+systemctl --user enable --now codex-gpui-live-preview
+sudo -n tailscale serve --bg --https=18500 http://127.0.0.1:18500
+```
+
+The link is `https://agents.tailc4c9b.ts.net:18500`. The unit watches the checkout that its `ExecStart` names, so point it at a checkout that stays.
+
 ## Live proof
 
 ```sh
@@ -905,6 +924,12 @@ It types a prompt into the Home composer with key events and pushes Enter.
 It waits for `turn/completed` and checks that the thread view shows `pong`.
 It prints the transcript and saves `live-1-home.png`, `live-2-streaming.png` and `live-3-done.png`.
 `$LIVE_ROOT` (default `/tmp/cgx-mac`) holds the project, the Codex home and the screenshots.
+
+Thread model, reasoning effort, and permission changes use `thread/settings/update`.
+Reviewer changes also use `turn/settings/update` during an active turn.
+The composer applies `thread/settings/updated` without changing the draft.
+Older servers keep the next-turn settings path.
+Run `cargo test -p app --test live_thread_settings` to check these requests and the fallback.
 
 ## Frame benchmark
 
