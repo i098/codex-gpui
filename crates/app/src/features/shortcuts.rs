@@ -41,7 +41,8 @@ actions!(
         DeleteCurrentChat,
         CopyConversationMarkdown,
         FocusMainChat,
-        FocusSideChat
+        FocusSideChat,
+        ReopenClosedTab
     ]
 );
 
@@ -165,6 +166,16 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
             this.sync(window, cx);
         }
     }))
+    .on_action(
+        cx.listener(|this, _: &ReopenClosedTab, window, cx| this.reopen_closed_tab(window, cx)),
+    )
+    .on_action(cx.listener(
+        |this, a: &ui::screens::diff::panel::MoveSideTabToBottom, window, cx| {
+            if this.tabs.get(a.0) == Some(&SidePanel::Console) {
+                this.show_terminal(true, window, cx);
+            }
+        },
+    ))
     .on_action(cx.listener(|this, _: &NextSideTab, window, cx| this.step_side(1, window, cx)))
     .on_action(cx.listener(|this, _: &PreviousSideTab, window, cx| this.step_side(-1, window, cx)))
     .on_action(cx.listener(|this, _: &RenameOpenChat, window, cx| {
