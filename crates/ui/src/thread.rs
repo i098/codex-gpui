@@ -3292,7 +3292,6 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::ContextCompaction { id }
         | ThreadItem::WebSearch { id, .. }
         | ThreadItem::CollabAgentToolCall { id, .. }
-        | ThreadItem::ImageGeneration { id, .. }
         | ThreadItem::ImageView { id, .. }
         | ThreadItem::EnteredReviewMode { id, .. }
         | ThreadItem::ExitedReviewMode { id, .. } => Some(id),
