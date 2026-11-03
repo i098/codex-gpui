@@ -589,24 +589,33 @@ impl Composer {
         div()
             .flex()
             .flex_col()
-            .child(div().px(px(8.)).py(px(6.)).child(text(
+            .child(div().px(px(8.)).py(px(4.)).child(text(
                 "Select model",
-                12.,
-                16.,
-                400.,
+                13.,
+                18.5714,
+                430.,
                 t.text_tertiary,
             )))
             .children(self.models.iter().enumerate().map(|(i, m)| {
                 div()
                     .id(("model", i))
-                    .h(px(32.))
                     .px(px(8.))
+                    .py(px(5.))
                     .flex()
                     .items_center()
-                    .rounded(px(12.))
-                    .when(i == self.model, |d| d.bg(hover))
+                    .gap(px(6.))
+                    .rounded(px(15.))
                     .hover(move |s| s.bg(hover))
-                    .child(text(m.label.clone(), 14., 20., 430., t.text))
+                    .child(div().flex_1().min_w_0().child(text(
+                        m.label.clone(),
+                        13.,
+                        18.5714,
+                        430.,
+                        t.text,
+                    )))
+                    .when(i == self.model, |d| {
+                        d.child(icon("menu-check", 16., t.text).opacity(0.75))
+                    })
                     .when(interactive, |d| {
                         d.track_focus(&self.menu_focus.items[i])
                             .focus(move |s| s.bg(hover))
