@@ -59,6 +59,30 @@ fn settings_automations_and_launch_links_route() -> Result<()> {
 }
 
 #[test]
+fn plugin_skill_mcp_app_and_pet_links_navigate() -> Result<()> {
+    let mut fx = Fx::new()?;
+    for (url, route) in [
+        ("codex://plugins", app::Route::Plugins("/plugins".into())),
+        (
+            "codex://plugins/test-plugin",
+            app::Route::Plugins("/plugins/test-plugin".into()),
+        ),
+        ("codex://skills", app::Route::Plugins("/skills".into())),
+        ("codex://mcp-app", app::Route::Plugins("/plugins".into())),
+    ] {
+        open(&mut fx, url)?;
+        fx.wait("plugin link", |fx| fx.route() == route)?;
+    }
+    assert!(app::deep_link::parse("codex://mcp-app/extra").is_none());
+
+    open(&mut fx, "codex://pets/install")?;
+    fx.wait("pet installation settings", |fx| {
+        fx.route() == app::Route::Settings
+    })?;
+    Ok(())
+}
+
+#[test]
 fn proxy() {
     common::proxy_child();
 }
