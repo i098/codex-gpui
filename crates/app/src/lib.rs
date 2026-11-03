@@ -235,6 +235,8 @@ pub enum SidePanel {
     Console,
     /// A file link in an answer: the file viewer ([`Root::file`]).
     File,
+    /// A generated image: the image view ([`Root::image`]).
+    Image,
     /// `Open in side chat`: the side chat with this [`SideChat::key`].
     SideChat(usize),
     /// Thread summary ▸ `Sources`: what the chat read, changed, searched and called.
@@ -481,6 +483,8 @@ pub struct Root {
     file: Option<Entity<FileView>>,
     /// The plan of [`SidePanel::Plan`]; cleared with the thread.
     plan: Option<Entity<ui::screens::plan::PlanView>>,
+    /// The image view of [`SidePanel::Image`]; cleared with the thread.
+    image: Option<Entity<ui::screens::thread::view::ImageView>>,
     /// The open thread in the main shell, with its side panel if any.
     split: Option<Entity<SplitScreen>>,
     terminal: terminal::Terminals,
@@ -989,6 +993,7 @@ impl Root {
             diff_watch: None,
             file: None,
             plan: None,
+            image: None,
             split: None,
             terminal: terminal::Terminals::default(),
             tabs: Vec::new(),
@@ -3195,6 +3200,7 @@ impl Root {
         view: &Entity<ThreadView>,
         file: Option<&Entity<FileView>>,
         plan: Option<&Entity<ui::screens::plan::PlanView>>,
+        image: bool,
         side_chats: &[SideChat],
         browsers: &[(usize, Entity<BrowserTab>)],
         console: bool,
@@ -3227,6 +3233,11 @@ impl Root {
                     preview: file.is_preview(),
                 })
             }
+            SidePanel::Image => image.then(|| Tab {
+                icon: "diff-file-image",
+                label: "Image view".into(),
+                preview: false,
+            }),
             SidePanel::SideChat(key) => {
                 let chat = side_chats.iter().find(|chat| chat.key == key)?;
                 let running = chat.view.read(cx).is_running();
@@ -3270,6 +3281,7 @@ impl Root {
     ) -> Option<(AnyView, Vec<Tab>, usize)> {
         let file = self.file.clone();
         let plan = self.plan.clone();
+        let image = self.image.is_some();
         let chats = &self.side_chats;
         let browsers = &self.browser_tabs;
         let console = self.terminal_panel().is_some();
@@ -3279,6 +3291,7 @@ impl Root {
                 view,
                 file.as_ref(),
                 plan.as_ref(),
+                image,
                 chats,
                 browsers,
                 console,
@@ -3298,6 +3311,7 @@ impl Root {
             SidePanel::Terminal => cx.new(|cx| Xterm::new(view.clone(), cx)).into(),
             SidePanel::Console => self.terminal_panel()?.clone().into(),
             SidePanel::File => self.file.as_ref()?.clone().into(),
+            SidePanel::Image => self.image.as_ref()?.clone().into(),
             SidePanel::SideChat(key) => self.chat(key)?.view.clone().into(),
             SidePanel::Sources => cx
                 .new(|cx| ui::screens::sources::SourcesView::new(view.clone(), cx))
@@ -3958,6 +3972,14 @@ impl Root {
                     let composer = this.composer(cx);
                     composer.update(cx, |composer, cx| composer.confirm_full_access(cx));
                     window.focus(&composer.focus_handle(cx), cx);
+                }
+                DialogOutcome::FullAccessAvailable => {
+                    window.focus(&focus, cx);
+                    if let Some(page) = this.settings_page.clone() {
+                        page.update(cx, |page, cx| {
+                            page.set(settings::FULL_ACCESS_SHOWN, Value::Bool(true), cx)
+                        });
+                    }
                 }
                 DialogOutcome::CloseWindow { do_not_ask_again } => {
                     if *do_not_ask_again {
@@ -4675,6 +4697,7 @@ impl Root {
         self.diff = Some(diff);
         self.file = None;
         self.plan = None;
+        self.image = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         view.update(cx, |view, cx| {
             view.set_git_phase(self.git_busy, cx);
@@ -6701,7 +6724,12 @@ impl Root {
                 if key == context_status::SETTING {
                     self.sync_context_usage(cx);
                 }
-                if matches!(key, "reduced-motion-preference" | "dock-icon-preference") {
+                if matches!(
+                    key,
+                    "reduced-motion-preference"
+                        | "dock-icon-preference"
+                        | "show-full-access-in-composer"
+                ) {
                     host_settings::apply(cx);
                 }
                 if key == "mac-menu-bar-enabled" {

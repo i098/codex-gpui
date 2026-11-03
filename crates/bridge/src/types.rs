@@ -157,6 +157,18 @@ pub enum ThreadItem {
         #[serde(flatten)]
         metadata: serde_json::Map<String, Value>,
     },
+    /// A generated image: `savedPath` is the PNG on disk, else `result` holds it as base64.
+    ImageGeneration {
+        id: String,
+        /// `inProgress` | `completed` | `failed`
+        status: String,
+        #[serde(default)]
+        revised_prompt: Option<String>,
+        #[serde(default)]
+        result: Option<String>,
+        #[serde(default)]
+        saved_path: Option<String>,
+    },
     /// A call to a client tool the thread was started with (`dynamicTools`).
     DynamicToolCall {
         id: String,
