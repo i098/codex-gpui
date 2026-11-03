@@ -808,6 +808,12 @@ impl Root {
                     ui::composer::SlashCommand::MemoryMode(_)
                     | ui::composer::SlashCommand::MemoryStatus => this.thread_memory_command(command, window, cx),
                     ui::composer::SlashCommand::Memories => this.open_memories(window, cx),
+                    ui::composer::SlashCommand::HotkeyNew => {
+                        window.dispatch_action(Box::new(hotkey::Collapse), cx)
+                    }
+                    ui::composer::SlashCommand::Resume(id) => {
+                        this.navigate(Route::Thread(id.clone()), window, cx)
+                    }
                     ui::composer::SlashCommand::Status => this.show_status(window, cx),
                     ui::composer::SlashCommand::Init => this.init_agents(window, cx),
                     ui::composer::SlashCommand::Side => this.start_side_chat(window, cx),
@@ -3041,6 +3047,7 @@ impl Root {
             menu.update(cx, |menu, cx| menu.update_catalog(threads, &unread, cx));
         }
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
+        hotkey::sync_recents(self, cx);
         if self.host_id() == "local" {
             let recents: Vec<_> = threads
                 .iter()
