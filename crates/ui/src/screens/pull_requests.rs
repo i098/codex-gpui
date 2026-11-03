@@ -261,6 +261,11 @@ pub enum Event {
     AskCodex(String),
     /// `Fix checks` / `Address comments`: starts a chat with this prompt.
     StartChat(String),
+    /// `Chat` (no linked chat yet: start one titled `title` and prefill `prompt`) or `Open chat`.
+    Chat {
+        title: String,
+        prompt: String,
+    },
     Code,
     Media {
         generation: u64,
@@ -282,6 +287,10 @@ pub struct Page {
     pub selected: Option<Identity>,
     pub detail: Option<Result<Value, String>>,
     pub detail_tab: DetailTab,
+    /// The chat `Chat` started for the selected pull request (`Open chat` then opens it).
+    pub chat: Option<String>,
+    /// `Chat` is creating the linked chat.
+    pub chat_pending: bool,
     pub code: Option<Result<Entity<DiffPanel>, String>>,
     code_loading: bool,
     detail_fullscreen: bool,
@@ -388,6 +397,8 @@ impl Page {
             selected: None,
             detail: None,
             detail_tab: DetailTab::Summary,
+            chat: None,
+            chat_pending: false,
             code: None,
             code_loading: false,
             detail_fullscreen: false,
@@ -1639,13 +1650,27 @@ impl Page {
     }
 
     fn discuss_selected(&self, cx: &mut Context<Self>) {
+        if self.chat_pending {
+            return;
+        }
         if let (Some(identity), Some(Ok(detail))) = (&self.selected, &self.detail) {
-            cx.emit(Event::AskCodex(format!(
-                "Help me understand pull request #{}: {}\n{}",
-                identity.number,
-                detail["title"].as_str().unwrap_or(""),
-                identity.url(),
-            )));
+            let title = detail["title"].as_str().unwrap_or("").trim();
+            cx.emit(Event::Chat {
+                title: if title.is_empty() {
+                    format!(
+                        "{}/{}#{}",
+                        identity.owner, identity.repository, identity.number
+                    )
+                } else {
+                    title.to_owned()
+                },
+                prompt: format!(
+                    "Help me understand pull request #{}: {}\n{}",
+                    identity.number,
+                    detail["title"].as_str().unwrap_or(""),
+                    identity.url(),
+                ),
+            });
         }
     }
 
@@ -1757,6 +1782,11 @@ impl Page {
 
     fn detail_actions(&self, available: bool, cx: &Context<Self>) -> Div {
         let t = cx.theme();
+        let chat_label = if self.chat.is_some() {
+            "Open chat"
+        } else {
+            "Chat"
+        };
         div()
             .flex()
             .items_center()
@@ -1775,9 +1805,9 @@ impl Page {
                     })),
             )
             .child(
-                self.detail_control("ask-pull-request", "Chat", true, cx)
-                    .aria_disabled(!available)
-                    .child(text("Chat", 13., 18., 430., t.text))
+                self.detail_control("ask-pull-request", chat_label, true, cx)
+                    .aria_disabled(!available || self.chat_pending)
+                    .child(text(chat_label, 13., 18., 430., t.text))
                     .on_click(cx.listener(|this, _, _, cx| this.discuss_selected(cx)))
                     .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
                         if matches!(event.keystroke.key.as_str(), "enter" | "space") {
