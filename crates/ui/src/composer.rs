@@ -244,6 +244,7 @@ pub(crate) mod menu {
 mod mention;
 pub use mention::ChatDrag;
 mod menus;
+mod sketch;
 mod slash;
 pub use slash::SlashCommand;
 
@@ -964,6 +965,7 @@ pub struct Composer {
     permission_profiles: Vec<(Permission, String)>,
     menu: Option<Menu>,
     slash: slash::Slash,
+    sketch: Option<sketch::Sketch>,
     menu_focus: menu::MenuFocus,
     /// The `Speed` submenu of the effort menu: open state, its items' focus, and the pending
     /// hover-open timer (Radix opens a sub trigger 100 ms after the pointer enters it).
@@ -1113,6 +1115,7 @@ impl Composer {
             permission_profiles: Vec::new(),
             menu: None,
             slash: slash::Slash::default(),
+            sketch: None,
             menu_focus: menu::MenuFocus::new(cx),
             speed_open: false,
             speed_focus: menu::MenuFocus::new(cx),
@@ -3613,6 +3616,9 @@ impl Render for Composer {
                     }),
             );
         let card = card.when(self.slash.open, |d| d.child(self.slash_menu(&t, cx)));
+        let card = card.when(self.sketch.is_some(), |d| {
+            d.child(self.sketch_panel(&t, cx))
+        });
         // The queued-follow-up tray (`bg-surface-elevated-secondary`, border-x border-t) sits
         // on the card's top edge, 13 px inside its sides; rows (handle, text, Steer, Delete,
         // `…` actions) have a 32 px height and a 1 px gap.
