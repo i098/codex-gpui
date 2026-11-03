@@ -172,6 +172,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - List `Show Mini` in the Search palette on Home too, as the original does; it showed only while a chat was open.
 - Show the original slash menu icons for Goal, MCP, Model, Pet, Plan mode, Reasoning, Sketch and Ultrafast, and a right chevron on the commands that open a submenu.
 - Show reads of a skill's `SKILL.md` as `Loaded a tool` or `Loaded tools` with the wrench icon in the activity group summary, as the original does.
+- Show the thread's day-and-time separator only where the original does: above the first message once it is over an hour old, and after an hour (message) or ten minutes (answer) since the last answer. A fresh thread no longer shows `Today 9:33 PM`; older days read `Wednesday`, `Wed, Oct 14 at 9:54 PM` or `Oct 14, 2025 at 9:54 PM`.
 - Show the original's two mode switch items, `ChatGPT` (`Create, learn, and explore`) and `Codex` (`Build, debug, and ship`), without shortcut keys or a separate `Work` row, at the original's size and position.
 - Show the `menu` vibrancy material behind the rail, titlebar and sidebar of the focused macOS main window, as the original app does, and keep the opaque surface while the window is not focused.
 - Raster moving shapes about twice as fast and remove GPUI's 30 fps cap on unfocused windows, so the sidebar animation runs at 87–107 fps after its first toggle (was 35–54).
