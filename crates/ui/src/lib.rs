@@ -97,6 +97,8 @@ actions!(
         OpenChangesPanel,
         /// Thread summary ▸ `Background processes` row: the command's terminal tab.
         OpenBackgroundTerminal,
+        /// Thread summary ▸ `Sources`: the Sources side panel tab.
+        OpenSourcesPanel,
         /// Thread summary ▸ `Plan`: the latest plan in its editable side panel tab.
         OpenPlanPanel,
         ShowWorkspaceTabView,

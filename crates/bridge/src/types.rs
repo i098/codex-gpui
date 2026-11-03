@@ -189,6 +189,7 @@ pub enum ThreadItem {
     },
     WebSearch {
         id: String,
+        #[serde(default)]
         query: String,
         #[serde(default)]
         action: Option<WebSearchAction>,

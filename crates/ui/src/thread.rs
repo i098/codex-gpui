@@ -1677,6 +1677,50 @@ impl ThreadView {
                     )),
             );
         }
+        let sources = crate::screens::sources::sources(&self.turns);
+        if !sources.is_empty() {
+            let open = |row: gpui::Stateful<Div>| {
+                row.mx(px(12.))
+                    .px(px(8.))
+                    .rounded(Theme::RADIUS_SM)
+                    .hover(move |style| style.bg(row_hover))
+                    .on_click(crate::dispatch::<crate::OpenSourcesPanel>)
+            };
+            let summary = sources
+                .files
+                .iter()
+                .map(|(path, _)| {
+                    let name = path.rsplit('/').next().unwrap_or(path);
+                    ("diff-file-default", name.to_owned())
+                })
+                .chain(
+                    sources
+                        .tools
+                        .iter()
+                        .map(|(server, _)| ("thread-mcp", server.clone())),
+                )
+                .chain(
+                    sources
+                        .web
+                        .iter()
+                        .map(|_| ("cloud-web", "Web search".to_owned())),
+                )
+                .take(3)
+                .enumerate()
+                .map(|(ix, (name, label))| open(row(name, label, 16., ix, window)));
+            sections.push(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(header("Sources".into()))
+                    .children(summary)
+                    .child(open(
+                        row("navigation-files", "View all".into(), 16., 3, window)
+                            .aria_label("View all sources"),
+                    )),
+            );
+        }
         if let Some((_, plan)) = crate::screens::plan::latest_plan(&self.turns) {
             let title = crate::screens::plan::plan_title(plan);
             sections.push(

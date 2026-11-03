@@ -235,6 +235,9 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     .on_action(cx.listener(|this, _: &OpenBackgroundTerminal, window, cx| {
         this.set_side(SidePanel::Terminal, window, cx)
     }))
+    .on_action(cx.listener(|this, _: &ui::OpenSourcesPanel, window, cx| {
+        this.set_side(SidePanel::Sources, window, cx)
+    }))
     .on_action(cx.listener(|this, _: &ui::OpenPlanPanel, window, cx| {
         let Some(thread) = this.thread.clone() else {
             return;

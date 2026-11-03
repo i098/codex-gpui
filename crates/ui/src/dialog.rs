@@ -189,10 +189,12 @@ pub enum Outcome {
     RevertChanges {
         do_not_ask_again: bool,
     },
-    /// `Save` or Enter in `Rename chat`: `thread/name/set` of `thread` to `name`.
+    /// `Save` or Enter in `Rename chat`: `thread/name/set` of `thread` to `name`, and the
+    /// picked `emoji` (`None` clears it).
     Rename {
         thread: String,
         name: String,
+        emoji: Option<String>,
     },
     SectionName {
         section: Option<String>,
@@ -306,6 +308,10 @@ pub struct Dialog {
     writing: Option<WritingSetup>,
     memories: Option<ChatMemories>,
     shortcuts: Vec<Shortcut>,
+    /// `Rename`: the chat's emoji (the original's `sidebar-thread-metadata` `emoji`), and
+    /// whether its `Choose emoji` picker is open.
+    emoji: Option<String>,
+    emoji_open: bool,
 }
 impl EventEmitter<Outcome> for Dialog {}
 impl Focusable for Dialog {
@@ -353,6 +359,8 @@ impl Dialog {
             } else {
                 Vec::new()
             },
+            emoji: None,
+            emoji_open: false,
         }
     }
 
@@ -1123,12 +1131,19 @@ impl Dialog {
             )
     }
 
-    /// `Rename chat` for `thread`, its input prefilled with `title` and all of it selected.
-    pub fn rename(thread: String, title: String, cx: &mut Context<Self>) -> Self {
+    /// `Rename chat` for `thread`, its input prefilled with `title` and all of it selected,
+    /// and its leading emoji button showing `emoji`.
+    pub fn rename(
+        thread: String,
+        title: String,
+        emoji: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             query: title,
             select_all: true,
             thread,
+            emoji,
             ..Self::new(Kind::Rename, cx)
         }
     }
@@ -1140,7 +1155,7 @@ impl Dialog {
                 Kind::NewSection
             },
             thread: id.unwrap_or_default(),
-            ..Self::rename(String::new(), name, cx)
+            ..Self::rename(String::new(), name, None, cx)
         }
     }
 
@@ -1901,6 +1916,7 @@ impl Dialog {
             (Kind::Rename, 0 | 1) => cx.emit(Outcome::Rename {
                 thread: self.thread.clone(),
                 name: self.query.clone(),
+                emoji: self.emoji.clone(),
             }),
             (Kind::NewSection | Kind::EditSection, 0 | 1) => {
                 let name = self.query.trim();
@@ -3268,8 +3284,12 @@ impl Dialog {
                     .px(px(10.))
                     .flex()
                     .items_center()
+                    .gap(px(6.))
                     .overflow_hidden()
                     .cursor_text()
+                    .when(self.kind == Kind::Rename, |d| {
+                        d.child(self.emoji_button(t, cx))
+                    })
                     .child(
                         text(
                             if self.query.is_empty() {
@@ -3308,6 +3328,7 @@ impl Dialog {
                         cx.notify();
                     })),
             )
+            .when(self.emoji_open, |d| d.child(self.emoji_picker(t, cx)))
             .child(
                 div()
                     .mt(px(12.))
@@ -3344,6 +3365,83 @@ impl Dialog {
                     .child(icon("close", 16., t.text.opacity(0.8)))
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(Outcome::Dismiss))),
             )
+    }
+
+    /// `Rename chat`'s leading `Choose emoji` / `Change emoji` button (the original's `kXo`):
+    /// the chat's emoji, or the `emoji-face-badge-plus` glyph when it has none.
+    fn emoji_button(&self, t: &Theme, cx: &Context<Self>) -> impl IntoElement {
+        div()
+            .id("rename-emoji")
+            .debug_selector(|| "rename-emoji".into())
+            .role(gpui::Role::Button)
+            .aria_label(if self.emoji.is_some() {
+                "Change emoji"
+            } else {
+                "Choose emoji"
+            })
+            .size(px(24.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(6.))
+            .cursor_pointer()
+            .hover(|s| s.bg(t.ghost_hover))
+            .child(match &self.emoji {
+                Some(emoji) => text(emoji.clone(), 14., 20., 430., t.text).into_any_element(),
+                None => icon("emoji-face-badge-plus", 16., t.text_tertiary).into_any_element(),
+            })
+            .on_click(cx.listener(|this, _, _, cx| {
+                cx.stop_propagation();
+                this.emoji_open = !this.emoji_open;
+                cx.notify();
+            }))
+    }
+
+    /// The emoji grid under the title input; the last cell clears a set emoji (`onClear`).
+    fn emoji_picker(&self, t: &Theme, cx: &Context<Self>) -> impl IntoElement {
+        let cell = |id: usize, label: SharedString| {
+            div()
+                .id(("rename-emoji-option", id))
+                .debug_selector(move || format!("rename-emoji-option-{id}"))
+                .role(gpui::Role::MenuItem)
+                .aria_label(label)
+                .size(px(EMOJI_CELL))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(6.))
+                .cursor_pointer()
+                .hover(|s| s.bg(t.ghost_hover))
+        };
+        div()
+            .mt(px(8.))
+            .flex()
+            .flex_wrap()
+            .w(px(EMOJI_CELL * 10.))
+            .children(EMOJIS.iter().enumerate().map(|(index, emoji)| {
+                cell(index, (*emoji).into())
+                    .when(self.emoji.as_deref() == Some(*emoji), |d| {
+                        d.bg(t.list_hover)
+                    })
+                    .child(text(*emoji, 16., 22., 430., t.text))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.emoji = Some((*emoji).to_owned());
+                        this.emoji_open = false;
+                        cx.notify();
+                    }))
+            }))
+            .when(self.emoji.is_some(), |d| {
+                d.child(
+                    cell(EMOJIS.len(), "Remove emoji".into())
+                        .child(icon("close", 16., t.text_tertiary))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.emoji = None;
+                            this.emoji_open = false;
+                            cx.notify();
+                        })),
+                )
+            })
     }
     fn shortcuts_content(&self, visible: &[&Shortcut], t: &Theme, cx: &Context<Self>) -> Div {
         let mut list = div().flex().flex_col().pr(px(12.));
@@ -3957,6 +4055,14 @@ impl Dialog {
     }
 }
 
+/// shortcut: the original's emoji `SymbolBrowser` (`j$r`) searches the full emoji catalog;
+/// this grid offers 20 common ones. Upgrade when that chunk is ported.
+const EMOJIS: [&str; 20] = [
+    "🚀", "🐛", "✨", "🔥", "📝", "🧪", "🛠️", "📦", "🎨", "🔒", "⚡", "📈", "🧹", "💡", "🔍", "🧭",
+    "🌱", "📚", "✅", "❤️",
+];
+const EMOJI_CELL: f32 = 28.;
+
 const REPEAT: [(&str, &str); 8] = [
     ("Daily", ""),
     ("Mondays", "MO"),
@@ -4118,7 +4224,16 @@ impl Render for Dialog {
                 144. + 28. * (self.query.chars().count() + 8).div_ceil(32).clamp(1, 3) as f32,
             ),
             Kind::ScheduleTask => (680., 422.),
-            Kind::Rename | Kind::NewSection | Kind::EditSection => (420., 185.),
+            Kind::Rename | Kind::NewSection | Kind::EditSection => (
+                420.,
+                // The open emoji grid (its rows and 8 px gap) grows the card.
+                185. + if self.emoji_open {
+                    let cells = EMOJIS.len() + usize::from(self.emoji.is_some());
+                    8. + EMOJI_CELL * cells.div_ceil(10) as f32
+                } else {
+                    0.
+                },
+            ),
             Kind::ArchiveSection => (420., 181.),
             Kind::FullAccess => (520., 420.),
             Kind::FullAccessAvailable => (420., 205.),

@@ -29,6 +29,7 @@ pub mod settings;
 pub mod sidebar;
 pub mod signin;
 pub mod sites;
+pub mod sources;
 pub mod space;
 pub mod terminal;
 pub mod thread;
