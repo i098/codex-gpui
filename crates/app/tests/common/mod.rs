@@ -1102,6 +1102,18 @@ impl app::host::Host for ActivityFixtureHost {
         {
             return app::host::Host::fetch(&*MFA, request);
         }
+        // The Help flyout's What's new feed, as the original fetched it.
+        static CHANGELOG: std::sync::LazyLock<app::host::ReplayHost> =
+            std::sync::LazyLock::new(|| {
+                app::host::ReplayHost::from_recording(include_str!(
+                    "../../../../fixtures/codex-app-changelog.json"
+                ))
+                .expect("changelog recording")
+            });
+        if matches!(request, app::host::Request::Fetch { url, .. } if url == app::host::CHANGELOG_FEED)
+        {
+            return app::host::Host::fetch(&*CHANGELOG, request);
+        }
         if matches!(request, app::host::Request::Http(http) if http["url"] == "/wham/statsig/bootstrap")
         {
             static POLICY: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
