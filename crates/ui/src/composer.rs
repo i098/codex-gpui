@@ -244,6 +244,7 @@ pub(crate) mod menu {
 mod mention;
 pub use mention::ChatDrag;
 mod menus;
+mod sketch;
 mod slash;
 pub use slash::SlashCommand;
 
@@ -254,6 +255,9 @@ const REQUEST_FORM_CONTEXT: &str = "ComposerRequestForm";
 /// its `collapse=sm` labels (permissions) and its `collapse=xs` labels (model and effort).
 const SM_WIDTH: f32 = 440.;
 const XS_WIDTH: f32 = 300.;
+/// The permissions menu's `Learn more` page.
+const PERMISSIONS_DOCS: &str =
+    "https://developers.openai.com/codex/concepts/sandboxing#how-you-control-it";
 /// Card width at or below which the Home utility bar hides its chip labels: its own
 /// `composer-footer` container (the card less 26 px rail inset and 8 px padding) reaches
 /// Electron's 475 px `collapse=sm|xs` limit.
@@ -344,6 +348,22 @@ pub fn bind_keys(cx: &mut App) {
 /// Efforts the model picker slider offers: the `enabled-reasoning-efforts` setting default
 /// (`low medium high xhigh ultra`) intersected with the model's supported efforts.
 const ENABLED_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "ultra"];
+
+/// The host's `show-full-access-in-composer` setting is off: the permissions menu omits
+/// `Full access` (`settings.agent.permissionsMode.fullAccess.toggle`).
+#[derive(Default)]
+pub struct FullAccessHidden(pub bool);
+
+impl gpui::Global for FullAccessHidden {}
+
+/// The preset rows of the permissions menu, before the named profiles.
+fn permission_presets(cx: &App) -> Vec<Permission> {
+    let hidden = cx.try_global::<FullAccessHidden>().is_some_and(|h| h.0);
+    Permission::ALL
+        .into_iter()
+        .filter(|p| !hidden || *p != Permission::FullAccess)
+        .collect()
+}
 
 /// The selected host's `enabled-reasoning-efforts` setting; `None` keeps [`ENABLED_EFFORTS`].
 #[derive(Default)]
@@ -524,6 +544,16 @@ impl Permission {
             Self::FullAccess => "Unrestricted access to the internet and any file on your computer",
             Self::Custom => "Uses permissions defined in config.toml",
             Self::Named(_) => "Uses the selected permission profile",
+        }
+    }
+
+    /// The menu row's leading `icon-sm`.
+    fn menu_icon(&self) -> &'static str {
+        match self {
+            Self::Ask => "hand",
+            Self::ApproveForMe => "security",
+            Self::FullAccess => "permission-full-access",
+            Self::Custom | Self::Named(_) => "permissions",
         }
     }
 }
@@ -883,6 +913,8 @@ pub struct Composer {
     /// Docked under a thread: `_ComposerLayoutRoot` paints the card and `_ComposerLayoutBody`
     /// (the content) is a `will-change: opacity` layer. On Home the body paints the card.
     docked: bool,
+    /// The ChatGPT home's one-row pill: `+`, the editor, then the model, microphone and voice.
+    chat: bool,
     shell_commands: bool,
     content: String,
     /// Mention chips in `content`, in order.
@@ -933,6 +965,7 @@ pub struct Composer {
     permission_profiles: Vec<(Permission, String)>,
     menu: Option<Menu>,
     slash: slash::Slash,
+    sketch: Option<sketch::Sketch>,
     menu_focus: menu::MenuFocus,
     /// The `Speed` submenu of the effort menu: open state, its items' focus, and the pending
     /// hover-open timer (Radix opens a sub trigger 100 ms after the pointer enters it).
@@ -1044,6 +1077,7 @@ impl Composer {
                 .map(|server| server.0.clone()),
             placeholder: placeholder.into(),
             docked,
+            chat: false,
             shell_commands: false,
             content: String::new(),
             mentions: Vec::new(),
@@ -1081,6 +1115,7 @@ impl Composer {
             permission_profiles: Vec::new(),
             menu: None,
             slash: slash::Slash::default(),
+            sketch: None,
             menu_focus: menu::MenuFocus::new(cx),
             speed_open: false,
             speed_focus: menu::MenuFocus::new(cx),
@@ -1941,6 +1976,12 @@ impl Composer {
         cx.notify();
     }
 
+    /// Switches to the ChatGPT home's one-row layout ([`Self::chat`]).
+    pub fn set_chat(&mut self, chat: bool, cx: &mut Context<Self>) {
+        self.chat = chat;
+        cx.notify();
+    }
+
     /// The submit button's accessible label (`composer.submitButtonTooltip.*`): `Stop` while a
     /// turn runs and the composer is empty, else the follow-up mode (`Queue` or `Steer`) while
     /// a turn runs, else `Send`. The original shows no tooltip on this button.
@@ -2393,7 +2434,7 @@ impl Composer {
         } else {
             self.menu = Some(menu);
             let count = match menu {
-                Menu::Permissions => Permission::ALL.len() + self.permission_profiles.len(),
+                Menu::Permissions => permission_presets(cx).len() + self.permission_profiles.len(),
                 Menu::Models => self.models.len(),
                 Menu::Effort => 3,
                 Menu::Comments => self.diff_comments.len(),
@@ -2600,12 +2641,11 @@ impl Composer {
     fn activate_menu_item(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         match self.menu {
             Some(Menu::Permissions) => {
-                let permission = if index < Permission::ALL.len() {
-                    Permission::ALL[index].clone()
+                let presets = permission_presets(cx);
+                let permission = if index < presets.len() {
+                    presets[index].clone()
                 } else {
-                    self.permission_profiles[index - Permission::ALL.len()]
-                        .0
-                        .clone()
+                    self.permission_profiles[index - presets.len()].0.clone()
                 };
                 self.dismiss(&Dismiss, window, cx);
                 if permission == Permission::FullAccess {
@@ -2723,14 +2763,16 @@ impl Composer {
             })
             .collect();
         if self.menu == Some(Menu::Permissions) {
-            self.menu_focus
-                .prepare(Permission::ALL.len() + self.permission_profiles.len(), cx);
+            self.menu_focus.prepare(
+                permission_presets(cx).len() + self.permission_profiles.len(),
+                cx,
+            );
         }
         cx.notify();
     }
 
     fn permission_typeahead(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let labels: Vec<String> = Permission::ALL
+        let labels: Vec<String> = permission_presets(cx)
             .iter()
             .map(|p| p.option_label().to_owned())
             .chain(
@@ -3506,24 +3548,16 @@ impl Render for Composer {
                     .when(self.docked, |d| d.layer())
                     .when(
                         !editing
-                            && (self.hotkey_controls.is_none() || !self.attachments.is_empty()),
+                            && ((self.hotkey_controls.is_none() && !self.chat)
+                                || !self.attachments.is_empty()),
                         |d| d.child(self.attachments_row(&t, cx)),
                     )
                     .when_some(self.upload_status(), |d, error| {
                         d.child(label(error, t.text))
                     })
-                    .child(
-                        self.editor(cx)
-                            .when(self.hotkey_controls.is_some(), |d| d.px_0().min_h(px(48.)))
-                            .when(editing, |d| d.pt(px(12.)).pb_0().min_h(px(52.)))
-                            // The original's `max-h-[min(25dvh,…)] overflow-y-auto`.
-                            .id("composer-editor")
-                            .max_h(window.viewport_size().height / 4.)
-                            .overflow_y_scroll()
-                            .when_some(self.field_scroll.as_ref(), |d, scroll| {
-                                d.track_scroll(scroll)
-                            }),
-                    )
+                    .when(!self.chat || editing, |d| {
+                        d.child(self.card_editor(editing, window, cx))
+                    })
                     .child(if editing {
                         let cancel = self.on_cancel_edit.clone().expect("edit callback");
                         let enabled = !self.edit_pending && !self.content.trim().is_empty();
@@ -3582,6 +3616,9 @@ impl Render for Composer {
                     }),
             );
         let card = card.when(self.slash.open, |d| d.child(self.slash_menu(&t, cx)));
+        let card = card.when(self.sketch.is_some(), |d| {
+            d.child(self.sketch_panel(&t, cx))
+        });
         // The queued-follow-up tray (`bg-surface-elevated-secondary`, border-x border-t) sits
         // on the card's top edge, 13 px inside its sides; rows (handle, text, Steer, Delete,
         // `…` actions) have a 32 px height and a 1 px gap.

@@ -681,6 +681,11 @@ impl Composer {
                 self.toggle_plan(cx);
                 return;
             }
+            "sketch" => {
+                self.finish_command(window, cx);
+                self.open_sketch(cx);
+                return;
+            }
             "ultrafast" => {
                 self.finish_command(window, cx);
                 self.speed = if self.speed == 2 { 0 } else { 2 };
