@@ -1025,6 +1025,7 @@ pub fn parse_task_response(detail: &Value, turns: &Value) -> Result<CloudTask> {
                     id: format!("cloud-assistant-message:{assistant_id}"),
                     text,
                     phase: None,
+                    memory_citation: None,
                 });
             }
         }
@@ -1050,6 +1051,7 @@ pub fn parse_task_response(detail: &Value, turns: &Value) -> Result<CloudTask> {
                 section: None,
                 status: ThreadStatus::Idle,
                 git_info: None,
+                forked_from_id: None,
                 turns: vec![turn],
                 older_cursor: None,
             },
@@ -1166,7 +1168,10 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::FileChange { id, .. }
         | ThreadItem::McpToolCall { id, .. }
         | ThreadItem::ContextCompaction { id }
-        | ThreadItem::WebSearch { id, .. } => Some(id),
+        | ThreadItem::WebSearch { id, .. }
+        | ThreadItem::CollabAgentToolCall { id, .. }
+        | ThreadItem::ImageGeneration { id, .. }
+        | ThreadItem::ImageView { id, .. } => Some(id),
         _ => None,
     }
 }

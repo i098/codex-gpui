@@ -5619,7 +5619,8 @@ impl Root {
             let view = view.read(cx);
             view.id() == edit.thread_id && view.can_edit(&edit.turn_id)
         });
-        if !valid || edit.message.trim().is_empty() {
+        let empty = edit.message.trim().is_empty() && edit.attachments.is_empty();
+        if !valid || empty {
             edit.editor.update(cx, |editor, cx| editor.edit_failed(cx));
             if !valid {
                 self.toast(Toast::danger("Failed to edit message"), cx);
@@ -5628,41 +5629,55 @@ impl Root {
         }
         let resume = !self.loaded.contains(&edit.thread_id);
         let bridge = self.bridge.clone();
+        let mut input = vec![json!({"type": "text", "text": edit.message, "text_elements": []})];
+        input.extend(
+            edit.attachments
+                .iter()
+                .map(|p| json!({ "type": "localImage", "path": p })),
+        );
+        input.extend(edit.extra.iter().cloned());
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let mut reverted = false;
-            let result =
-                async {
-                    resume_if(resume, &bridge, &this, &edit.thread_id, cx).await?;
-                    let read: ThreadReadResponse = bridge
-                        .request(
-                            "thread/revert",
-                            json!({
-                                "threadId": edit.thread_id, "beforeTurnId": edit.turn_id,
-                            }),
-                        )
-                        .await?;
-                    reverted = true;
-                    let cwd = read.thread.cwd.clone();
-                    this.update_in(cx, |this, window, cx| {
-                        if this.state.route == Route::Thread(edit.thread_id.clone()) {
-                            this.show_thread(read.thread, window, cx);
-                        }
-                    })?;
-                    bridge.request::<_, Value>("turn/start", json!({
-                    "threadId": edit.thread_id,
-                    "turnTrigger": "edit_user_message",
-                    "input": [{"type": "text", "text": edit.message, "text_elements": []}],
-                    "cwd": cwd,
-                })).await?;
-                    Ok::<_, anyhow::Error>(())
-                }
-                .await;
+            let result = async {
+                resume_if(resume, &bridge, &this, &edit.thread_id, cx).await?;
+                let read: ThreadReadResponse = bridge
+                    .request(
+                        "thread/revert",
+                        json!({
+                            "threadId": edit.thread_id, "beforeTurnId": edit.turn_id,
+                        }),
+                    )
+                    .await?;
+                reverted = true;
+                let cwd = read.thread.cwd.clone();
+                this.update_in(cx, |this, window, cx| {
+                    if this.state.route == Route::Thread(edit.thread_id.clone()) {
+                        this.show_thread(read.thread, window, cx);
+                    }
+                })?;
+                bridge
+                    .request::<_, Value>(
+                        "turn/start",
+                        json!({
+                            "threadId": edit.thread_id,
+                            "turnTrigger": "edit_user_message",
+                            "input": input,
+                            "cwd": cwd,
+                        }),
+                    )
+                    .await?;
+                Ok::<_, anyhow::Error>(())
+            }
+            .await;
             if result.is_err() {
                 this.update(cx, |this, cx| {
                     edit.editor.update(cx, |editor, cx| editor.edit_failed(cx));
                     if reverted {
-                        this.thread_composer
-                            .update(cx, |composer, cx| composer.restore_text(&edit.message, cx));
+                        let (message, images) = (&edit.message, &edit.attachments);
+                        this.thread_composer.update(cx, |composer, cx| {
+                            composer.restore_text(message, cx);
+                            composer.drop_files(images, cx);
+                        });
                     }
                     this.toast(Toast::danger("Failed to edit message"), cx);
                 })?;

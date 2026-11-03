@@ -926,6 +926,7 @@ mod tests {
             section: None,
             status: ThreadStatus::Active,
             git_info: None,
+            forked_from_id: None,
             turns: vec![Turn {
                 id: "turn".into(),
                 items: vec![],

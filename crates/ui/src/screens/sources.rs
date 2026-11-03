@@ -2,12 +2,11 @@
 //! was given, read, created or updated, its web searches and its tool use counts, newest
 //! first, derived from the thread's items.
 
-use bridge::types::{ThreadItem, Turn, UserInput};
+use bridge::types::{ThreadItem, Turn, UserInput, WebSearchAction};
 use gpui::{
     Context, Div, Entity, IntoElement, ParentElement, Render, SharedString, Styled, Window, div,
     prelude::*, px,
 };
-use serde_json::Value;
 use theme::{ActiveTheme as _, Theme};
 
 use crate::icon::icon;
@@ -139,25 +138,23 @@ pub fn sources(turns: &[Turn]) -> Sources {
                         }
                     }
                 };
-                match action.as_ref().map(|a| (a["type"].as_str(), a)) {
-                    None => search(query),
-                    Some((Some("search"), action)) => {
-                        let queries = action["queries"].as_array().filter(|q| !q.is_empty());
-                        match queries {
-                            Some(queries) => {
-                                queries.iter().filter_map(Value::as_str).for_each(search)
-                            }
-                            None => search(action["query"].as_str().unwrap_or(query)),
+                match action {
+                    Some(WebSearchAction::Search { query: q, queries }) => {
+                        match queries.as_ref().filter(|q| !q.is_empty()) {
+                            Some(queries) => queries.iter().map(String::as_str).for_each(search),
+                            None => search(q.as_deref().unwrap_or(query)),
                         }
                     }
-                    Some((Some("openPage" | "findInPage"), action)) => {
-                        if let Some(url) = action["url"].as_str()
+                    Some(
+                        WebSearchAction::OpenPage { url } | WebSearchAction::FindInPage { url, .. },
+                    ) => {
+                        if let Some(url) = url
                             && !web.pages.iter().any(|known| known == url)
                         {
-                            web.pages.push(url.to_owned());
+                            web.pages.push(url.clone());
                         }
                     }
-                    Some(_) => search(query),
+                    Some(WebSearchAction::Other) | None => search(query),
                 }
             }
             _ => {}
@@ -358,7 +355,7 @@ impl Render for SourcesView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     fn turns(items: Value) -> Vec<Turn> {
         serde_json::from_value(json!([{
