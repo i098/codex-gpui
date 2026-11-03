@@ -203,14 +203,16 @@ impl Environment {
     pub fn repository_name(&self) -> String {
         self.repos
             .iter()
-            .map(|id| {
-                self.repo_map
-                    .get(id)
-                    .and_then(|v| v["repository_full_name"].as_str())
-                    .unwrap_or(id)
-            })
+            .map(|id| self.repository_label(id))
             .collect::<Vec<_>>()
             .join(", ")
+    }
+
+    pub fn repository_label<'a>(&'a self, id: &'a str) -> &'a str {
+        self.repo_map
+            .get(id)
+            .and_then(|v| v["repository_full_name"].as_str())
+            .unwrap_or(id)
     }
 
     pub fn secret_names(&self) -> Vec<SecretName> {
