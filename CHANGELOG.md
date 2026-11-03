@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Add Back, Next and Reload to the in-app browser toolbar with `⌘←`, `⌘→`, `⌘R`, `⌘⇧R` and `⌘L`, a load indicator, and the original's `This site can't be reached` error page with Reload.
+- Show each hook's trust state in Settings ▸ Hooks: `Trust` explains `New hook` or `Hook changed since last trusted`, the switch explains `Disabled until hook is trusted` or `Managed hooks are always on`, and `Open config file` opens the hook's `sourcePath`.
 - Settings ▸ `Filter settings by host`: while a remote host is connected, a dropdown beside the Settings title picks the host whose `config.toml` the Configuration page reads and writes.
 - Add the internal debug panel on Ctrl+D or Help ▸ `Show Local Trace` with build revision, trace state and uptime, and Help ▸ `Start Performance Trace` to toggle trace recording.
 - Forward a second launch's deep links and supported paths to the running Linux or Windows app, then focus its window.
@@ -40,6 +41,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Route shared-thread, ChatGPT, browser, Space, and Codex app links to native destinations.
 - List matching chats in a `Chats` section of the `@` mention list from `thread/search`, and let a sidebar chat dragged onto the composer show `Drop to reference chat`. A chat chip sends its id under `## Referenced chats with Codex:`.
 - Check for updates in the background every hour, send the original's appcast parameters (installation id, architecture, version, beta, macOS version and plan), and add a `Beta updates` setting.
+- Open Explore ▸ `Security Cloud` as a native read-only page with the Findings, Repositories and Scans of the `codex_security_cloud` app, read through app-server.
 - Show the update banner in the sidebar: the new version, download progress, `Restart to update` once the update is ready, `Read more` for the release notes, and a dismiss button.
 - Give new chats the `read_thread_terminal` tool, so the model can read the chat's terminal output and prompt, shown as `Reading chat terminal`.
 - Recall sent prompts with Up and Down in an empty composer, as the original's prompt history does; the last 20 prompts persist across restarts.
@@ -123,6 +125,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add `Group by` (`Project` or `None`) to the Archived chats filter menu; `None` shows every archived chat in one list without project headers.
 
 ### Fixed
+- Show the ChatGPT home's one-row composer pill (`+`, `Ask ChatGPT`, model, microphone, voice) without the permissions chip, and place the headline and pill at the original's `42svh` composer line.
 - Open the original's project menu from the Home `Choose project` chip: `Search projects`, the projects with a check on the selected one, `New project`, and `Don't work in a project`, instead of a folder dialog.
 - Show a command approval as the original's `Terminal` card in place of the composer: the reason as title, the command in a code box, and `Deny` and `Allow once` with their `Esc` and return keys. Offer `Allow similar commands` only when the request proposes a command prefix.
 - Draw the Appearance Background and Foreground hex inputs at 12 px, as the original does.
@@ -133,6 +136,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Show the text overflow icon on a code block's `Enable word wrap` button, and the wrap icon only while wrap is on, as the original does.
 - Show the Appearance theme picker's Codex themes in a `Codex themes` flyout submenu beside `ChatGPT`, with 24 px theme icons, as the original does.
 - Fold a running turn's interim messages under `Working for` once its final answer starts, as the original does.
+- Match the original permissions menu: the `Learn more` link, row icons, the current mode's check, the orange `Full access` row, its 417 px width and position, and the open trigger fill.
 - Show the full `Auto diff: switch to unified diff` label in the Changes options menu, as the original does; it lost its last letters to an ellipsis.
 - List `Toggle navigation panel` in the Search palette on every route, as the original does; it showed only while a navigation panel was open.
 - Start the text of a Search palette command that has no icon at the group heading, as the original does; it was indented by an empty icon slot.
@@ -142,6 +146,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Show the original's two rows in the `Codex ⌄` mode menu, `ChatGPT` and `Codex` with their descriptions and no shortcut text, and fill the trigger while the menu is open.
 - Keep the macOS window buttons centred in the top bar at every zoom level, as the original does; they stayed at the 100% position.
 - Use the original icons in the composer `+` menu: the gray paperclip, folder, target, light bulb and green scribble.
+- Size the model list rows and header as the original does, and mark the current model with a check instead of a filled row.
 - Space the Skills page sections as the original does, and show the See-more label in the original weight and color.
 - List `Show Mini` in the Search palette on Home too, as the original does; it showed only while a chat was open.
 - Show the original slash menu icons for Goal, MCP, Model, Pet, Plan mode, Reasoning, Sketch and Ultrafast, and a right chevron on the commands that open a submenu.
