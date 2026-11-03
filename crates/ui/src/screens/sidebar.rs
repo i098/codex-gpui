@@ -329,6 +329,8 @@ pub struct HomeSidebar {
     collapsed: [bool; 3],
     pinned: HashSet<String>,
     sections: Vec<CustomSection>,
+    /// Each chat's emoji (the original's `sidebar-thread-metadata`), shown before its title.
+    pub emojis: HashMap<String, SharedString>,
     grouped_rows: HashSet<usize>,
     /// Threads whose rows carry the unread dot; any lights the header's bell.
     pub unread: Vec<String>,
@@ -472,6 +474,7 @@ impl HomeSidebar {
             collapsed: [false; 3],
             pinned: pinned_ids(threads),
             sections: Vec::new(),
+            emojis: HashMap::new(),
             grouped_rows: HashSet::new(),
             unread: Vec::new(),
             running: threads
@@ -1188,6 +1191,10 @@ impl HomeSidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        let label = match self.emojis.get(id) {
+            Some(emoji) => format!("{emoji} {label}").into(),
+            None => label,
+        };
         let open = id.to_owned();
         let menu_for = id.to_owned();
         let row_focus = focus::handle(
@@ -1232,6 +1239,9 @@ impl HomeSidebar {
                 focused,
                 self.pinned.contains(id),
                 self.activity_clock.is_some(),
+                self.sections
+                    .iter()
+                    .any(|s| s.thread_ids.iter().any(|t| t == id)),
             ),
             [&row_focus, &pin_focus, &archive_focus],
         )
@@ -1588,7 +1598,7 @@ fn thread_row(
     selected: bool,
     end: Option<RowEnd>,
     cx: &App,
-    (focused, pinned, activity): (bool, bool, bool),
+    (focused, pinned, activity, in_section): (bool, bool, bool, bool),
     handles: [&gpui::Entity<focus::ControlFocus>; 3],
 ) -> Stateful<Div> {
     let t = cx.theme();
@@ -1727,13 +1737,26 @@ fn thread_row(
                     .gap(px(8.))
                     .child({
                         let id = id.to_owned();
+                        // A row in a custom section trades `Pin chat` for the original's
+                        // `Remove from section` (`sidebarElectron.removeFromSection`).
                         tooltip(
                             action("pin-chat", "sidebar-pin").on_click(move |_, window, cx| {
                                 cx.stop_propagation();
-                                window
-                                    .dispatch_action(Box::new(PinThread(id.clone(), !pinned)), cx);
+                                let action: Box<dyn gpui::Action> = if in_section {
+                                    Box::new(ThreadMenuAction {
+                                        thread: id.clone(),
+                                        command: ThreadCommand::MoveToSection(None),
+                                    })
+                                } else {
+                                    Box::new(PinThread(id.clone(), !pinned))
+                                };
+                                window.dispatch_action(action, cx);
                             }),
-                            if pinned { "Unpin chat" } else { "Pin chat" },
+                            match (in_section, pinned) {
+                                (true, _) => "Remove from section",
+                                (false, true) => "Unpin chat",
+                                (false, false) => "Pin chat",
+                            },
                             None,
                             Side::Top,
                         )
