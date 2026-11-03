@@ -392,6 +392,42 @@ pub fn mfa_info() -> Request {
     }))
 }
 
+/// An account settings call to the ChatGPT backend (`path` under `/backend-api`), with the
+/// original's default headers; the cloud host attaches the sign-in and the account header.
+pub fn backend(method: &str, path: &str, body: Option<&Value>) -> Request {
+    let mut request = json!({
+        "url": path,
+        "method": method,
+        "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "originator": "Codex Desktop",
+        },
+        "returnErrorResponse": true,
+    });
+    if let Some(body) = body {
+        request["body"] = body.to_string().into();
+    }
+    Request::Http(request)
+}
+
+/// The HTTP status and JSON body of a [`backend`] response; an empty or non-JSON body is
+/// `Null`. Only a transport failure is an error, so callers can read the backend's error codes.
+pub fn backend_response(response: &Value) -> Result<(u16, Value)> {
+    let response = response_wire(response);
+    if response["responseType"] == "error" {
+        bail!("host error {}: {}", response["status"], response["error"]);
+    }
+    let status = response["status"].as_u64().context("missing host status")?;
+    let body = response
+        .get("bodyJsonString")
+        .or_else(|| response.get("body"))
+        .and_then(Value::as_str)
+        .and_then(|body| serde_json::from_str(body).ok())
+        .unwrap_or(Value::Null);
+    Ok((u16::try_from(status)?, body))
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Exchange {
     pub request: Request,

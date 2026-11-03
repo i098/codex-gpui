@@ -3,6 +3,7 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+mod account_backend;
 mod activity_access;
 mod archived_chats;
 mod chatgpt_chats;
@@ -723,6 +724,7 @@ impl Root {
         features::install_shortcuts(cx);
         let this = cx.weak_entity();
         usage::install(this.clone(), cx);
+        account_backend::install(this.clone(), cx);
         notifications::install(this.clone(), cx);
         settings_git::init(this.clone(), cx);
         let computer_use = this.clone();
