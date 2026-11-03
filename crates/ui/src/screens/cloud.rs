@@ -63,6 +63,8 @@ pub enum Operation {
         body: Value,
         repositories: Vec<Value>,
     },
+    Preferences,
+    PreferencesSave(Value),
 }
 
 #[derive(Clone)]
@@ -76,6 +78,7 @@ enum View {
     List,
     Detail,
     Editor,
+    Preferences,
 }
 #[derive(Clone, PartialEq)]
 enum Menu {
@@ -105,6 +108,64 @@ fn connection_ready(connection: &Value) -> bool {
         && connection["link"].is_object()
         && connection["link"]["auth_status"] != "REAUTH_REQUIRED"
         && connection["link"]["unavailable_reason"].is_null()
+}
+
+/// Mirrors the original `cloud-preferences` validator, in its check order.
+fn branch_format_error(pattern: &str, max_length: u64, specials: &[Value]) -> Option<&'static str> {
+    let open = pattern.matches('{').count();
+    if open != pattern.matches('}').count() {
+        return Some("Branch format has unmatched brackets");
+    }
+    if open == 0 {
+        return Some("Branch format must contain at least one placeholder");
+    }
+    let values: Vec<&str> = specials
+        .iter()
+        .filter_map(|s| s["value"].as_str())
+        .collect();
+    let mut rest = pattern;
+    while let Some(start) = rest.find('{') {
+        let after = &rest[start + 1..];
+        match after.find('}') {
+            Some(0) => rest = after,
+            Some(end) => {
+                if !values.contains(&&rest[start..start + end + 2]) {
+                    return Some("Branch format contains an unavailable placeholder");
+                }
+                rest = &after[end + 1..];
+            }
+            None => break,
+        }
+    }
+    let longest = expand_branch_format(pattern, specials, |s| {
+        "x".repeat(s["char_count"].as_u64().unwrap_or(0) as usize)
+    });
+    if longest.encode_utf16().count() as u64 > max_length {
+        Some("Generated branch name exceeds the allowed length")
+    } else if longest.starts_with('/') {
+        Some("Branch format cannot start with '/'")
+    } else if longest.is_empty()
+        || !longest
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '/' | '-' | '_'))
+    {
+        Some("Branch format contains invalid characters")
+    } else {
+        None
+    }
+}
+
+fn expand_branch_format(
+    pattern: &str,
+    specials: &[Value],
+    value: impl Fn(&Value) -> String,
+) -> String {
+    specials.iter().fold(pattern.to_owned(), |name, special| {
+        match special["value"].as_str() {
+            Some(tag) if !tag.is_empty() => name.replace(tag, &value(special)),
+            _ => name,
+        }
+    })
 }
 
 pub struct CloudPage {
@@ -149,6 +210,9 @@ pub struct CloudPage {
     route_pending: Option<String>,
     edit_requested: bool,
     unavailable: bool,
+    preferences: Option<Value>,
+    branch_format: Option<Entity<Composer>>,
+    notice: Option<&'static str>,
 }
 
 impl EventEmitter<Request> for CloudPage {}
@@ -207,6 +271,9 @@ impl CloudPage {
             route_pending: None,
             edit_requested: false,
             unavailable: false,
+            preferences: None,
+            branch_format: None,
+            notice: None,
         }
     }
 
@@ -329,6 +396,7 @@ impl CloudPage {
                 | Operation::Configs
                 | Operation::Vault
                 | Operation::Config(_)
+                | Operation::Preferences
         )
         .then(|| operation.clone());
         cx.emit(Request {
@@ -468,8 +536,95 @@ impl CloudPage {
                 self.load(Operation::Detail(id.clone()), cx);
             }
             Operation::Access => {}
+            Operation::Preferences => self.receive_preferences(body, cx)?,
+            Operation::PreferencesSave(change) => {
+                let user = self
+                    .preferences
+                    .as_mut()
+                    .and_then(|preferences| preferences["user"].as_object_mut())
+                    .ok_or("Unable to save cloud preference")?;
+                for (key, value) in change
+                    .as_object()
+                    .into_iter()
+                    .chain(body.as_object())
+                    .flatten()
+                {
+                    user.insert(key.clone(), value.clone());
+                }
+                self.notice = Some(if change.get("git_diff_mode").is_some() {
+                    "Saved diff view"
+                } else {
+                    "Saved branch format"
+                });
+            }
         }
         Ok(())
+    }
+
+    fn receive_preferences(&mut self, body: Value, cx: &mut Context<Self>) -> Result<(), String> {
+        if !body["user"].is_object()
+            || !body["config"]["branch_format_special_values"].is_array()
+            || !body["config"]["branch_format_max_length"].is_u64()
+        {
+            return Err("Unable to load cloud preferences".into());
+        }
+        let value = body["user"]["branch_format"].as_str().unwrap_or("");
+        let field = cx.new(|cx| {
+            Composer::settings_form_field(
+                "Branch format pattern",
+                "codex/{feature}",
+                value,
+                false,
+                cx,
+            )
+        });
+        cx.observe(&field, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&field, |this, _, _: &SettingsFieldSubmit, cx| {
+            this.save_branch_format(cx)
+        })
+        .detach();
+        self.branch_format = Some(field);
+        self.preferences = Some(body);
+        Ok(())
+    }
+
+    /// The edited pattern and its validation error, when it differs from the saved one.
+    fn branch_format_edit(&self, cx: &App) -> Option<(String, Option<&'static str>)> {
+        let preferences = self.preferences.as_ref()?;
+        let pattern = self
+            .branch_format
+            .as_ref()?
+            .read(cx)
+            .field_text()
+            .to_owned();
+        let error = branch_format_error(
+            &pattern,
+            preferences["config"]["branch_format_max_length"]
+                .as_u64()
+                .unwrap_or(0),
+            preferences["config"]["branch_format_special_values"]
+                .as_array()
+                .map_or(&[][..], Vec::as_slice),
+        );
+        Some((pattern, error))
+    }
+
+    fn save_branch_format(&mut self, cx: &mut Context<Self>) {
+        let Some((pattern, None)) = self.branch_format_edit(cx) else {
+            return;
+        };
+        let saved = self
+            .preferences
+            .as_ref()
+            .map(|p| &p["user"]["branch_format"]);
+        if self.pending || saved.and_then(Value::as_str) == Some(pattern.as_str()) {
+            return;
+        }
+        self.notice = None;
+        self.load(
+            Operation::PreferencesSave(json!({ "branch_format": pattern })),
+            cx,
+        );
     }
 
     fn receive_environment_list(
@@ -960,7 +1115,7 @@ impl CloudPage {
             .px(px(20.))
             .flex()
             .items_center()
-            .when(self.view != View::List, |d| {
+            .when(!matches!(self.view, View::List | View::Preferences), |d| {
                 let parent = div()
                     .h(px(28.))
                     .px(px(9.))
@@ -1071,6 +1226,162 @@ impl CloudPage {
         )
     }
 
+    fn tabs(&self, cx: &mut Context<Self>) -> AnyElement {
+        let preferences = self.view == View::Preferences;
+        div()
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .child(self.segment(
+                "cloud-tab-environments",
+                "Environments",
+                !preferences,
+                cx,
+                |this, _, cx| {
+                    if this.view == View::Preferences {
+                        this.view = View::List;
+                        this.refresh(cx);
+                    }
+                },
+            ))
+            .child(self.segment(
+                "cloud-tab-preferences",
+                "Preferences",
+                preferences,
+                cx,
+                |this, _, cx| this.open_preferences(cx),
+            ))
+            .into_any_element()
+    }
+
+    fn open_preferences(&mut self, cx: &mut Context<Self>) {
+        if self.view != View::Preferences {
+            self.view = View::Preferences;
+            self.notice = None;
+            self.load(Operation::Preferences, cx);
+        }
+    }
+
+    fn preferences_view(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let mut view = div().flex().flex_col().gap(px(16.)).child(self.tabs(cx));
+        let (Some(preferences), Some(field), Some((pattern, error))) = (
+            self.preferences.as_ref(),
+            self.branch_format.clone(),
+            self.branch_format_edit(cx),
+        ) else {
+            return view.into_any_element();
+        };
+        let mode = preferences["user"]["git_diff_mode"].as_str().unwrap_or("");
+        let diff = div()
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .children(
+                [("unified", "Unified"), ("split", "Split")].map(|(id, label)| {
+                    self.segment(
+                        if id == "split" {
+                            "cloud-diff-split"
+                        } else {
+                            "cloud-diff-unified"
+                        },
+                        label,
+                        mode == id,
+                        cx,
+                        move |this, _, cx| {
+                            let saved = this
+                                .preferences
+                                .as_ref()
+                                .map(|p| &p["user"]["git_diff_mode"]);
+                            if !this.pending && saved.and_then(Value::as_str) != Some(id) {
+                                this.notice = None;
+                                this.load(
+                                    Operation::PreferencesSave(json!({ "git_diff_mode": id })),
+                                    cx,
+                                );
+                            }
+                        },
+                    )
+                }),
+            )
+            .into_any_element();
+        let specials = preferences["config"]["branch_format_special_values"]
+            .as_array()
+            .map_or(&[][..], Vec::as_slice);
+        let unchanged = preferences["user"]["branch_format"].as_str() == Some(pattern.as_str());
+        let hint = match error {
+            Some(error) => error.to_owned(),
+            None => format!(
+                "Example: {}",
+                expand_branch_format(&pattern, specials, |s| {
+                    s["example"].as_str().unwrap_or("").to_owned()
+                })
+            ),
+        };
+        let tags = specials
+            .iter()
+            .filter_map(|s| s["value"].as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let branch = div()
+            .p(px(16.))
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(div().w(px(224.)).child(field))
+                    .when(!unchanged && error.is_none() && !self.pending, |d| {
+                        d.child(self.button(
+                            "cloud-branch-format-save",
+                            "Save",
+                            false,
+                            cx,
+                            |this, _, cx| this.save_branch_format(cx),
+                        ))
+                    }),
+            )
+            .child(text(
+                hint,
+                13.,
+                18.,
+                430.,
+                if error.is_some() {
+                    t.text_error
+                } else {
+                    t.text_secondary
+                },
+            ))
+            .child(text(
+                format!("Available placeholders: {tags}"),
+                13.,
+                18.,
+                430.,
+                t.text_tertiary,
+            ))
+            .into_any_element();
+        view = view
+            .child(Self::group(
+                "",
+                vec![Self::row(
+                    "Diff view",
+                    Some("Choose how changes are shown in cloud chats"),
+                    diff,
+                    &t,
+                )],
+                &t,
+            ))
+            .child(Self::group("Branch format", vec![branch], &t))
+            .children(
+                self.notice
+                    .map(|notice| text(notice, 13., 18., 430., t.text_secondary)),
+            );
+        view.into_any_element()
+    }
+
     fn list(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.theme().clone();
         let toolbar = div()
@@ -1111,6 +1422,7 @@ impl CloudPage {
             .flex()
             .flex_col()
             .gap(px(16.))
+            .child(self.tabs(cx))
             .when(self.access.cloud, |d| {
                 d.child(
                     div()
@@ -2372,7 +2684,7 @@ impl Render for CloudPage {
         }
         let t = cx.theme().clone();
         let title = match self.view {
-            View::List => "Legacy Codex Cloud".to_owned(),
+            View::List | View::Preferences => "Legacy Codex Cloud".to_owned(),
             View::Detail => self
                 .selected
                 .as_ref()
@@ -2390,6 +2702,7 @@ impl Render for CloudPage {
             View::List => self.list(cx),
             View::Detail => self.detail(cx),
             View::Editor => self.editor(cx),
+            View::Preferences => self.preferences_view(cx),
         };
         div()
             .size_full()
@@ -2584,6 +2897,53 @@ impl Render for CloudModal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn branch_format_validation_follows_the_original_check_order() {
+        let specials = [
+            json!({"value":"{feature}","example":"fix-login","char_count":20}),
+            json!({"value":"{date}","example":"2026-10-31","char_count":10}),
+        ];
+        let check = |pattern: &str, max| branch_format_error(pattern, max, &specials);
+        assert_eq!(check("codex/{feature}", 40), None);
+        assert_eq!(check("codex/{feature}/{date}", 40), None);
+        assert_eq!(
+            check("codex/{feature", 40),
+            Some("Branch format has unmatched brackets")
+        );
+        assert_eq!(
+            check("codex/feature", 40),
+            Some("Branch format must contain at least one placeholder")
+        );
+        assert_eq!(
+            check("codex/{owner}", 40),
+            Some("Branch format contains an unavailable placeholder")
+        );
+        assert_eq!(
+            check("codex/{feature}", 25),
+            Some("Generated branch name exceeds the allowed length")
+        );
+        assert_eq!(
+            check("/{feature}", 40),
+            Some("Branch format cannot start with '/'")
+        );
+        assert_eq!(
+            check("co dex/{feature}", 40),
+            Some("Branch format contains invalid characters")
+        );
+        // `{}` is not a placeholder, so only its braces are left to fail the character check.
+        assert_eq!(
+            check("{}{feature}", 40),
+            Some("Branch format contains invalid characters")
+        );
+        assert_eq!(
+            expand_branch_format("codex/{feature}-{date}", &specials, |s| s["example"]
+                .as_str()
+                .unwrap()
+                .to_owned()),
+            "codex/fix-login-2026-10-31"
+        );
+    }
 
     #[test]
     fn repository_pages_keep_selection_and_retry_without_duplicates() {
