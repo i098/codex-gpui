@@ -42,11 +42,11 @@ vt100 = "0.18.1"
 mozjpeg = { version = "0.10.13", default-features = false }
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSPasteboard", "NSMenu", "NSMenuItem", "NSCell", "NSImage", "NSImageRep", "NSPDFImageRep", "NSBitmapImageRep", "NSGraphics", "NSGraphicsContext", "NSView", "NSWindow", "NSEvent", "NSAppearance"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSString", "NSData", "NSGeometry"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSString", "NSData", "NSGeometry", "NSError", "NSDictionary", "NSURL"] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFData"] }
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGDataProvider", "CGPDFArray", "CGPDFDictionary", "CGPDFDocument", "CGPDFObject", "CGPDFPage", "CGPDFStream"] }
 raw-window-handle = "0.6"
-objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-app-kit", "WKWebView"] }
+objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-app-kit", "WKWebView", "WKNavigation", "WKNavigationDelegate"] }
 # The in-app browser's page: a WKWebView child of the window's view.
 wry = { version = "0.57", default-features = false }
 
