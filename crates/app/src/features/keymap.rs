@@ -233,11 +233,19 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "nextThreadNeedingAttention" => Box::new(shortcuts::NextAttentionChat),
         "markThreadUnread" => Box::new(shortcuts::MarkOpenChatUnread),
         "manageTasks" => Box::new(OpenScheduled),
+        "forceReloadSkills" => Box::new(crate::ForceReloadSkills),
+        "openSkills" => Box::new(crate::OpenSkills),
+        "mcpSettings" => Box::new(crate::McpSettings),
+        "personalitySettings" => Box::new(crate::PersonalitySettings),
+        "importExternalAgent" => Box::new(crate::ImportExternalAgent),
+        "feedback" => Box::new(crate::OpenFeedback),
+        "codexMicroSettings" => Box::new(OpenMobileSetup),
         "openThreadInNewWindow" => Box::new(super::OpenThreadInNewWindow),
         "newWindow" => Box::new(crate::windows::NewWindow),
         "closeTab" => Box::new(CloseWindow),
         "closeWindow" => Box::new(shortcuts::CloseWholeWindow),
         "closeOtherTabs" => Box::new(shortcuts::CloseOtherSideTabs),
+        "reopenClosedTab" => Box::new(shortcuts::ReopenClosedTab),
         "nextTab" => Box::new(shortcuts::NextSideTab),
         "previousTab" => Box::new(shortcuts::PreviousSideTab),
         "toggleThreadPin" => Box::new(shortcuts::ToggleThreadPin),
@@ -245,9 +253,8 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "findInThread" => Box::new(FindInThread),
         "copyDeeplink" => Box::new(shortcuts::CopyDeeplink),
         "copyLastCodeBlock" => Box::new(shortcuts::CopyLastCodeBlock),
-        "copyWorkingDirectory" | "copyConversationPath" => {
-            Box::new(super::copy_directory::CopyWorkingDirectory)
-        }
+        "copyWorkingDirectory" => Box::new(super::copy_directory::CopyWorkingDirectory),
+        "copyConversationPath" => Box::new(super::copy_directory::CopyConversationPath),
         "composer.submit" => Box::new(ui::composer::Submit),
         "composer.submitInBackground" => Box::new(ui::composer::SubmitInBackground),
         id => {

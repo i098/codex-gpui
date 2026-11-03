@@ -1533,6 +1533,8 @@ mod tests {
             worktree: false,
             missing: false,
             expanded: true,
+            roots: Vec::new(),
+            pinned: false,
         }
     }
 
