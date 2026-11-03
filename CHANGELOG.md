@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Add `Disable Git-based diffs` to Settings ▸ Git: with it on, the Changes panel shows only `Last Turn`, hides `View branch diff`, and runs no git repository discovery (`git-review-mode` = `last-turn-only`).
+- Show the original's Worktrees save toasts: worktree root, upstream refresh, automatic deletion and auto-delete limit saves or failures, `Failed to delete worktree`, and the pinned-chat delete notice.
 - Right-click a side panel tab for `Move to left pane` / `Move to right pane` (and `Move to bottom pane` on the terminal tab), and reopen the last closed tab with `⌘⇧T`.
 - Show `<name> marketplace upgraded` or `Failed to upgrade marketplace` after `Upgrade`, and `Could not save MCP server` or `Could not uninstall MCP server` toasts when an MCP server change fails.
 - Add `Create PR` and `Create draft PR` to a cloud task's header: they post the diff turn to `/wham/tasks/{task}/turns/{turn}/pr` and then show `View PR` with the opened pull request.
