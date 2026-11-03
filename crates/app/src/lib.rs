@@ -808,6 +808,12 @@ impl Root {
                     ui::composer::SlashCommand::MemoryMode(_)
                     | ui::composer::SlashCommand::MemoryStatus => this.thread_memory_command(command, window, cx),
                     ui::composer::SlashCommand::Memories => this.open_memories(window, cx),
+                    ui::composer::SlashCommand::HotkeyNew => {
+                        window.dispatch_action(Box::new(hotkey::Collapse), cx)
+                    }
+                    ui::composer::SlashCommand::Resume(id) => {
+                        this.navigate(Route::Thread(id.clone()), window, cx)
+                    }
                     ui::composer::SlashCommand::Status => this.show_status(window, cx),
                     ui::composer::SlashCommand::Init => this.init_agents(window, cx),
                     ui::composer::SlashCommand::Side => this.start_side_chat(window, cx),
@@ -3041,6 +3047,7 @@ impl Root {
             menu.update(cx, |menu, cx| menu.update_catalog(threads, &unread, cx));
         }
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
+        hotkey::sync_recents(self, cx);
         if self.host_id() == "local" {
             let recents: Vec<_> = threads
                 .iter()
@@ -6804,6 +6811,10 @@ impl Root {
                         "Failed to save draft pull request setting"
                     }
                     "git-review-mode" => "Could not save Git diff setting",
+                    "git-worktree-root" => "Failed to save worktree root",
+                    "worktree-upstream-refresh-mode" => "Failed to save upstream refresh setting",
+                    "worktree-auto-cleanup-enabled" => "Failed to save automatic deletion setting",
+                    "worktree-keep-count" => "Failed to save auto-delete limit",
                     "git-pr-watch-auto-merge" => "Failed to save automatic PR merging",
                     "git-commit-instructions"
                     | "git-pr-instructions"
@@ -6883,6 +6894,22 @@ impl Root {
                 };
                 if let Some(message) = message {
                     self.toast(Toast::info(message), cx);
+                }
+                let saved = match key {
+                    "git-worktree-root" => Some("Saved worktree root"),
+                    "worktree-upstream-refresh-mode" if e.value == "best-effort" => {
+                        Some("Upstream refresh enabled")
+                    }
+                    "worktree-upstream-refresh-mode" => Some("Upstream refresh disabled"),
+                    "worktree-auto-cleanup-enabled" if e.value == true => {
+                        Some("Automatic deletion enabled")
+                    }
+                    "worktree-auto-cleanup-enabled" => Some("Automatic deletion disabled"),
+                    "worktree-keep-count" => Some("Saved auto-delete limit"),
+                    _ => None,
+                };
+                if let Some(saved) = saved {
+                    self.toast(Toast::success(saved), cx);
                 }
             }
             return;
