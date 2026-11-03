@@ -8,6 +8,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - List a thread's subagents in Thread summary and open them in a `Subagents` side panel tab: `Active` and `Done` sections, and a detail view with the model, delegated task, status and final response.
+- Show `<name> marketplace upgraded` or `Failed to upgrade marketplace` after `Upgrade`, and `Could not save MCP server` or `Could not uninstall MCP server` toasts when an MCP server change fails.
+- Add `Create PR` and `Create draft PR` to a cloud task's header: they post the diff turn to `/wham/tasks/{task}/turns/{turn}/pr` and then show `View PR` with the opened pull request.
 - Show web searches, subagent calls, generated and viewed images, memory citations and the `Continued from chat` fork divider in the thread, and show a sent message's images, file mentions and skills, which Edit message now keeps.
 - Add Back, Next and Reload to the in-app browser toolbar with `⌘←`, `⌘→`, `⌘R`, `⌘⇧R` and `⌘L`, a load indicator, and the original's `This site can't be reached` error page with Reload.
 - Add `Filter generated files` to the Changes file tree options: it hides files that `.gitattributes` marks `linguist-generated` from the tree and the diff list.
