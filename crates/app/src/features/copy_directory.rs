@@ -1,13 +1,11 @@
-//! `copyWorkingDirectory` / `copyConversationPath` (the original runs one function for both:
-//! `Gda`, refs: data/cgx-fam-menus-ide/clipboard-contracts-048.json): for an app server that
-//! supports `threadAttachments`, refresh the thread's attachments and copy the newest worktree's
-//! workspace root (minus worktrees with a pending archive), else the cwd. A failed refresh
-//! copies nothing.
-
+//! `copyWorkingDirectory` and `copyConversationPath` actions.
+//! `copyWorkingDirectory` uses `Gda` (refs: data/cgx-fam-menus-ide/clipboard-contracts-048.json):
+//! refresh `threadAttachments` and copy the newest unarchived worktree root, else the cwd.
+//! `copyConversationPath` reads the rollout file path from `thread/read`.
 use crate::*;
 use gpui::ClipboardItem;
 
-actions!(app, [CopyWorkingDirectory]);
+actions!(app, [CopyWorkingDirectory, CopyConversationPath]);
 
 /// The app server that first answers `thread/attachment/list` (`threadAttachments`).
 const MIN_VERSION: &str = "0.155.0-alpha.2";
@@ -20,6 +18,12 @@ pub(super) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
         };
         let cwd = thread.read(cx).cwd().to_owned();
         this.copy_working_directory(id, cwd, window, cx)
+    }))
+    .on_action(cx.listener(|this, _: &CopyConversationPath, window, cx| {
+        let Route::Thread(id) = this.state.route.clone() else {
+            return;
+        };
+        this.copy_conversation_path(id, window, cx);
     }))
 }
 
@@ -71,6 +75,32 @@ impl Root {
                     }
                 }
                 Err(_) => this.toast(Toast::danger("Unable to copy working directory"), cx),
+            })
+        });
+        log_err(task, cx);
+    }
+
+    fn copy_conversation_path(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let result = bridge
+                .request::<_, ThreadReadResponse>(
+                    "thread/read",
+                    json!({"threadId": id, "includeTurns": false}),
+                )
+                .await
+                .and_then(|read| {
+                    read.thread
+                        .path
+                        .filter(|path| !path.is_empty())
+                        .ok_or_else(|| anyhow::anyhow!("thread/read returned no conversation path"))
+                });
+            this.update(cx, |this, cx| match result {
+                Ok(path) => {
+                    cx.write_to_clipboard(ClipboardItem::new_string(path));
+                    this.toast(Toast::success("Copied conversation path"), cx);
+                }
+                Err(_) => this.toast(Toast::danger("Unable to copy conversation path"), cx),
             })
         });
         log_err(task, cx);
