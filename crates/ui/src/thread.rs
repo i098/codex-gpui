@@ -3378,8 +3378,8 @@ fn separators(turns: &[Turn], now: i64) -> Vec<Option<i64>> {
                 let gap = if user { 3_600 } else { 600 };
                 if separator.is_none()
                     && let Some(at) = at
-                    && ((user && !sent && now - at > 3_600)
-                        || answered_at.is_some_and(|answered| at - answered > gap))
+                    && ((user && !sent && now.saturating_sub(at) > 3_600)
+                        || answered_at.is_some_and(|answered| at.saturating_sub(answered) > gap))
                 {
                     separator = Some(at);
                 }
