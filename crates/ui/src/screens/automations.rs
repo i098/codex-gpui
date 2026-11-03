@@ -64,6 +64,35 @@ actions!(
 #[action(namespace = automations, no_json)]
 pub struct StartSuggestedTask(pub usize);
 
+/// An empty-list suggestion row (`inbox.automations.emptySuggestion.*`): opens the create
+/// editor filled with that suggestion of [`EMPTY_SUGGESTIONS`].
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct UseEmptySuggestion(pub usize);
+
+/// `inbox.automations.emptySuggestion.*` in bundle order: name, description, task prompt and
+/// the schedule as an RRULE.
+pub const EMPTY_SUGGESTIONS: [(&str, &str, &str, &str); 3] = [
+    (
+        "Daily brief",
+        "Start each weekday with a summary of your calendar, unread email, and priorities",
+        "Give me a morning brief with what's on my calendar, important unread emails, and anything that needs my attention today.",
+        "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=8;BYMINUTE=0",
+    ),
+    (
+        "Weekly review",
+        "Turn your recent work into a concise status update every Friday",
+        "Review what I worked on this week and draft a short status update.",
+        "FREQ=WEEKLY;BYDAY=FR;BYHOUR=16;BYMINUTE=0",
+    ),
+    (
+        "Follow-up monitor",
+        "Review recent email and calendar activity and flag anything that needs your attention",
+        "Review recent email and calendar activity, highlight meaningful changes, and flag anything that needs my attention.",
+        "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0",
+    ),
+];
+
 /// A previous run under the selected task: opens the run's chat beside the task list.
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = automations, no_json)]
@@ -1452,6 +1481,39 @@ impl Render for ScheduledSidebar {
             ListState::Ready if shown.is_empty() => Some("No matching tasks"),
             ListState::Ready => None,
         };
+        if self.load == ListState::Ready && self.tasks.is_empty() {
+            rows.extend(EMPTY_SUGGESTIONS.iter().enumerate().map(
+                |(i, (name, description, _, rrule))| {
+                    div()
+                        .id(("empty-suggestion", i))
+                        .role(Role::Button)
+                        .aria_label(format!("Set up {name} scheduled task"))
+                        .px(px(8.))
+                        .py(px(6.))
+                        .rounded(px(12.5))
+                        .flex()
+                        .flex_col()
+                        .hover(move |s| s.bg(hover_bg))
+                        .on_click(move |_, window, cx| {
+                            window.dispatch_action(Box::new(UseEmptySuggestion(i)), cx)
+                        })
+                        .child(text(*name, 14., 21., 430., t.text_default_nav))
+                        .child(
+                            text(*description, 12., 18., 430., t.text_tertiary)
+                                .whitespace_normal()
+                                .line_clamp(2),
+                        )
+                        .child(text(
+                            schedule_summary(rrule),
+                            12.,
+                            18.,
+                            430.,
+                            t.text_tertiary,
+                        ))
+                        .into_any_element()
+                },
+            ));
+        }
         let search = focus::ring(
             icon_button("search-tasks", icon("search", 16., t.text_tertiary), &t)
                 .role(Role::Button)
