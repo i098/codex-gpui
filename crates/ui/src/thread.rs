@@ -65,7 +65,7 @@ pub use items::{ImageView, OpenImage};
 
 pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
-pub use actions::{EditMessage, ForkThread, PatchTurn, RevertTurn, ThreadPressed};
+pub use actions::{EditMessage, ForkThread, PatchTurn, RevertTurn, SubmitRating, ThreadPressed};
 use actions::{TurnFocus, action_row};
 pub enum GitAction {
     Refresh,
@@ -2456,6 +2456,10 @@ impl ThreadView {
                 .filter(|(id, _)| *id == turn.id)
                 .map(|_| self.turn_menu_popup(turn.started_at, cx));
             let id = turn.id.clone();
+            let rate = cx.listener(move |view, event: &gpui::ClickEvent, window, cx| {
+                view.open_rating(id.clone(), event.position(), window, cx)
+            });
+            let id = turn.id.clone();
             let toggle = cx.listener(move |view, _: &gpui::ClickEvent, window, cx| {
                 view.toggle_turn_menu(&id, window, cx)
             });
@@ -2464,7 +2468,7 @@ impl ThreadView {
             });
             return col.when(!self.embedded, |col| {
                 col.child(action_row(
-                    last, &group, answer, sent_at, menu, toggle, hover, &focus, t,
+                    last, &group, answer, sent_at, menu, rate, toggle, hover, &focus, t,
                 ))
             });
         }
