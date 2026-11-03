@@ -129,11 +129,12 @@ pub(crate) fn attach(
                         .await
                         .map_err(|_| error_label(&request.operation).to_owned());
                     let setup = match &request.operation {
-                        Operation::ConfigCreate { repositories, .. } => result
-                            .as_ref()
-                            .ok()
-                            .and_then(|config| config["id"].as_str())
-                            .map(|id| (id.to_owned(), repositories.clone())),
+                        Operation::ConfigCreate { repositories, .. } => {
+                            result.as_ref().ok().and_then(|config| {
+                                let id = config["id"].as_str()?.to_owned();
+                                Some((id, setup_repositories(config, repositories)))
+                            })
+                        }
                         Operation::ConfigSetup(id) => {
                             result.as_ref().ok().map(|_| (id.clone(), Vec::new()))
                         }
@@ -702,6 +703,31 @@ fn github_connections(host: &dyn host::Host, identity: &host::Identity) -> Resul
     Ok(json!({"connections":connections,"failed":failed}))
 }
 
+/// The setup chat's repositories. A legacy migration sends `{id, name}` rows without a ref,
+/// so each repository and ref then comes from the created config's draft, as in the original.
+fn setup_repositories(config: &Value, requested: &[Value]) -> Vec<Value> {
+    if requested
+        .iter()
+        .all(|repository| repository["ref"].is_string())
+    {
+        return requested.to_vec();
+    }
+    let draft = config.get("draft").filter(|draft| !draft.is_null());
+    draft.unwrap_or(config)["repositories"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|repository| {
+            let id = &repository["repository_id"];
+            let name = requested
+                .iter()
+                .find(|requested| requested["id"] == *id)
+                .map_or(id, |requested| &requested["name"]);
+            json!({"name": name, "ref": repository["ref"]})
+        })
+        .collect()
+}
+
 fn link_matches(provider: &Value, link: &Value) -> bool {
     link["connector_id"].as_str().is_some()
         && link["connector_id"] == provider["id"]
@@ -752,6 +778,24 @@ fn config_error_label(operation: &Operation) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_migration_takes_refs_from_the_created_draft() {
+        let requested = [json!({"id": "repo-1", "name": "openai/codex"})];
+        let config = json!({"id": "config", "repositories": [], "draft": {"repositories": [
+            {"repository_id": "repo-1", "ref": "main"},
+            {"repository_id": "repo-2", "ref": "dev"},
+        ]}});
+        assert_eq!(
+            setup_repositories(&config, &requested),
+            [
+                json!({"name": "openai/codex", "ref": "main"}),
+                json!({"name": "repo-2", "ref": "dev"}),
+            ]
+        );
+        let created = [json!({"name": "openai/codex", "ref": "main"})];
+        assert_eq!(setup_repositories(&config, &created), created);
+    }
     #[test]
     fn workspace_policy_requires_the_original_cloud_permission() {
         let gates = json!({"feature_gates":{"375130565":{"value":true},"3769444934":{"value":true},"1355972088":{"value":true}}});

@@ -1423,6 +1423,28 @@ impl CloudPage {
             .flex_col()
             .gap(px(16.))
             .child(self.tabs(cx))
+            .when(self.access.cloud, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.))
+                        .child(text(
+                            "A new Codex Cloud experience is here",
+                            14.,
+                            21.,
+                            500.,
+                            t.text,
+                        ))
+                        .child(text(
+                            "Legacy Cloud environments can be migrated to the new Cloud environments using the migration button.",
+                            13.,
+                            18.,
+                            430.,
+                            t.text_secondary,
+                        )),
+                )
+            })
             .child(toolbar)
             .when(
                 self.environments.is_empty() && !self.pending && self.error.is_none(),
@@ -1546,6 +1568,13 @@ impl CloudPage {
                         this.selected = None;
                         this.refresh(cx);
                     }))
+                    .when(edit && self.access.cloud, |d| {
+                        d.child(
+                            self.button("cloud-migrate", "Migrate", true, cx, |this, _, cx| {
+                                this.migrate(cx)
+                            }),
+                        )
+                    })
                     .when(edit, |d| {
                         d.child(self.button("cloud-edit", "Edit", false, cx, |this, _, cx| {
                             this.edit(this.selected.clone(), cx)
@@ -1581,6 +1610,22 @@ impl CloudPage {
             )
             .child(Self::group("", rows, &t))
             .into_any_element()
+    }
+
+    /// Converts the selected legacy environment through the onboarding service, as the
+    /// original `Migrate` button does; the app opens the setup chat on success.
+    fn migrate(&mut self, cx: &mut Context<Self>) {
+        let Some(environment) = &self.selected else {
+            return;
+        };
+        // Ids with names only: the app takes each ref from the returned draft.
+        let repositories = environment
+            .repos
+            .iter()
+            .map(|id| json!({"id": id, "name": environment.repository_label(id)}))
+            .collect();
+        let body = json!({"legacy_environment_id": environment.id, "start_onboarding": true});
+        self.load(Operation::ConfigCreate { body, repositories }, cx);
     }
 
     fn input_row(
