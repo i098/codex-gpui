@@ -500,6 +500,7 @@ pub struct Root {
     plugins_page: Option<Entity<ui::screens::plugins::Page>>,
     voice_chat: Option<voice_chat::VoiceChat>,
     sites_page: Option<Entity<ui::screens::sites::Page>>,
+    security_cloud_page: Option<Entity<ui::screens::security_cloud::Page>>,
     maps_page: Option<Entity<ui::screens::maps::Page>>,
     images_page: Option<Entity<ui::screens::images::Page>>,
     gpts_page: Option<Entity<ui::screens::gpts::Page>>,
@@ -552,6 +553,8 @@ pub struct Root {
     project_load: Option<Task<()>>,
     destination_load: Option<Task<()>>,
     unread_destinations: Option<Arc<[SharedString]>>,
+    /// The MCP catalog lists the `codex_security_cloud` destination.
+    security_cloud: bool,
     picking_project: bool,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
@@ -999,6 +1002,7 @@ impl Root {
             plugins_page: None,
             voice_chat: None,
             sites_page: None,
+            security_cloud_page: None,
             maps_page: None,
             images_page: None,
             gpts_page: None,
@@ -1054,6 +1058,7 @@ impl Root {
             project_load: None,
             destination_load: None,
             unread_destinations: None,
+            security_cloud: false,
             picking_project: false,
             automation_updates: HashMap::new(),
             suggestion_load: None,
@@ -1442,6 +1447,10 @@ impl Root {
 
     pub fn sites_page(&self) -> Option<&Entity<ui::screens::sites::Page>> {
         self.sites_page.as_ref()
+    }
+
+    pub fn security_cloud_page(&self) -> Option<&Entity<ui::screens::security_cloud::Page>> {
+        self.security_cloud_page.as_ref()
     }
 
     pub fn space_page(&self) -> Option<&Entity<ui::screens::space::SpacePage>> {
