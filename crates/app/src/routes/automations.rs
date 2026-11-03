@@ -67,6 +67,18 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             this.start_suggested_task(action.0, window, cx);
         }),
     )
+    .on_action(
+        cx.listener(|this, action: &automations::UseEmptySuggestion, window, cx| {
+            let Some((name, _, prompt, rrule)) = automations::EMPTY_SUGGESTIONS.get(action.0)
+            else {
+                return;
+            };
+            let item = serde_json::json!({ "name": name, "prompt": prompt, "rrule": rrule });
+            // A new task, like `New task`: it is created in the local source.
+            this.set_automation_source("local");
+            this.show_automation_editor(Some(item), None, window, cx);
+        }),
+    )
 }
 
 /// Hands the list's load state, run history, search and filters to a newly built sidebar.
