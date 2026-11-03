@@ -173,6 +173,9 @@ pub enum ThreadItem {
         result: Option<String>,
         #[serde(default)]
         saved_path: Option<String>,
+        /// `{"type": "usageLimitExceeded", "resetsAt"?}`
+        #[serde(default)]
+        failure: Option<Value>,
     },
     /// A call to a client tool the thread was started with (`dynamicTools`).
     DynamicToolCall {
@@ -203,18 +206,6 @@ pub enum ThreadItem {
         /// Last known state of each receiver, by thread id.
         #[serde(default)]
         agents_states: std::collections::BTreeMap<String, CollabAgentState>,
-    },
-    ImageGeneration {
-        id: String,
-        /// `inProgress` | `completed` | `failed` | ...
-        status: String,
-        #[serde(default)]
-        saved_path: Option<String>,
-        #[serde(default)]
-        revised_prompt: Option<String>,
-        /// `{"type": "usageLimitExceeded", "resetsAt"?}`
-        #[serde(default)]
-        failure: Option<Value>,
     },
     ImageView {
         id: String,

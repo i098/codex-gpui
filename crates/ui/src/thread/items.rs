@@ -884,6 +884,7 @@ fn item_row(item: &ThreadItem, live: bool) -> Option<Row> {
             saved_path,
             revised_prompt,
             failure,
+            ..
         } => {
             let label = match status.as_str() {
                 "inProgress" | "generating" => "Generating image...",
