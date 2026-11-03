@@ -1506,7 +1506,6 @@ impl Shell {
     /// changelog page instead of the in-app post dialog, and rows take no arrow keys; add them
     /// with a Mini visibility flag, a post dialog and menu focus handling.
     fn profile_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        type MenuAction = Box<dyn Fn(&mut Window, &mut App)>;
         fn send(action: impl Action + Clone) -> MenuAction {
             Box::new(move |window, cx| window.dispatch_action(action.boxed_clone(), cx))
         }
@@ -1833,7 +1832,7 @@ impl Shell {
                 .bg(t.border)
         });
         let flyout = help_open.then(|| {
-            composer::popover(t, 277.265625, |d| {
+            composer::popover(t, 277.265_63, |d| {
                 d.relative()
                     .child(
                         div()
