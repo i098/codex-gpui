@@ -91,6 +91,12 @@ The shapes come from the original zod schemas in Codex 26.1007.30912. No account
 The clock is frozen at 2026-10-15T17:00:00-07:00. `crates/app/tests/space_sites.rs` replays each exchange.
 `site-detail.json` adds `GET /websites/{project_id}` for the first owned site, with the same list exchange; `crates/app/tests/rail_sites.rs` opens it from a Sites row.
 
+## Security Cloud fixture
+
+`security-cloud.jsonl` replays the `codex_security_cloud.defense_factory_*` reads of the Explore ▸ `Security Cloud` page through `mcpServer/tool/call`.
+The results come from a live macOS `codex app-server` 0.166.0-alpha.5.1 on 2026-10-30; the bootstrap keeps only the fields the page reads.
+`crates/app/tests/security_cloud.rs` replays them after `readback.jsonl`.
+
 ## Owned Maps fixture
 
 `maps-home.json` holds one synthetic `/local/home` exchange for Maps, plus an empty `/conversations` page that gives `ReplayHost` its identity.

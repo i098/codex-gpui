@@ -788,6 +788,19 @@ impl Login {
         cx.notify();
     }
 
+    /// Abandons the browser sign-in in progress (`account/login/cancel`).
+    pub fn cancel_pending(&mut self, cx: &mut Context<Self>) {
+        self.attempt += 1;
+        self.pending = false;
+        self.login_url = None;
+        self.device_code = None;
+        if let Some(id) = self.login_id.take()
+            && let Some(bridge) = self.bridge.clone()
+        {
+            cancel(bridge, id, cx);
+        }
+    }
+
     fn command(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
         match command {
             Command::Start(provider) => self.start(provider, None, cx),
@@ -834,17 +847,7 @@ impl Login {
                 self.error = None;
             }
             Command::Submit => self.submit(cx),
-            Command::Cancel => {
-                self.attempt += 1;
-                self.pending = false;
-                self.login_url = None;
-                self.device_code = None;
-                if let Some(id) = self.login_id.take()
-                    && let Some(bridge) = self.bridge.clone()
-                {
-                    cancel(bridge, id, cx);
-                }
-            }
+            Command::Cancel => self.cancel_pending(cx),
             Command::UseCode if self.pending => self.start_device_code(cx),
             Command::CopyLink => {
                 if let Some(url) = &self.login_url {

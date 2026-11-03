@@ -53,6 +53,7 @@ It preserves the existing route1 and Root capture clocks and fixtures.
 | `sidebar` | `rest` | Existing route1 Home capture: the rail, thread list, search and project groups | `common::Fx` startup, as `home` |
 | `terminal` | `rest` | Existing route1 recorded command replay | The same recorded events and input sequence as `flows::open_terminal` |
 | `thread` | `rest` | Existing route1 `thread` capture: open Add a subtract | `common::Fx` startup, click Add a subtract, wait for the thread |
+| `thread` | `approval` | The `thread` capture, then s015's first command approval request as a window `mcp-request` message | The subtract thread with the same request inserted after its thread read |
 | `thread` | `worked` | The same, then click `Worked for 17s` | The same, then click `Worked for`, 400 ms of motion |
 | `thread` | `tools` | The same, then click `Edited a file, read files, ran commands` and wait 800 ms | The same, then click that summary row, 400 ms of motion |
 | `thread` | `code` | Greeting chat after s008's bridge step: its final answer becomes a Python code block | The same answer replaced in the fixture's thread read, click Change the greeting |
