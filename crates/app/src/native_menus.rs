@@ -73,12 +73,14 @@ actions!(
         TextReplacement,
         TogglePinnedSummary,
         ToggleNavigationPanel,
+        ToggleDebugPanel,
         ToggleBrowserPanel,
     ]
 );
 
 pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &ShowAbout, cx| cx.defer(about::open));
+    cx.on_action(|_: &ToggleDebugPanel, cx| cx.defer(features::debug::toggle_panel));
     cx.bind_keys([
         KeyBinding::new("cmd-shift-v", PasteAndMatchStyle, None),
         KeyBinding::new("cmd-alt-shift-v", PasteAndMatchStyle, None),
@@ -506,6 +508,12 @@ fn menus_for_route(
                 ShowKeyboardShortcuts,
             ),
             MenuItem::action(label("sidebarHelp.whatsNew", "What's New"), OpenChangelog),
+            MenuItem::separator(),
+            MenuItem::action(
+                "Start Performance Trace",
+                features::debug::ToggleTraceRecording,
+            ),
+            MenuItem::action("Show Local Trace", ToggleDebugPanel),
             MenuItem::separator(),
             MenuItem::action(
                 label("electron.appMenu.help.troubleshooting", "Troubleshooting"),

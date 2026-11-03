@@ -410,6 +410,10 @@ impl DiffPanel {
             .get("git-review-mode")
             .and_then(serde_json::Value::as_str)
             == Some("last-turn-only");
+        self.generated.filter = values
+            .get("review-filter-generated-files")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         self.layout = match values
             .get("editorDiffViewMode")
             .and_then(serde_json::Value::as_str)

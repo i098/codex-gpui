@@ -34,7 +34,8 @@ actions!(
         CopyDeeplink,
         CopyLastCodeBlock,
         CloseWholeWindow,
-        CloseOtherSideTabs
+        CloseOtherSideTabs,
+        ReopenClosedTab
     ]
 );
 
@@ -158,6 +159,16 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
             this.sync(window, cx);
         }
     }))
+    .on_action(
+        cx.listener(|this, _: &ReopenClosedTab, window, cx| this.reopen_closed_tab(window, cx)),
+    )
+    .on_action(cx.listener(
+        |this, a: &ui::screens::diff::panel::MoveSideTabToBottom, window, cx| {
+            if this.tabs.get(a.0) == Some(&SidePanel::Console) {
+                this.show_terminal(true, window, cx);
+            }
+        },
+    ))
     .on_action(cx.listener(|this, _: &NextSideTab, window, cx| this.step_side(1, window, cx)))
     .on_action(cx.listener(|this, _: &PreviousSideTab, window, cx| this.step_side(-1, window, cx)))
     .on_action(cx.listener(|this, _: &RenameOpenChat, window, cx| {
@@ -233,7 +244,12 @@ impl Root {
         self.toast(Toast::danger("Error starting chat"), cx);
     }
 
-    fn new_special_chat(&mut self, mode: NewChatMode, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn new_special_chat(
+        &mut self,
+        mode: NewChatMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.new_chat(window, cx);
         self.shortcut_state.new_chat_mode = mode;
         self.home.update(cx, |home, cx| {
@@ -650,6 +666,7 @@ impl Root {
             if let Some(config) = computer_use {
                 params["config"] = config;
             }
+            params["dynamicTools"] = json!([crate::terminal::read_thread_terminal_tool()]);
             if let Some(memory) = memory {
                 memory.apply(&mut params);
             }
