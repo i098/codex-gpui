@@ -10,6 +10,8 @@ use gpui::{
 pub(super) struct UserMessage {
     pub id: SharedString,
     pub message: SharedString,
+    /// The message's non-text inputs: images, file mentions, skills.
+    pub attachments: Vec<UserInput>,
     pub sent_at: Option<String>,
     pub find: Option<FindPaint>,
     pub thread_id: String,
@@ -50,15 +52,32 @@ impl MessageActions {
         cx.notify();
     }
 
+    /// Opens the editor on the message: its text and local images in the composer, the other
+    /// attachments (`extra`) resent unchanged.
     fn edit(
         &mut self,
         message: &str,
+        attachments: &[UserInput],
         thread_id: String,
         turn_id: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let owner = cx.weak_entity();
+        let (images, extra): (Vec<_>, Vec<_>) = attachments
+            .iter()
+            .partition(|input| matches!(input, UserInput::LocalImage { .. }));
+        let images: Vec<std::path::PathBuf> = images
+            .into_iter()
+            .filter_map(|input| match input {
+                UserInput::LocalImage { path } => Some(path.into()),
+                _ => None,
+            })
+            .collect();
+        let extra: Vec<serde_json::Value> = extra
+            .into_iter()
+            .filter_map(|input| serde_json::to_value(input).ok())
+            .collect();
         self.editor = Some(cx.new(|cx| {
             let editor = cx.weak_entity();
             let mut composer = Composer::message_edit(
@@ -75,6 +94,7 @@ impl MessageActions {
                 window,
                 cx,
             );
+            composer.load_queued("", &images, window, cx);
             composer.on_submit(move |submission, window, cx| {
                 if let Some(editor) = editor.upgrade() {
                     window.dispatch_action(
@@ -82,6 +102,8 @@ impl MessageActions {
                             thread_id: thread_id.clone(),
                             turn_id: turn_id.clone(),
                             message: submission.text.clone(),
+                            attachments: submission.attachments.clone(),
+                            extra: extra.clone(),
                             editor,
                         }),
                         cx,
@@ -103,7 +125,14 @@ fn reveal<E: InteractiveElement>(e: E, group: &SharedString, color: Hsla) -> E {
 
 impl RenderOnce for UserMessage {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let bubble = user_bubble(&self.id, &self.message, self.find.as_ref(), window, cx);
+        let bubble = user_bubble(
+            &self.id,
+            &self.message,
+            &self.attachments,
+            self.find.as_ref(),
+            window,
+            cx,
+        );
         let state = window.use_keyed_state(self.id.clone(), cx, |_, cx| MessageActions {
             copied: false,
             focus: cx.focus_handle(),
@@ -119,7 +148,8 @@ impl RenderOnce for UserMessage {
         let copied = s.copied;
         let focus = s.focus.clone();
         let t = cx.theme();
-        let (edit_state, edit_message) = (state.clone(), self.message.clone());
+        let (edit_state, edit_message, edit_attachments) =
+            (state.clone(), self.message.clone(), self.attachments);
         let group = SharedString::from(format!("{}-group", self.id));
         let shown = t.text_tertiary;
         let color = shown.opacity(if visible { 1. } else { 0. });
@@ -179,6 +209,7 @@ impl RenderOnce for UserMessage {
                                     edit_state.update(cx, |s, cx| {
                                         s.edit(
                                             &edit_message,
+                                            &edit_attachments,
                                             self.thread_id.clone(),
                                             turn_id.clone(),
                                             window,
@@ -277,6 +308,10 @@ pub struct EditMessage {
     pub thread_id: String,
     pub turn_id: String,
     pub message: String,
+    /// The editor's images, sent as `localImage` inputs.
+    pub attachments: Vec<std::path::PathBuf>,
+    /// The message's other inputs (mentions, skills, remote images), resent unchanged.
+    pub extra: Vec<serde_json::Value>,
     pub editor: Entity<Composer>,
 }
 
