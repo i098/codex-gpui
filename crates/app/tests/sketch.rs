@@ -6,6 +6,11 @@ use common::{Fx, exchange, script};
 use serde_json::json;
 
 #[test]
+fn proxy() {
+    common::proxy_child();
+}
+
+#[test]
 fn slash_sketch_attaches_the_drawing_as_a_png() -> Result<()> {
     let mut lines = script(None, |_| {})?;
     lines.extend(exchange("fs/createDirectory", json!({})));
