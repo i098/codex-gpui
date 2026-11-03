@@ -50,6 +50,7 @@ mod tray;
 pub mod user_data;
 pub use routes::Route;
 mod plugins;
+mod project_actions;
 pub mod screenshot;
 mod search;
 mod section_actions;
@@ -501,6 +502,7 @@ pub struct Root {
     plugins_page: Option<Entity<ui::screens::plugins::Page>>,
     voice_chat: Option<voice_chat::VoiceChat>,
     sites_page: Option<Entity<ui::screens::sites::Page>>,
+    security_cloud_page: Option<Entity<ui::screens::security_cloud::Page>>,
     maps_page: Option<Entity<ui::screens::maps::Page>>,
     images_page: Option<Entity<ui::screens::images::Page>>,
     gpts_page: Option<Entity<ui::screens::gpts::Page>>,
@@ -553,6 +555,8 @@ pub struct Root {
     project_load: Option<Task<()>>,
     destination_load: Option<Task<()>>,
     unread_destinations: Option<Arc<[SharedString]>>,
+    /// The MCP catalog lists the `codex_security_cloud` destination.
+    security_cloud: bool,
     picking_project: bool,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
@@ -1000,6 +1004,7 @@ impl Root {
             plugins_page: None,
             voice_chat: None,
             sites_page: None,
+            security_cloud_page: None,
             maps_page: None,
             images_page: None,
             gpts_page: None,
@@ -1055,6 +1060,7 @@ impl Root {
             project_load: None,
             destination_load: None,
             unread_destinations: None,
+            security_cloud: false,
             picking_project: false,
             automation_updates: HashMap::new(),
             suggestion_load: None,
@@ -1443,6 +1449,10 @@ impl Root {
 
     pub fn sites_page(&self) -> Option<&Entity<ui::screens::sites::Page>> {
         self.sites_page.as_ref()
+    }
+
+    pub fn security_cloud_page(&self) -> Option<&Entity<ui::screens::security_cloud::Page>> {
+        self.security_cloud_page.as_ref()
     }
 
     pub fn space_page(&self) -> Option<&Entity<ui::screens::space::SpacePage>> {
@@ -6758,6 +6768,9 @@ impl Root {
         if !matches!(store, "desktop" | "features" | "sandbox_workspace_write") && !key.is_empty() {
             return apply(&mut self.config);
         }
+        if settings_configuration::write_on_selected_host(self, e, cx) {
+            return;
+        }
         let params = json!({
             "keyPath": e.path,
             "value": e.value,
@@ -8873,7 +8886,10 @@ impl Render for Root {
         let root = routes::actions(archived_chats::actions(root, cx), cx);
         let root = hotkey::actions(root, self.popout.is_some(), cx);
         native_menus::actions(
-            section_actions::actions(features::actions(root, self, cx), cx),
+            section_actions::actions(
+                project_actions::actions(features::actions(root, self, cx), cx),
+                cx,
+            ),
             self,
             cx,
         )

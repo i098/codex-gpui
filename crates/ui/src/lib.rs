@@ -76,6 +76,9 @@ actions!(
         OpenPullRequests,
         OpenPlugins,
         OpenSecurity,
+        /// Explore ▸ `Security Cloud`: the `codex_security_cloud` app's findings, repositories
+        /// and scans.
+        OpenSecurityCloud,
         /// Rail `Sites` (`/sites`).
         OpenSites,
         /// Explore ▸ `Maps` (`/maps`).
@@ -300,6 +303,8 @@ pub struct Shell {
     /// Unseen, unpinned MCP destinations; `None` while their source is unavailable.
     pub unread_destinations: Option<Arc<[SharedString]>>,
     pub security_available: bool,
+    /// The MCP catalog has the `codex_security_cloud` destination: Explore lists `Security Cloud`.
+    pub security_cloud_available: bool,
     pub scheduled_attention: bool,
     /// The profile avatar's menu is open.
     pub profile_menu: bool,
@@ -404,6 +409,7 @@ impl Shell {
             attention: false,
             unread_destinations: None,
             security_available: false,
+            security_cloud_available: false,
             scheduled_attention: false,
             profile_menu: false,
             account: None,
@@ -1395,9 +1401,9 @@ impl Shell {
 
     /// The Explore `…` menu (`sidebarCustomization.moreMenu`), right of the rail item: the
     /// secondary destinations the port has, in the original's order (`Images`, `Maps`,
-    /// `GPTs`), then `Security` when available.
-    /// `Customize sidebar` and MCP destinations need the sidebar-customization store, which the
-    /// port lacks.
+    /// `GPTs`), then `Security` and the `Security Cloud` MCP destination when available.
+    /// `Customize sidebar` and other MCP destinations need the sidebar-customization store,
+    /// which the port lacks.
     fn explore_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let hover = t.menu_item_hover;
         let menu_item = |id: &'static str, label: &'static str, action: Box<dyn gpui::Action>| {
@@ -1433,6 +1439,13 @@ impl Shell {
                             "explore-security",
                             "Security",
                             Box::new(OpenSecurity),
+                        ))
+                    })
+                    .when(self.security_cloud_available, |d| {
+                        d.child(menu_item(
+                            "explore-security-cloud",
+                            "Security Cloud",
+                            Box::new(OpenSecurityCloud),
                         ))
                     })
             }))
