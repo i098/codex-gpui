@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Run the selected local environment's actions from the thread: `Run: {action}` and an `Actions` menu in the header, `⌘⇧D` for the first and `environmentAction1`–`9` shortcut slots; each command runs in a new terminal tab.
+- List a thread's subagents in Thread summary and open them in a `Subagents` side panel tab: `Active` and `Done` sections, and a detail view with the model, delegated task, status and final response.
 - Migrate a legacy Codex Cloud environment from its detail page with `Migrate`, as in the original: the app converts it through `legacy_environment_id` with `start_onboarding` and opens the setup chat. The list shows the `A new Codex Cloud experience is here` notice.
 - Bind the Configure and Skills commands in keyboard shortcuts, command search, and the command menu.
 - Show the original's suggested scheduled tasks (`Daily brief`, `Weekly review`, `Follow-up monitor`) under an empty Scheduled list; a row opens the create editor with its name, prompt and schedule filled in.

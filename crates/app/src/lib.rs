@@ -249,6 +249,8 @@ pub enum SidePanel {
     Sources,
     /// Thread summary ▸ `Plan`: the latest plan, editable.
     Plan,
+    /// Thread summary ▸ `Subagents`: the thread's subagents ([`Root::subagents`]).
+    Subagents,
     /// `⌘T` and a link's `Open in` ▸ `New tab`: the browser tab with this key
     /// ([`Root::browser_tab`]).
     Browser(usize),
@@ -489,6 +491,8 @@ pub struct Root {
     file: Option<Entity<FileView>>,
     /// The plan of [`SidePanel::Plan`]; cleared with the thread.
     plan: Option<Entity<ui::screens::plan::PlanView>>,
+    /// The view of [`SidePanel::Subagents`]; cleared with the thread.
+    subagents: Option<Entity<ui::screens::subagents::SubagentsView>>,
     /// The image view of [`SidePanel::Image`]; cleared with the thread.
     image: Option<Entity<ui::screens::thread::view::ImageView>>,
     /// The open thread in the main shell, with its side panel if any.
@@ -1008,6 +1012,7 @@ impl Root {
             diff_watch: None,
             file: None,
             plan: None,
+            subagents: None,
             image: None,
             split: None,
             terminal: terminal::Terminals::default(),
@@ -3233,6 +3238,7 @@ impl Root {
         side_chats: &[SideChat],
         browsers: &[(usize, Entity<BrowserTab>)],
         console: bool,
+        subagents: bool,
         cx: &App,
     ) -> Option<Tab> {
         match side {
@@ -3290,6 +3296,11 @@ impl Root {
                 label: plan?.read(cx).title(),
                 preview: false,
             }),
+            SidePanel::Subagents => subagents.then(|| Tab {
+                icon: "side-chat",
+                label: "Subagents".into(),
+                preview: false,
+            }),
             SidePanel::Browser(key) => {
                 let (_, tab) = browsers.iter().find(|(k, _)| *k == key)?;
                 Some(Tab {
@@ -3314,6 +3325,7 @@ impl Root {
         let chats = &self.side_chats;
         let browsers = &self.browser_tabs;
         let console = self.terminal_panel().is_some();
+        let subagents = self.subagents.is_some();
         let tab = |side: &SidePanel| {
             Self::side_tab(
                 *side,
@@ -3324,6 +3336,7 @@ impl Root {
                 chats,
                 browsers,
                 console,
+                subagents,
                 cx,
             )
         };
@@ -3346,6 +3359,7 @@ impl Root {
                 .new(|cx| ui::screens::sources::SourcesView::new(view.clone(), cx))
                 .into(),
             SidePanel::Plan => self.plan.as_ref()?.clone().into(),
+            SidePanel::Subagents => self.subagents.as_ref()?.clone().into(),
             SidePanel::Browser(key) => self.browser_tab(key)?.clone().into(),
         };
         Some((view, tabs, active))
@@ -4765,6 +4779,7 @@ impl Root {
         self.diff = Some(diff);
         self.file = None;
         self.plan = None;
+        self.subagents = None;
         self.image = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         view.update(cx, |view, cx| {
