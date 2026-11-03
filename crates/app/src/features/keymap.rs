@@ -153,6 +153,9 @@ fn rebind(previous: Option<&Preferences>, next: &Preferences, cx: &mut App) {
             // Tab navigation keeps the chat bindings outside the focused side panel.
             let context = if matches!(command.id, "nextTab" | "previousTab" | "closeOtherTabs") {
                 Some("SideTabs")
+            } else if matches!(command.id, "navigateBrowserBack" | "navigateBrowserForward") {
+                // `⌘←`/`⌘→` keep their line-start/end meaning in the address bar.
+                Some("BrowserTab && !Composer")
             } else if command.id.starts_with("composer.") {
                 Some("Composer")
             } else if !key.contains("cmd-") && !key.contains("ctrl-") && !key.contains("alt-") {
@@ -209,6 +212,11 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "environmentAction9" => Box::new(shortcuts::EnvironmentAction9),
         "openReviewTab" => Box::new(OpenChangesPanel),
         "openBrowserTab" => Box::new(ui::browser::OpenBrowserTab::default()),
+        "navigateBrowserBack" => Box::new(ui::browser::BrowserBack),
+        "navigateBrowserForward" => Box::new(ui::browser::BrowserForward),
+        "reloadBrowserPage" => Box::new(ui::browser::ReloadBrowserPage),
+        "hardReloadBrowserPage" => Box::new(ui::browser::HardReloadBrowserPage),
+        "focusBrowserAddressBar" => Box::new(ui::browser::FocusBrowserAddressBar),
         "toggleSidePanel" => Box::new(ToggleChangesPanel),
         "toggleFileTreePanel" => Box::new(crate::native_menus::ToggleNavigationPanel),
         "showWorkspaceTabView" => Box::new(ui::ShowWorkspaceTabView),
