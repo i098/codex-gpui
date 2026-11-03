@@ -630,6 +630,7 @@ impl Composer {
     /// leading icon, label, description and, on the current mode, the check.
     pub(super) fn permissions_menu(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
         let hover = t.menu_item_hover;
+        let presets = permission_presets(cx);
         popover(t, 417., |d| {
             d.child(
                 div()
@@ -654,7 +655,7 @@ impl Composer {
                     ),
             )
             .children(
-                Permission::ALL
+                presets
                     .iter()
                     .map(|p| (p, p.description()))
                     .chain(
