@@ -88,6 +88,14 @@ pub(super) fn page(root: &mut Root, window: &mut Window, cx: &mut Context<Root>)
     {
         page.update(cx, |page, cx| page.show_subtree(view, cx));
     }
+    cx.subscribe_in(
+        &page,
+        window,
+        |this, _, _: &settings::RequestFullAccessAvailable, window, cx| {
+            this.open_dialog(DialogKind::FullAccessAvailable, window, cx)
+        },
+    )
+    .detach();
     cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
         this.write_setting(e, cx);
         if e.path.starts_with("host.") && e.path != settings::THEME {
