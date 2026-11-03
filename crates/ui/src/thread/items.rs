@@ -847,6 +847,7 @@ fn item_row(item: &ThreadItem, live: bool) -> Option<Row> {
             receiver_thread_ids,
             prompt,
             agents_states,
+            ..
         } => {
             let mut r = row(
                 id,
