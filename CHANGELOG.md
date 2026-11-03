@@ -130,6 +130,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Bind `⇧⌘C` to copy the open chat's newest managed worktree root, else its working directory; bind `⌥⇧⌘C` to copy the conversation file path from `thread/read`.
 - Add signed native updates with download progress, installation, relaunch, and organization policy controls.
 - Restore `View` > `Toggle Bottom Panel` and `View` > `Open Terminal` in the macOS menu bar, in the original order.
+- Open system HTTP and HTTPS links in the in-app browser; opt into macOS handler registration with `CODEX_GPUI_DEFAULT_BROWSER=1`.
 - Add `Group by` (`Project` or `None`) to the Archived chats filter menu; `None` shows every archived chat in one list without project headers.
 
 ### Fixed

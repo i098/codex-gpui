@@ -10,9 +10,10 @@ if [[ ${1:-} != --assemble ]]; then
     [[ -z $(git status --porcelain) ]] || revision=$revision-dirty
     lane=bundle
     [[ $mode == normal ]] || { mode=qa; lane=qa-sync; }
-    printf -v update_env 'CODEX_GPUI_UPDATE_FEED=%q CODEX_GPUI_UPDATE_PUBLIC_KEY=%q CODEX_GPUI_SPARKLE_FRAMEWORK=%q CODEX_GPUI_SIGN_IDENTITY=%q' \
+    printf -v update_env 'CODEX_GPUI_UPDATE_FEED=%q CODEX_GPUI_UPDATE_PUBLIC_KEY=%q CODEX_GPUI_SPARKLE_FRAMEWORK=%q CODEX_GPUI_SIGN_IDENTITY=%q CODEX_GPUI_DEFAULT_BROWSER=%q' \
         "${CODEX_GPUI_UPDATE_FEED:-}" "${CODEX_GPUI_UPDATE_PUBLIC_KEY:-}" \
-        "${CODEX_GPUI_SPARKLE_FRAMEWORK:-}" "${CODEX_GPUI_SIGN_IDENTITY:--}"
+        "${CODEX_GPUI_SPARKLE_FRAMEWORK:-}" "${CODEX_GPUI_SIGN_IDENTITY:--}" \
+        "${CODEX_GPUI_DEFAULT_BROWSER:-}"
     tools/mac.sh -l "$lane" "$update_env bash tools/bundle.sh --assemble /tmp/cgx-mac/release-$lane $mode $revision archive"
     destination=/tmp/cgx/release
     filename=codex-gpui-$version-macos-arm64.zip
@@ -29,20 +30,27 @@ name='Codex GPUI' identifier=dev.codexgpui.app
 # The normal bundle declares the `codex://` URL scheme (the original's packaged
 # CFBundleURLTypes); the QA bundle stays out of it so it never contends with the real
 # ChatGPT.app for the scheme on a shared Mac.
-url_scheme=''
+url_schemes=()
 export CODEX_GPUI_REVISION=$revision
 unset CODEX_GPUI_QA
 if [[ $mode == qa ]]; then
     name='Codex GPUI QA' identifier=dev.codexgpui.qa
     export CODEX_GPUI_QA=1
 elif [[ $mode == normal ]]; then
-    url_scheme='codex'
+    url_schemes=(codex)
+    if [[ ${CODEX_GPUI_DEFAULT_BROWSER:-} == 1 ]]; then
+        url_schemes+=(http https)
+    fi
 else
     exit 2
 fi
 url_types=""
-if [[ -n $url_scheme ]]; then
-    url_types="<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>$identifier</string><key>CFBundleURLSchemes</key><array><string>$url_scheme</string></array></dict></array>"
+if ((${#url_schemes[@]})); then
+    url_types="<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>$identifier</string><key>CFBundleURLSchemes</key><array>"
+    for scheme in "${url_schemes[@]}"; do
+        url_types+="<string>$scheme</string>"
+    done
+    url_types+="</array></dict></array>"
 fi
 binary=$CARGO_TARGET_DIR/release/codex-gpui
 if [[ ${CODEX_GPUI_UNIVERSAL:-} == 1 ]]; then
