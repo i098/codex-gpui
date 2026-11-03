@@ -177,6 +177,7 @@ impl Root {
             path == "/cloud-environments/new"
                 || path == "/settings/codex-cloud"
                 || path == "/settings/cloud-environments"
+                || path == "/settings/cloud-environments?tab=preferences"
                 || path.starts_with("/settings/cloud-environments/"),
             "Invalid cloud environment route"
         );
@@ -366,6 +367,16 @@ pub(crate) fn execute(
             path(&["wham", "environments", id, "reset-cache"]),
             None,
         ),
+        Operation::Preferences => {
+            return Ok(json!({
+                "user": request(host, identity, "GET", "/wham/settings/user", None)?,
+                "config": request(host, identity, "GET", "/wham/settings/configs/user-preferences", None)?,
+            }));
+        }
+        Operation::PreferencesSave(body) => {
+            ensure!(body.is_object(), "Invalid cloud preference body");
+            ("PATCH", "/wham/settings/user".into(), Some(body.clone()))
+        }
         Operation::Configs
         | Operation::Vault
         | Operation::Config(_)
@@ -745,6 +756,8 @@ fn error_label(operation: &Operation) -> &'static str {
         Operation::Save { .. } => "Unable to update cloud environment. Reload and try again",
         Operation::Delete(_) => "Unable to delete cloud environment",
         Operation::Reset(_) => "Unable to reset cloud environment cache",
+        Operation::Preferences => "Unable to load cloud preferences",
+        Operation::PreferencesSave(_) => "Unable to save cloud preference",
         _ => config_error_label(operation),
     }
 }
