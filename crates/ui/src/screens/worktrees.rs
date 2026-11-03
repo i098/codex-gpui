@@ -331,11 +331,17 @@ impl Worktrees {
             Load::Loading => unreachable!(),
             Load::Failed(error) => self.group(
                 "Unable to load worktrees".into(),
-                vec![
-                    div()
-                        .p(px(16.))
-                        .child(text(error, 13., 18.571_428, 430., t.text_secondary)),
-                ],
+                vec![div().p(px(16.)).child(text(
+                    if error.is_empty() {
+                        "Something went wrong while loading worktrees.".into()
+                    } else {
+                        error
+                    },
+                    13.,
+                    18.571_428,
+                    430.,
+                    t.text_secondary,
+                ))],
                 refresh,
                 t,
             ),
