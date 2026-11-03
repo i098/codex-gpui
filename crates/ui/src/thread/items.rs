@@ -10,6 +10,52 @@ pub(super) use automation::cache_automation_result;
 
 pub(super) type McpImages = RefCell<HashMap<String, Vec<(usize, Arc<Image>)>>>;
 
+/// Click on a generated image: show it in the side panel's image tab.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = shell, no_json)]
+pub struct OpenImage {
+    pub image: Arc<Image>,
+}
+
+/// The side panel's image tab: one generated image, fit to the panel.
+pub struct ImageView {
+    pub image: Arc<Image>,
+}
+
+impl Render for ImageView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .p(px(16.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(cx.theme().surface)
+            .child(
+                gpui::img(self.image.clone())
+                    .size_full()
+                    .object_fit(gpui::ObjectFit::Contain),
+            )
+    }
+}
+
+/// The image of an `imageGeneration` item: its `savedPath` file, else its base64 `result`.
+fn generated_image(saved_path: Option<&str>, result: Option<&str>) -> Option<Arc<Image>> {
+    // shortcut: reads the saved PNG on the UI thread once (then cached), async load if it lags.
+    let data = match saved_path.and_then(|path| std::fs::read(path).ok()) {
+        Some(data) => data,
+        None => base64::engine::general_purpose::STANDARD
+            .decode(result?)
+            .ok()?,
+    };
+    let format = saved_path
+        .and_then(|path| {
+            ImageFormat::from_mime_type(&format!("image/{}", path.rsplit('.').next()?))
+        })
+        .unwrap_or(ImageFormat::Png);
+    Some(Arc::new(Image::from_bytes(format, data)))
+}
+
 /// Right-aligned user message: `bg-user-message`, 22 px squircle, at most 70% wide. A message
 /// that wraps to more than 20 lines collapses to 19 with `Show more`
 /// (`collapsible-user-message-content`, `collapsedLineCount` 20, ellipsis indicator).
@@ -480,6 +526,8 @@ pub(super) enum Activity<'a> {
     /// A command still running, by its command line.
     Running(&'a str),
     Mcp(&'a ThreadItem),
+    /// An `imageGeneration` item: `Generating image...` while it runs, then the image.
+    Image(&'a ThreadItem),
     PatchOutput(&'a str, &'a str),
     /// A reasoning item seen live: `Thought for 3s` once completed, its summary under it while
     /// open (keyed `reasoning-<id>`); `Thinking` while it streams, with the streamed text
@@ -548,6 +596,7 @@ impl Activity<'_> {
             Activity::Markdown(_, text) => vec![(*text).to_owned()],
             Activity::Running(command) => vec![(*command).to_owned()],
             Activity::Mcp(item) => vec![mcp_label(item)],
+            Activity::Image(item) => vec![image_label(item).to_owned()],
             Activity::PatchOutput(_, output) => vec![(*output).to_owned()],
             Activity::Reasoning {
                 key,
@@ -634,6 +683,10 @@ pub(super) fn activities<'a>(
             ThreadItem::McpToolCall { .. } => {
                 flush(&mut out, &mut group);
                 out.push(Activity::Mcp(item));
+            }
+            ThreadItem::ImageGeneration { .. } => {
+                flush(&mut out, &mut group);
+                out.push(Activity::Image(item));
             }
             ThreadItem::DynamicToolCall { tool, status, .. } => {
                 flush(&mut out, &mut group);
@@ -1188,6 +1241,76 @@ pub(super) fn activity(
                     .child(header)
                     .children(view.expansion(&key, is_open, body, window, cx))
             }
+            Activity::Image(item) => {
+                let ThreadItem::ImageGeneration {
+                    id,
+                    status,
+                    result,
+                    saved_path,
+                    ..
+                } = item
+                else {
+                    unreachable!();
+                };
+                let decoded = (status == "completed")
+                    .then(|| {
+                        images
+                            .borrow_mut()
+                            .entry(id.clone())
+                            .or_insert_with(|| {
+                                generated_image(saved_path.as_deref(), result.as_deref())
+                                    .map(|image| (0, image))
+                                    .into_iter()
+                                    .collect()
+                            })
+                            .first()
+                            .map(|(_, image)| image.clone())
+                    })
+                    .flatten();
+                match decoded {
+                    Some(image) => {
+                        let context = crate::image_context::ImageContext {
+                            image: image.clone(),
+                            path: saved_path.as_ref().map(Into::into),
+                        };
+                        let open = OpenImage {
+                            image: image.clone(),
+                        };
+                        div().child(
+                            div()
+                                .id(SharedString::from(format!("generated-image-{id}")))
+                                .role(gpui::Role::Button)
+                                .aria_label("Generated image")
+                                .cursor_pointer()
+                                .rounded(px(12.))
+                                .overflow_hidden()
+                                .w(px(320.))
+                                .max_w_full()
+                                .child(gpui::img(image).w_full())
+                                .on_click(move |_, window, cx| {
+                                    window.dispatch_action(Box::new(open.clone()), cx)
+                                })
+                                .on_mouse_down(
+                                    gpui::MouseButton::Right,
+                                    cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                        this.menu = Some(context.menu(event.position, window, cx));
+                                        this.context_image = Some(context.clone());
+                                        cx.stop_propagation();
+                                        cx.notify();
+                                    }),
+                                ),
+                        )
+                    }
+                    None => {
+                        let words = if status == "completed" {
+                            "Image unavailable"
+                        } else {
+                            image_label(item)
+                        };
+                        row(glyph("diff-file-image"), plain(label(words.to_owned(), text60)))
+                    }
+                }
+            }
             Activity::Group {
                 key,
                 summary,
@@ -1289,6 +1412,17 @@ fn mcp_output(id: String, language: &'static str, value: &str, t: &Theme) -> Div
                         .whitespace_normal(),
                 ),
         )
+}
+
+/// The words of an `imageGeneration` row, as the original's generated-image placeholder says.
+fn image_label(item: &ThreadItem) -> &'static str {
+    match item {
+        ThreadItem::ImageGeneration { status, .. } if status == "inProgress" => {
+            "Generating image..."
+        }
+        ThreadItem::ImageGeneration { status, .. } if status == "completed" => "Generated image",
+        _ => "Image unavailable",
+    }
 }
 
 fn mcp_label(item: &ThreadItem) -> String {

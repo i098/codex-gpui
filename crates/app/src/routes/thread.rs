@@ -255,6 +255,18 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
         restore_focus(focused, window, cx);
     }))
     .on_action(cx.listener(Root::open_file))
+    .on_action(cx.listener(
+        |this, action: &ui::screens::thread::view::OpenImage, window, cx| {
+            this.image = Some(cx.new(|_| ui::screens::thread::view::ImageView {
+                image: action.image.clone(),
+            }));
+            if this.side_visible(SidePanel::Image) {
+                this.sync(window, cx);
+            } else {
+                this.set_side(SidePanel::Image, window, cx);
+            }
+        },
+    ))
     .on_action(cx.listener(|this, _: &OpenBackgroundTerminal, window, cx| {
         this.set_side(SidePanel::Terminal, window, cx)
     }))
