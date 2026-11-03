@@ -495,6 +495,9 @@ pub struct Root {
     /// Side panel tabs of the thread route in opening order, and the selected one (always in
     /// `tabs`); kept across threads like the original's panel.
     tabs: Vec<SidePanel>,
+    /// Closed side tabs, the last closed last, for `Reopen closed tab` (`⌘⇧T`); a browser
+    /// tab keeps its page's address.
+    closed_tabs: Vec<(SidePanel, Option<url::Url>)>,
     side: Option<SidePanel>,
     workspace_layout: WorkspaceLayout,
     /// The route's own shell.
@@ -809,6 +812,12 @@ impl Root {
                     ui::composer::SlashCommand::MemoryMode(_)
                     | ui::composer::SlashCommand::MemoryStatus => this.thread_memory_command(command, window, cx),
                     ui::composer::SlashCommand::Memories => this.open_memories(window, cx),
+                    ui::composer::SlashCommand::HotkeyNew => {
+                        window.dispatch_action(Box::new(hotkey::Collapse), cx)
+                    }
+                    ui::composer::SlashCommand::Resume(id) => {
+                        this.navigate(Route::Thread(id.clone()), window, cx)
+                    }
                     ui::composer::SlashCommand::Status => this.show_status(window, cx),
                     ui::composer::SlashCommand::Init => this.init_agents(window, cx),
                     ui::composer::SlashCommand::Side => this.start_side_chat(window, cx),
@@ -1002,6 +1011,7 @@ impl Root {
             split: None,
             terminal: terminal::Terminals::default(),
             tabs: Vec::new(),
+            closed_tabs: Vec::new(),
             side: None,
             workspace_layout: WorkspaceLayout::Split,
             page: None,
@@ -3042,6 +3052,7 @@ impl Root {
             menu.update(cx, |menu, cx| menu.update_catalog(threads, &unread, cx));
         }
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
+        hotkey::sync_recents(self, cx);
         if self.host_id() == "local" {
             let recents: Vec<_> = threads
                 .iter()
@@ -3379,10 +3390,20 @@ impl Root {
     /// the previous, is selected; closing the last tab closes the panel. A side chat's tab
     /// discards its conversation.
     fn close_side(&mut self, side: SidePanel, window: &mut Window, cx: &mut Context<Self>) {
+        let open = self.tabs.contains(&side);
         match side {
             SidePanel::SideChat(key) => self.discard_side_chat(key, cx),
-            // Dropping the tab removes its page from the window.
-            SidePanel::Browser(key) => self.browser_tabs.retain(|(k, _)| *k != key),
+            SidePanel::Browser(key) => {
+                let url = self
+                    .browser_tab(key)
+                    .and_then(|tab| tab.read(cx).url().cloned());
+                if open {
+                    self.closed_tabs.push((side, url));
+                }
+                // Dropping the tab removes its page from the window.
+                self.browser_tabs.retain(|(k, _)| *k != key);
+            }
+            _ if open => self.closed_tabs.push((side, None)),
             _ => {}
         }
         let Some(ix) = self.tabs.iter().position(|t| *t == side) else {
@@ -3393,6 +3414,24 @@ impl Root {
             self.side = self.tabs.get(ix).or(self.tabs.last()).copied();
         }
         self.sync(window, cx);
+    }
+
+    /// `Reopen closed tab` (`⌘⇧T`): the last closed tab whose content the thread still has
+    /// (a browser tab reloads its address), selected.
+    fn reopen_closed_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        while let Some((side, url)) = self.closed_tabs.pop() {
+            if self.tabs.contains(&side) {
+                continue;
+            }
+            if let SidePanel::Browser(_) = side {
+                self.open_browser_tab(url, window, cx);
+                return;
+            }
+            self.set_side(side, window, cx);
+            if self.tabs.contains(&side) {
+                return;
+            }
+        }
     }
 
     /// `⌘T` (`url` none, the address bar focused) and a link's `Open in` ▸ `New tab`: a new
@@ -6787,6 +6826,10 @@ impl Root {
                         "Failed to save draft pull request setting"
                     }
                     "git-review-mode" => "Could not save Git diff setting",
+                    "git-worktree-root" => "Failed to save worktree root",
+                    "worktree-upstream-refresh-mode" => "Failed to save upstream refresh setting",
+                    "worktree-auto-cleanup-enabled" => "Failed to save automatic deletion setting",
+                    "worktree-keep-count" => "Failed to save auto-delete limit",
                     "git-pr-watch-auto-merge" => "Failed to save automatic PR merging",
                     "git-commit-instructions"
                     | "git-pr-instructions"
@@ -6866,6 +6909,22 @@ impl Root {
                 };
                 if let Some(message) = message {
                     self.toast(Toast::info(message), cx);
+                }
+                let saved = match key {
+                    "git-worktree-root" => Some("Saved worktree root"),
+                    "worktree-upstream-refresh-mode" if e.value == "best-effort" => {
+                        Some("Upstream refresh enabled")
+                    }
+                    "worktree-upstream-refresh-mode" => Some("Upstream refresh disabled"),
+                    "worktree-auto-cleanup-enabled" if e.value == true => {
+                        Some("Automatic deletion enabled")
+                    }
+                    "worktree-auto-cleanup-enabled" => Some("Automatic deletion disabled"),
+                    "worktree-keep-count" => Some("Saved auto-delete limit"),
+                    _ => None,
+                };
+                if let Some(saved) = saved {
+                    self.toast(Toast::success(saved), cx);
                 }
             }
             return;
