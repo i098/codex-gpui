@@ -46,6 +46,9 @@ pub struct Thread {
     /// Filled only by `thread/read` with `includeTurns`, `thread/resume` and `thread/fork`.
     #[serde(default)]
     pub turns: Vec<Turn>,
+    /// `thread/turns/list` cursor for the turns older than `turns`; `None` when all are loaded.
+    #[serde(skip)]
+    pub older_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -165,6 +168,13 @@ pub enum ThreadItem {
         result: Option<String>,
         #[serde(default)]
         saved_path: Option<String>,
+    },
+    /// A call to a client tool the thread was started with (`dynamicTools`).
+    DynamicToolCall {
+        id: String,
+        tool: String,
+        /// `inProgress` | `completed` | `failed`
+        status: String,
     },
     ContextCompaction {
         id: String,
