@@ -203,6 +203,35 @@ impl Root {
         cx.notify();
     }
 
+    /// `Rate response`: sends the picked option as `feedback/upload` for the open thread.
+    pub(crate) fn submit_rating(
+        &mut self,
+        rating: &ui::screens::thread::view::SubmitRating,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Route::Thread(thread) = &self.state.route else {
+            return;
+        };
+        let params = json!({"classification": rating.classification, "reason": rating.reason,
+            "includeLogs": false, "threadId": thread, "tags": {"turn_id": rating.turn_id}});
+        let bridge = self.bridge.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = bridge.request::<_, Value>("feedback/upload", params).await;
+            this.update(cx, |this, cx| {
+                this.toast(
+                    match result {
+                        Ok(_) => Toast::success("Thanks for your feedback"),
+                        Err(error) => Toast::danger(format!("Failed to send feedback: {error}")),
+                    },
+                    cx,
+                )
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     pub(crate) fn recap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(view) = self
             .thread

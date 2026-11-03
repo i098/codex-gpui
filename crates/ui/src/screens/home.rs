@@ -131,8 +131,11 @@ impl HomeMain {
             _ => (None, "Do anything"),
         };
         self.headline = headline;
-        self.composer
-            .update(cx, |composer, cx| composer.set_placeholder(placeholder, cx));
+        let chat = placeholder == "Ask ChatGPT";
+        self.composer.update(cx, |composer, cx| {
+            composer.set_placeholder(placeholder, cx);
+            composer.set_chat(chat, cx);
+        });
         cx.notify();
     }
 
@@ -1029,10 +1032,9 @@ impl Render for HomeMain {
             // The ChatGPT composer is 640 px wide.
             .max_w(px(if chat { 672. } else { 768. }))
             .px(px(16.))
-            .pt(px(8.))
             .flex()
             .flex_col()
-            .child(div().h(px(8.)))
+            .when(!chat, |column| column.pt(px(8.)).child(div().h(px(8.))))
             .when(self.beacon, |column| {
                 column.child(self.beacon(&t, window, cx))
             })
@@ -1055,20 +1057,29 @@ impl Render for HomeMain {
             .child(self.composer.clone());
         let toolbar = div().flex_none().h(px(46.));
         if chat {
-            // The headline sits right above the composer, the pair a little above the middle
-            // (headline top at 296 px of the main panel's 788 at 1280×832).
+            // `_Hero`: `min-block-size: var(--home-composer-top)`, `max(0px, 42svh - 44px)`
+            // (the toolbar inset), `items-end`, 24 px above and 22 px below the headline; the
+            // composer starts at its bottom edge.
+            let top = (window.viewport_size().height * 0.42 - px(44.)).max(px(0.));
             let page = div()
                 .flex_1()
                 .min_h_0()
                 .flex()
                 .flex_col()
                 .items_center()
-                .pt(px(24.))
-                .child(div().flex_grow(2.))
-                .child(hero.w_full().px(px(20.)))
-                .child(div().h(px(14.)))
-                .child(column)
-                .child(div().flex_grow(3.));
+                .child(
+                    div()
+                        .w_full()
+                        .flex_none()
+                        .min_h(top)
+                        .pt(px(24.))
+                        .pb(px(22.))
+                        .flex()
+                        .items_end()
+                        .justify_center()
+                        .child(hero.w_full().max_w(px(672.)).px(px(20.))),
+                )
+                .child(column);
             return div()
                 .size_full()
                 .flex()

@@ -6,7 +6,9 @@
 //! User-message controls appear on hover or focus without moving the transcript.
 //! Copy writes plain text and HTML on macOS and shows a checkmark for 1500 ms.
 //! Answer text is selectable by drag (`thread/select.rs`); `Copy` writes the selection.
-//! Find searches user and agent messages, including collapsed activity, without server requests.
+//! Find searches user and agent messages, including collapsed activity. While older turns are
+//! unloaded, the app asks `thread/searchOccurrences` and pages them in until the matches show.
+//! Opening loads the newest page of turns; `Load earlier messages` fetches the one before.
 //! The last text message opens an inline editor. Send reverts that turn before resending it.
 //! Response copy adds HTML. Response actions use the shared delayed tooltip.
 //! A failed resume or revert leaves the draft open and shows `Failed to edit message`.
@@ -22,8 +24,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bridge::Event;
 use bridge::types::{
-    AgentMessageDeltaNotification, CommandAction, FileUpdateChange, ItemNotification, Thread,
-    ThreadItem, Turn, TurnNotification, TurnStatus, UserInput,
+    AgentMessageDeltaNotification, CommandAction, FileUpdateChange, ItemNotification,
+    MemoryCitation, Thread, ThreadItem, Turn, TurnNotification, TurnStatus, UserInput,
+    WebSearchAction,
 };
 use gpui::{
     Action, AnyView, App, Bounds, ClipboardItem, Context, Corners, Div, FontWeight, Hsla,
@@ -58,10 +61,11 @@ mod recovery;
 #[path = "thread/select.rs"]
 mod select;
 pub use context::ReasoningVisibility;
+pub use items::{ImageView, OpenImage};
 
 pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
-pub use actions::{EditMessage, ForkThread, PatchTurn, RevertTurn, ThreadPressed};
+pub use actions::{EditMessage, ForkThread, PatchTurn, RevertTurn, SubmitRating, ThreadPressed};
 use actions::{TurnFocus, action_row};
 pub enum GitAction {
     Refresh,
@@ -80,7 +84,38 @@ pub struct OpenAutomationCard {
 
 impl gpui::EventEmitter<OpenAutomationCard> for ThreadView {}
 
-use items::{activity, cache_automation_result, diff_card, disclosure, user_bubble, wrap_row};
+/// The `Load earlier messages` row was pressed (or find needs older turns).
+pub struct LoadOlderTurns;
+
+impl gpui::EventEmitter<LoadOlderTurns> for ThreadView {}
+
+/// The realtime voice session shown under the transcript.
+pub struct VoiceCard {
+    pub status: SharedString,
+    /// Starting or live: the card offers `End voice chat`; otherwise `Dismiss`.
+    pub live: bool,
+    pub lines: Vec<VoiceLine>,
+}
+
+pub struct VoiceLine {
+    pub user: bool,
+    pub text: SharedString,
+}
+
+/// The voice card's end or dismiss button was pressed.
+pub struct EndVoice;
+
+impl gpui::EventEmitter<EndVoice> for ThreadView {}
+
+/// The find query changed while older turns are unloaded: ask the server where it occurs.
+pub struct SearchHistory(pub String);
+
+impl gpui::EventEmitter<SearchHistory> for ThreadView {}
+
+use items::{
+    activity, cache_automation_result, diff_card, disclosure, memory_citations, user_bubble,
+    wrap_row,
+};
 use markdown::{markdown, tones};
 pub use select::Selection;
 use select::{Carets, block_end, frame_start, highlight};
@@ -190,6 +225,8 @@ pub struct ThreadView {
     clock: Clock,
     composer: AnyView,
     embedded: bool,
+    /// `forkedFromId`: the chat this one continues.
+    forked_from: Option<String>,
     _tick: Option<Task<()>>,
     running_since: HashMap<String, Instant>,
     /// A running turn's worked seconds, frozen when its final answer started streaming.
@@ -230,6 +267,12 @@ pub struct ThreadView {
     /// press that focuses it).
     press_focus: Option<gpui::FocusHandle>,
     find: Option<FindState>,
+    /// `thread/turns/list` cursor of the turns before `turns`; `None` once all are loaded.
+    older_cursor: Option<String>,
+    loading_older: bool,
+    voice: Option<VoiceCard>,
+    /// The turn that stays put when older turns are prepended, and its top in the viewport.
+    older_anchor: Rc<RefCell<Option<(String, Pixels)>>>,
     /// The link menu (`menu.rs`): `subject` is the right-clicked link.
     menu: Option<menu::ContextMenu>,
     context_image: Option<crate::image_context::ImageContext>,
@@ -703,6 +746,7 @@ impl ThreadView {
             clock,
             composer,
             embedded: false,
+            forked_from: thread.forked_from_id,
             _tick: None,
             running_since: HashMap::new(),
             answer_secs: HashMap::new(),
@@ -726,6 +770,10 @@ impl ThreadView {
             carets: Carets::default(),
             press_focus: None,
             find: None,
+            older_cursor: thread.older_cursor,
+            loading_older: false,
+            voice: None,
+            older_anchor: Rc::default(),
             menu: None,
             context_image: None,
         }
@@ -745,6 +793,109 @@ impl ThreadView {
 
     pub fn id(&self) -> &str {
         &self.thread_id
+    }
+
+    pub fn set_voice(&mut self, voice: Option<VoiceCard>, cx: &mut Context<Self>) {
+        self.voice = voice;
+        cx.notify();
+    }
+
+    fn voice_card(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
+        let voice = self.voice.as_ref()?;
+        let t = cx.theme().clone();
+        let button = recovery::retry_button(
+            "end-voice",
+            if voice.live {
+                "End voice chat"
+            } else {
+                "Dismiss"
+            },
+            window,
+            cx,
+        )
+        .on_click(cx.listener(|_, _, _, cx| cx.emit(EndVoice)));
+        let lines = voice.lines.iter().map(|line| {
+            let who = if line.user { "You" } else { "Codex" };
+            text(format!("{who}: {}", line.text), 14., 21., 400., t.text)
+        });
+        Some(
+            div()
+                .mx_auto()
+                .w_full()
+                .max_w(CONTENT_MAX_WIDTH)
+                .px(px(16.))
+                .pb(px(12.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .p(px(12.))
+                        .rounded(Theme::RADIUS_XL_BASE)
+                        .border_1()
+                        .border_color(t.border)
+                        .bg(t.surface_secondary)
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(text(voice.status.clone(), 14., 21., 500., t.text_secondary))
+                                .child(button),
+                        )
+                        .children(lines),
+                ),
+        )
+    }
+
+    pub fn has_turn(&self, id: &str) -> bool {
+        self.turns.iter().any(|turn| turn.id == id)
+    }
+
+    /// The cursor to fetch the next older page with, once; `None` while one is in flight.
+    pub fn begin_older(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        if self.loading_older {
+            return None;
+        }
+        let cursor = self.older_cursor.clone()?;
+        self.loading_older = true;
+        cx.notify();
+        Some(cursor)
+    }
+
+    /// Adds a fetched older page above the loaded turns without moving what is on screen.
+    pub fn prepend_turns(
+        &mut self,
+        mut turns: Vec<Turn>,
+        cursor: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        for item in turns.iter_mut().flat_map(|turn| &mut turn.items) {
+            cache_automation_result(item);
+        }
+        if let Some(first) = self.turns.first() {
+            let top = self
+                .laid_out
+                .borrow()
+                .turns
+                .get(&first.id)
+                .map(|&(top, _)| top);
+            *self.older_anchor.borrow_mut() =
+                top.map(|top| (first.id.clone(), top + self.scroll.offset().y));
+        }
+        turns.append(&mut self.turns);
+        self.turns = turns;
+        self.older_cursor = cursor;
+        self.loading_older = false;
+        if let Some(find) = &mut self.find {
+            find.dirty = true;
+        }
+        cx.notify();
+    }
+
+    pub fn older_failed(&mut self, cx: &mut Context<Self>) {
+        self.loading_older = false;
+        cx.notify();
     }
 
     /// The thread's working directory, as the server reports it.
@@ -911,6 +1062,10 @@ impl ThreadView {
         let cursor = find.selection.start + text.len();
         find.selection = cursor..cursor;
         find.dirty = true;
+        let query = find.query.trim().to_owned();
+        if self.older_cursor.is_some() && !query.is_empty() {
+            cx.emit(SearchHistory(query));
+        }
         cx.notify();
     }
 
@@ -1218,7 +1373,7 @@ impl ThreadView {
         .with_priority(3)
     }
     /// Only the last user message is editable, and only when its later turns have stopped.
-    /// Non-text content stays read-only because `UserInput::Other` cannot retain attachments.
+    /// Content the app cannot resend (`UserInput::Other`: audio, ...) stays read-only.
     pub fn can_edit(&self, turn_id: &str) -> bool {
         if self.embedded {
             return false;
@@ -1232,7 +1387,7 @@ impl ThreadView {
                     return turn.id == turn_id
                         && content
                             .iter()
-                            .all(|input| matches!(input, UserInput::Text { .. }));
+                            .all(|input| !matches!(input, UserInput::Other));
                 }
             }
         }
@@ -1519,6 +1674,50 @@ impl ThreadView {
                                 cx,
                             ))
                         },
+                    )),
+            );
+        }
+        let sources = crate::screens::sources::sources(&self.turns);
+        if !sources.is_empty() {
+            let open = |row: gpui::Stateful<Div>| {
+                row.mx(px(12.))
+                    .px(px(8.))
+                    .rounded(Theme::RADIUS_SM)
+                    .hover(move |style| style.bg(row_hover))
+                    .on_click(crate::dispatch::<crate::OpenSourcesPanel>)
+            };
+            let summary = sources
+                .files
+                .iter()
+                .map(|(path, _)| {
+                    let name = path.rsplit('/').next().unwrap_or(path);
+                    ("diff-file-default", name.to_owned())
+                })
+                .chain(
+                    sources
+                        .tools
+                        .iter()
+                        .map(|(server, _)| ("thread-mcp", server.clone())),
+                )
+                .chain(
+                    sources
+                        .web
+                        .iter()
+                        .map(|_| ("cloud-web", "Web search".to_owned())),
+                )
+                .take(3)
+                .enumerate()
+                .map(|(ix, (name, label))| open(row(name, label, 16., ix, window)));
+            sections.push(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(header("Sources".into()))
+                    .children(summary)
+                    .child(open(
+                        row("navigation-files", "View all".into(), 16., 3, window)
+                            .aria_label("View all sources"),
                     )),
             );
         }
@@ -2064,16 +2263,21 @@ impl ThreadView {
         focus.reverted = self.reverted_turns.contains(&turn.id);
         focus.patch_pending = self.patch_pending;
         let user = turn.items.iter().find_map(|i| match i {
-            ThreadItem::UserMessage { id, content } => Some((id, user_text(content))),
+            ThreadItem::UserMessage { id, content } => Some((id, user_text(content), content)),
             _ => None,
         });
-        if let Some((item, user)) = user {
+        if let Some((item, user, content)) = user {
             if let Some(started) = turn.started_at {
                 col = col.child(self.timestamp(started, window, t));
             }
             col = col.child(actions::UserMessage {
                 id: format!("user-message-{}", turn.id).into(),
                 message: user.into(),
+                attachments: content
+                    .iter()
+                    .filter(|input| !matches!(input, UserInput::Text { .. }))
+                    .cloned()
+                    .collect(),
                 find: self.find_paint(item),
                 thread_id: self.thread_id.clone(),
                 editable_turn: self.can_edit(&turn.id).then(|| turn.id.clone()),
@@ -2232,6 +2436,14 @@ impl ThreadView {
                 self.find_paint(item).as_ref(),
                 self.fades(item),
             ));
+            if let Some(ThreadItem::AgentMessage {
+                id,
+                memory_citation: Some(citation),
+                ..
+            }) = turn.items.last()
+            {
+                col = col.children(memory_citations(id, citation, &self.expanded, t, cx));
+            }
             if running {
                 return col;
             }
@@ -2244,6 +2456,10 @@ impl ThreadView {
                 .filter(|(id, _)| *id == turn.id)
                 .map(|_| self.turn_menu_popup(turn.started_at, cx));
             let id = turn.id.clone();
+            let rate = cx.listener(move |view, event: &gpui::ClickEvent, window, cx| {
+                view.open_rating(id.clone(), event.position(), window, cx)
+            });
+            let id = turn.id.clone();
             let toggle = cx.listener(move |view, _: &gpui::ClickEvent, window, cx| {
                 view.toggle_turn_menu(&id, window, cx)
             });
@@ -2252,7 +2468,7 @@ impl ThreadView {
             });
             return col.when(!self.embedded, |col| {
                 col.child(action_row(
-                    last, &group, answer, sent_at, menu, toggle, hover, &focus, t,
+                    last, &group, answer, sent_at, menu, rate, toggle, hover, &focus, t,
                 ))
             });
         }
@@ -2498,6 +2714,37 @@ impl ThreadView {
     }
 }
 
+/// `localConversation.forkedFromConversation`: the divider at the top of a forked chat. Its
+/// `Continued from chat` link opens the source chat.
+// shortcut: the original draws it after the copied history (fork point is client-side state); here it heads the chat.
+fn forked_marker(parent: &str, t: &Theme) -> Div {
+    let parent = parent.to_owned();
+    let line = || div().flex_1().h(px(1.)).bg(t.border);
+    div()
+        .w_full()
+        .py(px(16.))
+        .flex()
+        .items_center()
+        .gap(px(12.))
+        .child(line())
+        .child(
+            div()
+                .id("forked-from-conversation")
+                .cursor_pointer()
+                .hover(|s| s.underline())
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(
+                        Box::new(crate::screens::settings::usage::analytics::OpenChat(
+                            parent.clone(),
+                        )),
+                        cx,
+                    )
+                })
+                .child(text("Continued from chat", 13., 18., 430., t.text_tertiary)),
+        )
+        .child(line())
+}
+
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = cx.background_executor().now();
@@ -2548,7 +2795,7 @@ impl Render for ThreadView {
                     .then(|| laid_out.turns.get(&turn.id))
                     .flatten()
                     .filter(|&&(top, h)| far(top + offset, h, view));
-                match stand_in {
+                let body = match stand_in {
                     Some(&(_, h)) => div().h(h),
                     None => {
                         let errors = self.render_errors.borrow();
@@ -2582,6 +2829,14 @@ impl Render for ThreadView {
                             }
                         }
                     }
+                };
+                match &self.forked_from {
+                    Some(parent) if i == 0 && stand_in.is_none() => div()
+                        .flex()
+                        .flex_col()
+                        .child(forked_marker(parent, &t))
+                        .child(body),
+                    _ => body,
                 }
             })
             .collect();
@@ -2596,6 +2851,7 @@ impl Render for ThreadView {
             .as_ref()
             .map(|find| (find.target.clone(), find.scroll_pending.clone()));
         let view_id = cx.entity().entity_id();
+        let older_anchor = self.older_anchor.clone();
         let measure = move |bounds: Vec<Bounds<Pixels>>, window: &mut Window, cx: &mut App| {
             let origin = scroll.bounds().top() + scroll.offset().y;
             let width = bounds.first().map_or(px(0.), |b| b.size.width);
@@ -2624,6 +2880,14 @@ impl Render for ThreadView {
                 .zip(&bounds)
                 .map(|(id, b)| (id.clone(), (b.top() - origin, b.size.height)))
                 .collect();
+            if let Some((id, viewport_top)) = older_anchor.borrow_mut().take()
+                && let Some(&(top, _)) = l.turns.get(&id)
+            {
+                let mut offset = scroll.offset();
+                offset.y = (viewport_top - top).clamp(-scroll.max_offset().y, px(0.));
+                scroll.set_offset(offset);
+                window.defer(cx, move |_, cx| cx.notify(view_id));
+            }
             if let Some((target, pending)) = &find_scroll
                 && pending.replace(false)
                 && let Some((layout, index)) = target.borrow().as_ref()
@@ -2833,6 +3097,22 @@ impl Render for ThreadView {
                             .size_0(),
                     )
                     .children(tracker)
+                    .children(self.older_cursor.is_some().then(|| {
+                        let label = if self.loading_older {
+                            "Loading earlier messages"
+                        } else {
+                            "Load earlier messages"
+                        };
+                        div().mx_auto().max_w(CONTENT_MAX_WIDTH).pb(px(12.)).child(
+                            recovery::retry_button("load-older", label, window, cx).on_click(
+                                cx.listener(|view, _, _, cx| {
+                                    if !view.loading_older {
+                                        cx.emit(LoadOlderTurns);
+                                    }
+                                }),
+                            ),
+                        )
+                    }))
                     .child(
                         div()
                             .mx_auto()
@@ -2852,6 +3132,7 @@ impl Render for ThreadView {
                             .children(turns)
                             .on_children_prepainted(measure),
                     )
+                    .children(self.voice_card(window, cx))
                     // Room for the docked composer.
                     .child(div().h(px(114.)))
                     .child(top_fade),
@@ -3010,7 +3291,12 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::CommandExecution { id, .. }
         | ThreadItem::McpToolCall { id, .. }
         | ThreadItem::FileChange { id, .. }
+        | ThreadItem::ImageGeneration { id, .. }
+        | ThreadItem::DynamicToolCall { id, .. }
         | ThreadItem::ContextCompaction { id }
+        | ThreadItem::WebSearch { id, .. }
+        | ThreadItem::CollabAgentToolCall { id, .. }
+        | ThreadItem::ImageView { id, .. }
         | ThreadItem::EnteredReviewMode { id, .. }
         | ThreadItem::ExitedReviewMode { id, .. } => Some(id),
         ThreadItem::Other => None,
