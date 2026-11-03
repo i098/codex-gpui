@@ -303,6 +303,9 @@ pub mod environments;
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
 
+/// `Show Full access in the composer`; turning it on first asks `Make Full Access available?`.
+pub const FULL_ACCESS_SHOWN: &str = "host.show-full-access-in-composer";
+
 /// The live app-server connection. Settings and sign-in send their writes through it when
 /// the app sets this global; the parity fixture runs without one.
 pub struct AppServer(pub Arc<Bridge>);
@@ -676,6 +679,9 @@ pub struct HostSettingsChanged(pub Vec<(&'static str, Value)>);
 /// `Open config.toml`: the app opens the selected host's user config layer.
 pub struct OpenConfigToml;
 
+/// Turning on [`FULL_ACCESS_SHOWN`]: the app confirms before it stores the change.
+pub struct RequestFullAccessAvailable;
+
 /// `Filter settings by host` picked [`SettingsPage::config_host`].
 pub struct SelectConfigHost;
 
@@ -683,6 +689,7 @@ impl EventEmitter<SettingChanged> for SettingsPage {}
 impl EventEmitter<HostSettingsChanged> for SettingsPage {}
 impl EventEmitter<personalization::Event> for SettingsPage {}
 impl EventEmitter<OpenConfigToml> for SettingsPage {}
+impl EventEmitter<RequestFullAccessAvailable> for SettingsPage {}
 impl EventEmitter<SelectConfigHost> for SettingsPage {}
 
 /// `--sidebar-navigation` background, opaque.
@@ -1170,6 +1177,11 @@ impl SettingsPane {
         )
         .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
         .on_click(cx.listener(move |this, _, _, cx| {
+            if key == FULL_ACCESS_SHOWN && !on {
+                return this
+                    .page
+                    .update(cx, |_, cx| cx.emit(RequestFullAccessAvailable));
+            }
             let value = if key == "host.git-review-mode" {
                 json!(if on { "full" } else { "last-turn-only" })
             } else {
@@ -1299,7 +1311,7 @@ impl SettingsPane {
                         Some(
                             "When ChatGPT runs with full access, it can edit any file on your computer and run commands with network, without your approval. This significantly increases the risk of data loss, leaks, or unexpected behavior. <a>Learn more</a> about elevated risks.",
                         ),
-                        self.toggle("session.fullAccess", true, t, window, cx),
+                        self.toggle(FULL_ACCESS_SHOWN, true, t, window, cx),
                     ),
                 ],
             ),

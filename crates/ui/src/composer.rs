@@ -348,6 +348,22 @@ pub fn bind_keys(cx: &mut App) {
 /// (`low medium high xhigh ultra`) intersected with the model's supported efforts.
 const ENABLED_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "ultra"];
 
+/// The host's `show-full-access-in-composer` setting is off: the permissions menu omits
+/// `Full access` (`settings.agent.permissionsMode.fullAccess.toggle`).
+#[derive(Default)]
+pub struct FullAccessHidden(pub bool);
+
+impl gpui::Global for FullAccessHidden {}
+
+/// The preset rows of the permissions menu, before the named profiles.
+fn permission_presets(cx: &App) -> Vec<Permission> {
+    let hidden = cx.try_global::<FullAccessHidden>().is_some_and(|h| h.0);
+    Permission::ALL
+        .into_iter()
+        .filter(|p| !hidden || *p != Permission::FullAccess)
+        .collect()
+}
+
 /// The selected host's `enabled-reasoning-efforts` setting; `None` keeps [`ENABLED_EFFORTS`].
 #[derive(Default)]
 pub struct EnabledEfforts(pub Option<Vec<String>>);
@@ -2415,7 +2431,7 @@ impl Composer {
         } else {
             self.menu = Some(menu);
             let count = match menu {
-                Menu::Permissions => Permission::ALL.len() + self.permission_profiles.len(),
+                Menu::Permissions => permission_presets(cx).len() + self.permission_profiles.len(),
                 Menu::Models => self.models.len(),
                 Menu::Effort => 3,
                 Menu::Comments => self.diff_comments.len(),
@@ -2622,12 +2638,11 @@ impl Composer {
     fn activate_menu_item(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         match self.menu {
             Some(Menu::Permissions) => {
-                let permission = if index < Permission::ALL.len() {
-                    Permission::ALL[index].clone()
+                let presets = permission_presets(cx);
+                let permission = if index < presets.len() {
+                    presets[index].clone()
                 } else {
-                    self.permission_profiles[index - Permission::ALL.len()]
-                        .0
-                        .clone()
+                    self.permission_profiles[index - presets.len()].0.clone()
                 };
                 self.dismiss(&Dismiss, window, cx);
                 if permission == Permission::FullAccess {
@@ -2745,14 +2760,16 @@ impl Composer {
             })
             .collect();
         if self.menu == Some(Menu::Permissions) {
-            self.menu_focus
-                .prepare(Permission::ALL.len() + self.permission_profiles.len(), cx);
+            self.menu_focus.prepare(
+                permission_presets(cx).len() + self.permission_profiles.len(),
+                cx,
+            );
         }
         cx.notify();
     }
 
     fn permission_typeahead(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let labels: Vec<String> = Permission::ALL
+        let labels: Vec<String> = permission_presets(cx)
             .iter()
             .map(|p| p.option_label().to_owned())
             .chain(
