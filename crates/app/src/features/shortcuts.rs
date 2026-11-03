@@ -286,7 +286,12 @@ impl Root {
         self.toast(Toast::danger("Error starting chat"), cx);
     }
 
-    fn new_special_chat(&mut self, mode: NewChatMode, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn new_special_chat(
+        &mut self,
+        mode: NewChatMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.new_chat(window, cx);
         self.shortcut_state.new_chat_mode = mode;
         self.home.update(cx, |home, cx| {
@@ -703,6 +708,7 @@ impl Root {
             if let Some(config) = computer_use {
                 params["config"] = config;
             }
+            params["dynamicTools"] = json!([crate::terminal::read_thread_terminal_tool()]);
             if let Some(memory) = memory {
                 memory.apply(&mut params);
             }

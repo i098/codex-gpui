@@ -37,6 +37,8 @@ pub(crate) fn apply(cx: &mut gpui::App) {
     if let Some(motion) = values.get("reduced-motion-preference") {
         cx.set_reduce_motion(motion == "on");
     }
+    let hidden = values.get("show-full-access-in-composer") == Some(&Value::Bool(false));
+    cx.set_global(ui::composer::FullAccessHidden(hidden));
     if cfg!(target_os = "macos")
         && let Some(dock) = values.get("dock-icon-preference").and_then(Value::as_str)
     {

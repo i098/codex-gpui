@@ -137,6 +137,7 @@ impl Approval {
             permissions: None,
             form: None,
             computer_use: Some(request),
+            command: false,
             identity: Rc::new(RequestIdentity { id, thread }),
         }
     }

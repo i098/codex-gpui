@@ -294,7 +294,12 @@ fn configure(managed: bool, cx: &mut App) {
                     while let Ok(status) = events.recv().await {
                         cx.update(|cx| {
                             if !cx.global::<Updates>().managed {
-                                cx.global_mut::<Updates>().status = status;
+                                let release = cx
+                                    .try_global::<Runtime>()
+                                    .and_then(|runtime| runtime.backend.release());
+                                let updates = cx.global_mut::<Updates>();
+                                updates.status = status;
+                                updates.release = release;
                                 cx.refresh_windows();
                             }
                         });

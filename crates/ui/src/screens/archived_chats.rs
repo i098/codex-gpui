@@ -190,6 +190,7 @@ pub struct ArchivedChats {
     kind: Kind,
     project_filter: ProjectFilter,
     sort: Sort,
+    grouped: bool,
     groups: Vec<Group>,
     pending: HashSet<String>,
     removed: HashSet<String>,
@@ -234,6 +235,7 @@ impl ArchivedChats {
             kind: Kind::All,
             project_filter: ProjectFilter::All,
             sort: Sort::Updated,
+            grouped: true,
             groups: Vec::new(),
             pending: HashSet::new(),
             removed: HashSet::new(),
@@ -332,7 +334,7 @@ impl ArchivedChats {
             &self.projects,
             &self.metadata,
             self.query.read(cx).field_text(),
-            (self.kind, &self.project_filter, self.sort),
+            (self.kind, &self.project_filter, self.sort, self.grouped),
             &self.pending,
         );
     }
@@ -869,6 +871,15 @@ impl ArchivedChats {
                         Some(MenuChoice::Sort(sort)),
                     ));
                 }
+                entries.push(("".into(), false, None));
+                entries.push(("Group by".into(), false, None));
+                for (grouped, label) in [(true, "Project"), (false, "None")] {
+                    entries.push((
+                        label.into(),
+                        self.grouped == grouped,
+                        Some(MenuChoice::Group(grouped)),
+                    ));
+                }
             }
             Menu::Projects => {
                 entries.push((
@@ -1034,6 +1045,7 @@ impl ArchivedChats {
         match choice {
             Some(MenuChoice::Kind(kind)) => self.kind = *kind,
             Some(MenuChoice::Sort(sort)) => self.sort = *sort,
+            Some(MenuChoice::Group(grouped)) => self.grouped = *grouped,
             Some(MenuChoice::Project(project)) => self.project_filter = project.clone(),
             Some(MenuChoice::DeleteProject(project)) => {
                 self.confirm_delete(Some(*project), None, window, cx)
@@ -1051,6 +1063,7 @@ impl ArchivedChats {
 enum MenuChoice {
     Kind(Kind),
     Sort(Sort),
+    Group(bool),
     Project(ProjectFilter),
     DeleteProject(usize),
 }
@@ -1075,7 +1088,7 @@ impl ArchivedChats {
         cx: &mut Context<Self>,
     ) -> Div {
         let mut section = div().flex().flex_col();
-        if self.project_filter == ProjectFilter::All {
+        if self.project_filter == ProjectFilter::All && self.grouped {
             let label = group
                 .project
                 .map(|i| self.projects[i].label.clone())
@@ -1352,7 +1365,7 @@ fn project_groups(
     projects: &[Project],
     metadata: &Metadata,
     query: &str,
-    selection: (Kind, &ProjectFilter, Sort),
+    selection: (Kind, &ProjectFilter, Sort, bool),
     pending: &HashSet<String>,
 ) -> Vec<Group> {
     let rows: Vec<_> = threads
@@ -1383,14 +1396,14 @@ fn project_groups(
             }
         }))
         .collect();
-    let (kind, filter, sort) = selection;
+    let (kind, filter, sort, grouped) = selection;
     let query = query.trim().to_lowercase();
     let mut groups: Vec<Group> = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         if !row.matches(projects, &query, (kind, filter), pending) {
             continue;
         }
-        let key = if *filter == ProjectFilter::All {
+        let key = if *filter == ProjectFilter::All && grouped {
             row.project
         } else {
             None
@@ -1520,6 +1533,8 @@ mod tests {
             worktree: false,
             missing: false,
             expanded: true,
+            roots: Vec::new(),
+            pinned: false,
         }
     }
 
@@ -1570,7 +1585,7 @@ mod tests {
             &[],
             &metadata,
             "",
-            (Kind::All, &ProjectFilter::Chats, Sort::Updated),
+            (Kind::All, &ProjectFilter::Chats, Sort::Updated, true),
             &pending,
         );
         assert_eq!(
@@ -1587,7 +1602,7 @@ mod tests {
             &[],
             &metadata,
             "",
-            (Kind::All, &ProjectFilter::Scheduled, Sort::Updated),
+            (Kind::All, &ProjectFilter::Scheduled, Sort::Updated, true),
             &HashSet::new(),
         );
         assert_eq!(groups[0].rows, vec![0]);
@@ -1598,7 +1613,7 @@ mod tests {
                 &[],
                 &metadata,
                 "",
-                (Kind::Cloud, &ProjectFilter::All, Sort::Updated),
+                (Kind::Cloud, &ProjectFilter::All, Sort::Updated, true),
                 &HashSet::new()
             )
             .is_empty()
@@ -1619,9 +1634,48 @@ mod tests {
             &[],
             &Metadata::default(),
             "",
-            (Kind::All, &ProjectFilter::All, Sort::Created),
+            (Kind::All, &ProjectFilter::All, Sort::Created, true),
             &HashSet::new(),
         );
+        assert_eq!(groups[0].rows, vec![1, 2, 0]);
+    }
+
+    #[test]
+    fn ungrouped_lists_every_project_in_one_sorted_group() {
+        let projects = vec![project("one", "/repo-one"), project("two", "/repo-two")];
+        let mut threads = recorded_threads();
+        threads[0].cwd = "/repo-one".into();
+        threads[1].cwd = "/repo-two".into();
+        threads[2].cwd = "/elsewhere".into();
+        (
+            threads[0].updated_at,
+            threads[1].updated_at,
+            threads[2].updated_at,
+        ) = (10, 30, 20);
+        let all = ProjectFilter::All;
+        let selection = |grouped| (Kind::All, &all, Sort::Updated, grouped);
+        let metadata = Metadata::default();
+        let groups = project_groups(
+            &threads[..3],
+            &[],
+            &projects,
+            &metadata,
+            "",
+            selection(true),
+            &HashSet::new(),
+        );
+        assert_eq!(groups.len(), 3);
+        let groups = project_groups(
+            &threads[..3],
+            &[],
+            &projects,
+            &metadata,
+            "",
+            selection(false),
+            &HashSet::new(),
+        );
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].project, None);
         assert_eq!(groups[0].rows, vec![1, 2, 0]);
     }
 
@@ -1640,7 +1694,7 @@ mod tests {
             &[],
             &Metadata::default(),
             "environment",
-            (Kind::Cloud, &ProjectFilter::All, Sort::Updated),
+            (Kind::Cloud, &ProjectFilter::All, Sort::Updated, true),
             &HashSet::new(),
         );
         assert_eq!(groups[0].rows, vec![threads.len()]);
@@ -1650,7 +1704,7 @@ mod tests {
             &[],
             &Metadata::default(),
             "environment",
-            (Kind::Local, &ProjectFilter::All, Sort::Updated),
+            (Kind::Local, &ProjectFilter::All, Sort::Updated, true),
             &HashSet::new(),
         );
         assert!(groups.is_empty());
