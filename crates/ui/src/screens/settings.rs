@@ -303,6 +303,9 @@ pub mod environments;
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
 
+/// `Show Full access in the composer`; turning it on first asks `Make Full Access available?`.
+pub const FULL_ACCESS_SHOWN: &str = "host.show-full-access-in-composer";
+
 /// The live app-server connection. Settings and sign-in send their writes through it when
 /// the app sets this global; the parity fixture runs without one.
 pub struct AppServer(pub Arc<Bridge>);
@@ -499,6 +502,11 @@ pub struct SettingsPage {
     catalog_efforts: Vec<String>,
     /// The selected host's `config/read` with `includeLayers` (`origins`, `layers`).
     config_layers: Value,
+    /// The `Filter settings by host` choices, `(host id, label)`, the window's host first;
+    /// empty while no other host is connected.
+    hosts: Vec<(SharedString, SharedString)>,
+    /// The host whose `config.toml` the page reads and writes.
+    config_host: SharedString,
 }
 
 impl SettingsPage {
@@ -534,6 +542,8 @@ impl SettingsPage {
             cloud: None,
             catalog_efforts: Vec::new(),
             config_layers: Value::Null,
+            hosts: Vec::new(),
+            config_host: SharedString::default(),
         }
     }
 
@@ -542,7 +552,7 @@ impl SettingsPage {
     }
 
     /// `store.key`, or a top-level `config.toml` key such as `approval_policy`.
-    fn get(&self, path: &str) -> &Value {
+    pub fn get(&self, path: &str) -> &Value {
         match path.split_once('.') {
             Some((store, key)) => &self.values[store][key],
             None => &self.values[path],
@@ -620,6 +630,39 @@ impl SettingsPage {
         cx.notify();
     }
 
+    /// The `Filter settings by host` choices; the selection resets to `hosts[0]`.
+    pub fn set_hosts(&mut self, hosts: Vec<(SharedString, SharedString)>, cx: &mut Context<Self>) {
+        self.config_host = hosts.first().map(|(id, _)| id.clone()).unwrap_or_default();
+        self.hosts = hosts;
+        cx.notify();
+    }
+
+    /// The host the config rows read and write; empty before [`Self::set_hosts`].
+    pub fn config_host(&self) -> &str {
+        &self.config_host
+    }
+
+    /// The `Filter settings by host` choices, `(host id, label)`.
+    pub fn hosts(&self) -> &[(SharedString, SharedString)] {
+        &self.hosts
+    }
+
+    /// Points the config rows at `host` and asks the app to read its `config.toml`.
+    pub fn select_config_host(&mut self, host: SharedString, cx: &mut Context<Self>) {
+        if self.config_host != host {
+            self.config_host = host;
+            cx.emit(SelectConfigHost);
+            cx.notify();
+        }
+    }
+
+    /// Replaces the `config.toml` values with another host's, keeping the desktop `host` store.
+    pub fn set_config_values(&mut self, mut config: Value, cx: &mut Context<Self>) {
+        config["host"] = self.values["host"].take();
+        self.values = config;
+        cx.notify();
+    }
+
     pub fn show_subtree(&mut self, view: AnyView, cx: &mut Context<Self>) {
         self.subtree = Some(view);
         cx.notify();
@@ -676,10 +719,18 @@ pub struct HostSettingsChanged(pub Vec<(&'static str, Value)>);
 /// `Open config.toml`: the app opens the selected host's user config layer.
 pub struct OpenConfigToml;
 
+/// Turning on [`FULL_ACCESS_SHOWN`]: the app confirms before it stores the change.
+pub struct RequestFullAccessAvailable;
+
+/// `Filter settings by host` picked [`SettingsPage::config_host`].
+pub struct SelectConfigHost;
+
 impl EventEmitter<SettingChanged> for SettingsPage {}
 impl EventEmitter<HostSettingsChanged> for SettingsPage {}
 impl EventEmitter<personalization::Event> for SettingsPage {}
 impl EventEmitter<OpenConfigToml> for SettingsPage {}
+impl EventEmitter<RequestFullAccessAvailable> for SettingsPage {}
+impl EventEmitter<SelectConfigHost> for SettingsPage {}
 
 /// `--sidebar-navigation` background, opaque.
 fn sidebar_color(t: &Theme) -> Hsla {
@@ -692,6 +743,8 @@ pub struct SettingsNav {
     focus: FocusHandle,
     /// Chromium's composited layer of the scrolling section list.
     list: Layer,
+    /// `Filter settings by host`, while another host is connected.
+    hosts: Option<Entity<crate::settings_kit::Select>>,
 }
 
 impl SettingsNav {
@@ -703,7 +756,63 @@ impl SettingsNav {
             page,
             focus: cx.focus_handle(),
             list: Layer::default(),
+            hosts: None,
         }
+    }
+
+    /// The `Filter settings by host` menu (original `settings-host-dropdown`, `filter`
+    /// variant): the window's host, then each other connected host.
+    fn host_filter(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let page = self.page.read(cx);
+        if page.hosts.len() < 2 {
+            return None;
+        }
+        let current = page.config_host.clone();
+        let choices: Vec<_> = page
+            .hosts
+            .iter()
+            .map(|(id, label)| crate::settings_kit::Choice {
+                value: id.clone(),
+                label: label.clone(),
+                checked: false,
+                disabled: false,
+            })
+            .collect();
+        let select = match &self.hosts {
+            Some(select) => select.clone(),
+            None => {
+                let select = cx.new(|cx| {
+                    crate::settings_kit::Select::new(current.clone(), Vec::new(), None, cx)
+                        .with_width(200.)
+                });
+                let page = self.page.clone();
+                cx.subscribe(
+                    &select,
+                    move |_, _, selected: &crate::settings_kit::Selected, cx| {
+                        page.update(cx, |page, cx| {
+                            page.select_config_host(selected.0.clone(), cx)
+                        });
+                    },
+                )
+                .detach();
+                self.hosts = Some(select.clone());
+                select
+            }
+        };
+        select.update(cx, |select, cx| {
+            let known = select.choices().iter().map(|c| &c.value);
+            if !known.eq(choices.iter().map(|c| &c.value)) {
+                select.set_choices(choices, cx);
+            }
+            select.set_value(current, cx);
+        });
+        Some(
+            div()
+                .id("settings-host-filter")
+                .aria_label("Filter settings by host")
+                .child(select)
+                .into_any_element(),
+        )
     }
 
     fn key_down(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -835,6 +944,7 @@ impl SettingsNav {
 impl Render for SettingsNav {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        let host_filter = self.host_filter(cx);
         let page = self.page.read(cx);
         let (section, query) = (page.section, page.query.clone());
         let needle = query.to_lowercase();
@@ -887,9 +997,11 @@ impl Render for SettingsNav {
                             .pr(px(4.))
                             .flex()
                             .items_center()
+                            .justify_between()
                             .child(
                                 text("Settings", 18., 24., 600., t.text).font_family("OpenAI Sans"),
-                            ),
+                            )
+                            .children(host_filter),
                     )
                     .child(self.search(&query, &t, window, cx)),
             )
@@ -952,6 +1064,43 @@ const SEND_OPTIONS: &[(&str, &str)] = &[
     ("cmdIfMultiline", "⌘ + Enter for multiline prompts"),
     ("cmdAlways", "⌘ + Enter always"),
 ];
+
+/// The integrated terminal's shell when none is chosen: `$SHELL`, else `/bin/sh`.
+pub fn default_shell() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .filter(|s| s.starts_with('/'))
+        .unwrap_or_else(|| "/bin/sh".into())
+}
+
+/// The absolute paths `/etc/shells` lists, in order, without comments, blanks or repeats.
+fn parse_shells(text: &str) -> Vec<&str> {
+    let mut shells = Vec::new();
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('/') && !shells.contains(&line) {
+            shells.push(line);
+        }
+    }
+    shells
+}
+
+/// `Integrated terminal shell` options `(path, basename)`: the existing shells `/etc/shells`
+/// lists, one per real file (`/bin/bash` and a merged `/usr/bin/bash` show once).
+static SHELL_OPTIONS: std::sync::LazyLock<Vec<(&str, &str)>> = std::sync::LazyLock::new(|| {
+    let text = std::fs::read_to_string("/etc/shells").unwrap_or_default();
+    let mut seen = std::collections::HashSet::new();
+    parse_shells(&text)
+        .into_iter()
+        .filter(|path| {
+            std::fs::canonicalize(path).is_ok_and(|real| real.is_file() && seen.insert(real))
+        })
+        .map(|path| {
+            // Leaked once per process: the select menu takes `'static` options.
+            let path: &'static str = path.to_owned().leak();
+            (path, path.rsplit('/').next().unwrap_or(path))
+        })
+        .collect()
+});
 
 impl SettingsPane {
     fn new(page: Entity<SettingsPage>, cx: &mut Context<Self>) -> Self {
@@ -1068,6 +1217,11 @@ impl SettingsPane {
         )
         .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
         .on_click(cx.listener(move |this, _, _, cx| {
+            if key == FULL_ACCESS_SHOWN && !on {
+                return this
+                    .page
+                    .update(cx, |_, cx| cx.emit(RequestFullAccessAvailable));
+            }
             let value = if key == "host.git-review-mode" {
                 json!(if on { "full" } else { "last-turn-only" })
             } else {
@@ -1197,7 +1351,7 @@ impl SettingsPane {
                         Some(
                             "When ChatGPT runs with full access, it can edit any file on your computer and run commands with network, without your approval. This significantly increases the risk of data loss, leaks, or unexpected behavior. <a>Learn more</a> about elevated risks.",
                         ),
-                        self.toggle("session.fullAccess", true, t, window, cx),
+                        self.toggle(FULL_ACCESS_SHOWN, true, t, window, cx),
                     ),
                 ],
             ),
@@ -1283,6 +1437,23 @@ impl SettingsPane {
                             window,
                             cx,
                         ),
+                    ),
+                    row(
+                        "Integrated terminal shell",
+                        Some("Choose which shell opens in the integrated terminal."),
+                        if SHELL_OPTIONS.is_empty() {
+                            select("No shells available", 430., None, true, false, t)
+                                .into_any_element()
+                        } else {
+                            self.select_menu_or(
+                                "desktop.integratedTerminalShell",
+                                SHELL_OPTIONS.as_slice(),
+                                &default_shell(),
+                                None,
+                                |select| select,
+                                cx,
+                            )
+                        },
                     ),
                     row(
                         "Prevent sleep while running",
@@ -2063,5 +2234,14 @@ mod tests {
             "/Users/user/D…uments/Codex"
         );
         assert_eq!(super::middle_truncate("/Users/user", fits), "/Users/user");
+    }
+
+    #[test]
+    fn etc_shells_parse_to_unique_paths() {
+        let text = "# /etc/shells: valid login shells\n/bin/sh\n\n  /bin/bash \n/bin/sh\n# /bin/zsh\nnologin\n/usr/bin/fish\n";
+        assert_eq!(
+            super::parse_shells(text),
+            ["/bin/sh", "/bin/bash", "/usr/bin/fish"]
+        );
     }
 }

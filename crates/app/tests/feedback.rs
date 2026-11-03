@@ -1,8 +1,8 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use anyhow::{Result, ensure};
-use common::{Fx, GREETING, exchange, recorded_thread, script};
+use anyhow::{Context as _, Result, ensure};
+use common::{Fx, GREETING, SUBTRACT, exchange, recorded_thread, script};
 use serde_json::{Value, json};
 
 #[test]
@@ -187,5 +187,74 @@ fn export_reads_the_whole_thread_and_refuses_to_overwrite_a_file() -> Result<()>
             .iter()
             .any(|r| r["params"] == json!({"threadId":GREETING, "includeTurns":true}))
     );
+    Ok(())
+}
+
+#[test]
+fn rate_response_sends_the_picked_option_as_feedback() -> Result<()> {
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange(
+        "feedback/upload",
+        json!({"threadId": SUBTRACT, "promptHash": null}),
+    ));
+    // refs/thread shows SUBTRACT, so `fx.at` finds its last turn's `Rate response`.
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.click(fx.at("home", "Add a subtract")?)?;
+    fx.wait_thread(SUBTRACT)?;
+    // The proxy answers `thread/read` after the route changes; the row exists once turns do.
+    fx.wait("turns", |fx| {
+        fx.read(|root, cx| {
+            root.thread()
+                .is_some_and(|v| !v.read(cx).turns().is_empty())
+        })
+    })?;
+    // `fx.at` gives the original's layout, which does not hit our hover-revealed row, so open
+    // the menu as the button's click handler does: at the pointer, for the last turn.
+    let view = fx
+        .read(|root, _| root.thread().cloned())
+        .context("no thread view")?;
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            let turn = view
+                .turns()
+                .last()
+                .map(|turn| turn.id.clone())
+                .unwrap_or_default();
+            view.open_rating(
+                turn,
+                gpui::point(gpui::px(500.), gpui::px(500.)),
+                window,
+                cx,
+            )
+        })
+    })?;
+    fx.cx.run_until_parked();
+    let rows: Vec<String> = fx.read(|root, cx| {
+        root.thread().map_or(Vec::new(), |view| {
+            view.read(cx)
+                .context_menu_items()
+                .map(|(_, label, _)| label.to_owned())
+                .collect()
+        })
+    });
+    ensure!(
+        rows.first().is_some_and(|row| row == "Good response"),
+        "{rows:?}"
+    );
+    ensure!(rows.iter().any(|row| row == "Lost context"), "{rows:?}");
+    keys(&mut fx, "down enter")?;
+    fx.wait("rating sent", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|t| t == "Thanks for your feedback")
+        })
+    })?;
+    let sent = requests(&mut fx, "feedback/upload")?;
+    ensure!(sent.len() == 1);
+    let params = &sent[0]["params"];
+    ensure!(params["classification"] == "good_result" && params["reason"] == "Solved my task");
+    ensure!(params["threadId"] == SUBTRACT && params["includeLogs"] == false);
+    ensure!(params["tags"]["turn_id"].is_string(), "{params}");
     Ok(())
 }
