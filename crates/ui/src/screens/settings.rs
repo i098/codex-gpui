@@ -50,8 +50,11 @@ fn focus_on_pointer(
     }
 }
 
+mod account_page;
+pub mod backend;
 mod languages;
 pub mod personalization;
+pub mod trusted_contact;
 pub mod workspace {
     use crate::{SANS, composer::popover, focus, icon::icon, text};
     use gpui::{
@@ -1618,6 +1621,9 @@ impl Render for SettingsPane {
         }
         if section == "Archived chats" {
             return archived_chats::render(window, cx);
+        }
+        if section == "Trusted contact" {
+            return trusted_contact::render(window, cx);
         }
         if section == "Worktrees" {
             return worktrees::render(self.page.clone(), window, cx);
