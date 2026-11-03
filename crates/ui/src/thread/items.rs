@@ -1,4 +1,5 @@
 use super::*;
+use crate::icon::Icon;
 use base64::Engine as _;
 use gpui::{Image, ImageFormat};
 
@@ -8,6 +9,52 @@ use automation::automation_item;
 pub(super) use automation::cache_automation_result;
 
 pub(super) type McpImages = RefCell<HashMap<String, Vec<(usize, Arc<Image>)>>>;
+
+/// Click on a generated image: show it in the side panel's image tab.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = shell, no_json)]
+pub struct OpenImage {
+    pub image: Arc<Image>,
+}
+
+/// The side panel's image tab: one generated image, fit to the panel.
+pub struct ImageView {
+    pub image: Arc<Image>,
+}
+
+impl Render for ImageView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .p(px(16.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(cx.theme().surface)
+            .child(
+                gpui::img(self.image.clone())
+                    .size_full()
+                    .object_fit(gpui::ObjectFit::Contain),
+            )
+    }
+}
+
+/// The image of an `imageGeneration` item: its `savedPath` file, else its base64 `result`.
+fn generated_image(saved_path: Option<&str>, result: Option<&str>) -> Option<Arc<Image>> {
+    // shortcut: reads the saved PNG on the UI thread once (then cached), async load if it lags.
+    let data = match saved_path.and_then(|path| std::fs::read(path).ok()) {
+        Some(data) => data,
+        None => base64::engine::general_purpose::STANDARD
+            .decode(result?)
+            .ok()?,
+    };
+    let format = saved_path
+        .and_then(|path| {
+            ImageFormat::from_mime_type(&format!("image/{}", path.rsplit('.').next()?))
+        })
+        .unwrap_or(ImageFormat::Png);
+    Some(Arc::new(Image::from_bytes(format, data)))
+}
 
 /// Right-aligned user message: `bg-user-message`, 22 px squircle, at most 70% wide. A message
 /// that wraps to more than 20 lines collapses to 19 with `Show more`
@@ -479,6 +526,9 @@ pub(super) enum Activity<'a> {
     /// A command still running, by its command line.
     Running(&'a str),
     Mcp(&'a ThreadItem),
+    /// An `imageGeneration` item: `Generating image...` while it runs, then the image.
+    Image(&'a ThreadItem),
+    PatchOutput(&'a str, &'a str),
     /// A reasoning item seen live: `Thought for 3s` once completed, its summary under it while
     /// open (keyed `reasoning-<id>`); `Thinking` while it streams, with the streamed text
     /// under it.
@@ -490,6 +540,10 @@ pub(super) enum Activity<'a> {
     },
     /// A `contextCompaction` item: `Compacting context`, `Context compacted`, …
     Compaction(&'static str),
+    /// A `dynamicToolCall` item: `Reading chat terminal`, `Read chat terminal`, or the tool name.
+    Tool(&'static str, String),
+    /// An `enteredReviewMode` item: `Reviewing <what>`.
+    Review(String),
     /// Consecutive finished commands and file changes behind one summary
     /// (`agent-activity-group`, keyed by its first item): `Edited a file, read files, ran
     /// commands`.
@@ -542,6 +596,8 @@ impl Activity<'_> {
             Activity::Markdown(_, text) => vec![(*text).to_owned()],
             Activity::Running(command) => vec![(*command).to_owned()],
             Activity::Mcp(item) => vec![mcp_label(item)],
+            Activity::Image(item) => vec![image_label(item).to_owned()],
+            Activity::PatchOutput(_, output) => vec![(*output).to_owned()],
             Activity::Reasoning {
                 key,
                 label,
@@ -552,6 +608,8 @@ impl Activity<'_> {
                 .filter(|s| !s.is_empty())
                 .collect(),
             Activity::Compaction(label) => vec![(*label).to_owned()],
+            Activity::Tool(_, label) => vec![label.clone()],
+            Activity::Review(label) => vec![label.clone()],
             Activity::Group {
                 key, summary, rows, ..
             } => std::iter::once(summary.clone())
@@ -569,7 +627,7 @@ impl Activity<'_> {
 pub(super) fn activities<'a>(
     items: &'a [ThreadItem],
     running: bool,
-    view: &ThreadView,
+    view: &'a ThreadView,
     visibility: super::ReasoningVisibility,
     now: Instant,
 ) -> Vec<Activity<'a>> {
@@ -617,14 +675,41 @@ pub(super) fn activities<'a>(
                 ));
             }
             ThreadItem::McpToolCall { .. } if automation_item(item).is_some() => {}
+            ThreadItem::FileChange { id, .. } if view.patch_output.contains_key(id) => {
+                group.push(item);
+                flush(&mut out, &mut group);
+                out.push(Activity::PatchOutput(id, &view.patch_output[id]));
+            }
             ThreadItem::McpToolCall { .. } => {
                 flush(&mut out, &mut group);
                 out.push(Activity::Mcp(item));
             }
+            ThreadItem::ImageGeneration { .. } => {
+                flush(&mut out, &mut group);
+                out.push(Activity::Image(item));
+            }
+            ThreadItem::DynamicToolCall { tool, status, .. } => {
+                flush(&mut out, &mut group);
+                out.push(match (tool.as_str(), status.as_str()) {
+                    ("read_thread_terminal", "inProgress") => {
+                        Activity::Tool("thread-terminal", "Reading chat terminal".into())
+                    }
+                    ("read_thread_terminal", _) => {
+                        Activity::Tool("thread-terminal", "Read chat terminal".into())
+                    }
+                    _ => Activity::Tool("thread-mcp", tool.clone()),
+                });
+            }
             ThreadItem::CommandExecution { .. } | ThreadItem::FileChange { .. } => {
                 group.push(item);
             }
-            ThreadItem::AgentMessage { id, text, .. } | ThreadItem::Plan { id, text, .. }
+            ThreadItem::EnteredReviewMode { review, .. } => {
+                flush(&mut out, &mut group);
+                out.push(Activity::Review(format!("Reviewing {review}")));
+            }
+            ThreadItem::AgentMessage { id, text, .. }
+            | ThreadItem::Plan { id, text, .. }
+            | ThreadItem::ExitedReviewMode { id, review: text }
                 if !text.is_empty() =>
             {
                 flush(&mut out, &mut group);
@@ -666,7 +751,7 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                         true => p.to_owned(),
                         false => format!("{cwd}/{p}"),
                     })
-                    .filter(|p| skill_definition(p))
+                    .filter(|p| skill_name(p, cwd).is_some())
                     .collect();
                 // The server's parse: all `read` / `search` / `list_files` is exploration.
                 let exploration = !command_actions.is_empty()
@@ -696,7 +781,24 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                         .collect::<Vec<_>>()
                         .join("; "),
                 };
-                rows.push(if names.is_empty() {
+                // A skill's `SKILL.md` read names the skill (`toolSummaryForCmd.readSkillDefinition`).
+                let skill = match command_actions.as_slice() {
+                    [a] if a.kind == "read" => a
+                        .path
+                        .as_deref()
+                        .or(a.name.as_deref())
+                        .and_then(|p| skill_name(p, cwd)),
+                    _ => None,
+                };
+                rows.push(if let Some(skill) = skill {
+                    GroupRow {
+                        icon: "thread-wrench",
+                        verb: format!("Read {skill} skill"),
+                        file: None,
+                        stats: None,
+                        shell: None,
+                    }
+                } else if names.is_empty() {
                     // ponytail: `Stopped` (an interrupted turn) is not told apart from a failure.
                     let footer = match (status.as_str(), exit_code) {
                         ("inProgress", _) => String::new(),
@@ -774,12 +876,16 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
     })
 }
 
-/// Whether `path` is a skill's `SKILL.md`, as the original's skill path parse tells it:
-/// `.codex|.agents/skills/[_import|.system/]<id>/SKILL.md`, or under `plugins/` either
-/// `[cache/<marketplace>/]<plugin>/[<version>/]…/skills/<id>/SKILL.md` or a plugin's own
-/// `SKILL.md`. Segments match case-insensitively.
-fn skill_definition(path: &str) -> bool {
+/// The display name of the skill whose `SKILL.md` `path` (relative to `cwd`) reads, as the
+/// original's skill path parse tells it: `.codex|.agents/skills/[_import|.system/]<id>/SKILL.md`,
+/// or under `plugins/` either `[cache/<marketplace>/]<plugin>/[<version>/]…/skills/<id>/SKILL.md`
+/// or a plugin's own `SKILL.md` (named by the plugin). Segments match case-insensitively.
+fn skill_name(path: &str, cwd: &str) -> Option<String> {
     let path = path.trim().replace('\\', "/");
+    let path = match path.starts_with('/') {
+        true => path,
+        false => format!("{cwd}/{path}"),
+    };
     let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     let is = |i: usize, s: &str| segs.get(i).is_some_and(|x| x.eq_ignore_ascii_case(s));
     let definition = |rest: &[&str]| matches!(rest, [f] if f.eq_ignore_ascii_case("skill.md"));
@@ -787,7 +893,7 @@ fn skill_definition(path: &str) -> bool {
         if (is(i, ".codex") || is(i, ".agents")) && is(i + 1, "skills") {
             let id = i + 2 + usize::from(is(i + 2, "_import") || is(i + 2, ".system"));
             if id < segs.len() {
-                return definition(&segs[id + 1..]);
+                return definition(&segs[id + 1..]).then(|| humanize(segs[id]));
             }
         }
     }
@@ -802,13 +908,71 @@ fn skill_definition(path: &str) -> bool {
         }
         let root = plugin + usize::from(cache);
         match (root + 1..segs.len()).find(|&t| is(t, "skills")) {
-            Some(s) if s + 1 < segs.len() => return definition(&segs[s + 2..]),
+            Some(s) if s + 1 < segs.len() => {
+                return definition(&segs[s + 2..]).then(|| humanize(segs[s + 1]));
+            }
             Some(_) => {}
-            None if definition(segs.get(root + 1..).unwrap_or_default()) => return true,
+            None if definition(segs.get(root + 1..).unwrap_or_default()) => {
+                return Some(humanize(segs[plugin]));
+            }
             None => {}
         }
     }
-    false
+    None
+}
+
+/// A skill or plugin id in title case, as the original's humanizer (`gh-fix_ci:openai` →
+/// `GH Fix CI: OpenAI`).
+fn humanize(id: &str) -> String {
+    const ACRONYMS: [&str; 16] = [
+        "GH", "IA", "MCP", "API", "CI", "CLI", "LLM", "PDF", "PR", "RCS", "UI", "URL", "SQL", "TW",
+        "GPU", "CPU",
+    ];
+    const BRANDS: [(&str, &str); 10] = [
+        ("openai", "OpenAI"),
+        ("openaideveloperdocs", "OpenAI Developer Docs"),
+        ("openapi", "OpenAPI"),
+        ("github", "GitHub"),
+        ("imessage", "iMessage"),
+        ("pagerduty", "PagerDuty"),
+        ("datadog", "DataDog"),
+        ("sharepoint", "SharePoint"),
+        ("sqlite", "SQLite"),
+        ("fastapi", "FastAPI"),
+    ];
+    let word = |i: usize, w: &str| {
+        let upper = w.to_uppercase();
+        if ACRONYMS.contains(&upper.as_str()) {
+            return upper;
+        }
+        if let Some(stem) = upper.strip_suffix('S')
+            && ACRONYMS.contains(&stem)
+        {
+            return format!("{stem}s");
+        }
+        let lower = w.to_lowercase();
+        if let Some((_, brand)) = BRANDS.iter().find(|(id, _)| *id == lower) {
+            return (*brand).to_owned();
+        }
+        if i > 0 && ["and", "or", "to", "up", "with"].contains(&lower.as_str()) {
+            return lower;
+        }
+        let mut chars = lower.chars();
+        chars
+            .next()
+            .map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
+    };
+    id.split(':')
+        .map(|part| {
+            part.split(|c: char| c == '-' || c == '_' || c.is_whitespace())
+                .filter(|w| !w.is_empty())
+                .enumerate()
+                .map(|(i, w)| word(i, w))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect::<Vec<_>>()
+        .join(": ")
 }
 
 /// A turn's items without a final answer: agent messages, running command rows and activity
@@ -827,9 +991,10 @@ pub(super) fn activity(
     let fades = &view.stream_fades;
     let images = &view.mcp_images;
     let text60 = t.text_alpha_60;
-    // Exact-width 14 px text, styled before it is boxed (see [`measured`]).
+    // Exact-width 14 px text, styled before it is boxed (see [`measured`]). The box rounds the
+    // width up, or its `truncate` cuts a run that fits (`Read math.…`).
     let label = |s: String, color: Hsla| {
-        let w = width(window, &s, 14., 430., None);
+        let w = fit_width(window, &s, 14., 430., None);
         (text(s, 14., 21., 430., color), w)
     };
     // The label is exactly as wide as its text, and shrinks with an ellipsis (`truncate`) in a
@@ -845,19 +1010,20 @@ pub(super) fn activity(
     };
     let plain = |(label, w): (Div, Pixels)| boxed(label.into_any_element(), w);
     // A 21 px line: a 16 px icon, then its words.
-    let row = |icon_name: &'static str, words: Div| {
+    let glyph = |name: &'static str| icon(name, 16., text60);
+    let row = |glyph: Icon, words: Div| {
         div()
             .h(px(21.))
             .min_w_0()
             .flex()
             .items_center()
             .gap(px(6.))
-            .child(icon(icon_name, 16., text60))
+            .child(glyph)
             .child(words)
     };
     // A row that opens `key`: its label whitens on hover, its 14 px chevron shows on hover and
     // points down while open.
-    let disclosure = |key: String, icon_name: &'static str, (label, w): (Div, Pixels), is_open| {
+    let disclosure = |key: String, glyph: Icon, (label, w): (Div, Pixels), is_open| {
         let group = SharedString::from(format!("activity-group-{key}"));
         // Group hover recolours text only on a stateful element: the run colour is fixed at
         // layout, before this frame's group hitbox exists.
@@ -878,18 +1044,26 @@ pub(super) fn activity(
             .flex()
             .items_center()
             .gap(px(4.))
-            .child(row(icon_name, boxed(label.into_any_element(), w)))
+            .child(row(glyph, boxed(label.into_any_element(), w)))
             .child(
                 // `Icon` folds its opacity into the color, so the hover sets the color.
                 icon(chevron, 14., text60.opacity(if is_open { 1. } else { 0. }))
                     .group_hover(group, move |s| s.text_color(text60)),
             )
             .on_click(cx.listener(move |view, _, _, cx| {
-                if !view.expanded.remove(&key) {
-                    view.expanded.insert(key.clone());
-                }
+                view.toggle_activity(key.clone(), cx);
                 cx.notify();
             }))
+    };
+    // A disclosure body: 4 px below its row, inside the clip so the gap opens with it.
+    let body = || {
+        div()
+            .w_full()
+            .pt(px(4.))
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap(px(4.))
     };
     let mut col = div().flex().flex_col().gap(px(16.));
     let now = cx.background_executor().now();
@@ -906,8 +1080,11 @@ pub(super) fn activity(
                 markdown(text, window, t, segments)
             }
             Activity::Running(command) => {
-                row("thread-terminal", plain(label(command.to_owned(), text60)))
+                row(glyph("thread-terminal"), plain(label(command.to_owned(), text60)))
             }
+            Activity::PatchOutput(id, output) => mcp_output(
+                format!("patch-output-{id}"), "text", output, t,
+            ),
             Activity::Reasoning {
                 key: _,
                 label: words,
@@ -919,7 +1096,7 @@ pub(super) fn activity(
                 .flex_col()
                 .items_start()
                 .gap(px(4.))
-                .child(row("thread-summary", plain(label(words, text60))))
+                .child(row(glyph("thread-summary"), plain(label(words, text60))))
                 .when(!text.is_empty(), |d| d.child(text60_block(text, t))),
             Activity::Reasoning {
                 key,
@@ -928,24 +1105,27 @@ pub(super) fn activity(
                 ..
             } => {
                 let is_open = open.contains(&key);
+                let content =
+                    view.expansion(&key, is_open, || body().child(text60_block(text, t)), window, cx);
                 div()
                     .w_full()
                     .flex()
                     .flex_col()
                     .items_start()
-                    .gap(px(4.))
                     .child(disclosure(
                         key,
-                        "thread-summary",
+                        glyph("thread-summary"),
                         label(words, text60),
                         is_open,
                     ))
-                    .when(is_open, |d| d.child(text60_block(text, t)))
+                    .children(content)
             }
+            Activity::Review(words) => row(glyph("code-review"), plain(label(words.clone(), text60))),
             Activity::Compaction(words) => row(
-                "thread-compaction",
+                glyph("thread-compaction"),
                 plain(label(words.to_owned(), text60)),
             ),
+            Activity::Tool(icon, words) => row(glyph(icon), plain(label(words.clone(), text60))),
             Activity::Mcp(item) => {
                 let ThreadItem::McpToolCall {
                     id,
@@ -965,18 +1145,9 @@ pub(super) fn activity(
                 } else {
                     text60
                 };
-                let mut content = div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(disclosure(
-                        key,
-                        "thread-mcp",
-                        label(mcp_label(item), color),
-                        is_open,
-                    ));
-                if is_open {
+                let header = disclosure(key.clone(), glyph("thread-mcp"), label(mcp_label(item), color), is_open);
+                let body = || {
+                    let mut content = div().w_full().pt(px(4.)).flex().flex_col().gap(px(4.));
                     for update in progress {
                         if let Some(message) = update["message"].as_str() {
                             content =
@@ -1061,8 +1232,84 @@ pub(super) fn activity(
                             t,
                         ));
                     }
+                    content
+                };
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .child(header)
+                    .children(view.expansion(&key, is_open, body, window, cx))
+            }
+            Activity::Image(item) => {
+                let ThreadItem::ImageGeneration {
+                    id,
+                    status,
+                    result,
+                    saved_path,
+                    ..
+                } = item
+                else {
+                    unreachable!();
+                };
+                let decoded = (status == "completed")
+                    .then(|| {
+                        images
+                            .borrow_mut()
+                            .entry(id.clone())
+                            .or_insert_with(|| {
+                                generated_image(saved_path.as_deref(), result.as_deref())
+                                    .map(|image| (0, image))
+                                    .into_iter()
+                                    .collect()
+                            })
+                            .first()
+                            .map(|(_, image)| image.clone())
+                    })
+                    .flatten();
+                match decoded {
+                    Some(image) => {
+                        let context = crate::image_context::ImageContext {
+                            image: image.clone(),
+                            path: saved_path.as_ref().map(Into::into),
+                        };
+                        let open = OpenImage {
+                            image: image.clone(),
+                        };
+                        div().child(
+                            div()
+                                .id(SharedString::from(format!("generated-image-{id}")))
+                                .role(gpui::Role::Button)
+                                .aria_label("Generated image")
+                                .cursor_pointer()
+                                .rounded(px(12.))
+                                .overflow_hidden()
+                                .w(px(320.))
+                                .max_w_full()
+                                .child(gpui::img(image).w_full())
+                                .on_click(move |_, window, cx| {
+                                    window.dispatch_action(Box::new(open.clone()), cx)
+                                })
+                                .on_mouse_down(
+                                    gpui::MouseButton::Right,
+                                    cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                        this.menu = Some(context.menu(event.position, window, cx));
+                                        this.context_image = Some(context.clone());
+                                        cx.stop_propagation();
+                                        cx.notify();
+                                    }),
+                                ),
+                        )
+                    }
+                    None => {
+                        let words = if status == "completed" {
+                            "Image unavailable"
+                        } else {
+                            image_label(item)
+                        };
+                        row(glyph("diff-file-image"), plain(label(words.to_owned(), text60)))
+                    }
                 }
-                content
             }
             Activity::Group {
                 key,
@@ -1071,25 +1318,25 @@ pub(super) fn activity(
                 rows,
             } => {
                 let is_open = open.contains(key);
-                let header = disclosure(key.to_owned(), icon_name, label(summary, text60), is_open);
-                let mut col = div()
-                    .flex()
-                    .flex_col()
-                    .items_start()
-                    .gap(px(4.))
-                    .child(header);
-                if is_open {
-                    col = col.children(rows.into_iter().map(|r| {
+                let header = disclosure(key.to_owned(), glyph(icon_name), label(summary, text60), is_open);
+                // Fitted icon images paint outside layers, so the fade would skip them.
+                let faded = |name| glyph(name).runtime();
+                let content = || {
+                    // `vertical-scroll-fade-mask` with `--edge-fade-distance: 1.5rem`: rows that
+                    // fit show a 24 px top fade from the header's foot.
+                    // shortcut: no `max-h-56` scroll, so a list past 224 px grows unclipped.
+                    let list = body().children(rows.into_iter().map(|r| {
                         if let Some(shell) = r.shell {
                             let is_open = open.contains(&shell.key);
                             let key = shell.key.clone();
+                            let shell_body = || div().w_full().child(shell_card(&shell, t));
                             return div()
                                 .w_full()
                                 .flex()
                                 .flex_col()
                                 .items_start()
-                                .child(disclosure(key, r.icon, label(r.verb, text60), is_open))
-                                .when(is_open, |d| d.child(shell_card(&shell, t)));
+                                .child(disclosure(key, faded(r.icon), label(r.verb, text60), is_open))
+                                .children(view.expansion(&shell.key, is_open, shell_body, window, cx));
                         }
                         let mut words = div()
                             .flex()
@@ -1110,10 +1357,16 @@ pub(super) fn activity(
                         if let Some((added, removed)) = r.stats {
                             words = words.children(stats(added, removed, text60));
                         }
-                        row(r.icon, words)
+                        row(faded(r.icon), words)
                     }));
-                }
-                col
+                    list.layer().child(shapes::top_fade(px(24.)))
+                };
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .child(header)
+                    .children(view.expansion(key, is_open, content, window, cx))
             }
         });
     }
@@ -1159,6 +1412,17 @@ fn mcp_output(id: String, language: &'static str, value: &str, t: &Theme) -> Div
                         .whitespace_normal(),
                 ),
         )
+}
+
+/// The words of an `imageGeneration` row, as the original's generated-image placeholder says.
+fn image_label(item: &ThreadItem) -> &'static str {
+    match item {
+        ThreadItem::ImageGeneration { status, .. } if status == "inProgress" => {
+            "Generating image..."
+        }
+        ThreadItem::ImageGeneration { status, .. } if status == "completed" => "Generated image",
+        _ => "Image unavailable",
+    }
 }
 
 fn mcp_label(item: &ThreadItem) -> String {
@@ -1313,15 +1577,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn skill_definition_follows_the_original_parse() {
-        for path in [
-            "/Users/a/.codex/skills/operating-rules/SKILL.md",
-            "/Users/a/.codex/skills/.system/plan/skill.md",
-            "/repo/.agents/skills/lint/SKILL.md",
-            "/Users/a/.codex/plugins/cache/mkt/github/1.0/skills/review/SKILL.md",
-            "/Users/a/.codex/plugins/github/SKILL.md",
+    fn skill_name_follows_the_original_parse() {
+        for (path, name) in [
+            (
+                "/Users/a/.codex/skills/operating-rules/SKILL.md",
+                "Operating Rules",
+            ),
+            ("/Users/a/.codex/skills/.system/plan/skill.md", "Plan"),
+            (
+                "/Users/a/.codex/skills/_import/pdf_tools-and-apis/SKILL.md",
+                "PDF Tools and APIs",
+            ),
+            ("/repo/.agents/skills/lint/SKILL.md", "Lint"),
+            (".agents/skills/to-do/SKILL.md", "To Do"),
+            (
+                "/Users/a/.codex/plugins/cache/mkt/github/1.0/skills/gh-fix-ci/SKILL.md",
+                "GH Fix CI",
+            ),
+            ("/Users/a/.codex/plugins/github/SKILL.md", "GitHub"),
         ] {
-            assert!(skill_definition(path), "{path}");
+            assert_eq!(skill_name(path, "/repo").as_deref(), Some(name), "{path}");
         }
         for path in [
             "/Users/a/.codex/skills/operating-rules/scripts/run.md",
@@ -1329,7 +1604,7 @@ mod tests {
             "/repo/skills/lint/SKILL.md",
             "/repo/README.md",
         ] {
-            assert!(!skill_definition(path), "{path}");
+            assert_eq!(skill_name(path, "/repo"), None, "{path}");
         }
     }
 
@@ -1352,6 +1627,13 @@ mod tests {
         assert_eq!(
             summary(std::slice::from_ref(&one)),
             ("Loaded a tool".into(), "thread-wrench")
+        );
+        let Some(Activity::Group { rows, .. }) = group_entry(&[&one]) else {
+            unreachable!()
+        };
+        assert_eq!(
+            (rows[0].icon, rows[0].verb.as_str(), &rows[0].file),
+            ("thread-wrench", "Read Rules skill", &None)
         );
         let items = [
             one.clone(),

@@ -21,8 +21,10 @@ pub use cloud::CLOUD_ENDPOINT;
 pub mod imports;
 mod replay;
 pub mod security;
+pub mod security_cloud;
 pub mod storage;
 pub mod types;
+pub mod widget;
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -412,6 +414,11 @@ impl Bridge {
     /// Answers a server [`Event::Request`].
     pub fn respond(&self, id: Value, result: impl Serialize) -> Result<()> {
         self.write(json!({ "id": id, "result": serde_json::to_value(result)? }))
+    }
+
+    /// Answers a server request with a JSON-RPC error so the server does not wait for it.
+    pub fn respond_error(&self, id: Value, code: i64, message: String) -> Result<()> {
+        self.write(json!({ "id": id, "error": { "code": code, "message": message } }))
     }
 
     fn write(&self, msg: Value) -> Result<()> {

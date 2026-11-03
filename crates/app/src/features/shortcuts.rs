@@ -12,6 +12,15 @@ actions!(
         OpenShortcutSettings,
         ToggleBottomPanel,
         OpenInteractiveTerminal,
+        EnvironmentAction1,
+        EnvironmentAction2,
+        EnvironmentAction3,
+        EnvironmentAction4,
+        EnvironmentAction5,
+        EnvironmentAction6,
+        EnvironmentAction7,
+        EnvironmentAction8,
+        EnvironmentAction9,
         ClearAllUnreads,
         NextAttentionChat,
         MarkOpenChatUnread,
@@ -23,6 +32,7 @@ actions!(
         NextSideTab,
         PreviousSideTab,
         CopyDeeplink,
+        CopyLastCodeBlock,
         CloseWholeWindow,
         CloseOtherSideTabs
     ]
@@ -130,6 +140,15 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
             cx.write_to_clipboard(ClipboardItem::new_string(format!("codex://threads/{id}")));
         }
     }))
+    .on_action(cx.listener(|this, _: &CopyLastCodeBlock, _, cx| {
+        let code = this
+            .thread
+            .as_ref()
+            .and_then(|view| view.read(cx).last_code_block());
+        if let Some(code) = code {
+            cx.write_to_clipboard(ClipboardItem::new_string(code));
+        }
+    }))
     .on_action(
         cx.listener(|this, _: &CloseWholeWindow, window, cx| this.close_whole_window(window, cx)),
     )
@@ -165,6 +184,33 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
             this.show_terminal(false, window, cx)
         }),
     )
+    .on_action(cx.listener(|this, _: &EnvironmentAction1, window, cx| {
+        this.run_environment_action(1, window, cx)
+    }))
+    .on_action(cx.listener(|this, _: &EnvironmentAction2, window, cx| {
+        this.run_environment_action(2, window, cx)
+    }))
+    .on_action(cx.listener(|this, _: &EnvironmentAction3, window, cx| {
+        this.run_environment_action(3, window, cx)
+    }))
+    .on_action(cx.listener(|this, _: &EnvironmentAction4, window, cx| {
+        this.run_environment_action(4, window, cx)
+    }))
+    .on_action(cx.listener(|this, _: &EnvironmentAction5, window, cx| {
+        this.run_environment_action(5, window, cx)
+    }))
+    .on_action(cx.listener(|this, _: &EnvironmentAction6, window, cx| {
+        this.run_environment_action(6, window, cx)
+    }))
+    .on_action(cx.listener(|this, _: &EnvironmentAction7, window, cx| {
+        this.run_environment_action(7, window, cx)
+    }))
+    .on_action(cx.listener(|this, _: &EnvironmentAction8, window, cx| {
+        this.run_environment_action(8, window, cx)
+    }))
+    .on_action(cx.listener(|this, _: &EnvironmentAction9, window, cx| {
+        this.run_environment_action(9, window, cx)
+    }))
     .on_action(cx.listener(|this, _: &ZoomIn, window, cx| this.change_zoom(Some(1), window, cx)))
     .on_action(cx.listener(|this, _: &ZoomOut, window, cx| this.change_zoom(Some(-1), window, cx)))
     .on_action(cx.listener(|this, _: &ActualSize, window, cx| this.change_zoom(None, window, cx)))
@@ -187,7 +233,12 @@ impl Root {
         self.toast(Toast::danger("Error starting chat"), cx);
     }
 
-    fn new_special_chat(&mut self, mode: NewChatMode, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn new_special_chat(
+        &mut self,
+        mode: NewChatMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.new_chat(window, cx);
         self.shortcut_state.new_chat_mode = mode;
         self.home.update(cx, |home, cx| {
@@ -483,6 +534,15 @@ pub(crate) fn initialize_window(state: &mut State, window: &mut Window) {
     }
     state.zoom = state.zoom.clamp(0.5, 3.);
     window.set_ui_scale(state.zoom);
+    place_traffic_lights(state.zoom, window);
+}
+
+/// The original's `trafficLightPosition`: x 16, centred in the 44 px top bar at the zoom level.
+fn place_traffic_lights(zoom: f32, window: &Window) {
+    #[cfg(target_os = "macos")]
+    window.set_traffic_light_position(gpui::point(px(16.), px(((44. * zoom - 14.) / 2.).round())));
+    #[cfg(not(target_os = "macos"))]
+    let _ = (zoom, window);
 }
 
 impl Root {
@@ -491,6 +551,7 @@ impl Root {
             ((self.state.zoom * 100. + step as f32 * 10.).round() / 100.).clamp(0.5, 3.)
         });
         window.set_ui_scale(self.state.zoom);
+        place_traffic_lights(self.state.zoom, window);
         self.fit(window, cx);
         self.save(window, cx);
         if let Some(banner) = &self.shortcut_state.zoom_banner {
@@ -541,7 +602,16 @@ impl Root {
         let mode = self.shortcut_state.new_chat_mode;
         let host = self.host.clone();
         let hotkey_options = hotkey::start_options(self, cx);
+        let preparing_worktree = mode != NewChatMode::Standalone
+            && hotkey_options
+                .as_ref()
+                .is_some_and(|options| options.mode == ui::screens::hotkey::Mode::Worktree);
+        if preparing_worktree {
+            self.toast(Toast::info("Creating worktree…"), cx);
+        }
+        let memory = self.new_chat_memory;
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let result = async {
             let workspace = if mode == features::shortcuts::NewChatMode::Standalone {
                 let prepare = host.clone();
                 let prompt = s.text.clone();
@@ -558,7 +628,14 @@ impl Root {
                     let host = host.clone();
                     let prompt = s.text.clone();
                     match cx.background_executor().spawn(async move { hotkey::prepare_start(host, options, &prompt) }).await {
-                        Ok(prepared) => Some(prepared),
+                        Ok(prepared) => {
+                            if preparing_worktree {
+                                this.update(cx, |this, cx| {
+                                    this.toast(Toast::info("Attaching worktree…"), cx);
+                                })?;
+                            }
+                            Some(prepared)
+                        },
                         Err(error) => {
                             this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
                             return Err(error);
@@ -577,6 +654,10 @@ impl Root {
             apply_permissions(&mut params, &s.permission);
             if let Some(config) = computer_use {
                 params["config"] = config;
+            }
+            params["dynamicTools"] = json!([crate::terminal::read_thread_terminal_tool()]);
+            if let Some(memory) = memory {
+                memory.apply(&mut params);
             }
             let mut thread = match bridge
                 .request::<_, ThreadStartResponse>("thread/start", params)
@@ -644,7 +725,14 @@ impl Root {
             };
             this.update_in(cx, |this, window, cx| {
                 this.new_chat_section = None;
+                if let Some(memory) = memory {
+                    this.new_chat_memory = None;
+                    this.thread_memory.insert(id.clone(), memory);
+                }
                 this.loaded.insert(id.clone());
+                if preparing_worktree {
+                    this.worktree_statuses.insert(id.clone(), "Checkout created");
+                }
                 if mode == features::shortcuts::NewChatMode::Temporary {
                     this.shortcut_state.ephemeral.insert(id.clone());
                 } else {
@@ -662,6 +750,17 @@ impl Root {
             let result = turn_start(&bridge, &id, &s, user_input(&s), None).await;
             if result.is_err() {
                 this.update(cx, |this, cx| this.restore_failed_send(&s, cx))?;
+            }
+            result
+            }.await;
+            if preparing_worktree {
+                this.update(cx, |this, cx| {
+                    if let Err(error) = &result
+                        && format!("{error:#}").contains("Setup script")
+                    {
+                        this.toast(Toast::danger("Checkout created; setup failed"), cx);
+                    }
+                })?;
             }
             result
         });

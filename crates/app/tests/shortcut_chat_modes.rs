@@ -22,7 +22,7 @@ fn menu_hidden(fx: &Fx, menu: &str, item: &str) -> Result<bool> {
 }
 
 #[test]
-fn hidden_standalone_menu_allocates_its_own_workspace() -> Result<()> {
+fn standalone_menu_allocates_its_own_workspace() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let home = directory.path().join("codex");
     let workspaces = directory.path().join("standalone");
@@ -39,7 +39,7 @@ fn hidden_standalone_menu_allocates_its_own_workspace() -> Result<()> {
     let host = app::host::LocalHost::new(&home).with_bridge(bridge);
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(Arc::new(host), cx));
-    ensure!(menu_hidden(&fx, "File", "New standalone chat")?);
+    // OS-14 shows New standalone chat in the File menu; this test covers the workspace it allocates.
     fx.menu("File", "New standalone chat")?;
     fx.type_text(GREETING_PROMPT)?;
     fx.keys("enter")?;
@@ -67,6 +67,9 @@ fn hidden_standalone_menu_allocates_its_own_workspace() -> Result<()> {
             .as_str()
             .is_some_and(|text| text.contains("Projectless Chat"))
     );
+    // The projectless chat's summary offers `Outputs` and `Sources`.
+    fx.click((fx.size.0 - 63., 22.))?;
+    fx.capture_evidence("CGX_SUMMARY_PANEL_EVIDENCE", "native-summary")?;
     Ok(())
 }
 

@@ -3,15 +3,20 @@ use gpui::Div;
 
 mod archive;
 mod automations;
+mod gpts;
 mod home;
+mod images;
+mod maps;
 mod mobile;
 mod plugins;
+mod security_cloud;
 mod settings;
 mod sites;
+mod space;
 mod thread;
 
 pub(crate) use settings::request_quit;
-pub(crate) use thread::{forked_thread, load_thread};
+pub(crate) use thread::{forked_thread, load_thread, search_turns, turns_page};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Route {
@@ -31,6 +36,8 @@ pub enum Route {
     },
     /// Rail `Scheduled` (`/scheduled`): the Automations page.
     Scheduled,
+    /// Rail `Space` (`/space`): the Spaces list.
+    Space,
     /// A sidebar task row (`/scheduled?automationId=<id>`): the task's thread.
     Automation(String),
     /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
@@ -43,6 +50,16 @@ pub enum Route {
     Onboarding(ui::screens::onboarding::Page),
     /// Rail `Sites` (`/sites`).
     Sites,
+    /// Explore ▸ `Security Cloud`.
+    SecurityCloud,
+    /// Explore ▸ `Maps` (`/maps`).
+    Maps,
+    /// A Sites row (`/sites/:projectId`): the site's details.
+    Site(String),
+    /// Explore ▸ `Images` (`/images`).
+    Images,
+    /// Explore ▸ `GPTs` (`/gpts`), or one GPT's page (`/g/:gizmoId`).
+    Gpts(Option<String>),
 }
 
 pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
@@ -53,9 +70,14 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = mobile::actions(root, cx);
     root = crate::security::actions(root, cx);
     root = plugins::actions(root, cx);
+    root = space::actions(root, cx);
     root = archive::actions(root, cx);
     root = crate::pull_requests::actions(root, cx);
     root = sites::actions(root, cx);
+    root = security_cloud::actions(root, cx);
+    root = maps::actions(root, cx);
+    root = images::actions(root, cx);
+    root = gpts::actions(root, cx);
     root
 }
 
@@ -180,6 +202,11 @@ impl Root {
         self.cloud = None;
         self.plugins_page = None;
         self.sites_page = None;
+        self.security_cloud_page = None;
+        self.space_page = None;
+        self.maps_page = None;
+        self.images_page = None;
+        self.gpts_page = None;
         self.onboarding_page = None;
         self.cloud_modal = None;
         self.page = match self.state.route.clone() {
@@ -202,10 +229,16 @@ impl Root {
             Route::Archive => Some(archive::page(self, cx)),
             Route::Thread(_) if self.scheduled_thread() => Some(automations::thread(self, cx)),
             Route::Mobile => Some(mobile::page(self, cx)),
+            Route::Space => Some(space::page(self, cx)),
             Route::PullRequests(selected) => Some(self.pull_requests_shell(selected, window, cx)),
             Route::Security => Some(crate::security::shell(self, window, cx)),
             Route::Plugins(path) => Some(self.plugins_shell(path, window, cx)),
-            Route::Sites => Some(sites::page(self, cx)),
+            Route::Sites => Some(sites::page(self, None, window, cx)),
+            Route::Site(id) => Some(sites::page(self, Some(id), window, cx)),
+            Route::SecurityCloud => Some(security_cloud::page(self, cx)),
+            Route::Maps => Some(maps::page(self, cx)),
+            Route::Images => Some(images::page(self, cx)),
+            Route::Gpts(id) => Some(gpts::page(self, id, window, cx)),
             Route::Onboarding(page) => {
                 self.open_onboarding(page, window, cx);
                 None
@@ -225,6 +258,7 @@ impl Root {
                 shell.can_go_back = can_back;
                 shell.can_go_forward = can_forward;
                 shell.unread_destinations = self.unread_destinations.clone();
+                shell.security_cloud_available = self.security_cloud;
                 let access = self.security_access.read(cx);
                 shell.security_available = access.gate_enabled && access.plugin_available;
             });
@@ -283,6 +317,7 @@ impl Root {
             let panel = self.side_tabs_view(&view, cx);
             with_side_tabs(shell.clone(), view, panel, self.workspace_layout(), cx)
         });
+        self.sync_browser_pages(cx);
         window.focus(&self.route_focus(cx), cx);
         if let Some(id) = thread_id
             && self

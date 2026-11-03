@@ -19,6 +19,7 @@ use std::time::Instant;
 use theme::{ActiveTheme as _, Theme};
 use tooltip::{Side, tooltip};
 
+pub mod browser;
 pub mod composer;
 pub mod confirmation;
 pub mod dialog;
@@ -35,6 +36,14 @@ pub mod tooltip;
 pub mod updater;
 pub mod workspace;
 pub mod zoom;
+
+/// The account the profile menu shows (`account/read`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProfileAccount {
+    /// A ChatGPT sign-in and its email.
+    Chatgpt(Option<SharedString>),
+    ApiKey,
+}
 
 actions!(
     shell,
@@ -54,15 +63,30 @@ actions!(
         GoForward,
         OpenSettings,
         LogOut,
+        /// Profile menu `Add account` / `Sign in with ChatGPT`: the sign-in screen, cancelable.
+        SwitchAccount,
         ShowKeyboardShortcuts,
         OpenMini,
+        /// Rail `Space`: the Spaces list (`/space`).
+        OpenSpace,
+        /// Profile menu `Open config.toml`: the window host's user config layer.
+        OpenUserConfig,
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
         OpenPullRequests,
         OpenPlugins,
         OpenSecurity,
+        /// Explore ▸ `Security Cloud`: the `codex_security_cloud` app's findings, repositories
+        /// and scans.
+        OpenSecurityCloud,
         /// Rail `Sites` (`/sites`).
         OpenSites,
+        /// Explore ▸ `Maps` (`/maps`).
+        OpenMaps,
+        /// Explore ▸ `Images` (`/images`).
+        OpenImages,
+        /// Explore ▸ `GPTs` (`/gpts`).
+        OpenGpts,
         /// Home beacon `Start Voice` and the composer's `Start new voice chat`.
         StartVoiceChat,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
@@ -73,6 +97,8 @@ actions!(
         OpenChangesPanel,
         /// Thread summary ▸ `Background processes` row: the command's terminal tab.
         OpenBackgroundTerminal,
+        /// Thread summary ▸ `Plan`: the latest plan in its editable side panel tab.
+        OpenPlanPanel,
         ShowWorkspaceTabView,
         StepWorkspaceLayout,
         /// `⌘K`, `⌘⇧P`, sidebar `Search`: the command menu.
@@ -275,9 +301,13 @@ pub struct Shell {
     /// Unseen, unpinned MCP destinations; `None` while their source is unavailable.
     pub unread_destinations: Option<Arc<[SharedString]>>,
     pub security_available: bool,
+    /// The MCP catalog has the `codex_security_cloud` destination: Explore lists `Security Cloud`.
+    pub security_cloud_available: bool,
     pub scheduled_attention: bool,
     /// The profile avatar's menu is open.
     pub profile_menu: bool,
+    /// The signed-in account the profile menu names; `None` when signed out of OpenAI.
+    pub account: Option<ProfileAccount>,
     /// Pointer over the avatar: its own click toggles the menu, so a press there must not
     /// also close it as a click outside.
     avatar_hovered: bool,
@@ -301,7 +331,8 @@ pub struct Shell {
 // add the 3/8 and larger decodes when a larger zoom matters.
 fn avatar(under: Hsla) -> AnyElement {
     const PNG: &[u8] = include_bytes!("../assets/avatar-decoded-64.png");
-    if !cfg!(target_os = "macos") {
+    // The compositor tile needs an opaque `under`; over vibrancy the image is drawn directly.
+    if !cfg!(target_os = "macos") || under.a < 1. {
         let image = Arc::new(Image::from_bytes(ImageFormat::Png, PNG.to_vec()));
         return img(image).size(px(24.)).rounded_full().into_any_element();
     }
@@ -376,8 +407,10 @@ impl Shell {
             attention: false,
             unread_destinations: None,
             security_available: false,
+            security_cloud_available: false,
             scheduled_attention: false,
             profile_menu: false,
+            account: None,
             avatar_hovered: false,
             explore_menu: false,
             explore_hovered: false,
@@ -487,6 +520,16 @@ pub fn blit(top: Hsla, bottom: Hsla) -> Hsla {
 /// Window color behind the rail and titlebar: `_PageSurfaceLayout` over the body.
 pub fn layout_color(t: &Theme) -> Hsla {
     over(t.page_surface_layout, t.background_surface_under)
+}
+
+/// The body under the page: none over the window's vibrancy (the original's focused macOS
+/// window), else `--app-color-background-surface-under` (`electron-opaque`).
+fn body_color(t: &Theme, window: &Window) -> Hsla {
+    if window.background_appearance() == gpui::WindowBackgroundAppearance::Blurred {
+        gpui::transparent_black()
+    } else {
+        t.background_surface_under
+    }
 }
 
 pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
@@ -843,6 +886,8 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
 
 /// Click handler for the Home mode switch.
 pub type ModeSwitchClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+/// Profile-menu row action.
+type MenuAction = Box<dyn Fn(&mut Window, &mut App)>;
 
 /// The `Codex ⌄` trigger's current mode, click handler and open menu.
 pub struct ModeSwitch {
@@ -947,6 +992,20 @@ pub fn home_sidebar_header(
                         .items_center()
                         .gap(px(6.))
                         .rounded(RADIUS_BUTTON_XL)
+                        // Ghost `[data-state=open]:before`: the hover fill at opacity 0.6.
+                        .when(mode.menu.is_some(), |d| {
+                            d.child(div().absolute().inset_0().child(shapes::decoration(
+                                shapes::Decoration {
+                                    radius: Corners::all(RADIUS_BUTTON_XL),
+                                    corner: shapes::Corner::Squircle,
+                                    fill: Some(Hsla {
+                                        a: t.ghost_hover.a * 0.6,
+                                        ..t.ghost_hover
+                                    }),
+                                    ..Default::default()
+                                },
+                            )))
+                        })
                         .child(
                             icon::icon_sized(
                                 mode.wordmark.0,
@@ -1103,7 +1162,7 @@ impl Shell {
         // The avatar composites over the rail, or over the profile button's hover fill.
         // ponytail: the hover fill's end color, not its 150 ms fade; pass the fade's color if
         // the avatar's corners ever show during it.
-        let under = over(t.page_surface_layout, t.background_surface_under);
+        let under = over(t.page_surface_layout, body_color(t, window));
         let avatar_under = if self.avatar_hovered {
             over(hover_bg, under)
         } else {
@@ -1213,7 +1272,10 @@ impl Shell {
                             }),
                         "Home",
                     ))
-                    .child(rail_tip(item("space"), "Space"))
+                    .child(rail_tip(
+                        item("space").on_click(dispatch::<OpenSpace>),
+                        "Space",
+                    ))
                     .child(rail_tip(
                         item("scheduled")
                             .when(self.scheduled_attention, |d| d.child(dot(6.)))
@@ -1336,10 +1398,26 @@ impl Shell {
     }
 
     /// The Explore `…` menu (`sidebarCustomization.moreMenu`), right of the rail item: the
-    /// secondary destinations the port has. `Customize sidebar` and MCP destinations need the
-    /// sidebar-customization store, which the port lacks.
+    /// secondary destinations the port has, in the original's order (`Images`, `Maps`,
+    /// `GPTs`), then `Security` and the `Security Cloud` MCP destination when available.
+    /// `Customize sidebar` and other MCP destinations need the sidebar-customization store,
+    /// which the port lacks.
     fn explore_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let hover = t.menu_item_hover;
+        let menu_item = |id: &'static str, label: &'static str, action: Box<dyn gpui::Action>| {
+            div()
+                .id(id)
+                .px(px(8.))
+                .py(px(6.))
+                .rounded(px(12.))
+                .hover(move |s| s.bg(hover))
+                .child(text(label, 14., 20., 430., t.text))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.explore_menu = false;
+                    cx.notify();
+                    window.dispatch_action(action.boxed_clone(), cx);
+                }))
+        };
         div()
             .absolute()
             .left(RAIL_WIDTH)
@@ -1351,61 +1429,130 @@ impl Shell {
                 }
             }))
             .child(composer::popover(t, 220., |d| {
-                if self.security_available {
-                    d.child(
-                        div()
-                            .id("explore-security")
-                            .px(px(8.))
-                            .py(px(6.))
-                            .rounded(px(12.))
-                            .hover(move |s| s.bg(hover))
-                            .child(text("Security", 14., 20., 430., t.text))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.explore_menu = false;
-                                cx.notify();
-                                window.dispatch_action(Box::new(OpenSecurity), cx);
-                            })),
-                    )
-                } else {
-                    d.child(div().px(px(8.)).py(px(6.)).child(text(
-                        "No more destinations",
-                        14.,
-                        20.,
-                        400.,
-                        t.text_tertiary,
-                    )))
-                }
+                d.child(menu_item("explore-images", "Images", Box::new(OpenImages)))
+                    .child(menu_item("explore-maps", "Maps", Box::new(OpenMaps)))
+                    .child(menu_item("explore-gpts", "GPTs", Box::new(OpenGpts)))
+                    .when(self.security_available, |d| {
+                        d.child(menu_item(
+                            "explore-security",
+                            "Security",
+                            Box::new(OpenSecurity),
+                        ))
+                    })
+                    .when(self.security_cloud_available, |d| {
+                        d.child(menu_item(
+                            "explore-security-cloud",
+                            "Security Cloud",
+                            Box::new(OpenSecurityCloud),
+                        ))
+                    })
             }))
     }
 
-    /// Profile avatar menu (`codex.profileDropdown.*`) above the avatar: `Settings`, then the
-    /// `Help` submenu's `Set up mobile`, flattened under a `Help` heading.
-    /// Profile and Usage open pages that this menu does not yet expose.
+    /// Profile avatar menu (`codex.profileDropdown.*`) above the avatar: `Settings`, `Usage`
+    /// with the primary limit's `{n}% left`, `Personalization`, `Open config.toml`, the
+    /// free-plan upgrade link, then the `Help` submenu flattened under a `Help` heading.
+    /// `Log out` opens the `Log out?` confirmation.
+    /// shortcut: no `Profile` or `Invite a coworker`; the port has no profile page or referral
+    /// client yet.
     fn profile_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let hover = t.menu_item_hover;
+        let usage = cx.try_global::<screens::settings::usage::State>();
+        let remaining = usage.and_then(|state| match &state.limits {
+            screens::computer_use::Load::Ready(limits) => {
+                limits.rate_limits.primary.as_ref().map(|w| w.remaining())
+            }
+            _ => None,
+        });
+        let pricing = usage
+            .filter(|state| matches!(state.plan.as_str(), "free" | "go"))
+            .map(|state| {
+                if state.access.logged_in_pricing {
+                    "https://chatgpt.com/#pricing"
+                } else {
+                    "https://chatgpt.com/pricing/"
+                }
+            });
         let item = |id: &'static str,
                     label: &'static str,
-                    action: fn(&ClickEvent, &mut Window, &mut App)| {
+                    trailing: Option<String>,
+                    action: MenuAction| {
             div()
                 .id(id)
                 .px(px(8.))
                 .py(px(6.))
                 .rounded(px(12.))
+                .flex()
+                .justify_between()
                 .hover(move |s| s.bg(hover))
                 .child(text(label, 14., 20., 430., t.text))
-                .on_click(cx.listener(move |this, e, window, cx| {
+                .children(trailing.map(|s| text(s, 13., 20., 430., t.text_tertiary)))
+                .on_click(cx.listener(move |this, _, window, cx| {
                     this.profile_menu = false;
                     cx.notify();
-                    action(e, window, cx);
+                    action(window, cx);
                 }))
         };
-        let settings = item("profile-settings", "Settings", dispatch::<OpenSettings>);
+        fn send<A: Action + Clone>(action: A) -> MenuAction {
+            Box::new(move |window, cx| window.dispatch_action(Box::new(action.clone()), cx))
+        }
+        let section = |label: &str| {
+            send(screens::settings::subtrees::OpenSection {
+                label: label.into(),
+            })
+        };
+        let settings = item("profile-settings", "Settings", None, send(OpenSettings));
+        let usage = item(
+            "profile-usage",
+            "Usage",
+            remaining.map(|r| format!("{r:.0}% left")),
+            section("Usage & billing"),
+        );
+        let personalization = item(
+            "profile-personalization",
+            "Personalization",
+            None,
+            section("Personalization"),
+        );
+        let config = item(
+            "profile-open-config-toml",
+            "Open config.toml",
+            None,
+            send(OpenUserConfig),
+        );
+        let upgrade = pricing.map(|url| {
+            item(
+                "profile-upgrade",
+                "Upgrade for higher limits",
+                None,
+                Box::new(move |_, cx| cx.open_url(url)),
+            )
+        });
+        let mini = item("profile-mini", "Show Mini", None, send(OpenMini));
+        let log_out = item("profile-log-out", "Log out", None, send(LogOut));
         let mobile = item(
             "profile-set-up-mobile",
             "Set up mobile",
-            dispatch::<OpenMobileSetup>,
+            None,
+            send(OpenMobileSetup),
         );
-        let mini = item("profile-mini", "Show Mini", dispatch::<OpenMini>);
+        let shortcuts = item(
+            "profile-keyboard-shortcuts",
+            "Keyboard Shortcuts",
+            None,
+            send(ShowKeyboardShortcuts),
+        );
+        // `profileDropdown`: the signed-in account, then `Add account` (ChatGPT) or
+        // `Sign in with ChatGPT`; both open the sign-in screen through `SwitchAccount`.
+        let (account, switch) = match &self.account {
+            Some(ProfileAccount::Chatgpt(email)) => (email.clone(), "Add account"),
+            Some(ProfileAccount::ApiKey) => (
+                Some("Logged in with API key".into()),
+                "Sign in with ChatGPT",
+            ),
+            None => (None, "Sign in with ChatGPT"),
+        };
+        let switch = item("profile-switch-account", switch, None, send(SwitchAccount));
         div()
             .absolute()
             .left(px(8.))
@@ -1417,22 +1564,33 @@ impl Shell {
                 }
             }))
             .child(composer::popover(t, 220., |d| {
-                d.child(settings)
-                    .child(mini)
-                    .child(item("profile-log-out", "Log out", dispatch::<LogOut>))
-                    .child(div().px(px(8.)).pt(px(8.)).pb(px(4.)).child(text(
-                        "Help",
-                        12.,
-                        16.,
-                        400.,
-                        t.text_tertiary,
-                    )))
-                    .child(mobile)
-                    .child(item(
-                        "profile-keyboard-shortcuts",
-                        "Keyboard Shortcuts",
-                        dispatch::<ShowKeyboardShortcuts>,
-                    ))
+                d.when_some(account, |d, account| {
+                    d.child(
+                        div()
+                            .id("profile-account")
+                            .px(px(8.))
+                            .pt(px(6.))
+                            .pb(px(4.))
+                            .child(text(account, 12., 16., 400., t.text_tertiary)),
+                    )
+                })
+                .child(switch)
+                .child(settings)
+                .child(usage)
+                .child(personalization)
+                .child(config)
+                .children(upgrade)
+                .child(mini)
+                .child(log_out)
+                .child(div().px(px(8.)).pt(px(8.)).pb(px(4.)).child(text(
+                    "Help",
+                    12.,
+                    16.,
+                    400.,
+                    t.text_tertiary,
+                )))
+                .child(mobile)
+                .child(shortcuts)
             }))
     }
 
@@ -1931,7 +2089,7 @@ impl Render for Shell {
             fill: Some(t.sidebar_divider.opacity(hairline_alpha)),
             ..Default::default()
         };
-        let under = t.background_surface_under;
+        let under = body_color(&t, window);
         let surface_px = {
             let c = gpui::Rgba::from(t.surface);
             [c.r, c.g, c.b, 1.].map(|v| (v * 255.).round() as u8)

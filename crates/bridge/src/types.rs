@@ -46,6 +46,9 @@ pub struct Thread {
     /// Filled only by `thread/read` with `includeTurns`, `thread/resume` and `thread/fork`.
     #[serde(default)]
     pub turns: Vec<Turn>,
+    /// `thread/turns/list` cursor for the turns older than `turns`; `None` when all are loaded.
+    #[serde(skip)]
+    pub older_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -154,8 +157,37 @@ pub enum ThreadItem {
         #[serde(flatten)]
         metadata: serde_json::Map<String, Value>,
     },
+    /// A generated image: `savedPath` is the PNG on disk, else `result` holds it as base64.
+    ImageGeneration {
+        id: String,
+        /// `inProgress` | `completed` | `failed`
+        status: String,
+        #[serde(default)]
+        revised_prompt: Option<String>,
+        #[serde(default)]
+        result: Option<String>,
+        #[serde(default)]
+        saved_path: Option<String>,
+    },
+    /// A call to a client tool the thread was started with (`dynamicTools`).
+    DynamicToolCall {
+        id: String,
+        tool: String,
+        /// `inProgress` | `completed` | `failed`
+        status: String,
+    },
     ContextCompaction {
         id: String,
+    },
+    /// `/review` began: `review` names what is reviewed.
+    EnteredReviewMode {
+        id: String,
+        review: String,
+    },
+    /// `/review` finished: `review` is the review text.
+    ExitedReviewMode {
+        id: String,
+        review: String,
     },
     #[serde(other)]
     Other,
@@ -237,6 +269,9 @@ pub struct Model {
     pub default_reasoning_effort: String,
     pub supported_reasoning_efforts: Vec<Value>,
     pub is_default: bool,
+    /// `inputModalities`; absent means the server default, text and image.
+    #[serde(default)]
+    pub input_modalities: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -337,6 +372,9 @@ pub struct CommandApprovalRequest {
     #[serde(default)]
     pub kind: String,
     pub available_decisions: Option<Vec<Value>>,
+    /// The command prefix a session-wide approval would cover; the original offers
+    /// `Allow similar commands` only with it.
+    pub proposed_execpolicy_amendment: Option<Value>,
 }
 
 /// `item/fileChange/requestApproval`

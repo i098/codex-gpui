@@ -62,7 +62,8 @@ const FLOWS: &[(&str, Flow)] = &[
                 })?,
                 "the composer menu did not open"
             );
-            Ok(())
+            // The reference shows the menu after its 30 ms + 320 ms enter animation.
+            fx.advance(std::time::Duration::from_millis(350))
         })
     }),
     ("parity_screenshot", || {
@@ -110,6 +111,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("rail_focus_ring", rail_focus_ring),
     ("profile_menu_settings", profile_menu_settings),
     ("profile_menu_dismiss", profile_menu_dismiss),
+    ("profile_menu_usage", profile_menu_usage),
     ("profile_menu_mobile", profile_menu_mobile),
     ("mobile_button_hover", mobile_button_hover),
     ("mobile_focus_ring", mobile_focus_ring),
@@ -164,7 +166,10 @@ fn main() {
     // The flows render through the Metal headless renderer and the CoreText text system;
     // other platforms (Linux CI) have neither.
     if !cfg!(target_os = "macos") {
-        println!("flows: macOS only, skipped");
+        // nextest runs `--list` and rejects any line that is not "<name>: test".
+        if !std::env::args().any(|a| a == "--list") {
+            println!("flows: macOS only, skipped");
+        }
         return;
     }
     let filter = std::env::args().skip(1).find(|a| !a.starts_with('-'));
@@ -528,6 +533,7 @@ fn popover(target: &str, region: [f32; 4]) -> Result<String> {
     fx.hover((640., 22.))?;
     let before = fx.shot()?;
     fx.click(fx.at("home", target)?)?;
+    fx.advance(std::time::Duration::from_millis(350))?;
     fx.hover((640., 22.))?;
     let open = fx.shot()?;
     let n = changed(&before, &open, region);
@@ -924,8 +930,9 @@ fn avatar(fx: &Fx) -> (f32, f32) {
 }
 
 /// Profile menu rows `Settings` and `Set up mobile`, above the `Keyboard Shortcuts` row.
+/// `Usage`, `Personalization` and `Open config.toml` sit between `Settings` and `Show Mini`.
 fn profile_item(fx: &Fx, n: usize) -> (f32, f32) {
-    (118., fx.size.1 - [192., 100.][n])
+    (118., fx.size.1 - [320., 100.][n])
 }
 
 fn profile_menu_settings() -> Result<String> {
@@ -948,6 +955,17 @@ fn profile_menu_settings() -> Result<String> {
         fx.shell(|s| !s.profile_menu),
         "a second avatar click left it open"
     );
+    Ok(String::new())
+}
+
+/// `Usage` opens Settings ▸ `Usage & billing`.
+fn profile_menu_usage() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.click(avatar(&fx))?;
+    fx.capture_evidence("CGX_PROFILE_SHOTS", "profile-menu")?;
+    fx.click((118., fx.size.1 - 288.))?;
+    ensure!(fx.route() == Route::Settings, "route {:?}", fx.route());
+    fx.capture_evidence("CGX_PROFILE_SHOTS", "profile-usage")?;
     Ok(String::new())
 }
 
@@ -1502,7 +1520,7 @@ fn copy_response() -> Result<String> {
     Ok(String::new())
 }
 
-/// `Fork chat from here` under the last turn: `thread/fork` (no rollback), the fork opens
+/// More actions > `Branch in new chat` under the last turn: `thread/fork` (no rollback), the fork opens
 /// and heads Recents.
 fn fork_chat() -> Result<String> {
     const FORK: &str = "fork-of-subtract";
@@ -1512,7 +1530,9 @@ fn fork_chat() -> Result<String> {
     lines.extend(exchange("thread/fork", json!({ "thread": thread })));
     let mut fx = Fx::scripted(lines)?;
     open_subtract(&mut fx)?;
-    fx.click(fx.at("thread", "Fork chat from here")?)?;
+    let copy = fx.at("thread", "Copy")?;
+    fx.click((copy.0 + 84., copy.1))?;
+    fx.keys("enter")?;
     fx.wait_thread(FORK)?;
     let recents = fx.read(|r, _| r.recents());
     ensure!(

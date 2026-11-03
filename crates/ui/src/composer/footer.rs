@@ -79,9 +79,14 @@ fn effort_icon(effort: &str) -> &'static str {
 }
 
 impl Composer {
-    pub(super) fn dictation_button(&self, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+    /// The microphone, with the original's tooltip for its dictation state.
+    pub(super) fn dictation_button(
+        &self,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> crate::tooltip::Tooltip {
         let label = self.dictation_label();
-        pill("dictate", t)
+        let button = pill("dictate", t)
             .justify_center()
             .child(if self.dictation.is_some() {
                 div()
@@ -97,7 +102,7 @@ impl Composer {
             .role(gpui::Role::Button)
             .aria_label(label)
             .aria_disabled(label == "Transcribing")
-            .tab_index(0)
+            .track_focus(&self.dictate_focus)
             .focus_visible(crate::focus::trigger_focus)
             .size(px(28.))
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
@@ -106,41 +111,74 @@ impl Composer {
                     cx.stop_propagation();
                 }
             }))
-            .on_click(cx.listener(|this, _, window, cx| this.dictate(window, cx)))
+            .on_click(cx.listener(|this, _, window, cx| this.dictate(window, cx)));
+        crate::tooltip::tooltip(
+            button,
+            self.dictation_tooltip(),
+            None,
+            crate::tooltip::Side::Top,
+        )
+        .focus_handle(&self.dictate_focus)
     }
-    pub(super) fn footer(&self, window: &Window, t: &Theme, cx: &mut Context<Self>) -> Div {
+    pub(super) fn footer(&self, window: &mut Window, t: &Theme, cx: &mut Context<Self>) -> Div {
         let open = matches!(self.menu, Some(Menu::Effort | Menu::Models));
         let hotkey_home = self.hotkey_controls.is_some();
         let model = self.current_model();
         let loading = model.is_none();
         let model_label = model.map_or("Loading model…".into(), |m| m.label.clone());
+        // The original keeps the open trigger at least as wide as it was at open and as its
+        // `Select effort` placeholder (`minimumContentWidth`), so picking an effort or a model
+        // does not move the trigger or the menu centered on it.
+        let closed_width = window.use_keyed_state("model-trigger-width", cx, |_, _| px(0.));
+        let placeholder = "Select effort";
+        let min_width = open.then(|| {
+            let placeholder_width = window
+                .text_system()
+                .layout_line(
+                    placeholder,
+                    px(13.),
+                    &[TextRun {
+                        len: placeholder.len(),
+                        font: gpui::font(crate::SANS),
+                        color: t.text_tertiary,
+                        ..Default::default()
+                    }],
+                    None,
+                )
+                .width;
+            (*closed_width.read(cx)).max(crate::run_width(placeholder_width, window))
+        });
         let labels = div()
             .relative()
             .flex()
             .items_center()
             .gap(px(4.))
-            .child(
-                tabular(text(model_label, 13., 18., 400., t.text))
-                    .when(self.docked, |d| d.top_layer())
-                    .when(open, |d| d.invisible()),
-            )
-            .when(model.is_some(), |d| {
-                d.child(
-                    label(
-                        effort_label(self.displayed_effort()).to_string(),
-                        t.text_tertiary,
+            .when_some(min_width, |d, w| d.min_w(w).justify_center())
+            // The simple view shows the placeholder; the advanced view the live selection.
+            .map(|d| {
+                if self.menu == Some(Menu::Effort) {
+                    d.child(text(placeholder, 13., 18., 400., t.text_tertiary))
+                } else {
+                    d.child(
+                        tabular(text(model_label, 13., 18., 400., t.text))
+                            .when(self.docked, |d| d.top_layer()),
                     )
-                    .when(open, |d| d.invisible()),
-                )
+                    .when_some(model, |d, _| {
+                        d.child(label(
+                            effort_label(self.displayed_effort()).to_string(),
+                            t.text_tertiary,
+                        ))
+                    })
+                }
             })
-            .when(open, |d| {
+            .when(!open, |d| {
                 d.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .flex()
-                        .justify_center()
-                        .child(text("Select effort", 13., 18., 400., t.text_tertiary)),
+                    gpui::canvas(
+                        move |bounds, _, cx| closed_width.update(cx, |w, _| *w = bounds.size.width),
+                        |_, (), _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
                 )
             });
         let trigger = if loading {
@@ -186,7 +224,14 @@ impl Composer {
                 .child(icon("chevron-down-small", 16., t.text_tertiary))
         };
         let model_button = div()
+            .id("model-picker-slot")
             .relative()
+            // The tooltip owns the trigger's hover listener; the slot's matches its bounds.
+            .when(!loading, |d| {
+                d.on_hover(
+                    cx.listener(|this, hovered: &bool, _, _| this.menu_trigger_hovered = *hovered),
+                )
+            })
             // Chromium clips the open pill's fill to its 14 px rounded box: a rect under that
             // anti-aliased clip.
             .when(open, |d| {
@@ -202,27 +247,39 @@ impl Composer {
                         })),
                 ))
             })
-            .child(
-                trigger
+            .child({
+                let trigger = trigger
                     .track_focus(&self.model_focus)
                     .focus_visible(crate::focus::trigger_focus)
                     .when(!loading, |d| {
-                        d.on_hover(cx.listener(|this, hovered: &bool, _, _| {
-                            this.menu_trigger_hovered = *hovered
-                        }))
-                        .on_key_down(cx.listener(|this, event, window, cx| {
+                        d.on_key_down(cx.listener(|this, event, window, cx| {
                             this.trigger_key(Menu::Effort, event, window, cx)
                         }))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.toggle_menu(Menu::Effort, window, cx)
                         }))
-                    }),
-            )
-            .when(self.menu == Some(Menu::Effort), |d| {
-                d.child(self.anchored_menu(self.effort_menu(t, cx), Some(EFFORT_MENU_SLOT), cx))
+                    });
+                // The original passes the menu's open state to its tooltip, which stays closed.
+                if loading || open {
+                    trigger.into_any_element()
+                } else {
+                    // `codex.command.composer.openModelPicker` (recorded in f1c step 32).
+                    crate::tooltip::tooltip(
+                        trigger,
+                        "Select effort",
+                        Some("⌃⇧M"),
+                        crate::tooltip::Side::Top,
+                    )
+                    .focus_handle(&self.model_focus)
+                    .into_any_element()
+                }
             })
-            .when(self.menu == Some(Menu::Models), |d| {
-                d.child(self.anchored_menu(self.models_menu(t, cx), Some(EFFORT_MENU_SLOT), cx))
+            .when(open, |d| {
+                d.child(self.anchored_menu(
+                    self.picker_menu(t, window, cx),
+                    Some(EFFORT_MENU_SLOT),
+                    cx,
+                ))
             });
         let has_input = !self.content.is_empty()
             || !self.attachments.is_empty()
@@ -249,7 +306,7 @@ impl Composer {
                         .role(gpui::Role::Button)
                         .aria_label("Add files and more")
                         .aria_expanded(self.slash.open && self.slash.mention)
-                        .tab_index(0)
+                        .track_focus(&self.add_focus)
                         .focus_visible(crate::focus::trigger_focus)
                         .w(px(28.))
                         .justify_center()
@@ -270,53 +327,75 @@ impl Composer {
                     Some("@"),
                     crate::tooltip::Side::Top,
                 )
+                .focus_handle(&self.add_focus)
                 // The 1 px trigger border leaves a 4 px visible gap with this content-edge offset.
                 .side_offset(px(5.)),
             )
-            .child(
-                div()
-                    .relative()
-                    .child(
-                        pill("permissions", t)
-                            .track_focus(&self.permissions_focus)
-                            .focus_visible(crate::focus::trigger_focus)
-                            .on_hover(cx.listener(|this, hovered: &bool, _, _| {
-                                this.menu_trigger_hovered = *hovered
-                            }))
-                            .on_key_down(cx.listener(|this, event, window, cx| {
-                                this.trigger_key(Menu::Permissions, event, window, cx)
-                            }))
-                            .px(px(6.))
-                            .gap(px(4.))
-                            .child(footer_icon(
-                                if self.permission == Permission::Ask {
-                                    "composer-permission-ask"
-                                } else {
-                                    "permissions"
-                                },
-                                t.text_tertiary,
-                            ))
-                            .when(self.footer_width > SM_WIDTH, |d| {
-                                d.child(
-                                    text(
-                                        self.permission.short_label().to_owned(),
-                                        13.,
-                                        18.,
-                                        400.,
-                                        t.text_tertiary,
+            .when(!self.chat, |d| {
+                d.child(
+                    div()
+                        .id("permissions-slot")
+                        .relative()
+                        // The tooltip owns the trigger's hover listener; the slot's matches its bounds.
+                        .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                            this.menu_trigger_hovered = *hovered
+                        }))
+                        .child({
+                            let trigger = pill("permissions", t)
+                                .role(gpui::Role::Button)
+                                .aria_label("Change permissions")
+                                .track_focus(&self.permissions_focus)
+                                .focus_visible(crate::focus::trigger_focus)
+                                .on_key_down(cx.listener(|this, event, window, cx| {
+                                    this.trigger_key(Menu::Permissions, event, window, cx)
+                                }))
+                                .when(self.menu == Some(Menu::Permissions), |d| {
+                                    d.bg(t.ghost_hover)
+                                })
+                                .px(px(6.))
+                                .gap(px(4.))
+                                .child(footer_icon(
+                                    if self.permission == Permission::Ask {
+                                        "composer-permission-ask"
+                                    } else {
+                                        "permissions"
+                                    },
+                                    t.text_tertiary,
+                                ))
+                                .when(self.footer_width > SM_WIDTH, |d| {
+                                    d.child(
+                                        text(
+                                            self.permission.short_label().to_owned(),
+                                            13.,
+                                            18.,
+                                            400.,
+                                            t.text_tertiary,
+                                        )
+                                        .when(self.docked, |d| d.top_layer()),
                                     )
-                                    .when(self.docked, |d| d.top_layer()),
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.toggle_menu(Menu::Permissions, window, cx)
+                                }));
+                            if self.menu == Some(Menu::Permissions) {
+                                trigger.into_any_element()
+                            } else {
+                                crate::tooltip::tooltip(
+                                    trigger,
+                                    "Change permissions",
+                                    None,
+                                    crate::tooltip::Side::Top,
                                 )
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_menu(Menu::Permissions, window, cx)
-                            })),
-                    )
-                    .when(self.menu == Some(Menu::Permissions), |d| {
-                        d.child(self.anchored_menu(self.permissions_menu(t, cx), None, cx))
-                    }),
-            )
-            .when(self.plan, |d| {
+                                .focus_handle(&self.permissions_focus)
+                                .into_any_element()
+                            }
+                        })
+                        .when(self.menu == Some(Menu::Permissions), |d| {
+                            d.child(self.anchored_menu(self.permissions_menu(t, cx), None, cx))
+                        }),
+                )
+            })
+            .when(self.plan && !self.chat, |d| {
                 // `composer.planModeIndicator`: a divider, then a chip whose click turns plan
                 // mode off; hovering swaps its icon for the close icon.
                 d.child(div().h(px(16.)).w(px(1.)).bg(t.border.opacity(0.7)))
@@ -364,7 +443,7 @@ impl Composer {
                 self.send_label()
             })
             .aria_disabled(waiting_for_model || (hotkey_home && !has_input) || shell_disabled)
-            .tab_index(0)
+            .track_focus(&self.send_focus)
             .rounded(Theme::RADIUS_FULL)
             .focus_visible(move |style| {
                 style.shadow(vec![gpui::BoxShadow {
@@ -429,6 +508,19 @@ impl Composer {
                     this.submit(&Submit, window, cx);
                 }
             }));
+        // The submit labels are accessible names only; the voice start has a tooltip.
+        let send = if voice {
+            crate::tooltip::tooltip(
+                send,
+                "Start new voice chat",
+                None,
+                crate::tooltip::Side::Top,
+            )
+            .focus_handle(&self.send_focus)
+            .into_any_element()
+        } else {
+            send.into_any_element()
+        };
         // The original's right group: the model picker's slot is `flex-1 min-w-0` and takes what
         // the microphone and send (`shrink-0`) leave, so it clips to nothing in a narrow
         // footer; the fixed pair overflows to the left of the footer's end.
@@ -451,7 +543,25 @@ impl Composer {
             .children(self.hotkey_controls.clone())
             .child(self.dictation_button(t, cx))
             .child(send);
-        // Grid columns: controls, an empty column, then the right group, 5 px apart.
+        // Grid columns: controls, an empty column, then the right group, 5 px apart. The
+        // ChatGPT pill puts the editor in the middle column, 5 px from each side.
+        if self.chat {
+            return div()
+                .flex()
+                .items_center()
+                .gap(px(5.))
+                .p(px(8.))
+                .child(left)
+                .child(
+                    self.card_editor(false, window, cx)
+                        .flex_1()
+                        .min_w_0()
+                        .px_0()
+                        .pb_0()
+                        .min_h(px(20.)),
+                )
+                .child(right.flex_none());
+        }
         div()
             .flex()
             .items_center()

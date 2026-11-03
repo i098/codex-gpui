@@ -125,6 +125,11 @@ impl Buffer {
         self.parser.screen().application_cursor()
     }
 
+    /// The scrollback is full, so the oldest output is gone.
+    pub fn truncated(&self) -> bool {
+        self.rows.len() >= SCROLLBACK_ROWS + usize::from(self.size.0)
+    }
+
     fn snapshot(&mut self) {
         let screen = self.parser.screen_mut();
         screen.set_scrollback(0);
