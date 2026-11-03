@@ -926,6 +926,7 @@ mod tests {
             section: None,
             status: ThreadStatus::Active,
             git_info: None,
+            forked_from_id: None,
             turns: vec![Turn {
                 id: "turn".into(),
                 items: vec![],
@@ -935,6 +936,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
             }],
+            older_cursor: None,
         };
         app.update(|cx| page.update(cx, |page, cx| {
             page.set_data(CloudTask { id:"task".into(),title:"Cloud".into(),turns:vec![CloudTurn {id:"turn".into(),thread,phase:Phase::SettingUp,error:None,logs:vec![],images:vec![]}],active_turn:Some("turn".into()),diff_turn:None,diff:String::new(),clone_url:None,environment_label:None,working:true },cx);

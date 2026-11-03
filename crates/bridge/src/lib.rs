@@ -21,8 +21,10 @@ pub use cloud::CLOUD_ENDPOINT;
 pub mod imports;
 mod replay;
 pub mod security;
+pub mod security_cloud;
 pub mod storage;
 pub mod types;
+pub mod widget;
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};

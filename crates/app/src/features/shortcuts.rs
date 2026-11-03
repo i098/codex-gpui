@@ -655,6 +655,7 @@ impl Root {
             if let Some(config) = computer_use {
                 params["config"] = config;
             }
+            params["dynamicTools"] = json!([crate::terminal::read_thread_terminal_tool()]);
             if let Some(memory) = memory {
                 memory.apply(&mut params);
             }

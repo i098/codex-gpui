@@ -647,6 +647,11 @@ impl Composer {
                 self.toggle_plan(cx);
                 return;
             }
+            "sketch" => {
+                self.finish_command(window, cx);
+                self.open_sketch(cx);
+                return;
+            }
             "ultrafast" => {
                 self.finish_command(window, cx);
                 self.speed = if self.speed == 2 { 0 } else { 2 };
@@ -700,6 +705,10 @@ impl Composer {
     /// The projects `/project` offers on Home: label and root path.
     pub fn set_slash_projects(&mut self, projects: Vec<(SharedString, String)>) {
         self.slash.projects = projects;
+    }
+
+    pub fn slash_projects(&self) -> &[(SharedString, String)] {
+        &self.slash.projects
     }
 
     /// Offers `/memories` while the app-server's `memories` feature is on.
