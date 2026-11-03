@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Add Back, Next and Reload to the in-app browser toolbar with `⌘←`, `⌘→`, `⌘R`, `⌘⇧R` and `⌘L`, a load indicator, and the original's `This site can't be reached` error page with Reload.
+- Add `Filter generated files` to the Changes file tree options: it hides files that `.gitattributes` marks `linguist-generated` from the tree and the diff list.
 - Add Thread summary ▸ `Sources` and its `Sources` side panel tab: the files the chat was given, read, created or updated, its web searches and opened pages, and its tool use counts.
 - Make Settings ▸ General ▸ `Full access` control the composer: turning it off removes `Full access` from the permissions menus, and turning it on asks `Make Full Access available?` first. The choice persists as host `show-full-access-in-composer`.
 - Show each hook's trust state in Settings ▸ Hooks: `Trust` explains `New hook` or `Hook changed since last trusted`, the switch explains `Disabled until hook is trusted` or `Managed hooks are always on`, and `Open config file` opens the hook's `sourcePath`.
@@ -41,6 +42,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add `Toggle Git blame` to the command menu: the file viewer shows the author, commit summary, short SHA and date for the active (clicked or cited) line from the host's `git blame`.
 - Show `Queue paused because you interrupted` with `Resume` over a queue that an interrupted turn left, and ask to clear the queue or keep it when a new message is sent.
 - List installed plugins in the `@` mention list's `Plugins` section, with `Loading plugins...` while `plugin/list` runs; a picked plugin becomes a chip and sends `[@name](plugin://id)`.
+- Add `Sketch` to `/` and `@`: a drawing canvas over the composer that attaches the drawing as a PNG image.
 - Add the sidebar project row menu (`...` button or right-click): `Pin`/`Unpin` (pinned projects list first), `Mark all as read` and `Archive chats` next to the existing `Edit`, `Move up` and `Remove project`.
 - Route plugin, skill, MCP app, and pet-install deep links to their native pages.
 - Route shared-thread, ChatGPT, browser, Space, and Codex app links to native destinations.
