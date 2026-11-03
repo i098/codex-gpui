@@ -91,14 +91,14 @@ pub fn subagents(turns: &[Turn]) -> Vec<Subagent> {
             }
         }
         for (id, state) in agents_states {
-            let Some(status) = state["status"].as_str().and_then(Status::from_state) else {
+            let Some(status) = Status::from_state(&state.status) else {
                 continue;
             };
             let agent = entry(&mut agents, id);
             agent.status = status;
             if status.active() {
                 agent.message = None;
-            } else if let Some(message) = state["message"].as_str().filter(|m| !m.trim().is_empty())
+            } else if let Some(message) = state.message.as_deref().filter(|m| !m.trim().is_empty())
             {
                 agent.message = Some(message.to_owned());
             }

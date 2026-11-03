@@ -241,6 +241,11 @@ impl Composer {
         self.focus_handle.focus(window, cx);
     }
 
+    /// The selected project's root, if any: Home keeps it as the only file-search root.
+    pub fn search_roots(&self) -> &[String] {
+        &self.slash.search.roots
+    }
+
     /// Changes the file-search roots without losing the current draft or query.
     pub fn set_search_roots(&mut self, roots: Vec<String>, cx: &mut Context<Self>) {
         if self.slash.search.roots == roots {
@@ -526,7 +531,7 @@ impl Composer {
 
     /// Enter, Tab or a click on the highlighted row. `Files and folders` opens the picker; a
     /// skill or a file becomes a chip followed by a space, the list closes; `Plan mode` toggles
-    /// plan mode. ponytail: the other actions (goal, sketch, project) belong to their own rows.
+    /// plan mode; `Sketch` opens the canvas. ponytail: goal and project belong to their own rows.
     pub(super) fn activate_mention(&mut self, index: usize, cx: &mut Context<Self>) {
         let plugins = self.plugins_start();
         let files = self.files_start();
@@ -542,14 +547,18 @@ impl Composer {
                 cx.notify();
                 return;
             }
-            Some(action) if action.id == "plan-mode" => {
+            Some(action) if action.id == "plan-mode" || action.id == "sketch" => {
                 self.cancel_dictation(cx);
                 let range = self.splice(self.slash.range.clone(), "");
                 self.selected_range = range.start..range.start;
                 self.marked_range = None;
                 self.slash.open = false;
                 self.end_search(cx);
-                self.toggle_plan(cx);
+                if action.id == "sketch" {
+                    self.open_sketch(cx);
+                } else {
+                    self.toggle_plan(cx);
+                }
                 return;
             }
             Some(_) => return,
