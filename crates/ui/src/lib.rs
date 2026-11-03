@@ -37,6 +37,14 @@ pub mod updater;
 pub mod workspace;
 pub mod zoom;
 
+/// The account the profile menu shows (`account/read`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProfileAccount {
+    /// A ChatGPT sign-in and its email.
+    Chatgpt(Option<SharedString>),
+    ApiKey,
+}
+
 actions!(
     shell,
     [
@@ -55,15 +63,22 @@ actions!(
         GoForward,
         OpenSettings,
         LogOut,
+        /// Profile menu `Add account` / `Sign in with ChatGPT`: the sign-in screen, cancelable.
+        SwitchAccount,
         ShowKeyboardShortcuts,
         OpenMini,
         /// Rail `Space`: the Spaces list (`/space`).
         OpenSpace,
+        /// Profile menu `Open config.toml`: the window host's user config layer.
+        OpenUserConfig,
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
         OpenPullRequests,
         OpenPlugins,
         OpenSecurity,
+        /// Explore ▸ `Security Cloud`: the `codex_security_cloud` app's findings, repositories
+        /// and scans.
+        OpenSecurityCloud,
         /// Rail `Sites` (`/sites`).
         OpenSites,
         /// Explore ▸ `Maps` (`/maps`).
@@ -84,6 +99,8 @@ actions!(
         OpenChangesPanel,
         /// Thread summary ▸ `Background processes` row: the command's terminal tab.
         OpenBackgroundTerminal,
+        /// Thread summary ▸ `Sources`: the Sources side panel tab.
+        OpenSourcesPanel,
         /// Thread summary ▸ `Plan`: the latest plan in its editable side panel tab.
         OpenPlanPanel,
         ShowWorkspaceTabView,
@@ -322,6 +339,8 @@ pub struct Shell {
     /// Unseen, unpinned MCP destinations; `None` while their source is unavailable.
     pub unread_destinations: Option<Arc<[SharedString]>>,
     pub security_available: bool,
+    /// The MCP catalog has the `codex_security_cloud` destination: Explore lists `Security Cloud`.
+    pub security_cloud_available: bool,
     pub scheduled_attention: bool,
     /// The profile avatar's menu is open.
     pub profile_menu: bool,
@@ -329,6 +348,8 @@ pub struct Shell {
     profile_help: bool,
     /// What the profile menu shows about the signed-in account.
     pub profile: Profile,
+    /// The signed-in account the profile menu names; `None` when signed out of OpenAI.
+    pub account: Option<ProfileAccount>,
     /// Pointer over the avatar: its own click toggles the menu, so a press there must not
     /// also close it as a click outside.
     avatar_hovered: bool,
@@ -431,10 +452,12 @@ impl Shell {
             attention: false,
             unread_destinations: None,
             security_available: false,
+            security_cloud_available: false,
             scheduled_attention: false,
             profile_menu: false,
             profile_help: false,
             profile: Profile::default(),
+            account: None,
             avatar_hovered: false,
             explore_menu: false,
             explore_hovered: false,
@@ -910,6 +933,8 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
 
 /// Click handler for the Home mode switch.
 pub type ModeSwitchClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+/// Profile-menu row action.
+type MenuAction = Box<dyn Fn(&mut Window, &mut App)>;
 
 /// The `Codex ⌄` trigger's current mode, click handler and open menu.
 pub struct ModeSwitch {
@@ -1425,9 +1450,9 @@ impl Shell {
 
     /// The Explore `…` menu (`sidebarCustomization.moreMenu`), right of the rail item: the
     /// secondary destinations the port has, in the original's order (`Images`, `Maps`,
-    /// `GPTs`), then `Security` when available.
-    /// `Customize sidebar` and MCP destinations need the sidebar-customization store, which the
-    /// port lacks.
+    /// `GPTs`), then `Security` and the `Security Cloud` MCP destination when available.
+    /// `Customize sidebar` and other MCP destinations need the sidebar-customization store,
+    /// which the port lacks.
     fn explore_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let hover = t.menu_item_hover;
         let menu_item = |id: &'static str, label: &'static str, action: Box<dyn gpui::Action>| {
@@ -1463,6 +1488,13 @@ impl Shell {
                             "explore-security",
                             "Security",
                             Box::new(OpenSecurity),
+                        ))
+                    })
+                    .when(self.security_cloud_available, |d| {
+                        d.child(menu_item(
+                            "explore-security-cloud",
+                            "Security Cloud",
+                            Box::new(OpenSecurityCloud),
                         ))
                     })
             }))
@@ -1508,12 +1540,16 @@ impl Shell {
         let hover = t.menu_item_hover;
         let dim = t.text_tertiary;
         let help_open = self.profile_help;
-        const MAIN_ROWS: [&str; 5] = [
+        const MAIN_ROWS: [&str; 9] = [
             "profile-usage",
             "profile-mini",
             "profile-settings",
             "profile-help",
             "profile-log-out",
+            "profile-switch-account",
+            "profile-personalization",
+            "profile-open-config-toml",
+            "profile-upgrade",
         ];
         let row = |id: SharedString,
                    leading: Option<AnyElement>,
@@ -1619,7 +1655,16 @@ impl Shell {
                     .min_w_0()
                     .overflow_hidden()
                     .child(text(
-                        p.name.clone().unwrap_or_default(),
+                        p.name
+                            .clone()
+                            .or_else(|| match &self.account {
+                                Some(ProfileAccount::Chatgpt(email)) => email.clone(),
+                                Some(ProfileAccount::ApiKey) => {
+                                    Some("Logged in with API key".into())
+                                }
+                                None => None,
+                            })
+                            .unwrap_or_default(),
                         13.,
                         18.5714,
                         430.,
@@ -1650,6 +1695,48 @@ impl Shell {
             settings_shortcut.and_then(trail),
             Some(send(OpenSettings)),
         );
+        let switch_label = match &self.account {
+            Some(ProfileAccount::Chatgpt(_)) => "Add account",
+            _ => "Sign in with ChatGPT",
+        };
+        let switch = row(
+            "profile-switch-account".into(),
+            None,
+            switch_label.into(),
+            None,
+            Some(send(SwitchAccount)),
+        );
+        let personalization = row(
+            "profile-personalization".into(),
+            None,
+            "Personalization".into(),
+            None,
+            Some(section("Personalization")),
+        );
+        let config = row(
+            "profile-open-config-toml".into(),
+            None,
+            "Open config.toml".into(),
+            None,
+            Some(send(OpenUserConfig)),
+        );
+        let upgrade = cx
+            .try_global::<screens::settings::usage::State>()
+            .filter(|state| matches!(state.plan.as_str(), "free" | "go"))
+            .map(|state| {
+                let url = if state.access.logged_in_pricing {
+                    "https://chatgpt.com/#pricing"
+                } else {
+                    "https://chatgpt.com/pricing/"
+                };
+                row(
+                    "profile-upgrade".into(),
+                    None,
+                    "Upgrade for higher limits".into(),
+                    None,
+                    Some(open(url)),
+                )
+            });
         let help = row(
             "profile-help".into(),
             lead("profile-help"),
@@ -1786,10 +1873,14 @@ impl Shell {
             .child(composer::popover(t, 230., |d| {
                 d.p(px(5.))
                     .child(header)
+                    .child(switch)
                     .child(separator())
                     .child(usage)
                     .child(pet)
                     .child(settings)
+                    .child(personalization)
+                    .child(config)
+                    .children(upgrade)
                     .child(separator())
                     .child(help)
                     .child(log_out)

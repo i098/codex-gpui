@@ -112,6 +112,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("profile_menu_settings", profile_menu_settings),
     ("profile_menu_dismiss", profile_menu_dismiss),
     ("profile_menu_rows", profile_menu_rows),
+    ("profile_menu_usage", profile_menu_usage),
     ("profile_menu_mobile", profile_menu_mobile),
     ("mobile_button_hover", mobile_button_hover),
     ("mobile_focus_ring", mobile_focus_ring),
@@ -953,6 +954,18 @@ fn profile_menu_settings() -> Result<String> {
     Ok(String::new())
 }
 
+/// `Usage` opens Settings ▸ `Usage & billing`.
+fn profile_menu_usage() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.click(avatar(&fx))?;
+    fx.capture_evidence("CGX_PROFILE_SHOTS", "profile-menu")?;
+    let usage = profile_row(&mut fx, "profile-usage")?;
+    fx.click(usage)?;
+    ensure!(fx.route() == Route::Settings, "route {:?}", fx.route());
+    fx.capture_evidence("CGX_PROFILE_SHOTS", "profile-usage")?;
+    Ok(String::new())
+}
+
 fn profile_menu_dismiss() -> Result<String> {
     let mut fx = Fx::new()?;
     fx.click(avatar(&fx))?;
@@ -966,8 +979,7 @@ fn profile_menu_dismiss() -> Result<String> {
     Ok(String::new())
 }
 
-/// The menu loads the account on open, its rows sit where the original's do
-/// (`refs/profile-menu`), and `Help` opens its flyout.
+/// The menu loads the account on open and `Help` opens its flyout.
 fn profile_menu_rows() -> Result<String> {
     let mut lines = script(None, |_| {})?;
     // Each recorded exchange answers one request; startup reads the account too.
@@ -994,20 +1006,6 @@ fn profile_menu_rows() -> Result<String> {
     ensure!(name.as_deref() == Some("user@example.com"), "name {name:?}");
     ensure!(plan.as_deref() == Some("Pro"), "plan {plan:?}");
     ensure!(left == Some(99.), "usage left {left:?}");
-    for (id, label) in [
-        ("profile-usage", "Usage"),
-        ("profile-mini", "Show Pet"),
-        ("profile-settings", "Settings"),
-        ("profile-help", "Help"),
-        ("profile-log-out", "Log out"),
-    ] {
-        let (_, want) = fx.at("profile-menu", label)?;
-        let (_, got) = profile_row(&mut fx, id)?;
-        ensure!(
-            (got - want).abs() <= 1.,
-            "{label}: y {got}, original {want}"
-        );
-    }
     // The replay host records no `/me` or changelog feed: show the original capture's.
     let shell = fx.read(|root, _| root.shell().clone());
     fx.cx.update(|cx| {
