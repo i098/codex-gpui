@@ -48,6 +48,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add `Toggle Git blame` to the command menu: the file viewer shows the author, commit summary, short SHA and date for the active (clicked or cited) line from the host's `git blame`.
 - Show `Queue paused because you interrupted` with `Resume` over a queue that an interrupted turn left, and ask to clear the queue or keep it when a new message is sent.
 - List installed plugins in the `@` mention list's `Plugins` section, with `Loading plugins...` while `plugin/list` runs; a picked plugin becomes a chip and sends `[@name](plugin://id)`.
+- Add `/new` and `/resume` to the hotkey window composer: `/new` returns to the hotkey window home, and `/resume` lists recent chats to continue.
 - Wire the answer actions: `Read aloud` speaks the response with the system voice (a second press stops it), and `Rate response` sends the picked option as `feedback/upload`.
 - Add `Sketch` to `/` and `@`: a drawing canvas over the composer that attaches the drawing as a PNG image.
 - Add the sidebar project row menu (`...` button or right-click): `Pin`/`Unpin` (pinned projects list first), `Mark all as read` and `Archive chats` next to the existing `Edit`, `Move up` and `Remove project`.
