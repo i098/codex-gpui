@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Show the original's suggested scheduled tasks (`Daily brief`, `Weekly review`, `Follow-up monitor`) under an empty Scheduled list; a row opens the create editor with its name, prompt and schedule filled in.
 - Show the original's Worktrees save toasts: worktree root, upstream refresh, automatic deletion and auto-delete limit saves or failures, `Failed to delete worktree`, and the pinned-chat delete notice.
 - Right-click a side panel tab for `Move to left pane` / `Move to right pane` (and `Move to bottom pane` on the terminal tab), and reopen the last closed tab with `⌘⇧T`.
 - Show `<name> marketplace upgraded` or `Failed to upgrade marketplace` after `Upgrade`, and `Could not save MCP server` or `Could not uninstall MCP server` toasts when an MCP server change fails.
