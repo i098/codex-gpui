@@ -143,7 +143,7 @@ fn markdown(thread: &Thread) -> String {
                     .iter()
                     .filter_map(|input| match input {
                         UserInput::Text { text } => Some(text.as_str()),
-                        UserInput::Other => None,
+                        UserInput::LocalImage { .. } | UserInput::Other => None,
                     })
                     .collect();
                 push(&mut blocks, escape_details(text.join("\n").trim()));
