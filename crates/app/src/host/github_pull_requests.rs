@@ -239,6 +239,34 @@ pub(super) fn fetch(host: &super::LocalHost, endpoint: &str, params: &Value) -> 
         "gh-pr-detail" => detail(host, params),
         "gh-pr-patch" => patch(host, params),
         "gh-pr-media" => media(host, params),
+        "pull-request-chat" => {
+            let key = chat_key(params)?;
+            let state = host.read_global_state()?;
+            let chat = &state["electron-persisted-atom-state"][CHATS][&key];
+            Ok(json!({"threadId": (chat["hostId"] == "local").then(|| chat["threadId"].clone())}))
+        }
+        "pull-request-chat-link" => {
+            let key = chat_key(params)?;
+            let thread = params["threadId"].as_str().context("missing threadId")?;
+            host.update_global_state(|state| {
+                if state["electron-persisted-atom-state"].is_null() {
+                    state["electron-persisted-atom-state"] = json!({});
+                }
+                let atoms = &mut state["electron-persisted-atom-state"];
+                ensure!(atoms.is_object(), "Persisted atoms must be an object");
+                if atoms[CHATS].is_null() {
+                    atoms[CHATS] = json!({});
+                }
+                let chats = atoms[CHATS]
+                    .as_object_mut()
+                    .context("Pull request chats must be an object")?;
+                // shortcut: no 300-entry cap as the original's; serde_json maps here do not keep
+                // insertion order, so add it if the store grows large.
+                chats.insert(key, json!({"hostId": "local", "threadId": thread}));
+                Ok(true)
+            })?;
+            Ok(json!({"success": true}))
+        }
         _ => bail!("Unsupported GitHub endpoint: {endpoint}"),
     }
 }
@@ -328,6 +356,31 @@ fn request_identity(params: &Value) -> Result<(Account, Identity)> {
         "Pull request account does not match the request"
     );
     Ok((account, identity))
+}
+
+/// The original's `pull-request-chat-associations-v2` persisted atom: the chat that `Chat` on a
+/// pull request started, keyed by account and pull request.
+const CHATS: &str = "pull-request-chat-associations-v2";
+
+/// The original's association key: `[accountId, userId, hostname, login, pullRequest]`.
+// shortcut: the port does not track the ChatGPT account and user ids here, so both are null;
+// fill them in when the port keeps the signed-in account ids.
+fn chat_key(params: &Value) -> Result<String> {
+    let (account, identity) = request_identity(params)?;
+    let pull_request = json!([
+        identity.hostname.to_lowercase(),
+        identity.owner.to_lowercase(),
+        identity.repository.to_lowercase(),
+        identity.number
+    ]);
+    Ok(json!([
+        null,
+        null,
+        account.hostname.to_lowercase(),
+        account.login.to_lowercase(),
+        pull_request.to_string()
+    ])
+    .to_string())
 }
 
 fn detail(host: &super::LocalHost, params: &Value) -> Result<Value> {

@@ -5,7 +5,7 @@ use app::{Root, Route, State};
 use bridge::{Bridge, types::ThreadItem};
 use common::{Fx, GREETING, script};
 use gpui::{AppContext as _, Focusable as _, px, size};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 #[test]
@@ -22,9 +22,18 @@ fn remote_thread_reads_writes_and_events_stay_on_its_connection() -> Result<()> 
         local.read(|root, cx| format!("{:?}", root.thread().unwrap().read(cx).turns()));
 
     let mut lines = script(None, |_| {})?;
+    let pages: Vec<Value> = lines
+        .iter()
+        .filter(|line| line["msg"]["method"] == "thread/turns/list")
+        .map(|line| line["msg"]["id"].clone())
+        .collect();
     for line in &mut lines {
         if line["msg"]["result"]["thread"]["id"] == GREETING {
             line["msg"]["result"]["thread"]["turns"] = json!([]);
+        }
+        // The paged read (`thread/turns/list`) carries the turns too.
+        if line["dir"] == "recv" && pages.contains(&line["msg"]["id"]) {
+            line["msg"]["result"]["data"] = json!([]);
         }
     }
     let turn = json!({"id": "remote-turn", "items": [], "status": "inProgress", "error": null});

@@ -43,9 +43,15 @@ pub struct Thread {
     pub section: Option<ThreadSection>,
     pub status: ThreadStatus,
     pub git_info: Option<Value>,
+    /// The chat this one was forked from.
+    #[serde(default)]
+    pub forked_from_id: Option<String>,
     /// Filled only by `thread/read` with `includeTurns`, `thread/resume` and `thread/fork`.
     #[serde(default)]
     pub turns: Vec<Turn>,
+    /// `thread/turns/list` cursor for the turns older than `turns`; `None` when all are loaded.
+    #[serde(skip)]
+    pub older_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -109,6 +115,8 @@ pub enum ThreadItem {
         text: String,
         #[serde(default)]
         phase: Option<String>,
+        #[serde(default)]
+        memory_citation: Option<MemoryCitation>,
     },
     Plan {
         id: String,
@@ -154,18 +162,139 @@ pub enum ThreadItem {
         #[serde(flatten)]
         metadata: serde_json::Map<String, Value>,
     },
+    /// A generated image: `savedPath` is the PNG on disk, else `result` holds it as base64.
+    ImageGeneration {
+        id: String,
+        /// `inProgress` | `completed` | `failed`
+        status: String,
+        #[serde(default)]
+        revised_prompt: Option<String>,
+        #[serde(default)]
+        result: Option<String>,
+        #[serde(default)]
+        saved_path: Option<String>,
+        /// `{"type": "usageLimitExceeded", "resetsAt"?}`
+        #[serde(default)]
+        failure: Option<Value>,
+    },
+    /// A call to a client tool the thread was started with (`dynamicTools`).
+    DynamicToolCall {
+        id: String,
+        tool: String,
+        /// `inProgress` | `completed` | `failed`
+        status: String,
+    },
     ContextCompaction {
         id: String,
+    },
+    WebSearch {
+        id: String,
+        #[serde(default)]
+        query: String,
+        #[serde(default)]
+        action: Option<WebSearchAction>,
+    },
+    /// A subagent tool call: `spawnAgent`, `sendInput`, `wait`, `resumeAgent`, `closeAgent`, ...
+    CollabAgentToolCall {
+        id: String,
+        tool: String,
+        /// `inProgress` | `completed` | `failed` | `interrupted`
+        status: String,
+        #[serde(default)]
+        receiver_thread_ids: Vec<String>,
+        #[serde(default)]
+        prompt: Option<String>,
+        /// Last known state of each receiver, by thread id.
+        #[serde(default)]
+        agents_states: std::collections::BTreeMap<String, CollabAgentState>,
+    },
+    ImageView {
+        id: String,
+        path: String,
+    },
+    /// `/review` began: `review` names what is reviewed.
+    EnteredReviewMode {
+        id: String,
+        review: String,
+    },
+    /// `/review` finished: `review` is the review text.
+    ExitedReviewMode {
+        id: String,
+        review: String,
     },
     #[serde(other)]
     Other,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct MemoryCitation {
+    pub entries: Vec<MemoryCitationEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryCitationEntry {
+    pub path: String,
+    pub line_start: u32,
+    pub line_end: u32,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
+pub enum WebSearchAction {
+    Search {
+        query: Option<String>,
+        queries: Option<Vec<String>>,
+    },
+    OpenPage {
+        url: Option<String>,
+    },
+    FindInPage {
+        url: Option<String>,
+        pattern: Option<String>,
+    },
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CollabAgentState {
+    /// `pendingInit` | `running` | `interrupted` | `completed` | `errored` | `shutdown` |
+    /// `notFound`
+    pub status: String,
+    pub message: Option<String>,
+}
+
+/// One part of a user message. Every variant but `Other` serializes back to its `turn/start`
+/// input, so an edited message resends its attachments.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum UserInput {
     Text {
         text: String,
+    },
+    /// A remote or `data:` URL image; `url` is absent for an uploaded `fileId` image.
+    Image {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_id: Option<String>,
+    },
+    LocalImage {
+        path: String,
+    },
+    Mention {
+        name: String,
+        path: String,
+    },
+    Skill {
+        name: String,
+        path: String,
     },
     #[serde(other)]
     Other,
@@ -340,6 +469,9 @@ pub struct CommandApprovalRequest {
     #[serde(default)]
     pub kind: String,
     pub available_decisions: Option<Vec<Value>>,
+    /// The command prefix a session-wide approval would cover; the original offers
+    /// `Allow similar commands` only with it.
+    pub proposed_execpolicy_amendment: Option<Value>,
 }
 
 /// `item/fileChange/requestApproval`
