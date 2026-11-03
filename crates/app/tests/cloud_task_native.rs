@@ -153,6 +153,8 @@ impl Host for FixtureHost {
             worktree: false,
             missing: false,
             expanded: true,
+            roots: Vec::new(),
+            pinned: false,
         }])
     }
 

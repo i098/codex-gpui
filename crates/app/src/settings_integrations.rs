@@ -86,6 +86,17 @@ impl Root {
     }
 
     fn settings_integration_action(&mut self, action: Action, cx: &mut Context<Self>) {
+        if let Action::OpenHookConfig(path) = &action {
+            // shortcut: a remote host's file cannot open in a local editor; name it until
+            // remote editing exists.
+            if self.host_id == "local" {
+                cx.open_with_system(std::path::Path::new(path));
+            } else {
+                let host = self.host_id.clone();
+                self.toast(Toast::danger(format!("{path} is on {host}")), cx);
+            }
+            return;
+        }
         if self
             .settings_integrations
             .update(cx, |state, _| defer_if_busy(state, &action))
@@ -623,7 +634,7 @@ async fn execute(
     configuration: &Value,
 ) -> Result<Option<String>> {
     match action {
-        Action::Refresh | Action::ReloadHooks => {}
+        Action::Refresh | Action::ReloadHooks | Action::OpenHookConfig(_) => {}
         Action::ReloadServers => {
             bridge
                 .request::<_, Value>("config/mcpServer/reload", json!({}))

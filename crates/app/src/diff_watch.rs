@@ -4,8 +4,24 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 pub(super) struct Watch {
     path: String,
     dirty: bool,
-    _watcher: RecommendedWatcher,
-    _events: Task<()>,
+    _local: Option<(RecommendedWatcher, Task<()>)>,
+    remote: Option<RemoteWatch>,
+}
+
+/// An `fs/watch` on the window's remote host; `fs/changed` carries the same `watchId`.
+struct RemoteWatch {
+    id: String,
+    bridge: Arc<Bridge>,
+}
+
+impl Drop for RemoteWatch {
+    fn drop(&mut self) {
+        let (id, bridge) = (self.id.clone(), self.bridge.clone());
+        std::thread::spawn(move || {
+            let params = json!({ "watchId": id });
+            let _ = pollster::block_on(bridge.request::<_, Value>("fs/unwatch", params));
+        });
+    }
 }
 
 impl Root {
@@ -27,6 +43,10 @@ impl Root {
         let Some(panel) = self.diff.clone() else {
             return;
         };
+        if self.host_id != "local" {
+            self.watch_remote(path, panel, cx);
+            return;
+        }
         let (changed, changes) = async_channel::unbounded();
         let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
             let event = match event {
@@ -76,13 +96,68 @@ impl Root {
         self.diff_watch = Some(Watch {
             path,
             dirty: true,
-            _watcher: watcher,
-            _events: events,
+            _local: Some((watcher, events)),
+            remote: None,
         });
         if let Some(panel) = &self.diff {
             panel.update(cx, |panel, cx| panel.set_watch_limited(false, cx));
         }
         self.refresh_watched_diff(cx);
+    }
+
+    /// Watches the repository on the remote host; the local disk holds nothing of it.
+    fn watch_remote(&mut self, path: String, panel: Entity<DiffPanel>, cx: &mut Context<Self>) {
+        let id = uuid_v4();
+        let bridge = self.bridge.clone();
+        self.diff_watch = Some(Watch {
+            path: path.clone(),
+            dirty: true,
+            _local: None,
+            remote: Some(RemoteWatch {
+                id: id.clone(),
+                bridge: bridge.clone(),
+            }),
+        });
+        panel.update(cx, |panel, cx| panel.set_watch_limited(false, cx));
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let params = json!({ "path": path, "watchId": id });
+            if let Err(error) = bridge.request::<_, Value>("fs/watch", params).await {
+                eprintln!("codex-gpui: cannot watch remote repository: {error:#}");
+                this.update(cx, |this, cx| {
+                    if this
+                        .diff_watch
+                        .as_ref()
+                        .and_then(|watch| watch.remote.as_ref())
+                        .is_some_and(|remote| remote.id == id)
+                    {
+                        this.diff_watch = None;
+                        panel.update(cx, |panel, cx| panel.set_watch_limited(true, cx));
+                    }
+                })?;
+            }
+            Ok(())
+        });
+        log_err(task, cx);
+        self.refresh_watched_diff(cx);
+    }
+
+    /// `fs/changed` for the remote watch marks the diff stale and reloads it.
+    pub(super) fn diff_watch_event(&mut self, event: &Event, cx: &mut Context<Self>) {
+        let Event::Notification { method, params } = event else {
+            return;
+        };
+        if method != "fs/changed" {
+            return;
+        }
+        if let Some(watch) = &mut self.diff_watch
+            && watch
+                .remote
+                .as_ref()
+                .is_some_and(|remote| params["watchId"] == remote.id.as_str())
+        {
+            watch.dirty = true;
+            self.refresh_watched_diff(cx);
+        }
     }
 
     pub(super) fn refresh_watched_diff(&mut self, cx: &mut Context<Self>) {
