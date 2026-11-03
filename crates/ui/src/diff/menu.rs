@@ -968,7 +968,10 @@ impl DiffPanel {
                         )
                         .flex_1()
                         .min_w_0()
-                        .truncate()
+                        // The options menu is as wide as its widest label (`width` above); layout
+                        // rounds that box to device pixels, which must not ellipsize the label.
+                        .when(options, |d| d.whitespace_nowrap())
+                        .when(!options, |d| d.truncate())
                         .when(options && !enabled, |d| d.opacity(0.5)),
                     )
                     .when(source && SOURCES[i] == self.source, |d| {
