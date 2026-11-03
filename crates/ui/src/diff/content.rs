@@ -402,6 +402,10 @@ impl DiffPanel {
             .get("hideDiffImports")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
+        self.generated.filter = values
+            .get("review-filter-generated-files")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         self.layout = match values
             .get("editorDiffViewMode")
             .and_then(serde_json::Value::as_str)
