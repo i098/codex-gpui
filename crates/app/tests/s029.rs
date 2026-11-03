@@ -45,6 +45,7 @@ fn port_tabs(fx: &Fx) -> Vec<(String, bool)> {
                     }
                     SidePanel::Console => "Terminal",
                     SidePanel::File => "math.py",
+                    SidePanel::Image => "Image view",
                     SidePanel::SideChat(_) => "Side chat",
                     SidePanel::Plan => "Plan",
                     SidePanel::Browser(_) => "New tab",
