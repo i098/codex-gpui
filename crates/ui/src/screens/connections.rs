@@ -10,6 +10,21 @@ use theme::{ActiveTheme as _, Theme};
 
 mod ssh;
 
+/// The original names this computer "Mac" on macOS and "PC" on Windows or Linux.
+const fn mac_or_pc(mac: &'static str, pc: &'static str) -> &'static str {
+    if cfg!(target_os = "macos") { mac } else { pc }
+}
+
+const DEVICES_THAT_CONTROL: &str = mac_or_pc(
+    "Devices that can control this Mac",
+    "Devices that can control this PC",
+);
+const KEEP_AWAKE: &str = mac_or_pc("Keep this Mac awake", "Keep this PC awake");
+const SSH_FROM_HERE: &str = mac_or_pc(
+    "SSH connections from this Mac",
+    "SSH connections from this PC",
+);
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Tab {
@@ -438,19 +453,28 @@ impl ConnectionsPage {
                     );
                     if clients.is_empty() {
                         rows.push(row(
-                            "Add device to control this Mac remotely",
-                            Some("Control this Mac from your phone or other device".into()),
+                            mac_or_pc(
+                                "Add device to control this Mac remotely",
+                                "Add device to control this PC remotely",
+                            ),
+                            Some(
+                                mac_or_pc(
+                                    "Control this Mac from your phone or other device",
+                                    "Control this PC from your phone or other device",
+                                )
+                                .into(),
+                            ),
                             button,
                             &t,
                         ));
                     } else {
-                        rows.push(row("Devices that can control this Mac", None, button, &t));
+                        rows.push(row(DEVICES_THAT_CONTROL, None, button, &t));
                     }
                 }
             }
         }
         let awake = self.toggle(
-            ("connections-keep-awake", "Keep this Mac awake"),
+            ("connections-keep-awake", KEEP_AWAKE),
             state.keep_awake,
             Action::KeepAwake(!state.keep_awake),
             state.pending,
@@ -461,11 +485,11 @@ impl ConnectionsPage {
             .flex()
             .flex_col()
             .gap(px(24.))
-            .child(card("Devices that can control this Mac", rows, &t))
+            .child(card(DEVICES_THAT_CONTROL, rows, &t))
             .child(card(
                 "Other settings",
                 vec![row(
-                    "Keep this Mac awake",
+                    KEEP_AWAKE,
                     Some(
                         "Prevent sleep when computer is plugged in and remote access is enabled"
                             .into(),
@@ -654,8 +678,11 @@ impl ConnectionsPage {
             .child(text(
                 match self.tab {
                     Tab::Wsl => "WSL connections",
-                    Tab::Devices => "Devices you can control from this Mac",
-                    _ => "SSH connections from this Mac",
+                    Tab::Devices => mac_or_pc(
+                        "Devices you can control from this Mac",
+                        "Devices you can control from this PC",
+                    ),
+                    _ => SSH_FROM_HERE,
                 },
                 14.,
                 21.,
@@ -696,15 +723,18 @@ impl ConnectionsPage {
         let ssh = self.tab == Tab::Ssh;
         let (title, description, glyph, width) = if ssh {
             (
-                "SSH connections from this Mac",
+                SSH_FROM_HERE,
                 "Connect to a remote device through SSH connection",
                 "connections-empty-ssh",
                 66.,
             )
         } else {
             (
-                "Devices that can control this Mac",
-                "Add device to control this Mac remotely",
+                DEVICES_THAT_CONTROL,
+                mac_or_pc(
+                    "Add device to control this Mac remotely",
+                    "Add device to control this PC remotely",
+                ),
                 "connections-empty-devices",
                 61. * 24. / 23.,
             )
@@ -821,7 +851,10 @@ impl Render for ConnectionsPage {
             tabs.splice(
                 0..0,
                 [
-                    (Tab::Computer, "Control this Mac"),
+                    (
+                        Tab::Computer,
+                        mac_or_pc("Control this Mac", "Control this PC"),
+                    ),
                     (Tab::Devices, "Control other devices"),
                 ],
             );
@@ -876,7 +909,10 @@ impl Render for ConnectionsPage {
                 .max_w(viewport.width * 0.92)
                 .max_h(viewport.height - px(32.))
                 .role(gpui::Role::Dialog)
-                .aria_label("Connect a device to this Mac")
+                .aria_label(mac_or_pc(
+                    "Connect a device to this Mac",
+                    "Connect a device to this PC",
+                ))
                 .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(shapes::backdrop_blur(
                     px(24.),
