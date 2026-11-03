@@ -179,6 +179,15 @@ pub enum ThreadItem {
     ContextCompaction {
         id: String,
     },
+    /// `action`: `{"type": "search", "query"?, "queries"?}` | `{"type": "openPage" |
+    /// "findInPage", "url"?}`; absent on older servers.
+    WebSearch {
+        id: String,
+        #[serde(default)]
+        query: String,
+        #[serde(default)]
+        action: Option<Value>,
+    },
     /// `/review` began: `review` names what is reviewed.
     EnteredReviewMode {
         id: String,
@@ -198,6 +207,9 @@ pub enum ThreadItem {
 pub enum UserInput {
     Text {
         text: String,
+    },
+    LocalImage {
+        path: String,
     },
     #[serde(other)]
     Other,

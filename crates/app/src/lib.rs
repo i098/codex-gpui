@@ -239,6 +239,8 @@ pub enum SidePanel {
     Image,
     /// `Open in side chat`: the side chat with this [`SideChat::key`].
     SideChat(usize),
+    /// Thread summary ▸ `Sources`: what the chat read, changed, searched and called.
+    Sources,
     /// Thread summary ▸ `Plan`: the latest plan, editable.
     Plan,
     /// `⌘T` and a link's `Open in` ▸ `New tab`: the browser tab with this key
@@ -3261,6 +3263,11 @@ impl Root {
                     preview: false,
                 })
             }
+            SidePanel::Sources => Some(Tab {
+                icon: "navigation-files",
+                label: "Sources".into(),
+                preview: false,
+            }),
             SidePanel::Plan => Some(Tab {
                 icon: "navigation-files",
                 label: plan?.read(cx).title(),
@@ -3318,6 +3325,9 @@ impl Root {
             SidePanel::File => self.file.as_ref()?.clone().into(),
             SidePanel::Image => self.image.as_ref()?.clone().into(),
             SidePanel::SideChat(key) => self.chat(key)?.view.clone().into(),
+            SidePanel::Sources => cx
+                .new(|cx| ui::screens::sources::SourcesView::new(view.clone(), cx))
+                .into(),
             SidePanel::Plan => self.plan.as_ref()?.clone().into(),
             SidePanel::Browser(key) => self.browser_tab(key)?.clone().into(),
         };

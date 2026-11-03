@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Add Thread summary ▸ `Sources` and its `Sources` side panel tab: the files the chat was given, read, created or updated, its web searches and opened pages, and its tool use counts.
 - Make Settings ▸ General ▸ `Full access` control the composer: turning it off removes `Full access` from the permissions menus, and turning it on asks `Make Full Access available?` first. The choice persists as host `show-full-access-in-composer`.
 - Show each hook's trust state in Settings ▸ Hooks: `Trust` explains `New hook` or `Hook changed since last trusted`, the switch explains `Disabled until hook is trusted` or `Managed hooks are always on`, and `Open config file` opens the hook's `sourcePath`.
 - Settings ▸ `Filter settings by host`: while a remote host is connected, a dropdown beside the Settings title picks the host whose `config.toml` the Configuration page reads and writes.
