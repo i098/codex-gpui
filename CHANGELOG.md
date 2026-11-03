@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Show each hook's trust state in Settings ▸ Hooks: `Trust` explains `New hook` or `Hook changed since last trusted`, the switch explains `Disabled until hook is trusted` or `Managed hooks are always on`, and `Open config file` opens the hook's `sourcePath`.
 - Settings ▸ `Filter settings by host`: while a remote host is connected, a dropdown beside the Settings title picks the host whose `config.toml` the Configuration page reads and writes.
 - Add the internal debug panel on Ctrl+D or Help ▸ `Show Local Trace` with build revision, trace state and uptime, and Help ▸ `Start Performance Trace` to toggle trace recording.
 - Forward a second launch's deep links and supported paths to the running Linux or Windows app, then focus its window.
