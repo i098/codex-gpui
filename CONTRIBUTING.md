@@ -5,7 +5,7 @@ Every change keeps the goal in the [README](README.md): the same layout, text, c
 
 ## Set up
 
-Read [Requirements](README.md#requirements) first.
+Read [Requirements](docs/build-and-run.md#requirements) first.
 The native app, the native tests and the parity harness need macOS on Apple silicon.
 The workspace also builds on Linux, which is enough for the CI checks.
 On Ubuntu, CI installs these packages first:
@@ -34,17 +34,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-The README names a focused test for most features; run the tests for the area that you change.
+The docs name a focused test for most features; run the tests for the area that you change.
 Many native tests run only on macOS.
 
-A change to rendered pixels also needs the parity harness on macOS (see [Parity method](README.md#parity-method)):
+A change to rendered pixels also needs the parity harness on macOS (see [Parity method](docs/parity.md#parity-method)):
 
 ```sh
 cargo run -p parity -- --gate
 ```
 
 The references in `refs/` come from the original renderer.
-Do not edit them by hand; regenerate them as [Regenerate inputs](README.md#regenerate-inputs) tells.
+Do not edit them by hand; regenerate them as [Regenerate inputs](docs/parity.md#regenerate-inputs) tells.
 
 ## Commits
 
