@@ -10,6 +10,8 @@ use gpui::{
 pub(super) struct UserMessage {
     pub id: SharedString,
     pub message: SharedString,
+    /// The message's non-text inputs: images, file mentions, skills.
+    pub attachments: Vec<UserInput>,
     pub sent_at: Option<String>,
     pub find: Option<FindPaint>,
     pub thread_id: String,
@@ -50,15 +52,32 @@ impl MessageActions {
         cx.notify();
     }
 
+    /// Opens the editor on the message: its text and local images in the composer, the other
+    /// attachments (`extra`) resent unchanged.
     fn edit(
         &mut self,
         message: &str,
+        attachments: &[UserInput],
         thread_id: String,
         turn_id: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let owner = cx.weak_entity();
+        let (images, extra): (Vec<_>, Vec<_>) = attachments
+            .iter()
+            .partition(|input| matches!(input, UserInput::LocalImage { .. }));
+        let images: Vec<std::path::PathBuf> = images
+            .into_iter()
+            .filter_map(|input| match input {
+                UserInput::LocalImage { path } => Some(path.into()),
+                _ => None,
+            })
+            .collect();
+        let extra: Vec<serde_json::Value> = extra
+            .into_iter()
+            .filter_map(|input| serde_json::to_value(input).ok())
+            .collect();
         self.editor = Some(cx.new(|cx| {
             let editor = cx.weak_entity();
             let mut composer = Composer::message_edit(
@@ -75,6 +94,7 @@ impl MessageActions {
                 window,
                 cx,
             );
+            composer.load_queued("", &images, window, cx);
             composer.on_submit(move |submission, window, cx| {
                 if let Some(editor) = editor.upgrade() {
                     window.dispatch_action(
@@ -82,6 +102,8 @@ impl MessageActions {
                             thread_id: thread_id.clone(),
                             turn_id: turn_id.clone(),
                             message: submission.text.clone(),
+                            attachments: submission.attachments.clone(),
+                            extra: extra.clone(),
                             editor,
                         }),
                         cx,
@@ -103,7 +125,14 @@ fn reveal<E: InteractiveElement>(e: E, group: &SharedString, color: Hsla) -> E {
 
 impl RenderOnce for UserMessage {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let bubble = user_bubble(&self.id, &self.message, self.find.as_ref(), window, cx);
+        let bubble = user_bubble(
+            &self.id,
+            &self.message,
+            &self.attachments,
+            self.find.as_ref(),
+            window,
+            cx,
+        );
         let state = window.use_keyed_state(self.id.clone(), cx, |_, cx| MessageActions {
             copied: false,
             focus: cx.focus_handle(),
@@ -119,7 +148,8 @@ impl RenderOnce for UserMessage {
         let copied = s.copied;
         let focus = s.focus.clone();
         let t = cx.theme();
-        let (edit_state, edit_message) = (state.clone(), self.message.clone());
+        let (edit_state, edit_message, edit_attachments) =
+            (state.clone(), self.message.clone(), self.attachments);
         let group = SharedString::from(format!("{}-group", self.id));
         let shown = t.text_tertiary;
         let color = shown.opacity(if visible { 1. } else { 0. });
@@ -179,6 +209,7 @@ impl RenderOnce for UserMessage {
                                     edit_state.update(cx, |s, cx| {
                                         s.edit(
                                             &edit_message,
+                                            &edit_attachments,
                                             self.thread_id.clone(),
                                             turn_id.clone(),
                                             window,
@@ -277,6 +308,10 @@ pub struct EditMessage {
     pub thread_id: String,
     pub turn_id: String,
     pub message: String,
+    /// The editor's images, sent as `localImage` inputs.
+    pub attachments: Vec<std::path::PathBuf>,
+    /// The message's other inputs (mentions, skills, remote images), resent unchanged.
+    pub extra: Vec<serde_json::Value>,
     pub editor: Entity<Composer>,
 }
 
@@ -391,10 +426,58 @@ pub struct PatchTurn {
 #[action(namespace = thread, no_json)]
 pub struct ThreadPressed(pub String);
 
-/// Copy, Rate response, Read aloud, More actions: shown under the latest turn; earlier turns
-/// (group `group`) show them on hover. More actions opens `menu` (`Branch in new chat`).
-/// ponytail: Read aloud (ChatGPT voice playback) and Rate response (feedback menu) have no
-/// handler; wire them with a voice backend and the feedback menu.
+/// A rating picked in the `Rate response` menu: `feedback/upload` with `classification` and the
+/// option label.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = thread, no_json)]
+pub struct SubmitRating {
+    pub turn_id: String,
+    pub classification: &'static str,
+    pub reason: &'static str,
+}
+
+/// The rating menu: `(id, label, classification)`; the original's `turnRatingControls` options
+/// (`thumbs_up` then `thumbs_down`). An empty classification is a heading.
+pub(super) const RATINGS: [(&str, &str, &str); 13] = [
+    ("good-heading", "Good response", ""),
+    ("solved_my_task", "Solved my task", "good_result"),
+    (
+        "followed_my_instructions",
+        "Followed my instructions",
+        "good_result",
+    ),
+    (
+        "good_code_or_output_quality",
+        "Good code / output quality",
+        "good_result",
+    ),
+    ("fast_and_efficient", "Fast and efficient", "good_result"),
+    ("useful_autonomy", "Useful autonomy", "good_result"),
+    ("bad-heading", "Bad response", ""),
+    (
+        "incorrect_or_incomplete",
+        "Incorrect or incomplete",
+        "bad_result",
+    ),
+    (
+        "didnt_follow_my_instructions",
+        "Didn't follow my instructions",
+        "bad_result",
+    ),
+    (
+        "off_track_or_wrong_scope",
+        "Off track / wrong scope",
+        "bad_result",
+    ),
+    ("lost_context", "Lost context", "bad_result"),
+    ("slow_or_buggy", "Slow or buggy", "bad_result"),
+    (
+        "safety_or_legal_concern",
+        "Safety or legal concern",
+        "safety_check",
+    ),
+];
+
 /// Focus handles of a turn's buttons. The original's `group-focus-within` shows a turn's hover
 /// UI (action row time, diff card subtitle) while any of them has focus.
 #[derive(Clone)]
@@ -441,8 +524,8 @@ impl TurnFocus {
 }
 
 /// `sent_at` is the turn's `Wednesday 9:54 PM`, shown beside the actions on hover or focus.
-/// `menu` is the open More actions menu; `toggle_menu` opens or closes it and `hover_menu`
-/// reports the pointer over its trigger.
+/// `rate` opens the `Rate response` menu. `menu` is the open More actions menu; `toggle_menu`
+/// opens or closes it and `hover_menu` reports the pointer over its trigger.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn action_row(
     last: bool,
@@ -450,6 +533,7 @@ pub(super) fn action_row(
     answer: &str,
     sent_at: Option<String>,
     menu: Option<AnyElement>,
+    rate: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     toggle_menu: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     hover_menu: impl Fn(&bool, &mut Window, &mut App) + 'static,
     focus: &TurnFocus,
@@ -473,7 +557,7 @@ pub(super) fn action_row(
             .rounded(Theme::RADIUS_MD)
             .child(icon)
     };
-    let answer = answer.to_owned();
+    let (answer, spoken) = (answer.to_owned(), answer.to_owned());
     div()
         .mt(px(6.))
         .ml(px(-4.))
@@ -505,7 +589,9 @@ pub(super) fn action_row(
         .child(tooltip(
             action("thread-rate")
                 .id("rate-response")
-                .aria_label("Rate response"),
+                .aria_label("Rate response")
+                .role(gpui::Role::Button)
+                .on_click(rate),
             "Rate response",
             None,
             Side::Top,
@@ -513,7 +599,17 @@ pub(super) fn action_row(
         .child(tooltip(
             action("thread-read-aloud")
                 .id("read-response")
-                .aria_label("Read aloud"),
+                .aria_label("Read aloud")
+                .role(gpui::Role::Button)
+                .on_click(move |_, _, cx| {
+                    // shortcut: native system speech, not the original's ChatGPT `/synthesize`
+                    // voice (needs a ChatGPT session); a second press stops it.
+                    if crate::native_text::is_speaking(cx) {
+                        crate::native_text::stop_speaking(cx);
+                    } else if let Err(error) = crate::native_text::speak(&spoken, cx) {
+                        eprintln!("codex-gpui: cannot read the response aloud: {error:#}");
+                    }
+                }),
             "Read aloud",
             None,
             Side::Top,

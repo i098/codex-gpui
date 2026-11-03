@@ -854,6 +854,29 @@ impl Login {
         cx.notify();
     }
 
+    /// Abandons the browser sign-in in progress (`account/login/cancel`).
+    pub fn cancel_pending(&mut self, cx: &mut Context<Self>) {
+        self.attempt += 1;
+        if self.gateway_pending {
+            self.gateway_pending = false;
+            if let Some(bridge) = self.bridge.clone() {
+                cx.spawn(async move |_, _| {
+                    let _ = bridge
+                        .request::<_, Value>("account/gatewayOAuth/cancel", Option::<()>::None)
+                        .await;
+                })
+                .detach();
+            }
+        }
+        self.pending = false;
+        self.login_url = None;
+        if let Some(id) = self.login_id.take()
+            && let Some(bridge) = self.bridge.clone()
+        {
+            cancel(bridge, id, cx);
+        }
+    }
+
     fn command(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
         match command {
             Command::GatewayOAuth => self.start_gateway_oauth(cx),
@@ -901,30 +924,7 @@ impl Login {
                 self.error = None;
             }
             Command::Submit => self.submit(cx),
-            Command::Cancel => {
-                self.attempt += 1;
-                if self.gateway_pending {
-                    self.gateway_pending = false;
-                    if let Some(bridge) = self.bridge.clone() {
-                        cx.spawn(async move |_, _| {
-                            let _ = bridge
-                                .request::<_, Value>(
-                                    "account/gatewayOAuth/cancel",
-                                    Option::<()>::None,
-                                )
-                                .await;
-                        })
-                        .detach();
-                    }
-                }
-                self.pending = false;
-                self.login_url = None;
-                if let Some(id) = self.login_id.take()
-                    && let Some(bridge) = self.bridge.clone()
-                {
-                    cancel(bridge, id, cx);
-                }
-            }
+            Command::Cancel => self.cancel_pending(cx),
             Command::CopyLink => {
                 if let Some(url) = &self.login_url {
                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(url.clone()));
