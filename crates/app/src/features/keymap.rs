@@ -238,6 +238,7 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "closeTab" => Box::new(CloseWindow),
         "closeWindow" => Box::new(shortcuts::CloseWholeWindow),
         "closeOtherTabs" => Box::new(shortcuts::CloseOtherSideTabs),
+        "reopenClosedTab" => Box::new(shortcuts::ReopenClosedTab),
         "nextTab" => Box::new(shortcuts::NextSideTab),
         "previousTab" => Box::new(shortcuts::PreviousSideTab),
         "toggleThreadPin" => Box::new(shortcuts::ToggleThreadPin),
