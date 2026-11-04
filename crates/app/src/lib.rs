@@ -6944,14 +6944,17 @@ impl Root {
             }
             return;
         }
-        let value = e.value.clone();
-        let apply = move |config: &mut Value| match key {
-            "" => config[store] = value,
-            _ => config[store][key] = value,
+        let (path, value) = (e.path, e.value.clone());
+        let apply = move |config: &mut Value| {
+            *path.split('.').fold(config, |config, key| &mut config[key]) = value;
         };
-        // `desktop`/`features` keys and the Configuration page's top-level `config.toml` keys
-        // persist; other stores are session-only.
-        if !matches!(store, "desktop" | "features" | "sandbox_workspace_write") && !key.is_empty() {
+        // `desktop`/`features`/`browser_use` keys and the Configuration page's top-level
+        // `config.toml` keys persist; other stores are session-only.
+        if !matches!(
+            store,
+            "desktop" | "features" | "sandbox_workspace_write" | "browser_use"
+        ) && !key.is_empty()
+        {
             return apply(&mut self.config);
         }
         if settings_configuration::write_on_selected_host(self, e, cx) {
@@ -6984,6 +6987,10 @@ impl Root {
             (Some("desktop.reviewDelivery"), _) => "Could not save review delivery preference",
             (Some("desktop.followUpQueueMode"), true) => "Could not save follow-up behavior",
             (Some("desktop.followUpQueueMode"), false) => "Couldn’t save your changes. Try again",
+            (Some("browser_use.allow_history_access"), _) => "Unable to save history setting",
+            (Some(path), _) if path.starts_with("browser_use.") => {
+                "Unable to save site permissions"
+            }
             _ => "Couldn't save your changes. Try again",
         };
         let locale_changed = params["keyPath"] == "desktop.localeOverride";
