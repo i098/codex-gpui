@@ -313,21 +313,37 @@ impl CodeReview {
         let Some(detail) = &mut self.detail else {
             return;
         };
-        detail.load = Load::Loading;
+        // A refetch keeps the shown settings and only disables the controls, as the original does.
+        if matches!(detail.load, Load::Ready(_)) {
+            detail.saving = true;
+        } else {
+            detail.load = Load::Loading;
+        }
         let id = detail.id.clone();
         let path = format!("/wham/settings/code_review/{}", encode(&id));
         backend::request(Call::new("GET", path, None), cx, move |this, result, cx| {
             let Some(detail) = this.detail.as_mut().filter(|d| d.id == id) else {
                 return;
             };
+            detail.saving = false;
+            let path = |repo: &Value| {
+                repo["security_review"]["threat_model_file_path"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            let shown = match &detail.load {
+                Load::Ready(repo) => Some(path(repo)),
+                _ => None,
+            };
             detail.load = match result {
                 Ok(response) if response.ok() && response.body.is_object() => {
-                    let saved = response.body["security_review"]["threat_model_file_path"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned();
-                    let field = detail.threat_path.clone();
-                    field.update(cx, |field, cx| field.set_text(&saved, cx));
+                    let saved = path(&response.body);
+                    // A draft survives other saves: the field resets only when the saved path changes.
+                    if shown.as_ref() != Some(&saved) {
+                        let field = detail.threat_path.clone();
+                        field.update(cx, |field, cx| field.set_text(&saved, cx));
+                    }
                     Load::Ready(response.body)
                 }
                 _ => Load::Failed,
@@ -379,6 +395,10 @@ impl CodeReview {
                         return;
                     }
                 }
+                if status.is_none() {
+                    // The original invalidates every `repository-review-settings` query.
+                    this.load_repos(cx);
+                }
                 this.load_detail(cx);
             },
         );
@@ -417,7 +437,10 @@ impl CodeReview {
             })
             .clone();
         select.update(cx, |select, cx| {
-            select.set_choices(choices(), cx);
+            let known = select.choices().iter().map(|c| c.value.as_ref());
+            if !known.eq(options.iter().map(|(value, _)| *value)) {
+                select.set_choices(choices(), cx);
+            }
             select.set_value(value.to_owned(), cx);
             select.set_disabled(disabled, cx);
         });
@@ -490,9 +513,9 @@ impl CodeReview {
 
     // ── Rendering ────────────────────────────────────────────────────────────────────────────
 
-    fn overview(&mut self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn overview(&mut self, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let repositories = self.repositories(t, cx);
-        let prefs = self.preferences(t, window, cx);
+        let prefs = self.preferences(t, cx);
         div()
             .flex()
             .flex_col()
@@ -600,7 +623,7 @@ impl CodeReview {
         )
     }
 
-    fn preferences(&mut self, t: &Theme, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn preferences(&mut self, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let prefs = match &self.prefs {
             Load::Loading => {
                 return message_row("Loading code review settings…", t).into_any_element();
@@ -819,12 +842,7 @@ impl CodeReview {
             .into_any_element()
     }
 
-    fn repository(
-        &mut self,
-        t: &Theme,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> (SharedString, AnyElement) {
+    fn repository(&mut self, t: &Theme, cx: &mut Context<Self>) -> (SharedString, AnyElement) {
         let Some(detail) = &self.detail else {
             return (SharedString::default(), div().into_any_element());
         };
@@ -885,7 +903,7 @@ impl CodeReview {
             .into();
         let permissions = &repo["repository"]["permissions"];
         let writable = permissions["admin"] == true || permissions["push"] == true;
-        let disabled = detail.saving || !writable || matches!(detail.load, Load::Loading);
+        let disabled = detail.saving || !writable;
         if !writable {
             body.push(
                 status(
@@ -901,7 +919,7 @@ impl CodeReview {
         }
         body.push(self.review_code(&repo, disabled, t, cx));
         if !repo["security_review"].is_null() {
-            body.push(self.review_security(&repo, disabled, t, window, cx));
+            body.push(self.review_security(&repo, disabled, t, cx));
         }
         if let Some(instructions) = instructions(&repo, t) {
             body.push(instructions);
@@ -954,6 +972,16 @@ impl CodeReview {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let mut rows = self.scope_rows(repo, false, disabled, t, cx);
+        // The original shows the card's other rows only while automatic review is on.
+        if repo["global_review_preference"] == "never_review" {
+            return section(
+                "Review code",
+                None,
+                None,
+                card(rows, Some(&self.layer), t),
+                t,
+            );
+        }
         let trigger = repo["code_review_trigger_policy"]
             .as_str()
             .unwrap_or("personal");
@@ -1037,11 +1065,19 @@ impl CodeReview {
         repo: &Value,
         disabled: bool,
         t: &Theme,
-        _: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let security = repo["security_review"].clone();
         let mut rows = self.scope_rows(&security, true, disabled, t, cx);
+        if security["global_review_preference"] == "never_review" {
+            return section(
+                "Review security vulnerabilities",
+                None,
+                None,
+                card(rows, Some(&self.layer), t),
+                t,
+            );
+        }
         let trigger = security["trigger_policy"]
             .as_str()
             .unwrap_or(WITH_CODE_REVIEW.0);
@@ -1058,7 +1094,13 @@ impl CodeReview {
             cx,
         );
         rows.push(settings_row_content("Trigger", None, trigger, t));
-        rows.push(self.threat_path_row(&security, disabled, t, cx));
+        // `Lt`: the path row shows only for the repository-file threat model source.
+        if security["threat_model_source"]
+            .as_str()
+            .is_none_or(|source| source == "repository_file")
+        {
+            rows.push(self.threat_path_row(&security, disabled, t, cx));
+        }
         let severity = self.menu(
             "repo-security-severity".into(),
             security["severity_threshold"].as_str().unwrap_or("high"),
@@ -1145,7 +1187,7 @@ impl CodeReview {
                                     let Some(detail) = &this.detail else { return };
                                     let path = detail.threat_path.read(cx).field_text().trim().to_owned();
                                     let path = (!path.is_empty()).then_some(path);
-                                    this.save_repo(json!({ "security_review": { "threat_model_file_path": path } }), cx);
+                                    this.save_repo(json!({ "security_review": { "threat_model_source": "repository_file", "threat_model_file_path": path } }), cx);
                                 }),
                             ),
                         )
@@ -1183,7 +1225,7 @@ impl CodeReview {
             t,
         )
         .on_click(cx.listener(move |this, _, window, cx| {
-            if disabled {
+            if disabled || this.detail.as_ref().is_some_and(|d| d.rule.is_some()) {
                 return;
             }
             let field = cx.new(|cx| Composer::settings_compact_field("src/", "", cx));
@@ -1334,9 +1376,9 @@ impl Render for CodeReview {
         let t = cx.theme().clone();
         let detail = self.detail.is_some();
         let (title, content) = if detail {
-            self.repository(&t, window, cx)
+            self.repository(&t, cx)
         } else {
-            ("Code Review".into(), self.overview(&t, window, cx))
+            ("Code Review".into(), self.overview(&t, cx))
         };
         let intro = detail
             .then(|| paragraph("Manage how Codex reviews this repository", &t).into_any_element());
@@ -1543,8 +1585,9 @@ fn agents_url(repo: &Value) -> Option<String> {
         "blob"
     };
     Some(format!(
-        "{}{path}/{blob}/{branch}/AGENTS.md",
-        clone.origin().ascii_serialization()
+        "{}{path}/{blob}/{}/AGENTS.md",
+        clone.origin().ascii_serialization(),
+        encode(branch)
     ))
 }
 

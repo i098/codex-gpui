@@ -186,9 +186,19 @@ fn personal_and_repository_review_settings() -> Result<()> {
         item["repository"] == REPO && item["funding_generation"] == 3,
         "{body}"
     );
+    // The switch thumb moves for 150 ms.
+    fx.advance(std::time::Duration::from_millis(300))?;
     shot(&mut fx, "repository-off")?;
 
     click(&mut fx, "code-review-back")?;
     fx.wait("back to the list", |fx| visible(fx, "code-review-repo-0"))?;
+    let searches = backend
+        .log
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, url, _)| url.starts_with("/wham/settings/code_review_search"))
+        .count();
+    ensure!(searches >= 2, "the list was not refetched after the save");
     Ok(())
 }
