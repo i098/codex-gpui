@@ -7,6 +7,9 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Show the original's `Restart to apply workspace settings` prompt when the polled org policy (`in_app_updates`) flips under a running app; `Restart` re-execs the app in place.
+- Set the in-app browser's default site permissions (Browse, Download, Upload), history access and full CDP access on Settings ▸ Browser; they persist to `browser_use` in `config.toml`, and custom site permissions are listed.
+- Run the selected local environment's actions from the thread: `Run: {action}` and an `Actions` menu in the header, `⌘⇧D` for the first and `environmentAction1`–`9` shortcut slots; each command runs in a new terminal tab.
 - Add the Settings ▸ Trusted contact page (also `codex://settings/trusted-contact`): invite a contact with the ChatGPT backend's `/trusted_contact` service, see Pending or Active, resend the invitation, and remove the contact.
 - Add the legacy Codex Cloud `Preferences` tab (`/settings/cloud-environments?tab=preferences`): the `Diff view` (Unified or Split) choice and a `Branch format` pattern with the original's placeholder validation, saved to `/wham/settings/user`.
 - List a thread's subagents in Thread summary and open them in a `Subagents` side panel tab: `Active` and `Done` sections, and a detail view with the model, delegated task, status and final response.
@@ -19,6 +22,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add `Create PR` and `Create draft PR` to a cloud task's header: they post the diff turn to `/wham/tasks/{task}/turns/{turn}/pr` and then show `View PR` with the opened pull request.
 - Show web searches, subagent calls, generated and viewed images, memory citations and the `Continued from chat` fork divider in the thread, and show a sent message's images, file mentions and skills, which Edit message now keeps.
 - Add Back, Next and Reload to the in-app browser toolbar with `⌘←`, `⌘→`, `⌘R`, `⌘⇧R` and `⌘L`, a load indicator, and the original's `This site can't be reached` error page with Reload.
+- Right-click a page in the in-app browser for the original's context menu: `Open in new tab`, `Open in external browser` and `Copy link address` on a link, then `Back`, `Forward` and `Reload`. Editable text and selections keep the system menu.
 - Add `Filter generated files` to the Changes file tree options: it hides files that `.gitattributes` marks `linguist-generated` from the tree and the diff list.
 - Add Thread summary ▸ `Sources` and its `Sources` side panel tab: the files the chat was given, read, created or updated, its web searches and opened pages, and its tool use counts.
 - Make Settings ▸ General ▸ `Full access` control the composer: turning it off removes `Full access` from the permissions menus, and turning it on asks `Make Full Access available?` first. The choice persists as host `show-full-access-in-composer`.
