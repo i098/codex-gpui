@@ -199,6 +199,11 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             this.open_browser_tab(url, window, cx);
         }),
     )
+    .on_action(cx.listener(
+        |this, a: &ui::screens::thread::view::RunEnvironmentAction, window, cx| {
+            this.run_environment_action(a.0, window, cx);
+        },
+    ))
     .on_action(cx.listener(|this, _: &ui::browser::BrowserBack, _, cx| {
         on_active_browser(this, cx, |tab, cx| tab.go_back(cx));
     }))
@@ -293,6 +298,16 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
         }
         this.set_side(SidePanel::Plan, window, cx)
     }))
+    .on_action(cx.listener(|this, _: &ui::OpenSubagentsPanel, window, cx| {
+        let Some(thread) = this.thread.clone() else {
+            return;
+        };
+        if this.subagents.is_none() {
+            this.subagents =
+                Some(cx.new(|cx| ui::screens::subagents::SubagentsView::new(thread, cx)));
+        }
+        this.set_side(SidePanel::Subagents, window, cx)
+    }))
     .on_action(cx.listener(|this, action: &OpenTerminalItem, window, cx| {
         if let Some(thread) = &this.thread {
             thread.update(cx, |thread, cx| thread.select_terminal(Some(&action.0), cx));
@@ -333,6 +348,11 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
         this.open_rename(a.0.clone(), false, window, cx)
     }))
     .on_action(cx.listener(|this, a: &ForkThread, window, cx| this.fork(&a.0, window, cx)))
+    .on_action(cx.listener(
+        |this, a: &ui::screens::thread::view::SubmitRating, window, cx| {
+            this.submit_rating(a, window, cx)
+        },
+    ))
     .on_action(cx.listener(|this, edit: &EditMessage, window, cx| {
         this.edit_message(edit.clone(), window, cx)
     }))

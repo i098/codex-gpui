@@ -3,6 +3,7 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+mod account_backend;
 mod activity_access;
 mod archived_chats;
 mod chatgpt_chats;
@@ -154,6 +155,12 @@ actions!(
         NextChat,
         /// `⌘⇧A`: archive the open chat (`archiveThread`).
         ArchiveChat,
+        ForceReloadSkills,
+        OpenSkills,
+        McpSettings,
+        PersonalitySettings,
+        ImportExternalAgent,
+        OpenFeedback,
         ExportLogs,
     ]
 );
@@ -243,6 +250,8 @@ pub enum SidePanel {
     Sources,
     /// Thread summary ▸ `Plan`: the latest plan, editable.
     Plan,
+    /// Thread summary ▸ `Subagents`: the thread's subagents ([`Root::subagents`]).
+    Subagents,
     /// `⌘T` and a link's `Open in` ▸ `New tab`: the browser tab with this key
     /// ([`Root::browser_tab`]).
     Browser(usize),
@@ -483,6 +492,8 @@ pub struct Root {
     file: Option<Entity<FileView>>,
     /// The plan of [`SidePanel::Plan`]; cleared with the thread.
     plan: Option<Entity<ui::screens::plan::PlanView>>,
+    /// The view of [`SidePanel::Subagents`]; cleared with the thread.
+    subagents: Option<Entity<ui::screens::subagents::SubagentsView>>,
     /// The image view of [`SidePanel::Image`]; cleared with the thread.
     image: Option<Entity<ui::screens::thread::view::ImageView>>,
     /// The open thread in the main shell, with its side panel if any.
@@ -491,6 +502,9 @@ pub struct Root {
     /// Side panel tabs of the thread route in opening order, and the selected one (always in
     /// `tabs`); kept across threads like the original's panel.
     tabs: Vec<SidePanel>,
+    /// Closed side tabs, the last closed last, for `Reopen closed tab` (`⌘⇧T`); a browser
+    /// tab keeps its page's address.
+    closed_tabs: Vec<(SidePanel, Option<url::Url>)>,
     side: Option<SidePanel>,
     workspace_layout: WorkspaceLayout,
     /// The route's own shell.
@@ -710,6 +724,7 @@ impl Root {
         features::install_shortcuts(cx);
         let this = cx.weak_entity();
         usage::install(this.clone(), cx);
+        account_backend::install(this.clone(), cx);
         notifications::install(this.clone(), cx);
         settings_git::init(this.clone(), cx);
         let computer_use = this.clone();
@@ -805,6 +820,12 @@ impl Root {
                     ui::composer::SlashCommand::MemoryMode(_)
                     | ui::composer::SlashCommand::MemoryStatus => this.thread_memory_command(command, window, cx),
                     ui::composer::SlashCommand::Memories => this.open_memories(window, cx),
+                    ui::composer::SlashCommand::HotkeyNew => {
+                        window.dispatch_action(Box::new(hotkey::Collapse), cx)
+                    }
+                    ui::composer::SlashCommand::Resume(id) => {
+                        this.navigate(Route::Thread(id.clone()), window, cx)
+                    }
                     ui::composer::SlashCommand::Status => this.show_status(window, cx),
                     ui::composer::SlashCommand::Init => this.init_agents(window, cx),
                     ui::composer::SlashCommand::Side => this.start_side_chat(window, cx),
@@ -993,10 +1014,12 @@ impl Root {
             diff_watch: None,
             file: None,
             plan: None,
+            subagents: None,
             image: None,
             split: None,
             terminal: terminal::Terminals::default(),
             tabs: Vec::new(),
+            closed_tabs: Vec::new(),
             side: None,
             workspace_layout: WorkspaceLayout::Split,
             page: None,
@@ -3037,6 +3060,7 @@ impl Root {
             menu.update(cx, |menu, cx| menu.update_catalog(threads, &unread, cx));
         }
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
+        hotkey::sync_recents(self, cx);
         if self.host_id() == "local" {
             let recents: Vec<_> = threads
                 .iter()
@@ -3216,6 +3240,7 @@ impl Root {
         side_chats: &[SideChat],
         browsers: &[(usize, Entity<BrowserTab>)],
         console: bool,
+        subagents: bool,
         cx: &App,
     ) -> Option<Tab> {
         match side {
@@ -3273,6 +3298,11 @@ impl Root {
                 label: plan?.read(cx).title(),
                 preview: false,
             }),
+            SidePanel::Subagents => subagents.then(|| Tab {
+                icon: "side-chat",
+                label: "Subagents".into(),
+                preview: false,
+            }),
             SidePanel::Browser(key) => {
                 let (_, tab) = browsers.iter().find(|(k, _)| *k == key)?;
                 Some(Tab {
@@ -3297,6 +3327,7 @@ impl Root {
         let chats = &self.side_chats;
         let browsers = &self.browser_tabs;
         let console = self.terminal_panel().is_some();
+        let subagents = self.subagents.is_some();
         let tab = |side: &SidePanel| {
             Self::side_tab(
                 *side,
@@ -3307,6 +3338,7 @@ impl Root {
                 chats,
                 browsers,
                 console,
+                subagents,
                 cx,
             )
         };
@@ -3329,6 +3361,7 @@ impl Root {
                 .new(|cx| ui::screens::sources::SourcesView::new(view.clone(), cx))
                 .into(),
             SidePanel::Plan => self.plan.as_ref()?.clone().into(),
+            SidePanel::Subagents => self.subagents.as_ref()?.clone().into(),
             SidePanel::Browser(key) => self.browser_tab(key)?.clone().into(),
         };
         Some((view, tabs, active))
@@ -3365,10 +3398,20 @@ impl Root {
     /// the previous, is selected; closing the last tab closes the panel. A side chat's tab
     /// discards its conversation.
     fn close_side(&mut self, side: SidePanel, window: &mut Window, cx: &mut Context<Self>) {
+        let open = self.tabs.contains(&side);
         match side {
             SidePanel::SideChat(key) => self.discard_side_chat(key, cx),
-            // Dropping the tab removes its page from the window.
-            SidePanel::Browser(key) => self.browser_tabs.retain(|(k, _)| *k != key),
+            SidePanel::Browser(key) => {
+                let url = self
+                    .browser_tab(key)
+                    .and_then(|tab| tab.read(cx).url().cloned());
+                if open {
+                    self.closed_tabs.push((side, url));
+                }
+                // Dropping the tab removes its page from the window.
+                self.browser_tabs.retain(|(k, _)| *k != key);
+            }
+            _ if open => self.closed_tabs.push((side, None)),
             _ => {}
         }
         let Some(ix) = self.tabs.iter().position(|t| *t == side) else {
@@ -3379,6 +3422,24 @@ impl Root {
             self.side = self.tabs.get(ix).or(self.tabs.last()).copied();
         }
         self.sync(window, cx);
+    }
+
+    /// `Reopen closed tab` (`⌘⇧T`): the last closed tab whose content the thread still has
+    /// (a browser tab reloads its address), selected.
+    fn reopen_closed_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        while let Some((side, url)) = self.closed_tabs.pop() {
+            if self.tabs.contains(&side) {
+                continue;
+            }
+            if let SidePanel::Browser(_) = side {
+                self.open_browser_tab(url, window, cx);
+                return;
+            }
+            self.set_side(side, window, cx);
+            if self.tabs.contains(&side) {
+                return;
+            }
+        }
     }
 
     /// `⌘T` (`url` none, the address bar focused) and a link's `Open in` ▸ `New tab`: a new
@@ -4297,9 +4358,15 @@ impl Root {
                 "Toggle pin" => {
                     window.dispatch_action(Box::new(features::shortcuts::ToggleThreadPin), cx)
                 }
-                "Go to skills" => {
-                    self.open_plugins("/skills", window, cx);
+                "Force reload skills" => window.dispatch_action(Box::new(ForceReloadSkills), cx),
+                "Go to skills" => window.dispatch_action(Box::new(OpenSkills), cx),
+                "Import from other AI apps" => {
+                    window.dispatch_action(Box::new(ImportExternalAgent), cx)
                 }
+                "MCP servers" => window.dispatch_action(Box::new(McpSettings), cx),
+                "Personalization" => window.dispatch_action(Box::new(PersonalitySettings), cx),
+                "Feedback" => window.dispatch_action(Box::new(OpenFeedback), cx),
+                "Codex Micro setup" => window.dispatch_action(Box::new(OpenMobileSetup), cx),
                 "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 "Log out" => window.dispatch_action(Box::new(LogOut), cx),
@@ -4714,6 +4781,7 @@ impl Root {
         self.diff = Some(diff);
         self.file = None;
         self.plan = None;
+        self.subagents = None;
         self.image = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         view.update(cx, |view, cx| {
@@ -4771,6 +4839,7 @@ impl Root {
         self.show_approval(cx);
         hotkey::thread_shown(self, window, cx);
         self.refresh_git_actions(cx);
+        self.load_environment_actions(cx);
         if self.state.route == route {
             self.sync(window, cx);
         } else {
@@ -6772,6 +6841,10 @@ impl Root {
                         "Failed to save draft pull request setting"
                     }
                     "git-review-mode" => "Could not save Git diff setting",
+                    "git-worktree-root" => "Failed to save worktree root",
+                    "worktree-upstream-refresh-mode" => "Failed to save upstream refresh setting",
+                    "worktree-auto-cleanup-enabled" => "Failed to save automatic deletion setting",
+                    "worktree-keep-count" => "Failed to save auto-delete limit",
                     "git-pr-watch-auto-merge" => "Failed to save automatic PR merging",
                     "git-commit-instructions"
                     | "git-pr-instructions"
@@ -6852,17 +6925,36 @@ impl Root {
                 if let Some(message) = message {
                     self.toast(Toast::info(message), cx);
                 }
+                let saved = match key {
+                    "git-worktree-root" => Some("Saved worktree root"),
+                    "worktree-upstream-refresh-mode" if e.value == "best-effort" => {
+                        Some("Upstream refresh enabled")
+                    }
+                    "worktree-upstream-refresh-mode" => Some("Upstream refresh disabled"),
+                    "worktree-auto-cleanup-enabled" if e.value == true => {
+                        Some("Automatic deletion enabled")
+                    }
+                    "worktree-auto-cleanup-enabled" => Some("Automatic deletion disabled"),
+                    "worktree-keep-count" => Some("Saved auto-delete limit"),
+                    _ => None,
+                };
+                if let Some(saved) = saved {
+                    self.toast(Toast::success(saved), cx);
+                }
             }
             return;
         }
-        let value = e.value.clone();
-        let apply = move |config: &mut Value| match key {
-            "" => config[store] = value,
-            _ => config[store][key] = value,
+        let (path, value) = (e.path, e.value.clone());
+        let apply = move |config: &mut Value| {
+            *path.split('.').fold(config, |config, key| &mut config[key]) = value;
         };
-        // `desktop`/`features` keys and the Configuration page's top-level `config.toml` keys
-        // persist; other stores are session-only.
-        if !matches!(store, "desktop" | "features" | "sandbox_workspace_write") && !key.is_empty() {
+        // `desktop`/`features`/`browser_use` keys and the Configuration page's top-level
+        // `config.toml` keys persist; other stores are session-only.
+        if !matches!(
+            store,
+            "desktop" | "features" | "sandbox_workspace_write" | "browser_use"
+        ) && !key.is_empty()
+        {
             return apply(&mut self.config);
         }
         if settings_configuration::write_on_selected_host(self, e, cx) {
@@ -6895,6 +6987,10 @@ impl Root {
             (Some("desktop.reviewDelivery"), _) => "Could not save review delivery preference",
             (Some("desktop.followUpQueueMode"), true) => "Could not save follow-up behavior",
             (Some("desktop.followUpQueueMode"), false) => "Couldn’t save your changes. Try again",
+            (Some("browser_use.allow_history_access"), _) => "Unable to save history setting",
+            (Some(path), _) if path.starts_with("browser_use.") => {
+                "Unable to save site permissions"
+            }
             _ => "Couldn't save your changes. Try again",
         };
         let locale_changed = params["keyPath"] == "desktop.localeOverride";
@@ -8982,11 +9078,25 @@ impl Render for Root {
             );
         let root = routes::actions(archived_chats::actions(root, cx), cx);
         let root = hotkey::actions(root, self.popout.is_some(), cx);
+        let root = features::actions(root, self, cx)
+            .on_action(cx.listener(|this, _: &ForceReloadSkills, _, cx| this.refresh_skills(cx)))
+            .on_action(cx.listener(|this, _: &OpenSkills, window, cx| {
+                this.open_plugins("/skills", window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &McpSettings, window, cx| {
+                this.open_settings_section("MCP servers", window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &PersonalitySettings, window, cx| {
+                this.open_settings_section("Personalization", window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ImportExternalAgent, window, cx| {
+                this.open_settings_section("Import", window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &OpenFeedback, window, cx| {
+                this.open_feedback(window, cx);
+            }));
         native_menus::actions(
-            section_actions::actions(
-                project_actions::actions(features::actions(root, self, cx), cx),
-                cx,
-            ),
+            section_actions::actions(project_actions::actions(root, cx), cx),
             self,
             cx,
         )

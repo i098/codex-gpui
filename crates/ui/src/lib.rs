@@ -101,6 +101,8 @@ actions!(
         OpenSourcesPanel,
         /// Thread summary ▸ `Plan`: the latest plan in its editable side panel tab.
         OpenPlanPanel,
+        /// Thread summary ▸ `Subagents` row: the `Subagents` side panel tab.
+        OpenSubagentsPanel,
         ShowWorkspaceTabView,
         StepWorkspaceLayout,
         /// `⌘K`, `⌘⇧P`, sidebar `Search`: the command menu.

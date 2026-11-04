@@ -404,6 +404,12 @@ fn response_html_tag(tag: pulldown_cmark::TagEnd) -> Option<&'static str> {
     })
 }
 
+/// `environmentAction1..9` and the header's run menu: run the selected local environment's
+/// Nth action (0-based) in a terminal.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = thread, no_json)]
+pub struct RunEnvironmentAction(pub usize);
+
 /// `Fork chat from here` under a turn: a new chat with the thread up to that turn (its id).
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = thread, no_json)]
@@ -426,10 +432,58 @@ pub struct PatchTurn {
 #[action(namespace = thread, no_json)]
 pub struct ThreadPressed(pub String);
 
-/// Copy, Rate response, Read aloud, More actions: shown under the latest turn; earlier turns
-/// (group `group`) show them on hover. More actions opens `menu` (`Branch in new chat`).
-/// ponytail: Read aloud (ChatGPT voice playback) and Rate response (feedback menu) have no
-/// handler; wire them with a voice backend and the feedback menu.
+/// A rating picked in the `Rate response` menu: `feedback/upload` with `classification` and the
+/// option label.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = thread, no_json)]
+pub struct SubmitRating {
+    pub turn_id: String,
+    pub classification: &'static str,
+    pub reason: &'static str,
+}
+
+/// The rating menu: `(id, label, classification)`; the original's `turnRatingControls` options
+/// (`thumbs_up` then `thumbs_down`). An empty classification is a heading.
+pub(super) const RATINGS: [(&str, &str, &str); 13] = [
+    ("good-heading", "Good response", ""),
+    ("solved_my_task", "Solved my task", "good_result"),
+    (
+        "followed_my_instructions",
+        "Followed my instructions",
+        "good_result",
+    ),
+    (
+        "good_code_or_output_quality",
+        "Good code / output quality",
+        "good_result",
+    ),
+    ("fast_and_efficient", "Fast and efficient", "good_result"),
+    ("useful_autonomy", "Useful autonomy", "good_result"),
+    ("bad-heading", "Bad response", ""),
+    (
+        "incorrect_or_incomplete",
+        "Incorrect or incomplete",
+        "bad_result",
+    ),
+    (
+        "didnt_follow_my_instructions",
+        "Didn't follow my instructions",
+        "bad_result",
+    ),
+    (
+        "off_track_or_wrong_scope",
+        "Off track / wrong scope",
+        "bad_result",
+    ),
+    ("lost_context", "Lost context", "bad_result"),
+    ("slow_or_buggy", "Slow or buggy", "bad_result"),
+    (
+        "safety_or_legal_concern",
+        "Safety or legal concern",
+        "safety_check",
+    ),
+];
+
 /// Focus handles of a turn's buttons. The original's `group-focus-within` shows a turn's hover
 /// UI (action row time, diff card subtitle) while any of them has focus.
 #[derive(Clone)]
@@ -476,8 +530,8 @@ impl TurnFocus {
 }
 
 /// `sent_at` is the turn's `Wednesday 9:54 PM`, shown beside the actions on hover or focus.
-/// `menu` is the open More actions menu; `toggle_menu` opens or closes it and `hover_menu`
-/// reports the pointer over its trigger.
+/// `rate` opens the `Rate response` menu. `menu` is the open More actions menu; `toggle_menu`
+/// opens or closes it and `hover_menu` reports the pointer over its trigger.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn action_row(
     last: bool,
@@ -485,6 +539,7 @@ pub(super) fn action_row(
     answer: &str,
     sent_at: Option<String>,
     menu: Option<AnyElement>,
+    rate: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     toggle_menu: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     hover_menu: impl Fn(&bool, &mut Window, &mut App) + 'static,
     focus: &TurnFocus,
@@ -508,7 +563,7 @@ pub(super) fn action_row(
             .rounded(Theme::RADIUS_MD)
             .child(icon)
     };
-    let answer = answer.to_owned();
+    let (answer, spoken) = (answer.to_owned(), answer.to_owned());
     div()
         .mt(px(6.))
         .ml(px(-4.))
@@ -540,7 +595,9 @@ pub(super) fn action_row(
         .child(tooltip(
             action("thread-rate")
                 .id("rate-response")
-                .aria_label("Rate response"),
+                .aria_label("Rate response")
+                .role(gpui::Role::Button)
+                .on_click(rate),
             "Rate response",
             None,
             Side::Top,
@@ -548,7 +605,17 @@ pub(super) fn action_row(
         .child(tooltip(
             action("thread-read-aloud")
                 .id("read-response")
-                .aria_label("Read aloud"),
+                .aria_label("Read aloud")
+                .role(gpui::Role::Button)
+                .on_click(move |_, _, cx| {
+                    // shortcut: native system speech, not the original's ChatGPT `/synthesize`
+                    // voice (needs a ChatGPT session); a second press stops it.
+                    if crate::native_text::is_speaking(cx) {
+                        crate::native_text::stop_speaking(cx);
+                    } else if let Err(error) = crate::native_text::speak(&spoken, cx) {
+                        eprintln!("codex-gpui: cannot read the response aloud: {error:#}");
+                    }
+                }),
             "Read aloud",
             None,
             Side::Top,
