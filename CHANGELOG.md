@@ -7,6 +7,10 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Open any settings page from `codex://settings/<slug>` links (`git-settings`, `mcp-settings`, `hooks-settings`, `agent`, `local-environments` and the rest of the original slugs, plus the `work-settings` and usage-tab aliases); unknown slugs open General.
+- Show external agent import progress as imported and failed item counts in the import view.
+- Open a `New tab` page from the side panel's and the titlebar's `New tab` buttons: `Tools` (Changes, Terminal with `Open bottom terminal`, Browser) and `Recents` (recently opened files). A pick replaces the `New tab` tab.
+- Add `Fix checks` under a pull request's failing checks and `Address comments` with optional guidance under its review comments: each starts a new chat that checks out the pull request branch and fixes it.
 - Show the original's `Restart to apply workspace settings` prompt when the polled org policy (`in_app_updates`) flips under a running app; `Restart` re-execs the app in place.
 - Set the in-app browser's default site permissions (Browse, Download, Upload), history access and full CDP access on Settings ▸ Browser; they persist to `browser_use` in `config.toml`, and custom site permissions are listed.
 - Run the selected local environment's actions from the thread: `Run: {action}` and an `Actions` menu in the header, `⌘⇧D` for the first and `environmentAction1`–`9` shortcut slots; each command runs in a new terminal tab.
@@ -151,6 +155,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add `Group by` (`Project` or `None`) to the Archived chats filter menu; `None` shows every archived chat in one list without project headers.
 
 ### Fixed
+- Match the original profile menu: the account name and plan header, `Usage` with the percent left, `Show Pet`, `Settings` with their shortcuts, a `Help` flyout with What's new posts, setup, guide and privacy links, and `Log out`.
+- Hide the whole Home sidebar, including the header, `New chat` and `Your dot` rows, with the panel when it collapses, and fit project and Recents titles to a resized panel instead of a fixed 264 px width.
 - Name this computer "PC" on Windows and Linux in Settings ▸ Connections (`Control this PC`, `Devices that can control this PC`, `Keep this PC awake`, `SSH connections from this PC`), as the original does; macOS keeps "Mac".
 - Show the ChatGPT home's one-row composer pill (`+`, `Ask ChatGPT`, model, microphone, voice) without the permissions chip, and place the headline and pill at the original's `42svh` composer line.
 - Open the original's project menu from the Home `Choose project` chip: `Search projects`, the projects with a check on the selected one, `New project`, and `Don't work in a project`, instead of a folder dialog.

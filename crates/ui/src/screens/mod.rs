@@ -17,6 +17,7 @@ pub mod maps;
 pub mod mini;
 pub mod mobile;
 pub mod new_project;
+pub mod new_tab;
 pub mod oauth;
 pub mod onboarding;
 pub mod plan;

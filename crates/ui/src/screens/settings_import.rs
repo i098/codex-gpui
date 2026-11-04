@@ -42,6 +42,7 @@ pub struct ImportState {
     pub preferences: Preferences,
     pub sync_enabled: bool,
     pub running: Option<Arc<Vec<DetectedItem>>>,
+    pub progress: Option<(usize, usize)>,
     pub pending: bool,
     pub reviewing: bool,
     pub modal_open: bool,
@@ -55,6 +56,10 @@ pub struct ImportState {
 }
 
 impl Global for ImportState {}
+fn progress_summary(state: &ImportState) -> Option<String> {
+    let (succeeded, failed) = state.progress?;
+    (succeeded + failed > 0).then(|| format!("{succeeded} imported, {failed} failed"))
+}
 
 pub fn visible(cx: &App) -> bool {
     cx.try_global::<ImportState>()
@@ -600,7 +605,13 @@ impl ImportPage {
         let t = cx.theme().clone();
         let mut subtitle = None;
         let rows = if state.running.is_some() {
-            vec![row("Import in progress", None, None, spinner(&t), &t)]
+            vec![row(
+                "Import in progress",
+                progress_summary(state),
+                None,
+                spinner(&t),
+                &t,
+            )]
         } else {
             match &state.detected {
                 Load::Loading => vec![row(
@@ -1044,7 +1055,13 @@ impl ImportPage {
             .map_or(0, |history| history.completed_at_ms);
         let mut entries = Vec::new();
         if let Some(items) = &state.running {
-            let mut rows = vec![row("Importing now", None, None, spinner(&t), &t)];
+            let mut rows = vec![row(
+                "Importing now",
+                progress_summary(state),
+                None,
+                spinner(&t),
+                &t,
+            )];
             for category in ItemType::ALL {
                 if items.iter().any(|item| item.item.item_type == category) {
                     rows.push(nested_row(
