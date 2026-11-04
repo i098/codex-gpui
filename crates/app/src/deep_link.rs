@@ -1,7 +1,7 @@
 //! Native Codex URL parsing and page-family dispatch (SH-151..155).
 
 use crate::{Root, Route, State, windows};
-use gpui::{App, AppContext as _, Context, Focusable, Window};
+use gpui::{App, AppContext as _, BorrowAppContext as _, Context, Focusable, Window};
 use std::borrow::Cow;
 use ui::screens::connections::Tab;
 use url::Url;
@@ -31,6 +31,11 @@ pub enum Link {
         name: String,
         project_path: Option<String>,
         enabled: bool,
+    },
+    /// `codex://settings/local-environments/create`: opens the environment editor.
+    CreateEnvironment {
+        workspace_root: String,
+        config_path: Option<String>,
     },
     Scheduled,
     Automation {
@@ -322,6 +327,15 @@ fn settings(sub: &[&str], params: &Params<'_>) -> Link {
             }
         }
         ["connections", "ssh"] => Link::Connections(Tab::Ssh),
+        ["browser-use"] => Link::Settings(Some("Browser")),
+        ["local-environments", "create"] => match params.value("workspaceRoot") {
+            Some(workspace_root) if workspace_root.starts_with('/') => Link::CreateEnvironment {
+                workspace_root,
+                config_path: params.value("configPath"),
+            },
+            _ => Link::Settings(Some("Worktrees")),
+        },
+        ["trusted-contact"] => Link::Settings(Some("Trusted contact")),
         [] => Link::Settings(None),
         [slug, ..] => Link::Settings(Some(ui::screens::settings::slug_section(slug))),
     }
@@ -464,6 +478,16 @@ impl Root {
             }
             Link::Settings(None) => self.navigate(Route::Settings, window, cx),
             Link::Settings(Some(label)) => self.open_settings_section(label, window, cx),
+            Link::CreateEnvironment {
+                workspace_root,
+                config_path,
+            } => {
+                let create = (workspace_root.clone(), config_path.clone());
+                cx.update_global::<ui::screens::settings::environments::State, _>(|state, _| {
+                    state.create = Some(create)
+                });
+                self.open_settings_section("Worktrees", window, cx);
+            }
             Link::Connections(tab) => self.open_connections(*tab, window, cx),
             Link::AddSsh {
                 name,
@@ -714,6 +738,23 @@ mod tests {
     }
 
     #[test]
+    fn local_environment_create_requires_an_absolute_workspace_root() {
+        assert_eq!(
+            parse(
+                "codex://settings/local-environments/create?workspaceRoot=%2Fwork&configPath=%2Fwork%2F.codex%2Fenvironments%2Fa.toml"
+            ),
+            Some(Link::CreateEnvironment {
+                workspace_root: "/work".into(),
+                config_path: Some("/work/.codex/environments/a.toml".into()),
+            })
+        );
+        assert_eq!(
+            parse("codex://settings/local-environments/create?workspaceRoot=work"),
+            Some(Link::Settings(Some("Worktrees")))
+        );
+    }
+
+    #[test]
     fn settings_slugs_open_their_section() {
         for (url, section) in [
             ("codex://settings/git-settings", "Git"),
@@ -909,7 +950,12 @@ mod tests {
                     | Link::CloudEnvironmentCreate
                     | Link::Onboarding,
                 ) => assert!(!expected.is_null(), "{value}"),
-                Some(Link::Settings(_) | Link::Connections(_) | Link::AddSsh { .. }) => {
+                Some(
+                    Link::Settings(_)
+                    | Link::Connections(_)
+                    | Link::AddSsh { .. }
+                    | Link::CreateEnvironment { .. },
+                ) => {
                     assert_eq!(expected["kind"], "settings", "{value}")
                 }
                 Some(Link::Launch | Link::Path(_)) | None => {}
