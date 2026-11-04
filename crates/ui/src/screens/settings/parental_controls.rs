@@ -824,7 +824,6 @@ fn bare(row: gpui::Div) -> AnyElement {
         .size_full()
         .flex()
         .flex_col()
-        .child(div().h(px(46.)).flex_none())
         .child(row)
         .into_any_element()
 }
@@ -847,14 +846,34 @@ fn retry_row<V: 'static>(
     cx: &mut Context<V>,
     on_retry: impl Fn(&mut V, &mut Context<V>) + 'static,
 ) -> gpui::Div {
-    settings_row_content(
-        message,
-        None,
-        action(id, "Retry", Kind::Secondary, false, t)
-            .on_click(cx.listener(move |this, _, _, cx| on_retry(this, cx)))
-            .into_any_element(),
-        t,
-    )
+    // The original's load-error row: 13 px text and a borderless toolbar-size Retry.
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(24.))
+        .px(px(16.))
+        .py(px(12.))
+        .child(text(message, 13., 18., 400., t.text))
+        .child(
+            div()
+                .id(id)
+                .debug_selector(move || id.into())
+                .h(px(28.))
+                .px(px(9.))
+                .flex()
+                .flex_none()
+                .items_center()
+                .relative()
+                .child(on_card(
+                    8.,
+                    shapes::Corner::Squircle,
+                    t.button_secondary,
+                    None,
+                ))
+                .child(text("Retry", 13., 18., 400., t.text))
+                .on_click(cx.listener(move |this, _, _, cx| on_retry(this, cx))),
+        )
 }
 
 fn avatar(member: &Member, t: &Theme) -> gpui::Div {

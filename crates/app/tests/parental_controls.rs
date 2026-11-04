@@ -8,6 +8,7 @@ use anyhow::{Context as _, Result, ensure};
 use app::host::{Host, Identity, Request};
 use common::Fx;
 use serde_json::{Value, json};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[test]
@@ -22,6 +23,8 @@ const USER: &str = "user-parent";
 struct Backend {
     family: Mutex<Option<Vec<Value>>>,
     log: Mutex<Vec<(String, String, Value)>>,
+    /// Set once the first family load has failed, as with no backend.
+    loaded_once: AtomicBool,
 }
 
 impl Backend {
@@ -32,6 +35,9 @@ impl Backend {
                 200,
                 json!({"accounts": {ACCOUNT: {"account": {"structure": "personal"}}}}),
             ),
+            ("GET", "/amphora") if !self.loaded_once.swap(true, Ordering::SeqCst) => {
+                (500, json!({"detail": "unavailable"}))
+            }
             ("GET", "/amphora") => match &*family {
                 Some(_) => (200, json!({"id": "fam-1", "role": "owner"})),
                 None => (200, json!({})),
@@ -138,6 +144,10 @@ fn invite_resend_and_cancel() -> Result<()> {
     fx.cx.update_window(fx.window, |_, window, cx| {
         root.update(cx, |root, cx| root.open_deep_link(&link, window, cx));
     })?;
+    // The first load fails, as the original shows without a reachable backend.
+    fx.wait("load error", |fx| visible(fx, "parental-controls-retry"))?;
+    shot(&mut fx, "error")?;
+    click(&mut fx, "parental-controls-retry")?;
     fx.wait("Add family member", |fx| {
         visible(fx, "parental-controls-add")
     })?;
