@@ -3,6 +3,7 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+mod account_backend;
 mod activity_access;
 mod archived_chats;
 mod chatgpt_chats;
@@ -251,6 +252,8 @@ pub enum SidePanel {
     Plan,
     /// The strip's `New tab` button: the page of tools and recent files ([`Root::new_tab`]).
     NewTab,
+    /// Thread summary ▸ `Subagents`: the thread's subagents ([`Root::subagents`]).
+    Subagents,
     /// `⌘T` and a link's `Open in` ▸ `New tab`: the browser tab with this key
     /// ([`Root::browser_tab`]).
     Browser(usize),
@@ -493,6 +496,8 @@ pub struct Root {
     plan: Option<Entity<ui::screens::plan::PlanView>>,
     /// The page of [`SidePanel::NewTab`]; cleared with the thread.
     new_tab: Option<Entity<ui::screens::new_tab::NewTabPage>>,
+    /// The view of [`SidePanel::Subagents`]; cleared with the thread.
+    subagents: Option<Entity<ui::screens::subagents::SubagentsView>>,
     /// The image view of [`SidePanel::Image`]; cleared with the thread.
     image: Option<Entity<ui::screens::thread::view::ImageView>>,
     /// The open thread in the main shell, with its side panel if any.
@@ -723,6 +728,7 @@ impl Root {
         features::install_shortcuts(cx);
         let this = cx.weak_entity();
         usage::install(this.clone(), cx);
+        account_backend::install(this.clone(), cx);
         notifications::install(this.clone(), cx);
         settings_git::init(this.clone(), cx);
         let computer_use = this.clone();
@@ -1013,6 +1019,7 @@ impl Root {
             file: None,
             plan: None,
             new_tab: None,
+            subagents: None,
             image: None,
             split: None,
             terminal: terminal::Terminals::default(),
@@ -3239,6 +3246,7 @@ impl Root {
         browsers: &[(usize, Entity<BrowserTab>)],
         console: bool,
         new_tab: bool,
+        subagents: bool,
         cx: &App,
     ) -> Option<Tab> {
         match side {
@@ -3301,6 +3309,11 @@ impl Root {
                 label: "New tab".into(),
                 preview: false,
             }),
+            SidePanel::Subagents => subagents.then(|| Tab {
+                icon: "side-chat",
+                label: "Subagents".into(),
+                preview: false,
+            }),
             SidePanel::Browser(key) => {
                 let (_, tab) = browsers.iter().find(|(k, _)| *k == key)?;
                 Some(Tab {
@@ -3326,6 +3339,7 @@ impl Root {
         let browsers = &self.browser_tabs;
         let console = self.terminal_panel().is_some();
         let new_tab = self.new_tab.is_some();
+        let subagents = self.subagents.is_some();
         let tab = |side: &SidePanel| {
             Self::side_tab(
                 *side,
@@ -3337,6 +3351,7 @@ impl Root {
                 browsers,
                 console,
                 new_tab,
+                subagents,
                 cx,
             )
         };
@@ -3360,6 +3375,7 @@ impl Root {
                 .into(),
             SidePanel::Plan => self.plan.as_ref()?.clone().into(),
             SidePanel::NewTab => self.new_tab.as_ref()?.clone().into(),
+            SidePanel::Subagents => self.subagents.as_ref()?.clone().into(),
             SidePanel::Browser(key) => self.browser_tab(key)?.clone().into(),
         };
         Some((view, tabs, active))
@@ -4780,6 +4796,7 @@ impl Root {
         self.file = None;
         self.plan = None;
         self.new_tab = None;
+        self.subagents = None;
         self.image = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         view.update(cx, |view, cx| {
@@ -4837,6 +4854,7 @@ impl Root {
         self.show_approval(cx);
         hotkey::thread_shown(self, window, cx);
         self.refresh_git_actions(cx);
+        self.load_environment_actions(cx);
         if self.state.route == route {
             self.sync(window, cx);
         } else {
@@ -6941,14 +6959,17 @@ impl Root {
             }
             return;
         }
-        let value = e.value.clone();
-        let apply = move |config: &mut Value| match key {
-            "" => config[store] = value,
-            _ => config[store][key] = value,
+        let (path, value) = (e.path, e.value.clone());
+        let apply = move |config: &mut Value| {
+            *path.split('.').fold(config, |config, key| &mut config[key]) = value;
         };
-        // `desktop`/`features` keys and the Configuration page's top-level `config.toml` keys
-        // persist; other stores are session-only.
-        if !matches!(store, "desktop" | "features" | "sandbox_workspace_write") && !key.is_empty() {
+        // `desktop`/`features`/`browser_use` keys and the Configuration page's top-level
+        // `config.toml` keys persist; other stores are session-only.
+        if !matches!(
+            store,
+            "desktop" | "features" | "sandbox_workspace_write" | "browser_use"
+        ) && !key.is_empty()
+        {
             return apply(&mut self.config);
         }
         if settings_configuration::write_on_selected_host(self, e, cx) {
@@ -6981,6 +7002,10 @@ impl Root {
             (Some("desktop.reviewDelivery"), _) => "Could not save review delivery preference",
             (Some("desktop.followUpQueueMode"), true) => "Could not save follow-up behavior",
             (Some("desktop.followUpQueueMode"), false) => "Couldn’t save your changes. Try again",
+            (Some("browser_use.allow_history_access"), _) => "Unable to save history setting",
+            (Some(path), _) if path.starts_with("browser_use.") => {
+                "Unable to save site permissions"
+            }
             _ => "Couldn't save your changes. Try again",
         };
         let locale_changed = params["keyPath"] == "desktop.localeOverride";

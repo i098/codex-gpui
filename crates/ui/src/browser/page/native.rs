@@ -12,6 +12,41 @@ use wry::{PageLoadEvent, Rect, WebView, WebViewBuilder, WebViewExtMacOS as _};
 
 use super::{LoadError, PageChange, PageState};
 
+/// Posts a right-click to the host instead of WebKit's menu. Editable text and selections
+/// keep WebKit's own menu (cut, copy, paste, spelling). Runs in every frame; a frame's
+/// coordinates are not the page's, so only the main frame reports.
+const CONTEXT_MENU_SCRIPT: &str = r#"
+if (window === window.top) {
+  addEventListener("contextmenu", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const editable = target?.closest("input, textarea, [contenteditable=''], [contenteditable='true']");
+    if (event.defaultPrevented || editable || String(getSelection()).trim()) return;
+    event.preventDefault();
+    const link = target?.closest("a[href]")?.href ?? null;
+    window.ipc.postMessage(JSON.stringify({ x: event.clientX, y: event.clientY, link }));
+  });
+}
+"#;
+
+/// The page's `CONTEXT_MENU_SCRIPT` message; `None` for any other body.
+fn context_menu(body: &str) -> Option<PageChange> {
+    #[derive(serde::Deserialize)]
+    struct Click {
+        x: f32,
+        y: f32,
+        link: Option<String>,
+    }
+    let click: Click = serde_json::from_str(body).ok()?;
+    Some(PageChange::ContextMenu {
+        x: click.x,
+        y: click.y,
+        link: click
+            .link
+            .and_then(|link| Url::parse(&link).ok())
+            .filter(|link| matches!(link.scheme(), "http" | "https")),
+    })
+}
+
 pub(in crate::browser) struct WebPage {
     view: WebView,
     /// The view's navigation delegate: wry holds the one it wraps.
@@ -23,6 +58,7 @@ impl WebPage {
     pub fn new(window: &Window, changed: async_channel::Sender<PageChange>) -> Option<Self> {
         let on_title = changed.clone();
         let on_load = changed.clone();
+        let on_menu = changed.clone();
         let view = WebViewBuilder::new()
             .with_visible(false)
             // `Started` fires once the navigation commits: the URL has changed.
@@ -34,6 +70,12 @@ impl WebPage {
             })
             .with_document_title_changed_handler(move |_| {
                 let _ = on_title.try_send(PageChange::Changed);
+            })
+            .with_initialization_script(CONTEXT_MENU_SCRIPT)
+            .with_ipc_handler(move |request| {
+                if let Some(change) = context_menu(request.body()) {
+                    let _ = on_menu.try_send(change);
+                }
             })
             .build_as_child(window)
             .ok()?;
