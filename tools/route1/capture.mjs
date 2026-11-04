@@ -127,6 +127,10 @@ const STATES = {
     await d.click(byText("Settings"));
     await d.waitFor(`document.body.innerText.includes("Default permissions")`, "settings general");
   },
+  "profile-menu": async (d) => {
+    await d.click(byText("Open profile menu"));
+    await d.waitFor(`document.querySelector("[role=menu]")?.innerText.includes("Log out")`, "profile menu");
+  },
   automations: async (d) => {
     await d.click(byText("Scheduled"));
     await d.waitFor(`document.body.innerText.includes("Scheduled") && !document.body.innerText.includes("Loading scheduled")`, "automations page");

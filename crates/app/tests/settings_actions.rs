@@ -155,7 +155,7 @@ fn foreign_and_cancelled_browser_logins_cannot_authenticate() -> Result<()> {
     });
     ensure!(fx.read(|root, _| root.signed_out()));
     evidence(&mut fx, "pending-login")?;
-    fx.click((640., 454.))?;
+    fx.click((640., 432.))?;
     drain(&mut fx)?;
     fx.root.update(&mut fx.cx, |root, cx| {
         root.on_event(completed("owned-login"), cx)
