@@ -65,7 +65,11 @@ pub use items::{ImageView, OpenImage};
 
 pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
-pub use actions::{EditMessage, ForkThread, PatchTurn, RevertTurn, SubmitRating, ThreadPressed};
+pub use actions::{
+    EditMessage, ForkThread, PatchTurn, RevertTurn, RunEnvironmentAction, SubmitRating,
+    ThreadPressed,
+};
+
 use actions::{TurnFocus, action_row};
 pub enum GitAction {
     Refresh,
@@ -182,6 +186,10 @@ pub struct ThreadView {
     branch: Option<SharedString>,
     /// Remote environment link (`thread/environment/connected` / `disconnected`).
     environment_connected: Option<bool>,
+    /// Names of the selected local environment's run actions (`Run` in the header).
+    environment_actions: Vec<SharedString>,
+    /// The header's run-actions menu is open.
+    run_menu: bool,
     /// Workspace folder; its name heads the summary panel.
     cwd: String,
     /// The `Toggle summary` panel is open.
@@ -729,6 +737,8 @@ impl ThreadView {
             thread_id: thread.id,
             branch: None,
             environment_connected: None,
+            environment_actions: Vec::new(),
+            run_menu: false,
             cwd: thread.cwd,
             summary_open: false,
             projectless: false,
