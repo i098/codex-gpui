@@ -2233,7 +2233,8 @@ impl Composer {
         }
     }
 
-    fn send_draft(&mut self, background: bool, window: &mut Window, cx: &mut Context<Self>) {
+    /// Sends the draft as Enter does; a draft that can't be sent yet stays in the composer.
+    pub fn send_draft(&mut self, background: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.blocked.is_some() {
             return;
         }
