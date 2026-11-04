@@ -40,6 +40,7 @@ pub mod oauth;
 pub mod onboarding;
 mod permissions;
 mod personalization;
+mod profile_menu;
 mod pull_requests;
 pub mod qa;
 mod routes;
@@ -9077,6 +9078,7 @@ impl Render for Root {
                 }),
             );
         let root = routes::actions(archived_chats::actions(root, cx), cx);
+        let root = profile_menu::actions(root, cx);
         let root = hotkey::actions(root, self.popout.is_some(), cx);
         let root = features::actions(root, self, cx)
             .on_action(cx.listener(|this, _: &ForceReloadSkills, _, cx| this.refresh_skills(cx)))

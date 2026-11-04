@@ -151,6 +151,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add `Group by` (`Project` or `None`) to the Archived chats filter menu; `None` shows every archived chat in one list without project headers.
 
 ### Fixed
+- Match the original profile menu: the account name and plan header, `Usage` with the percent left, `Show Pet`, `Settings` with their shortcuts, a `Help` flyout with What's new posts, setup, guide and privacy links, and `Log out`.
 - Hide the whole Home sidebar, including the header, `New chat` and `Your dot` rows, with the panel when it collapses, and fit project and Recents titles to a resized panel instead of a fixed 264 px width.
 - Name this computer "PC" on Windows and Linux in Settings ▸ Connections (`Control this PC`, `Devices that can control this PC`, `Keep this PC awake`, `SSH connections from this PC`), as the original does; macOS keeps "Mac".
 - Show the ChatGPT home's one-row composer pill (`+`, `Ask ChatGPT`, model, microphone, voice) without the permissions chip, and place the headline and pill at the original's `42svh` composer line.
