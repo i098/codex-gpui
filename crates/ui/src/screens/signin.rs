@@ -487,6 +487,7 @@ enum Command {
     Submit,
     Cancel,
     CopyLink,
+    UseCode,
     Retry,
     PlaySnake,
     ShowBedrock,
@@ -517,6 +518,7 @@ pub struct Login {
     attempt: u64,
     login_id: Option<String>,
     login_url: Option<String>,
+    device_code: Option<String>,
     restart_blocked: bool,
     snake: Option<snake::Snake>,
     snake_timer: Option<gpui::Task<()>>,
@@ -573,6 +575,7 @@ impl Login {
             attempt: 0,
             login_id: None,
             login_url: None,
+            device_code: None,
             restart_blocked: false,
             snake: None,
             snake_timer: None,
@@ -724,6 +727,7 @@ impl Login {
         self.pending = false;
         self.login_id = None;
         self.login_url = None;
+        self.device_code = None;
         if params["success"] == true {
             cx.emit(LoginEvent::Authenticated);
         } else {
@@ -787,6 +791,7 @@ impl Login {
         };
         self.pending = true;
         self.login_url = None;
+        self.device_code = None;
         self.restart_blocked = true;
         self.error = None;
         self.attempt += 1;
@@ -813,6 +818,64 @@ impl Login {
                 cx.notify();
             }).ok();
         }).detach();
+        cx.notify();
+    }
+
+    /// Sign in with a one-time code typed on a web page, for browsers that cannot reach the
+    /// loopback callback of the browser flow.
+    pub fn start_device_code(&mut self, cx: &mut Context<Self>) {
+        let Some(bridge) = self.bridge.clone() else {
+            return;
+        };
+        if let Some(id) = self.login_id.take() {
+            cancel(bridge.clone(), id, cx);
+        }
+        self.attempt += 1;
+        let attempt = self.attempt;
+        self.login_url = None;
+        self.device_code = None;
+        self.error = None;
+        cx.spawn(async move |this, cx| {
+            let result = bridge
+                .request::<_, Value>("account/login/start", json!({"type": "chatgptDeviceCode"}))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.attempt != attempt {
+                    if let Ok(value) = result
+                        && let Some(id) = value["loginId"].as_str()
+                    {
+                        cancel(bridge.clone(), id.to_owned(), cx);
+                    }
+                    return;
+                }
+                let parsed = result.as_ref().ok().and_then(|value| {
+                    Some((
+                        value["loginId"].as_str()?.to_owned(),
+                        value["verificationUrl"].as_str()?.to_owned(),
+                        value["userCode"].as_str()?.to_owned(),
+                    ))
+                });
+                match (parsed, result) {
+                    (Some((id, url, code)), _) => {
+                        this.login_id = Some(id);
+                        this.login_url = Some(url.clone());
+                        this.device_code = Some(code);
+                        cx.open_url(&url);
+                    }
+                    (None, Err(error)) => {
+                        this.pending = false;
+                        this.error = Some(format!("Sign-in failed: {error}"));
+                    }
+                    (None, Ok(_)) => {
+                        this.pending = false;
+                        this.error = Some("Sign-in failed: invalid sign-in response".into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
         cx.notify();
     }
 
@@ -870,6 +933,7 @@ impl Login {
         }
         self.pending = false;
         self.login_url = None;
+        self.device_code = None;
         if let Some(id) = self.login_id.take()
             && let Some(bridge) = self.bridge.clone()
         {
@@ -925,6 +989,7 @@ impl Login {
             }
             Command::Submit => self.submit(cx),
             Command::Cancel => self.cancel_pending(cx),
+            Command::UseCode if self.pending => self.start_device_code(cx),
             Command::CopyLink => {
                 if let Some(url) = &self.login_url {
                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(url.clone()));
@@ -1500,7 +1565,28 @@ impl Login {
                             .when(self.login_url.is_none(), |button| button.opacity(0.5)),
                         ),
                 )
-            });
+            })
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(text(
+                        "Page can't be reached?",
+                        14.,
+                        20.,
+                        400.,
+                        t.text_description,
+                    ))
+                    .child(self.button(
+                        "use-signin-code",
+                        "Sign in with a code",
+                        Command::UseCode,
+                        Style::Link,
+                        window,
+                        cx,
+                    )),
+            );
         frame.pb(px(48.)).child(
             div()
                 .w(px(340.))
@@ -1510,7 +1596,10 @@ impl Login {
                 .gap(px(32.))
                 .child(icon("signin-chatgpt", 40., t.text))
                 .child(text(
-                    "Continue signing in with your browser",
+                    match &self.device_code {
+                        Some(code) => format!("Enter code {code} on the page that opened"),
+                        None => "Continue signing in with your browser".to_owned(),
+                    },
                     14.,
                     20.,
                     400.,

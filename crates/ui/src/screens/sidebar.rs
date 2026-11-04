@@ -553,7 +553,8 @@ impl HomeSidebar {
                 let group = project.id.clone();
                 let project_id = project.id.to_string();
                 let color = theme.text_default_nav;
-                let label_width = if project.worktree { 204. } else { 240. };
+                // Right insets in the 272 px row, so the label follows the panel's width.
+                let label_right = if project.worktree { 36. } else { 0. };
                 // A deleted or moved folder cannot host a chat.
                 let selectable = project.root.clone().filter(|_| !project.missing);
                 let content = div()
@@ -587,8 +588,10 @@ impl HomeSidebar {
                             .id("project-label")
                             .absolute()
                             .left(px(32.))
-                            .w(px(label_width))
-                            .group_hover(group.clone(), move |style| style.w(px(label_width - 56.)))
+                            .right(px(label_right))
+                            .group_hover(group.clone(), move |style| {
+                                style.right(px(label_right + 56.))
+                            })
                             .top_0()
                             .h(px(30.))
                             .flex()
@@ -1664,15 +1667,16 @@ fn thread_row(
                     .absolute()
                     .left_0()
                     .top(px(if activity { 6. } else { 5. }))
-                    .w(px(if activity {
-                        if focused { 187. } else { 267. }
+                    // Right insets in the 272 px row, so the title follows the panel's width.
+                    .right(px(if activity {
+                        if focused { 85. } else { 5. }
                     } else if focused {
-                        216.
+                        56.
                     } else {
-                        264. - clip
+                        8. + clip
                     }))
                     .group_hover(group.clone(), |s| {
-                        s.w(px(if activity { 187. } else { 216. }))
+                        s.right(px(if activity { 85. } else { 56. }))
                     })
                     .h(px(20.))
                     .pl(px(8. + indent))
