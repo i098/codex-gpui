@@ -18,6 +18,8 @@ use crate::composer::{Composer, SettingsFieldSubmit};
 use crate::tooltip::{Side, tooltip};
 use crate::{icon, icon_button, text};
 
+#[cfg(target_os = "macos")]
+mod menu;
 mod page;
 
 /// `thread.browser.addressPlaceholder`.
@@ -149,8 +151,18 @@ impl BrowserTab {
         let address_focus = address.focus_handle(cx);
         cx.on_blur(&address_focus, window, |tab, _, cx| tab.show_url(cx))
             .detach();
-        let changes = cx.spawn(async move |tab, cx| {
+        let changes = cx.spawn_in(window, async move |tab, cx| {
             while let Ok(change) = changes.recv().await {
+                #[cfg(target_os = "macos")]
+                if let page::PageChange::ContextMenu { x, y, link } = change {
+                    let shown = tab.update_in(cx, |tab, window, cx| {
+                        tab.context_menu(x, y, link, window, cx)
+                    });
+                    if shown.is_err() {
+                        break;
+                    }
+                    continue;
+                }
                 if tab
                     .update(cx, |tab, cx| tab.page_changed(change, cx))
                     .is_err()
