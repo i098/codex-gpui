@@ -52,6 +52,7 @@ fn focus_on_pointer(
 
 mod account_page;
 pub mod backend;
+pub mod computer_history;
 mod languages;
 pub mod personalization;
 pub mod trusted_contact;
@@ -917,6 +918,9 @@ impl Render for SettingsNav {
             .as_ref()
             .map(|cloud| cloud.read(cx).access())
             .unwrap_or_default();
+        let integrations = page.integrations.read(cx);
+        let history_visible =
+            computer_history::visible(&integrations.evaluations, integrations.gates_loaded);
         let mut sections = Vec::new();
         for (heading, items) in NAV {
             let rows: Vec<_> = items
@@ -927,6 +931,7 @@ impl Render for SettingsNav {
                     "Cloud computer" => false,
                     "Codex Cloud" => cloud_access.cloud,
                     "Legacy Codex Cloud" => cloud_access.legacy,
+                    "Computer history" => history_visible,
                     "Debug" => debug::allowed(),
                     _ => true,
                 })
@@ -1643,6 +1648,9 @@ impl Render for SettingsPane {
         }
         if section == "Connections" {
             return super::connections::render(window, cx);
+        }
+        if section == "Computer history" {
+            return computer_history::render(self.page.clone(), window, cx);
         }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
