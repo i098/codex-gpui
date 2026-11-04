@@ -2129,6 +2129,14 @@ impl Host for LocalHost {
                     .as_str()
                     .context("missing environment path")?,
             ))?,
+            "local-environment-actions" => environments::actions(
+                self,
+                Path::new(
+                    params["workspaceRoot"]
+                        .as_str()
+                        .context("missing workspace root")?,
+                ),
+            )?,
             "local-environment-config-save" => environments::save(&params)?,
             "local-environment-select" => self.select_environment(
                 params["workspaceRoot"]
