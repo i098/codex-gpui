@@ -2213,6 +2213,12 @@ impl Shell {
                             new_tab_focus.read(cx).handle.clone().focus(window, cx);
                             cx.stop_propagation();
                         })
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(crate::screens::diff::panel::OpenNewSideTab),
+                                cx,
+                            )
+                        })
                         // Chromium squashes it into the titlebar's overlap layer, at whole
                         // device px (layer 44 at (380, 0) at 2x, layer 97 at (0, 0) at 110%).
                         .child(
