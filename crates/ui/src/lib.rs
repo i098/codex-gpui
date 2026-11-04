@@ -2302,7 +2302,13 @@ impl Render for Shell {
                 .left_0()
                 .top(Theme::TITLEBAR_HEIGHT)
                 .bottom(PAGE_INSET)
-                .w(self.sidebar_width)
+                // Docked, the main surface covers the panel past its left edge while it moves.
+                .w(if self.overlay {
+                    self.sidebar_width
+                } else {
+                    main_left
+                })
+                .overflow_hidden()
                 .snap_origin()
                 .child(self.sidebar_panel(&t, progress));
             // An overlay floats over the main surface, so it casts a shadow.
