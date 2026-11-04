@@ -648,18 +648,15 @@ impl ComputerHistory {
                     Ok(settings) => {
                         this.settings = Load::Ready(settings);
                         this.modal = None;
-                        if enable {
-                            this.pending_enable = true;
-                            if let Some(window) = cx.active_window() {
-                                let entity = cx.entity();
-                                cx.defer(move |cx| {
-                                    window
-                                        .update(cx, |_, window, cx| {
-                                            entity.update(cx, |this, cx| this.enable(window, cx))
-                                        })
-                                        .ok();
-                                });
-                            }
+                        if enable && let Some(window) = cx.active_window() {
+                            let entity = cx.entity();
+                            cx.defer(move |cx| {
+                                window
+                                    .update(cx, |_, window, cx| {
+                                        entity.update(cx, |this, cx| this.enable(window, cx))
+                                    })
+                                    .ok();
+                            });
                         }
                     }
                     Err(_) => this.toast(
@@ -1645,7 +1642,7 @@ impl ComputerHistory {
         };
         let apps = listed("app");
         let sites = listed("url");
-        let choices = self
+        let choices: Vec<Choice> = self
             .applications
             .iter()
             .filter_map(|app| {
@@ -1659,7 +1656,10 @@ impl ComputerHistory {
             })
             .collect();
         app_select.update(cx, |select, cx| {
-            select.set_choices(choices, cx);
+            let known = select.choices().iter().map(|c| &c.value);
+            if !known.eq(choices.iter().map(|c| &c.value)) {
+                select.set_choices(choices, cx);
+            }
             select.set_value("Add app", cx);
         });
         let policy = |scope: &'static str, cx: &mut Context<Self>| {

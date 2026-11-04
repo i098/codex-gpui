@@ -159,32 +159,23 @@ fn call(bridge: &Bridge, host: &dyn Host, method: &str, params: &Value) -> Resul
     }
 }
 
-/// `g7`: retries transient Apple-Event failures and a not-yet-enabled service.
+/// `g7`: retries a not-yet-enabled service; the Apple-Event transport retries its own
+/// transient failures.
 fn skysight(host: &dyn Host, request_type: &str, payload: Value, timeout: u32) -> Result<Value> {
-    const TRANSIENT: [u64; 5] = [50, 100, 200, 400, 800];
     const NOT_ENABLED: [u64; 5] = [100, 250, 500, 1000, 2000];
-    let (mut transient, mut not_enabled) = (0, 0);
+    let mut attempt = 0;
     loop {
         let error = match host.skysight(request_type, &payload, timeout) {
             Ok(reply) => return Ok(reply),
             Err(error) => error,
         };
-        let message = error.to_string();
-        let delay = if ["-600 (", "-609 (", "-1708 (", "-1717 ("]
-            .iter()
-            .any(|code| message.starts_with(&format!("AESendMessage failed with {code}")))
-        {
-            transient += 1;
-            TRANSIENT.get(transient - 1)
-        } else if message
+        let delay = error
+            .to_string()
             .to_lowercase()
             .contains("computer history is not enabled for this user")
-        {
-            not_enabled += 1;
-            NOT_ENABLED.get(not_enabled - 1)
-        } else {
-            None
-        };
+            .then(|| NOT_ENABLED.get(attempt))
+            .flatten();
+        attempt += 1;
         match delay {
             Some(ms) => std::thread::sleep(Duration::from_millis(*ms)),
             None => return Err(error),
@@ -299,7 +290,7 @@ fn reconcile_plugin(bridge: &Bridge, installed: bool) -> Result<()> {
 }
 
 /// `setEnabled(true)`: start the recorder, then save `features.chronicle`. A pending permission
-/// keeps it on and waiting; a denied one turns it back off.
+/// keeps it on and waiting; a denied one, or any later failure, stops it and turns it off.
 fn enable(bridge: &Bridge, host: &dyn Host) -> Result<Value> {
     ensure_allowed(bridge)?;
     let _guard = CONTROL.lock().unwrap_or_else(|e| e.into_inner());
@@ -307,38 +298,41 @@ fn enable(bridge: &Bridge, host: &dyn Host) -> Result<Value> {
     if let Err(error) = reconcile_plugin(bridge, true) {
         eprintln!("codex-gpui: install the Computer History plugin: {error:#}");
     }
-    match skysight(
+    let started = skysight(
         host,
         "ComputerUseIPCSkysightStartRequest",
         json!({}),
         LONG_TIMEOUT,
-    ) {
-        Ok(reply) => {
-            write_chronicle(bridge, true)?;
+    );
+    let pending = started.as_ref().err().and_then(permission) == Some("pending");
+    let saved = match started {
+        Ok(reply) => write_chronicle(bridge, true).and_then(|()| {
+            let state = derive(true, &reply)?;
             set_activation(if reply["state"] == "stopped" {
                 "failed"
             } else {
                 "idle"
             });
-            derive(true, &reply)
+            Ok(state)
+        }),
+        Err(_) if pending => write_chronicle(bridge, true).and_then(|()| {
+            set_activation("waiting_for_permissions");
+            derive(true, &json!({ "state": "stopped" }))
+        }),
+        Err(error) => Err(error),
+    };
+    match saved {
+        Ok(state) => Ok(state),
+        Err(error) if permission(&error) == Some("denied") => {
+            rollback(bridge, host);
+            set_activation("idle");
+            derive(false, &json!({ "state": "stopped" }))
         }
-        Err(error) => match permission(&error) {
-            Some("pending") => {
-                write_chronicle(bridge, true)?;
-                set_activation("waiting_for_permissions");
-                derive(true, &json!({ "state": "stopped" }))
-            }
-            Some(_) => {
-                rollback(bridge, host);
-                set_activation("idle");
-                derive(false, &json!({ "state": "stopped" }))
-            }
-            None => {
-                rollback(bridge, host);
-                set_activation("failed");
-                Err(error)
-            }
-        },
+        Err(error) => {
+            rollback(bridge, host);
+            set_activation("failed");
+            Err(error)
+        }
     }
 }
 
@@ -353,6 +347,23 @@ fn rollback(bridge: &Bridge, host: &dyn Host) {
     for error in [stop.err(), write.err()].into_iter().flatten() {
         eprintln!("codex-gpui: Chronicle rollback: {error:#}");
     }
+}
+
+/// At launch (and the original's service respawn), restart the recorder when the saved
+/// setting says Computer history is on.
+pub(crate) fn reconcile_on_launch(root: &Root, cx: &mut gpui::Context<Root>) {
+    if root.bridge.is_acp() || !root.host.skysight_available() {
+        return;
+    }
+    let (bridge, host) = (root.bridge.clone(), root.host.clone());
+    cx.background_spawn(async move {
+        if configured(&bridge).unwrap_or(false)
+            && let Err(error) = reconcile(&bridge, host.as_ref())
+        {
+            eprintln!("codex-gpui: restart Computer history: {error:#}");
+        }
+    })
+    .detach();
 }
 
 /// `reconcileEnabled`: start the recorder when it is stopped.
@@ -403,7 +414,7 @@ fn reconcile(bridge: &Bridge, host: &dyn Host) -> Result<Value> {
 }
 
 /// `setEnabled(false)`: stop the recorder (it must close its segment), then save the flag.
-fn disable(bridge: &Bridge, host: &dyn Host) -> Result<Value> {
+pub(crate) fn disable(bridge: &Bridge, host: &dyn Host) -> Result<Value> {
     let _guard = CONTROL.lock().unwrap_or_else(|e| e.into_inner());
     let reply = skysight(
         host,
@@ -420,7 +431,16 @@ fn disable(bridge: &Bridge, host: &dyn Host) -> Result<Value> {
     if let Err(error) = reconcile_plugin(bridge, false) {
         eprintln!("codex-gpui: remove the Computer History plugin: {error:#}");
     }
-    write_chronicle(bridge, false)?;
+    if let Err(error) = write_chronicle(bridge, false) {
+        // The original restarts the recorder so the saved setting and the recorder agree.
+        let _ = skysight(
+            host,
+            "ComputerUseIPCSkysightStartRequest",
+            json!({}),
+            LONG_TIMEOUT,
+        );
+        return Err(error);
+    }
     derive(false, &reply)
 }
 
@@ -651,6 +671,100 @@ fn reveal(path: &str) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A replayed app-server answering `exchanges` in order, matched by method.
+    fn server(exchanges: &[(&str, std::result::Result<Value, &str>)]) -> Bridge {
+        use std::io::Write as _;
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        for (id, (method, result)) in exchanges.iter().enumerate() {
+            let send =
+                json!({ "dir": "send", "msg": { "id": id, "method": method, "params": {} } });
+            let reply = match result {
+                Ok(result) => json!({ "id": id, "result": result }),
+                Err(message) => {
+                    json!({ "id": id, "error": { "code": -32000, "message": message } })
+                }
+            };
+            writeln!(file, "{send}\n{}", json!({ "dir": "recv", "msg": reply })).unwrap();
+        }
+        Bridge::replay(file.path()).unwrap().0
+    }
+
+    /// A recorder whose `Start` fails with `start_error`; it logs every request type.
+    struct Recorder {
+        start_error: Option<i32>,
+        log: Mutex<Vec<String>>,
+    }
+
+    impl Host for Recorder {
+        fn fetch(&self, _: &crate::host::Request) -> Result<Value> {
+            bail!("no network")
+        }
+        fn skysight(&self, request_type: &str, _: &Value, _: u32) -> Result<Value> {
+            self.log.lock().unwrap().push(request_type.to_owned());
+            match (request_type, self.start_error) {
+                ("ComputerUseIPCSkysightStartRequest", Some(code)) => {
+                    bail!("Codex Computer Use Apple Event error {code}: refused")
+                }
+                ("ComputerUseIPCSkysightStartRequest", None) => Ok(json!({ "state": "running" })),
+                _ => Ok(json!({ "state": "stopped" })),
+            }
+        }
+    }
+
+    fn stopped(recorder: &Recorder) -> bool {
+        recorder
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|r| r == "ComputerUseIPCSkysightStopRequest")
+    }
+
+    #[test]
+    fn enable_rolls_back_a_denied_start_and_a_failed_save() {
+        let allowed = (
+            "configRequirements/read",
+            Ok(json!({ "requirements": null })),
+        );
+        let plugins = ("plugin/list", Ok(json!({ "marketplaces": [] })));
+        let saved = ("config/value/write", Ok(json!({ "status": "ok" })));
+
+        let denied = Recorder {
+            start_error: Some(-10009),
+            log: Mutex::default(),
+        };
+        let bridge = server(&[allowed.clone(), plugins.clone(), saved.clone()]);
+        let state = enable(&bridge, &denied).unwrap();
+        assert_eq!(state["enabled"], false);
+        assert!(stopped(&denied), "a denied start must stop the recorder");
+
+        let pending = Recorder {
+            start_error: Some(-10014),
+            log: Mutex::default(),
+        };
+        let bridge = server(&[allowed.clone(), plugins.clone(), saved.clone()]);
+        let state = enable(&bridge, &pending).unwrap();
+        assert_eq!(state["activationState"], "waiting_for_permissions");
+        assert!(!stopped(&pending));
+
+        // The recorder started, but `features.chronicle` could not be saved.
+        let started = Recorder {
+            start_error: None,
+            log: Mutex::default(),
+        };
+        let bridge = server(&[
+            allowed,
+            plugins,
+            ("config/value/write", Err("read-only config")),
+            saved,
+        ]);
+        assert!(enable(&bridge, &started).is_err());
+        assert!(
+            stopped(&started),
+            "a failed save must stop the running recorder"
+        );
+    }
 
     #[test]
     fn summary_names_follow_the_original_pattern() {

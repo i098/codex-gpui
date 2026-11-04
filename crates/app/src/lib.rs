@@ -1382,6 +1382,7 @@ impl Root {
                 this.ready = this.login.is_none();
                 hotkey::policy::refresh(this, cx);
                 connections::startup(this, cx);
+                chronicle::reconcile_on_launch(this, cx);
                 #[cfg(target_os = "windows")]
                 this.check_windows_sandbox_readiness(cx);
                 this.select_route(cx);
