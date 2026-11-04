@@ -25,6 +25,9 @@ struct Backend {
     log: Mutex<Vec<(String, String, Value)>>,
     /// Set once the first family load has failed, as with no backend.
     loaded_once: AtomicBool,
+    /// Lists one unanswered invite to `fam-2` until its notification is marked reacted.
+    invite: bool,
+    reacted: AtomicBool,
 }
 
 impl Backend {
@@ -45,7 +48,23 @@ impl Backend {
             ("GET", "/amphora/u18_graduation_unlink_setting_notices") => {
                 (200, json!({"notices": []}))
             }
+            ("GET", "/amphora/notifications?limit=20")
+                if self.invite && !self.reacted.load(Ordering::SeqCst) =>
+            {
+                (
+                    200,
+                    json!({"items": [{
+                        "id": "n-1", "notification_type": "family-invite", "reacted_to_at": null,
+                        "payload": {"family_group_id": "fam-2", "inviter_name": "Pat Parent", "role": "member_role"},
+                    }]}),
+                )
+            }
             ("GET", "/amphora/notifications?limit=20") => (200, json!({"items": []})),
+            ("GET", "/amphora/fam-2/members") => (200, json!({"items": []})),
+            ("POST", "/amphora/notifications/n-1/reacted") => {
+                self.reacted.store(true, Ordering::SeqCst);
+                (200, json!({}))
+            }
             ("POST", "/amphora") if body["role"] == "parent" => {
                 *family = Some(vec![json!({
                     "user_id": USER, "name": "Pat Parent", "email": "pat@example.com",
@@ -213,5 +232,44 @@ fn invite_resend_and_cancel() -> Result<()> {
     );
     ensure!(!visible(&mut fx, "parental-controls-member-1"));
     shot(&mut fx, "cancelled")?;
+    Ok(())
+}
+
+/// A revoked invite (`/invite` answers 404) still gets its notification marked reacted, so
+/// the pending-invite card does not come back.
+#[test]
+fn revoked_invite_is_dismissed() -> Result<()> {
+    let mut fx = Fx::new()?;
+    let backend = Arc::new(Backend {
+        loaded_once: AtomicBool::new(true),
+        invite: true,
+        ..Default::default()
+    });
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(backend.clone(), cx));
+    let link = app::deep_link::parse("codex://settings/parental-controls").context("link")?;
+    let root = fx.root.clone();
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        root.update(cx, |root, cx| root.open_deep_link(&link, window, cx));
+    })?;
+    fx.wait("pending invite", |fx| {
+        visible(fx, "parental-controls-open-invite")
+    })?;
+    shot(&mut fx, "pending-invite")?;
+    click(&mut fx, "parental-controls-open-invite")?;
+    // Enter accepts: Accept, not Decline, holds the focus.
+    fx.keys("enter")?;
+    fx.wait("invite card gone", |fx| {
+        !visible(fx, "parental-controls-open-invite") && visible(fx, "parental-controls-add")
+    })?;
+    ensure!(
+        posts(&backend)
+            == [
+                ("/amphora/fam-2/invite".into(), json!({"choice": "accept"})),
+                ("/amphora/notifications/n-1/reacted".into(), Value::Null),
+            ],
+        "{:?}",
+        posts(&backend)
+    );
     Ok(())
 }

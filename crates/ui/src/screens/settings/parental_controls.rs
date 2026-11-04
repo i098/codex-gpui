@@ -178,6 +178,7 @@ impl ParentalControls {
             self.loaded_for = user;
             self.family = Family::Loading;
             self.detail = None;
+            self.load_notices(cx);
             self.reload(cx);
         }
         cx.notify();
@@ -191,7 +192,6 @@ impl ParentalControls {
     fn reload(&mut self, cx: &mut Context<Self>) {
         self.generation += 1;
         let generation = self.generation;
-        self.load_notices(cx);
         backend::request(
             Call::new("GET", "/amphora", None),
             cx,
@@ -430,7 +430,7 @@ impl ParentalControls {
     }
 
     /// The invite form's submit: validates the identifier, creates the family when there is
-    /// none, skips a person who is already invited, then `POST /amphora/{id}/members`.
+    /// none, then `POST /amphora/{id}/members`.
     fn submit_invite(&mut self, cx: &mut Context<Self>) {
         let Some(form) = &mut self.form else {
             return;
@@ -442,11 +442,13 @@ impl ParentalControls {
         };
         let raw = field.read(cx).field_text().to_owned();
         let identifier = raw.trim().to_owned();
-        let valid = if form.phone {
-            valid_phone(&identifier)
+        let identifier = if form.phone {
+            e164(&identifier)
         } else {
-            super::trusted_contact::valid_email(&identifier)
+            super::trusted_contact::valid_email(&identifier).then_some(identifier)
         };
+        let valid = identifier.is_some();
+        let identifier = identifier.unwrap_or_default();
         form.invalid = (!valid).then_some(raw);
         let Some(role) = form.role.filter(|_| valid && !self.busy) else {
             cx.notify();
@@ -474,7 +476,14 @@ impl ParentalControls {
                         .filter(Response::ok)
                         .and_then(|r| r.body["id"].as_str().map(str::to_owned))
                     {
-                        Some(id) => invite(this, id, cx),
+                        Some(id) => {
+                            // Keep the new family, as the original does, so a failed invite
+                            // retries the member POST instead of creating the family again.
+                            if let Family::Ready { group, .. } = &mut this.family {
+                                group.id = Some(id.clone());
+                            }
+                            invite(this, id, cx)
+                        }
                         None => this.invited(
                             Err(anyhow::anyhow!("Family creation returned no group")),
                             cx,
@@ -534,7 +543,6 @@ impl ParentalControls {
             cx.notify();
         })
         .detach();
-        window.focus(&dialog.focus_handle(cx), cx);
         self.confirmation = Some(dialog);
         cx.notify();
     }
@@ -545,38 +553,40 @@ impl ParentalControls {
         let path = format!("/amphora/{}/invite", encode(&invite.family_group_id));
         let call = Call::new("POST", path, Some(json!({ "choice": choice })));
         backend::request(call, cx, move |this, result, cx| match result {
-            Ok(response) if response.ok() => {
-                let path = format!(
-                    "/amphora/notifications/{}/reacted",
-                    encode(&invite.notification_id)
-                );
-                backend::request(
-                    Call::new("POST", path, None),
-                    cx,
-                    move |this, result, cx| {
-                        this.busy = false;
-                        let dismissed = result.is_ok_and(|r| r.ok());
-                        this.message = Some(match (choice, dismissed) {
-                        ("accept", true) => ("Request accepted".into(), false),
-                        ("accept", false) => ("Invitation accepted. The notification couldn’t be dismissed. Retry, or close and return later.".into(), true),
-                        (_, true) => ("Invitation update".into(), false),
-                        (_, false) => ("Invitation declined. The notification couldn’t be dismissed. Retry, or close and return later.".into(), true),
-                    });
-                        this.reload(cx);
-                    },
-                );
-            }
-            Ok(response) if response.status == 404 => {
-                this.busy = false;
-                this.message = Some(("This invitation is no longer available".into(), true));
-                this.reload(cx);
-            }
+            Ok(response) if response.ok() => this.react(invite, Some(choice), cx),
+            // A used or revoked invite: drop its notification so the card does not return.
+            Ok(response) if response.status == 404 => this.react(invite, None, cx),
             _ => {
                 this.busy = false;
                 this.message = Some((ACTION_ERROR.into(), true));
             }
         });
         cx.notify();
+    }
+
+    /// `POST /amphora/notifications/{id}/reacted` after an answer (`choice`), or after the
+    /// invite turned out to be gone (`None`), then the original's result note.
+    fn react(&mut self, invite: Invite, choice: Option<&'static str>, cx: &mut Context<Self>) {
+        let path = format!(
+            "/amphora/notifications/{}/reacted",
+            encode(&invite.notification_id)
+        );
+        backend::request(
+            Call::new("POST", path, None),
+            cx,
+            move |this, result, cx| {
+                this.busy = false;
+                let dismissed = result.is_ok_and(|r| r.ok());
+                this.message = Some(match (choice, dismissed) {
+                    (None, _) => ("This invitation is no longer available".into(), true),
+                    (Some("accept"), true) => ("Request accepted".into(), false),
+                    (Some("accept"), false) => ("Invitation accepted. The notification couldn’t be dismissed. Retry, or close and return later.".into(), true),
+                    (_, true) => ("Invitation update".into(), false),
+                    (_, false) => ("Invitation declined. The notification couldn’t be dismissed. Retry, or close and return later.".into(), true),
+                });
+                this.reload(cx);
+            },
+        );
     }
 
     /// Resend: a confirmation, then `POST /amphora/{id}/members/resend` and the `Sent!` note.
@@ -609,7 +619,9 @@ impl ParentalControls {
         let Some(id) = self.group().and_then(|g| g.id.clone()) else {
             return;
         };
-        let identifier = member.identifier().unwrap_or_default().to_owned();
+        let Some(identifier) = member.identifier().map(str::to_owned) else {
+            return;
+        };
         let (path, body) = if resend {
             (
                 format!("/amphora/{}/members/resend", encode(&id)),
@@ -618,7 +630,7 @@ impl ParentalControls {
         } else {
             (
                 format!("/amphora/{}/remove", encode(&id)),
-                match &member.email {
+                match member.email.as_deref().filter(|e| !e.is_empty()) {
                     Some(email) => json!({ "email": email }),
                     None => json!({ "account_identifier": identifier }),
                 },
@@ -665,7 +677,7 @@ impl ParentalControls {
     ) {
         let owner = self.role() == "owner";
         let leaving = owner && member.role == "owner";
-        let label = if owner {
+        let label = if leaving {
             "Remove from family"
         } else {
             "Unlink accounts"
@@ -778,15 +790,17 @@ fn error_text(result: &anyhow::Result<Response>) -> String {
     }
 }
 
-/// shortcut: digits-only E.164 shape check, not libphonenumber's per-region `isValid`;
+/// The number in E.164 form (`+14155550100`), as the original's phone input sends it.
+/// shortcut: digits-only shape check, not libphonenumber's per-region `isValid`;
 /// upgrade if the backend starts rejecting numbers this accepts.
-fn valid_phone(s: &str) -> bool {
-    let digits = s.strip_prefix('+').unwrap_or(s);
-    let digits: String = digits
+fn e164(s: &str) -> Option<String> {
+    let digits: String = s
+        .strip_prefix('+')?
         .chars()
         .filter(|c| !matches!(c, ' ' | '-' | '(' | ')' | '.'))
         .collect();
-    (8..=15).contains(&digits.len()) && digits.chars().all(|c| c.is_ascii_digit())
+    ((8..=15).contains(&digits.len()) && digits.chars().all(|c| c.is_ascii_digit()))
+        .then(|| format!("+{digits}"))
 }
 
 /// A wrapping paragraph whose `<a>…</a>` span opens `url`.
@@ -960,7 +974,11 @@ impl ParentalControls {
             ));
         }
         for recipient in ["teen", "parent"] {
-            let dismissing = self.notices.dismissing.clone().unwrap_or_default();
+            // Hide a dismissal only while it is in flight; a failed one shows its notices again.
+            let dismissing = match &self.notices.dismissing {
+                Some(ids) if pending => ids.clone(),
+                _ => Vec::new(),
+            };
             let group: Vec<&Value> = self
                 .notices
                 .items
@@ -1272,7 +1290,8 @@ impl ParentalControls {
         let teen_page = member.role != "owner" && (owner || me);
         let show_unlink = teen_page || !(teen && member.role != "owner");
         if show_unlink {
-            let label = if owner {
+            // The original says `Remove from family` only on the parent's own page.
+            let label = if owner && member.role == "owner" {
                 "Remove from family"
             } else {
                 "Unlink accounts"
@@ -1648,10 +1667,11 @@ mod tests {
     }
 
     #[test]
-    fn phone_numbers_need_8_to_15_digits() {
-        assert!(valid_phone("+1 (415) 555-0100"));
-        assert!(!valid_phone("12345"));
-        assert!(!valid_phone("+1415555abcd"));
+    fn phone_numbers_become_e164_with_8_to_15_digits() {
+        assert_eq!(e164("+1 (415) 555-0100").as_deref(), Some("+14155550100"));
+        assert_eq!(e164("4155550100"), None);
+        assert_eq!(e164("+12345"), None);
+        assert_eq!(e164("+1415555abcd"), None);
     }
 
     #[test]
