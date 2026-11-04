@@ -52,6 +52,7 @@ fn focus_on_pointer(
 
 mod account_page;
 pub mod backend;
+mod code_review;
 mod languages;
 pub mod personalization;
 pub mod trusted_contact;
@@ -927,6 +928,8 @@ impl Render for SettingsNav {
                     "Cloud computer" => false,
                     "Codex Cloud" => cloud_access.cloud,
                     "Legacy Codex Cloud" => cloud_access.legacy,
+                    // The original lists Code Review for its cloud review surface (`sx`).
+                    "Code Review" => cloud_access.legacy,
                     "Debug" => debug::allowed(),
                     _ => true,
                 })
@@ -1643,6 +1646,9 @@ impl Render for SettingsPane {
         }
         if section == "Connections" {
             return super::connections::render(window, cx);
+        }
+        if section == "Code Review" {
+            return code_review::render(self.page.clone(), window, cx);
         }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
