@@ -51,7 +51,7 @@ fn choose_customize_and_hide() -> Result<()> {
         visible(fx, "pets-customize-dialog")
     })?;
     shot(&mut fx, "customize")?;
-    click(&mut fx, "pets-customize-close")?;
+    fx.keys("escape")?;
     fx.wait("dialog closed", |fx| !visible(fx, "pets-customize-dialog"))?;
 
     click(&mut fx, "pets-tile-none")?;

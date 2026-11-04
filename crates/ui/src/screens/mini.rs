@@ -44,7 +44,7 @@ pub const BUNDLED: [(&str, &str, &str); 9] = [
 ];
 
 /// A pet from `$CODEX_HOME/pets/<dir>/pet.json` (or legacy `avatars/<dir>/avatar.json`).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CustomPet {
     /// `custom:<dir>`.
     pub id: String,

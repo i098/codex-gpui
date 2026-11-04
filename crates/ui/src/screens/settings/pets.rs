@@ -26,6 +26,8 @@ pub(super) struct State {
     /// The slider's width while it is dragged; written on release.
     drag: Option<f32>,
     track: Rc<Cell<Bounds<Pixels>>>,
+    /// The Customize dialog's focus, so Escape reaches its key handler.
+    focus: Option<FocusHandle>,
 }
 
 /// A grid entry: id, name and description.
@@ -104,7 +106,7 @@ impl SettingsPane {
         let mut content = Vec::new();
         if visible {
             content.push(
-                self.preview(&selected, &custom_pets, width, t, window, cx)
+                self.preview(&selected, &custom_pets, stored, width, t, window, cx)
                     .into_any_element(),
             );
         }
@@ -168,10 +170,13 @@ impl SettingsPane {
 
     /// `Qn`: the chosen pet over the Mini bar, and `Customize`. The area grows to the
     /// largest pet while the dialog is open, so resizing does not move the card.
+    /// `stored` sizes the sprite decode, `width` its box: a drag scales the stored frames.
+    #[allow(clippy::too_many_arguments)]
     fn preview(
         &self,
         selected: &str,
         custom: &[CustomPet],
+        stored: f32,
         width: f32,
         t: &Theme,
         window: &mut Window,
@@ -202,7 +207,13 @@ impl SettingsPane {
                 Some(t.border),
             ))
             .child(text("Customize", 14., 18., 430., t.text))
-            .on_click(cx.listener(|this, _, _, cx| {
+            .on_click(cx.listener(|this, _, window, cx| {
+                let focus = this
+                    .pets
+                    .focus
+                    .get_or_insert_with(|| cx.focus_handle())
+                    .clone();
+                window.focus(&focus, cx);
                 this.pets.customize = true;
                 cx.notify();
             }));
@@ -232,7 +243,7 @@ impl SettingsPane {
                             .left(px((AREA - width) / 2.))
                             .w(figure.width)
                             .h(figure.height)
-                            .child(sprite(selected, custom, width, window, cx)),
+                            .child(sprite(selected, custom, stored, window, cx)),
                     )
                     .child(
                         div()
@@ -602,6 +613,7 @@ impl SettingsPane {
             .debug_selector(|| "pets-customize-dialog".into())
             .role(gpui::Role::Dialog)
             .aria_label("Customize pet")
+            .when_some(self.pets.focus.as_ref(), |d, focus| d.track_focus(focus))
             .relative()
             .w(px(440.))
             .p(px(20.))

@@ -2188,6 +2188,7 @@ impl Host for LocalHost {
             "read-git-file-binary" => diff_files::git_binary(&params)?,
             "recommended-skills" => skills::recommended(&self.home, &params),
             "install-recommended-skill" => skills::install(&self.home, &params),
+            "custom-pets" => json!({ "pets": crate::pets::load(&self.home)? }),
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             "workspace-directory-entries" => directories::read(&params)?,
             "native-desktop-apps" => json!({"apps": native_apps::list(&params)?}),

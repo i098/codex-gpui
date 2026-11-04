@@ -1,30 +1,39 @@
 //! Custom pets (`customAvatars.load`) and the Settings ▸ Mini & Pets actions: Refresh and
 //! Create pet (install the bundled Hatch Pet skill, enable it, and prefill a new chat).
 
-use crate::Root;
+use crate::{Root, host::Host};
 use anyhow::{Context as _, Result, ensure};
-use gpui::{App, AppContext as _, Context, Window};
+use gpui::{App, AppContext as _, Context, WeakEntity, Window};
 use serde_json::{Value, json};
-use std::path::{Component, Path, PathBuf};
+use std::{
+    path::{Component, Path},
+    sync::Arc,
+};
 use ui::{
     screens::mini::{CustomPet, CustomPets, MiniOpen},
     toast::Toast,
 };
 
-/// Runs once per app: every window's `Root` calls it.
-pub(crate) fn install(cx: &mut App) {
-    if cx.has_global::<CustomPets>() {
-        return;
+/// Sets the globals once per app (every window's `Root` calls it), then loads this Root's pets.
+pub(crate) fn install(root: WeakEntity<Root>, cx: &mut App) {
+    if !cx.has_global::<CustomPets>() {
+        cx.set_global(CustomPets::default());
+        cx.set_global(MiniOpen::default());
     }
-    cx.set_global(CustomPets::default());
-    cx.set_global(MiniOpen::default());
-    reload(cx);
+    cx.spawn(async move |cx| {
+        let _ = root.update(cx, |root, cx| reload(root.host.clone(), cx));
+    })
+    .detach();
 }
 
-/// Rereads `$CODEX_HOME/pets/*/pet.json` and the legacy `avatars/*/avatar.json`.
-pub(crate) fn reload(cx: &mut App) {
+/// Rereads the host's custom pets (`custom-pets`).
+pub(crate) fn reload(host: Arc<dyn Host>, cx: &mut App) {
     cx.global_mut::<CustomPets>().loading = true;
-    let task = cx.background_spawn(async move { load(&codex_home()) });
+    let task = cx.background_spawn(async move {
+        let body =
+            crate::host::json_body(&host.fetch(&crate::host::Request::post("custom-pets", None))?)?;
+        Ok::<Vec<CustomPet>, anyhow::Error>(serde_json::from_value(body["pets"].clone())?)
+    });
     cx.spawn(async move |cx| {
         let result = task.await;
         cx.update(|cx| {
@@ -47,18 +56,10 @@ pub(crate) fn reload(cx: &mut App) {
     .detach();
 }
 
-fn codex_home() -> PathBuf {
-    std::env::var_os("CODEX_HOME")
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".codex")
-        })
-}
-
-/// The custom pets under `home`, newest manifest first; a `pets/` entry replaces the legacy
-/// `avatars/` entry of the same id. Unreadable manifests are skipped.
-fn load(home: &Path) -> Result<Vec<CustomPet>> {
+/// The custom pets under `home` (`$CODEX_HOME/pets/*/pet.json` and the legacy
+/// `avatars/*/avatar.json`), newest manifest first; a `pets/` entry replaces the legacy
+/// `avatars/` entry of the same id. Unreadable manifests and wrong-size sheets are skipped.
+pub(crate) fn load(home: &Path) -> Result<Vec<CustomPet>> {
     let mut found: Vec<(std::time::SystemTime, CustomPet)> = Vec::new();
     for (folder, manifest) in [("avatars", "avatar.json"), ("pets", "pet.json")] {
         let root = home.join(folder);
@@ -88,11 +89,12 @@ fn load(home: &Path) -> Result<Vec<CustomPet>> {
 
 fn parse(path: &Path, directory: &Path, name: &str) -> Result<(std::time::SystemTime, CustomPet)> {
     let manifest: Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    // The original falls back to the folder name (`displayName ?? id ?? <folder>`).
     let display = manifest["displayName"]
         .as_str()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .context("pet has no displayName")?;
+        .unwrap_or(name);
     let sheet = manifest["spritesheetPath"]
         .as_str()
         .map(str::trim)
@@ -103,6 +105,12 @@ fn parse(path: &Path, directory: &Path, name: &str) -> Result<(std::time::System
             .components()
             .all(|c| matches!(c, Component::Normal(_))),
         "spritesheet escapes the pet folder"
+    );
+    let sheet = directory.join(sheet);
+    let (width, height) = image::image_dimensions(&sheet)?;
+    ensure!(
+        width == 1536 && matches!(height, 1872 | 2288),
+        "spritesheet is not 1536×1872 or 1536×2288"
     );
     let updated = std::fs::metadata(path)?.modified()?;
     Ok((
@@ -115,7 +123,7 @@ fn parse(path: &Path, directory: &Path, name: &str) -> Result<(std::time::System
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_owned),
-            sheet: directory.join(sheet),
+            sheet,
             directory: directory.to_owned(),
         },
     ))
@@ -162,18 +170,24 @@ impl Root {
         let window_handle = window.window_handle();
         cx.spawn(async move |this, cx| {
             let result = task.await;
-            let _ = cx.update_window(window_handle, |_, window, cx| {
+            // Reset first: the window may be gone, and the flag is app-wide.
+            cx.update(|cx| {
                 cx.global_mut::<CustomPets>().creating = false;
                 cx.refresh_windows();
+            });
+            let _ = cx.update_window(window_handle, |_, window, cx| {
                 let _ = this.update(cx, |this, cx| match result {
-                    Ok(skill) => this.plugin_prefill(
-                        &format!(
-                            "[$hatch-pet]({}) create a pet based on what you know about me",
-                            skill.display()
-                        ),
-                        window,
-                        cx,
-                    ),
+                    Ok(skill) => {
+                        this.refresh_skills(cx);
+                        this.plugin_prefill(
+                            &format!(
+                                "[$hatch-pet]({}) create a pet based on what you know about me",
+                                skill.display()
+                            ),
+                            window,
+                            cx,
+                        )
+                    }
                     Err(error) => {
                         eprintln!("codex-gpui: create pet: {error:#}");
                         this.toast(Toast::danger("Unable to start pet creation"), cx);
@@ -192,42 +206,47 @@ mod tests {
     #[test]
     fn loads_pets_newest_first_and_skips_bad_manifests() -> Result<()> {
         let home = tempfile::tempdir()?;
-        let write = |folder: &str, dir: &str, file: &str, body: &str| -> Result<()> {
+        let write = |folder: &str, dir: &str, file: &str, body: &str, height: u32| -> Result<()> {
             let path = home.path().join(folder).join(dir);
             std::fs::create_dir_all(&path)?;
+            image::RgbaImage::new(1536, height).save(path.join("s.png"))?;
             std::fs::write(path.join(file), body)?;
             Ok(())
         };
-        write("avatars", "old", "avatar.json", r#"{"displayName":"Old"}"#)?;
+        let body = |name: &str| format!(r#"{{"displayName":"{name}","spritesheetPath":"s.png"}}"#);
+        write("avatars", "old", "avatar.json", &body("Old"), 1872)?;
         std::thread::sleep(std::time::Duration::from_millis(20));
         write(
             "pets",
             "new",
             "pet.json",
-            r#"{"displayName":" New ","description":"Fresh","spritesheetPath":"s.webp"}"#,
+            r#"{"displayName":" New ","description":"Fresh","spritesheetPath":"s.png"}"#,
+            2288,
         )?;
         write(
             "pets",
             "escape",
             "pet.json",
-            r#"{"displayName":"X","spritesheetPath":"../x"}"#,
+            r#"{"spritesheetPath":"../x"}"#,
+            1872,
         )?;
+        write("pets", "small", "pet.json", &body("Small"), 1024)?;
+        std::thread::sleep(std::time::Duration::from_millis(20));
         write(
             "pets",
             "nameless",
             "pet.json",
-            r#"{"description":"no name"}"#,
+            r#"{"spritesheetPath":"s.png"}"#,
+            1872,
         )?;
         let pets = load(home.path())?;
         let ids: Vec<_> = pets.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids, ["custom:new", "custom:old"]);
-        assert_eq!(pets[0].name, "New");
-        assert_eq!(pets[0].description.as_deref(), Some("Fresh"));
-        assert_eq!(pets[0].sheet, home.path().join("pets/new/s.webp"));
-        assert_eq!(
-            pets[1].sheet,
-            home.path().join("avatars/old/spritesheet.webp")
-        );
+        assert_eq!(ids, ["custom:nameless", "custom:new", "custom:old"]);
+        assert_eq!(pets[0].name, "nameless");
+        assert_eq!(pets[1].name, "New");
+        assert_eq!(pets[1].description.as_deref(), Some("Fresh"));
+        assert_eq!(pets[1].sheet, home.path().join("pets/new/s.png"));
+        assert_eq!(pets[2].sheet, home.path().join("avatars/old/s.png"));
         Ok(())
     }
 }
