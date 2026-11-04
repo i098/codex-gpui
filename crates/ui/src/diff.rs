@@ -2076,6 +2076,11 @@ pub struct ActivateSideTab(pub usize);
 #[action(namespace = ui, no_json)]
 pub struct CloseSideTab(pub usize);
 
+/// The strip's and the titlebar's `New tab` button: opens the side panel's `New tab` page.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = ui, no_json)]
+pub struct OpenNewSideTab;
+
 /// A tab menu's `Move to bottom pane` (the interactive terminal's tab): index into the strip.
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = ui, no_json)]
@@ -2380,9 +2385,13 @@ impl SplitScreen {
                     .child(tab(ix, t, cx))
             }))
             .child(
-                div()
-                    .pl(px(6.))
-                    .child(strip_button("diff-new-tab", t.text_tertiary, None)),
+                div().pl(px(6.)).child(
+                    strip_button("diff-new-tab", t.text_tertiary, None)
+                        .id("strip-new-tab")
+                        .role(gpui::Role::Button)
+                        .aria_label("New tab")
+                        .on_click(dispatch_action(OpenNewSideTab)),
+                ),
             )
             .child(self.layout_controls(t))
     }

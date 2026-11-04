@@ -358,6 +358,46 @@ pub fn section(label: &str) -> Option<&'static str> {
         .find(|&l| l == label && l != EXTERNAL)
 }
 
+/// The nav item a `/settings/<slug>` route opens (the original's `lQa` section slugs and
+/// the `work-settings` and usage-tab redirects). A trailing `?query` is ignored. Slugs
+/// with no native page open General, as the original does for unknown slugs.
+pub fn slug_section(slug: &str) -> &'static str {
+    match slug.split('?').next().unwrap_or_default() {
+        "notifications" => "Notifications",
+        "import" => "Import",
+        "account" => "Account",
+        "appearance" => "Appearance",
+        "archived-chats" => "Archived chats",
+        "parental-controls" => "Parental controls",
+        "trusted-contact" => "Trusted contact",
+        "voice" => "Voice",
+        "storage" => "Storage",
+        "agent" | "work-settings" => "Configuration",
+        "personalization" => "Personalization",
+        "pets" => "Mini & Pets",
+        "keyboard-shortcuts" => "Keyboard shortcuts",
+        "usage" | "billing" | "analytics" | "consumer-view" | "usage-code-review" => {
+            "Usage & billing"
+        }
+        "data-controls" => "Data controls",
+        "plugins-settings" | "skills-settings" => "Plugins",
+        "mcp-settings" => "MCP servers",
+        "passwords" => "Passwords",
+        "computer-use" => "Computer use",
+        "chronicle" => "Computer history",
+        "appshots" => "Appshots",
+        "browser-use" => "Browser",
+        "cloud-computer" => "Cloud computer",
+        "hooks-settings" => "Hooks",
+        "connections" => "Connections",
+        "codex-cloud" | "cloud-environments" | "environments" => "Codex Cloud",
+        "code-review" => "Code Review",
+        "git-settings" => "Git",
+        "worktrees" | "local-environments" => "Worktrees",
+        _ => "General",
+    }
+}
+
 /// The Settings route's shell for a `config/read` config and `skills/list` result: settings
 /// nav in the sidebar panel, the page in the main panel, open at the nav item `section`
 /// (`General` if `None`). The page emits [`SettingChanged`].
@@ -829,7 +869,29 @@ impl SettingsNav {
                 ..Default::default()
             }))
             .child(icon("search", 16., t.text_secondary))
-            .child(text(s, 14., 18., 430., color));
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(text(s, 14., 18., 430., color)),
+            )
+            .when(!query.is_empty(), |d| {
+                d.child(
+                    div()
+                        .id("settings-search-clear")
+                        .role(gpui::Role::Button)
+                        .aria_label("Clear settings search")
+                        .cursor_pointer()
+                        .child(icon("close", 16., t.text_secondary))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.page.update(cx, |p, cx| {
+                                p.query.clear();
+                                cx.notify();
+                            });
+                            this.focus.focus(window, cx);
+                        })),
+                )
+            });
         focus::ring(control, &focus, Theme::RADIUS_FULL, px(2.), cx)
     }
 
@@ -886,22 +948,66 @@ impl SettingsNav {
         focus::ring(control, &focus, Theme::RADIUS_LG, px(2.), cx)
             .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
             .when(label != EXTERNAL, |d| {
-                d.on_click(cx.listener(move |this, _, window, cx| {
-                    if this.page.read(cx).subtree.is_some() {
-                        window.dispatch_action(
-                            Box::new(subtrees::OpenSection {
-                                label: label.into(),
-                            }),
-                            cx,
-                        );
-                        return;
-                    }
-                    this.page.update(cx, |p, cx| {
-                        p.select_section(label, cx);
-                    });
-                }))
+                d.on_click(cx.listener(move |this, _, window, cx| this.open(label, window, cx)))
             })
     }
+
+    fn open(&mut self, label: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.page.read(cx).subtree.is_some() {
+            window.dispatch_action(
+                Box::new(subtrees::OpenSection {
+                    label: label.into(),
+                }),
+                cx,
+            );
+            return;
+        }
+        self.page.update(cx, |p, cx| p.select_section(label, cx));
+    }
+
+    /// A search result: a matching row's text over the page it is on. Pointer-only: the same
+    /// pages stay keyboard-reachable through the nav items, and result tab stops would
+    /// reorder the tab path into the page.
+    fn result(
+        &self,
+        index: usize,
+        label: &'static str,
+        row: &'static str,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let id = gpui::ElementId::NamedInteger("settings-search-result".into(), index as u64);
+        let fill = over(t.list_hover, sidebar_color(t));
+        div()
+            .id(id)
+            .role(gpui::Role::Button)
+            .aria_label(format!("{row} in {label}"))
+            .flex()
+            .flex_col()
+            .px(px(8.))
+            .py(px(4.))
+            .rounded(Theme::RADIUS_LG)
+            .cursor_pointer()
+            .hover(move |s| s.bg(fill))
+            .child(text(row, 14., 20., 400., t.text))
+            .child(text(label, 12., 16., 400., t.text_tertiary))
+            .on_click(cx.listener(move |this, _, window, cx| this.open(label, window, cx)))
+    }
+}
+
+/// Row titles and descriptions by nav item (`<label>\t<text>` lines), from the original's
+/// settings search documents.
+const SEARCH_INDEX: &str = include_str!("settings/search_index.tsv");
+
+/// The most row results the nav lists for one query.
+const MAX_RESULTS: usize = 50;
+
+/// `(nav label, row text)` index entries whose text contains the lowercase `needle`.
+fn row_matches(needle: &str) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
+    SEARCH_INDEX
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .filter(move |(_, row)| row.to_lowercase().contains(needle))
 }
 
 impl Render for SettingsNav {
@@ -917,19 +1023,19 @@ impl Render for SettingsNav {
             .as_ref()
             .map(|cloud| cloud.read(cx).access())
             .unwrap_or_default();
+        let visible = |label: &str| match label {
+            "Import" => import_visible,
+            "Cloud computer" => false,
+            "Codex Cloud" => cloud_access.cloud,
+            "Legacy Codex Cloud" => cloud_access.legacy,
+            "Debug" => debug::allowed(),
+            _ => true,
+        };
         let mut sections = Vec::new();
         for (heading, items) in NAV {
             let rows: Vec<_> = items
                 .iter()
-                .filter(|(label, _)| label.to_lowercase().contains(&needle))
-                .filter(|(label, _)| *label != "Import" || import_visible)
-                .filter(|(label, _)| match *label {
-                    "Cloud computer" => false,
-                    "Codex Cloud" => cloud_access.cloud,
-                    "Legacy Codex Cloud" => cloud_access.legacy,
-                    "Debug" => debug::allowed(),
-                    _ => true,
-                })
+                .filter(|(label, _)| label.to_lowercase().contains(&needle) && visible(label))
                 .map(|&(label, glyph)| self.item(label, glyph, label == section, &t, window, cx))
                 .collect();
             if rows.is_empty() {
@@ -940,6 +1046,21 @@ impl Render for SettingsNav {
                 div().flex().flex_col().gap(px(1.)).children(rows),
                 cx,
             ));
+        }
+        if !needle.is_empty() {
+            let results: Vec<_> = row_matches(&needle)
+                .filter(|(label, _)| visible(label))
+                .take(MAX_RESULTS)
+                .enumerate()
+                .map(|(i, (label, row))| self.result(i, label, row, &t, cx))
+                .collect();
+            if !results.is_empty() {
+                sections.push(sidebar_section(
+                    "Matching settings",
+                    div().flex().flex_col().gap(px(1.)).children(results),
+                    cx,
+                ));
+            }
         }
         let empty = sections.is_empty();
         div()
@@ -2138,6 +2259,17 @@ fn app_icon(page: Hsla) -> AnyElement {
 mod tests {
     use gpui::AppContext as _;
     use serde_json::json;
+
+    #[test]
+    fn search_finds_rows_case_insensitively_on_real_pages() {
+        for (label, _) in super::row_matches("") {
+            assert!(
+                super::section(label).is_some() || label == "MCP servers",
+                "{label} is not a settings page"
+            );
+        }
+        assert!(super::row_matches("speed").any(|r| r == ("General", "Speed")));
+    }
 
     #[test]
     fn leaving_cloud_restores_the_selected_settings_page() {

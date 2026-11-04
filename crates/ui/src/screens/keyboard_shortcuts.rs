@@ -424,6 +424,8 @@ const DIALOG_HIDDEN: &[&str] = &[
     "navigateBrowserBack",
     "navigateBrowserForward",
     "focusBrowserAddressBar",
+    "openSideChat",
+    "copyPageLink",
     "temporaryChat",
     "copyLastCodeBlock",
     "openReviewTab",
