@@ -45,7 +45,12 @@ fn completion_identity_wins_even_when_the_notification_precedes_the_reply() -> R
         },
     };
     let host = app::host::ReplayHost::from_recording(r#"{"exchanges":[]}"#)?;
-    let result = pollster::block_on(import_items(&bridge, &host, &[item]))?;
+    let result = pollster::block_on(import_items(
+        &bridge,
+        &host,
+        &[item],
+        async_channel::unbounded().0,
+    ))?;
     assert_eq!(
         result
             .completions
@@ -235,7 +240,12 @@ fn import_failure_preserves_completed_provider_results() -> Result<()> {
         },
     };
 
-    let result = pollster::block_on(import_items(&bridge, &host, &[claude, cursor]))?;
+    let result = pollster::block_on(import_items(
+        &bridge,
+        &host,
+        &[claude, cursor],
+        async_channel::unbounded().0,
+    ))?;
 
     assert_eq!(result.completions.len(), 1);
     assert!(result.project_roots.contains("/workspace"));
@@ -301,7 +311,12 @@ fn cursor_projectless_import_records_the_workspace_without_creating_a_project() 
         },
     };
 
-    let imported = pollster::block_on(import_items(&bridge, &host, &[item]))?;
+    let imported = pollster::block_on(import_items(
+        &bridge,
+        &host,
+        &[item],
+        async_channel::unbounded().0,
+    ))?;
 
     assert!(imported.project_roots.is_empty());
     let state: Value = serde_json::from_slice(&std::fs::read(

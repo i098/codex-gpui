@@ -283,13 +283,15 @@ impl DiffPanel {
         self.menu_items_for(self.menu.as_ref().map(|m| m.kind))
     }
 
-    fn menu_items_for(
+    pub(super) fn menu_items_for(
         &self,
         kind: Option<Kind>,
     ) -> impl ExactSizeIterator<Item = (&str, bool)> + Clone {
         let repository = self.repository.as_ref();
         let count = match kind {
             None => 0,
+            // `SOURCES[0]` is Last Turn, the only source that needs no git call.
+            Some(Kind::Source) if self.last_turn_only => 1,
             Some(Kind::Source) => SOURCES.len(),
             Some(Kind::Options) => 10 - self.menu.as_ref().map_or(0, |menu| menu.options_start),
             Some(kind @ (Kind::Branches | Kind::Commits)) => {

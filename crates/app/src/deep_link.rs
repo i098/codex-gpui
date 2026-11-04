@@ -336,7 +336,8 @@ fn settings(sub: &[&str], params: &Params<'_>) -> Link {
             _ => Link::Settings(Some("Worktrees")),
         },
         ["trusted-contact"] => Link::Settings(Some("Trusted contact")),
-        _ => Link::Settings(None),
+        [] => Link::Settings(None),
+        [slug, ..] => Link::Settings(Some(ui::screens::settings::slug_section(slug))),
     }
 }
 
@@ -751,6 +752,22 @@ mod tests {
             parse("codex://settings/local-environments/create?workspaceRoot=work"),
             Some(Link::Settings(Some("Worktrees")))
         );
+    }
+
+    #[test]
+    fn settings_slugs_open_their_section() {
+        for (url, section) in [
+            ("codex://settings/git-settings", "Git"),
+            ("codex://settings/mcp-settings/servers", "MCP servers"),
+            ("codex://settings/work-settings", "Configuration"),
+            ("codex://settings/usage?tab=analytics", "Usage & billing"),
+            ("codex://settings/analytics", "Usage & billing"),
+            ("codex://settings/local-environments", "Worktrees"),
+            ("codex://settings/no-such-slug", "General"),
+        ] {
+            assert_eq!(parse(url), Some(Link::Settings(Some(section))), "{url}");
+        }
+        assert_eq!(parse("codex://settings"), Some(Link::Settings(None)));
     }
 
     #[test]
