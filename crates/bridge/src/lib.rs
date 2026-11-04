@@ -276,7 +276,7 @@ impl Bridge {
         (Self::new(backend, sink, None, false), events)
     }
 
-    fn from_io(
+    pub fn from_io(
         read: impl Read + Send + 'static,
         write: impl Write + Send + 'static,
         child: Option<Child>,
