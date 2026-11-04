@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Show `Hook stats` in a finished turn's actions when hooks ran (`hook/started`, `hook/completed`): the dialog counts runs, blocked and failed runs, and lists each run's status, event and source, opening to its status message and output.
+- Open any settings page from `codex://settings/<slug>` links (`git-settings`, `mcp-settings`, `hooks-settings`, `agent`, `local-environments` and the rest of the original slugs, plus the `work-settings` and usage-tab aliases); unknown slugs open General.
 - Show external agent import progress as imported and failed item counts in the import view.
 - Open a `New tab` page from the side panel's and the titlebar's `New tab` buttons: `Tools` (Changes, Terminal with `Open bottom terminal`, Browser) and `Recents` (recently opened files). A pick replaces the `New tab` tab.
 - Add `Fix checks` under a pull request's failing checks and `Address comments` with optional guidance under its review comments: each starts a new chat that checks out the pull request branch and fixes it.
