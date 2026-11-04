@@ -493,7 +493,10 @@ impl Root {
     /// `oNc`: the ChatGPT group shows only for a personal ChatGPT account.
     fn refresh_notification_account(&mut self, cx: &mut Context<Self>) {
         let Some(identity) = self.host.identity() else {
-            update(cx, |state| state.account = Account::Hidden);
+            update(cx, |state| {
+                state.account = Account::Hidden;
+                state.user_id = None;
+            });
             return;
         };
         update(cx, |state| {
@@ -503,6 +506,7 @@ impl Root {
             state.fetching = true;
         });
         let host = self.host.clone();
+        let user_id = identity.user_id.clone();
         let task = cx.background_executor().spawn(async move {
             let accounts = usage::http(
                 host.as_ref(),
@@ -525,6 +529,7 @@ impl Root {
                         Ok(false) => Account::Hidden,
                         Err(_) => Account::Error,
                     };
+                    state.user_id = matches!(personal, Ok(true)).then(|| user_id.clone());
                 });
                 if matches!(personal, Ok(true)) {
                     this.notification_get("/notifications/settings", cx);
