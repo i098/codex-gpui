@@ -401,6 +401,8 @@ pub struct DiffPanel {
     context: context::State,
     full_view: Option<gpui::WeakEntity<Shell>>,
     viewed_files: serde_json::Map<String, serde_json::Value>,
+    /// `git-review-mode` is `last-turn-only`: the panel never asks git for changes.
+    last_turn_only: bool,
 }
 
 impl DiffPanel {
@@ -563,6 +565,7 @@ impl DiffPanel {
             context: context::State::default(),
             full_view: None,
             viewed_files: Default::default(),
+            last_turn_only: false,
         };
         panel
             .annotations
@@ -780,6 +783,9 @@ impl DiffPanel {
     }
 
     fn select_source(&mut self, source: DiffSource, cx: &mut Context<Self>) {
+        if self.last_turn_only && !matches!(source, DiffSource::LastTurn | DiffSource::Cloud) {
+            return;
+        }
         let previous = self.source;
         if previous == DiffSource::LastTurn && source != previous {
             self.turn_files = self.unfiltered_files();

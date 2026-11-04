@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Add `Disable Git-based diffs` to Settings ▸ Git: with it on, the Changes panel shows only `Last Turn`, hides `View branch diff`, and runs no git repository discovery (`git-review-mode` = `last-turn-only`).
 - Search settings rows: the Settings search lists matching row titles and descriptions under `Matching settings` and opens their page, and a `Clear settings search` button clears the query.
 - Show `Hook stats` in a finished turn's actions when hooks ran (`hook/started`, `hook/completed`): the dialog counts runs, blocked and failed runs, and lists each run's status, event and source, opening to its status message and output.
 - Sign in through an enterprise gateway with its native OAuth handoff, completion status, and cancellation flow.
