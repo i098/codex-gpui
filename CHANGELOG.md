@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Add `Fix checks` under a pull request's failing checks and `Address comments` with optional guidance under its review comments: each starts a new chat that checks out the pull request branch and fixes it.
+- Show the original's `Restart to apply workspace settings` prompt when the polled org policy (`in_app_updates`) flips under a running app; `Restart` re-execs the app in place.
 - Set the in-app browser's default site permissions (Browse, Download, Upload), history access and full CDP access on Settings ▸ Browser; they persist to `browser_use` in `config.toml`, and custom site permissions are listed.
 - Run the selected local environment's actions from the thread: `Run: {action}` and an `Actions` menu in the header, `⌘⇧D` for the first and `environmentAction1`–`9` shortcut slots; each command runs in a new terminal tab.
 - Add the Settings ▸ Trusted contact page (also `codex://settings/trusted-contact`): invite a contact with the ChatGPT backend's `/trusted_contact` service, see Pending or Active, resend the invitation, and remove the contact.
