@@ -113,7 +113,8 @@ struct AddForm {
     phone: bool,
     email_field: Entity<Composer>,
     phone_field: Entity<Composer>,
-    invalid: bool,
+    /// The field text that failed validation; any edit clears it (`k(!1)` on change).
+    invalid: Option<String>,
     error: Option<String>,
 }
 
@@ -391,7 +392,19 @@ impl ParentalControls {
                 .is_some_and(|m| m.iter().all(|m| m.user_id.as_deref() == self.me()));
         let field = |placeholder, cx: &mut Context<Self>| {
             let field = cx.new(|cx| Composer::settings_compact_field(placeholder, "", cx));
-            cx.observe(&field, |_, _, cx| cx.notify()).detach();
+            cx.observe(&field, |this, field, cx| {
+                let text = field.read(cx).field_text();
+                if let Some(form) = &mut this.form
+                    && form
+                        .invalid
+                        .as_deref()
+                        .is_some_and(|rejected| rejected != text)
+                {
+                    form.invalid = None;
+                }
+                cx.notify();
+            })
+            .detach();
             field
         };
         let email_field = field("name@email.com", cx);
@@ -410,7 +423,7 @@ impl ParentalControls {
             phone: false,
             email_field,
             phone_field,
-            invalid: false,
+            invalid: None,
             error: None,
         });
         cx.notify();
@@ -427,13 +440,14 @@ impl ParentalControls {
         } else {
             &form.email_field
         };
-        let identifier = field.read(cx).field_text().trim().to_owned();
+        let raw = field.read(cx).field_text().to_owned();
+        let identifier = raw.trim().to_owned();
         let valid = if form.phone {
             valid_phone(&identifier)
         } else {
             super::trusted_contact::valid_email(&identifier)
         };
-        form.invalid = !valid;
+        form.invalid = (!valid).then_some(raw);
         let Some(role) = form.role.filter(|_| valid && !self.busy) else {
             cx.notify();
             return;
@@ -1412,7 +1426,7 @@ impl ParentalControls {
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         if let Some(form) = &mut this.form {
                                             form.phone = !form.phone;
-                                            form.invalid = false;
+                                            form.invalid = None;
                                             let field = if form.phone {
                                                 &form.phone_field
                                             } else {
@@ -1429,7 +1443,7 @@ impl ParentalControls {
                             .debug_selector(|| "parental-controls-identifier".into())
                             .child(field.clone()),
                     )
-                    .when(form.invalid, |d| {
+                    .when(form.invalid.is_some(), |d| {
                         d.child(status(
                             if form.phone {
                                 "Enter a valid phone number."
