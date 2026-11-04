@@ -106,7 +106,7 @@ pub fn kind_label(entry: &HookOutputEntry) -> &'static str {
 
 /// Shown for a run that is not `completed` and gave no output.
 pub fn no_output(run: &HookRun) -> Option<&'static str> {
-    (run.entries.is_empty() && run.status != "completed").then(|| match run.status.as_str() {
+    (run.entries.is_empty() && run.status != "completed").then_some(match run.status.as_str() {
         "blocked" => "The hook did not provide a reason",
         "failed" => "The hook did not provide error details",
         _ => "The hook did not provide a stop reason",
