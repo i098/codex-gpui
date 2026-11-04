@@ -199,6 +199,11 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             this.open_browser_tab(url, window, cx);
         }),
     )
+    .on_action(cx.listener(
+        |this, a: &ui::screens::thread::view::RunEnvironmentAction, window, cx| {
+            this.run_environment_action(a.0, window, cx);
+        },
+    ))
     .on_action(cx.listener(|this, _: &ui::browser::BrowserBack, _, cx| {
         on_active_browser(this, cx, |tab, cx| tab.go_back(cx));
     }))

@@ -4839,6 +4839,7 @@ impl Root {
         self.show_approval(cx);
         hotkey::thread_shown(self, window, cx);
         self.refresh_git_actions(cx);
+        self.load_environment_actions(cx);
         if self.state.route == route {
             self.sync(window, cx);
         } else {
