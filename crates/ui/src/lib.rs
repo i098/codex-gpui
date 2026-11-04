@@ -7,7 +7,7 @@
 
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, Bounds, ClickEvent, ContentMask, Context,
-    Corners, CursorStyle, DispatchPhase, Div, FontWeight, Hsla, Image, ImageFormat,
+    Corners, CursorStyle, DispatchPhase, Div, ElementId, FontWeight, Hsla, Image, ImageFormat,
     InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, RenderImage, Rgba, SharedString, Stateful,
     StatefulInteractiveElement, Styled, Svg, Window, actions, canvas, div, fill, img, point,
@@ -89,8 +89,10 @@ actions!(
         OpenGpts,
         /// Home beacon `Start Voice` and the composer's `Start new voice chat`.
         StartVoiceChat,
-        /// Profile menu ▸ Help ▸ `Set up mobile`.
+        /// Profile menu ▸ Help ▸ `Set up mobile` and `Set up remote`.
         OpenMobileSetup,
+        /// The profile avatar opened its menu: reload the account data in [`Profile`].
+        RefreshProfile,
         /// `⌥⌘B`: show or hide the Changes side panel.
         ToggleChangesPanel,
         /// The thread summary's `Changes` row and generic Changes navigation.
@@ -257,6 +259,40 @@ impl Render for RailDrag {
     }
 }
 
+/// What the profile menu (`codex.profileDropdown`) shows about the signed-in account; the app
+/// loads it on [`RefreshProfile`].
+#[derive(Clone, Default)]
+pub struct Profile {
+    /// `/me`'s name, else the account email.
+    pub name: Option<SharedString>,
+    /// The plan's short name (`pricingPlanConstants.*.name`); set only for ChatGPT sign-in.
+    pub plan: Option<SharedString>,
+    /// The primary rate limit's remaining percent (`codex.profileDropdown.usageRemaining`).
+    pub usage_left: Option<f64>,
+    /// Help ▸ What's new: the changelog feed's newest posts, at most three.
+    pub changelog: Vec<ChangelogPost>,
+    /// Statsig gate `410065390`: Help ▸ `Set up Chrome extension`.
+    pub chrome_extension_setup: bool,
+    /// Statsig gate `3959961672`: Help ▸ `Privacy center`.
+    pub privacy_center: bool,
+}
+
+/// One post of the Codex app changelog feed.
+#[derive(Clone)]
+pub struct ChangelogPost {
+    pub title: SharedString,
+    /// `9 Oct`: the post's UTC day and short month.
+    pub date: SharedString,
+    pub url: SharedString,
+}
+
+/// Help ▸ `Full changelog`.
+const CHANGELOG_URL: &str = "https://developers.openai.com/codex/changelog";
+/// Help ▸ `User guide`.
+const USER_GUIDE_URL: &str = "https://learn.chatgpt.com/docs/quickstart";
+/// Help ▸ `Privacy center`.
+const PRIVACY_CENTER_URL: &str = "https://chatgpt.com/privacy-center";
+
 pub struct Shell {
     pub sidebar_open: bool,
     /// Below the sidebar breakpoint the panel floats over the main surface instead of docking.
@@ -310,6 +346,10 @@ pub struct Shell {
     pub scheduled_attention: bool,
     /// The profile avatar's menu is open.
     pub profile_menu: bool,
+    /// The profile menu's `Help` flyout is open.
+    profile_help: bool,
+    /// What the profile menu shows about the signed-in account.
+    pub profile: Profile,
     /// The signed-in account the profile menu names; `None` when signed out of OpenAI.
     pub account: Option<ProfileAccount>,
     /// Pointer over the avatar: its own click toggles the menu, so a press there must not
@@ -324,6 +364,9 @@ pub struct Shell {
     pub bottom: Option<AnyView>,
 }
 
+/// The fixture account's avatar, shared by the rail button and the profile menu's header.
+const AVATAR_PNG: &[u8] = include_bytes!("../assets/avatar-decoded-64.png");
+
 /// The fixture account's 24 px avatar (`rounded-full object-cover` `<img>`), rasterized the way
 /// Chromium draws it in the profile button's layer: the JPEG decoded to scale, drawn bilinear
 /// into the snapped box under its anti-aliased circular clip, and composited over `under`.
@@ -334,7 +377,7 @@ pub struct Shell {
 // ponytail: one decode size, valid while the avatar is at most 64 device px (scale 2.66);
 // add the 3/8 and larger decodes when a larger zoom matters.
 fn avatar(under: Hsla) -> AnyElement {
-    const PNG: &[u8] = include_bytes!("../assets/avatar-decoded-64.png");
+    const PNG: &[u8] = AVATAR_PNG;
     // The compositor tile needs an opaque `under`; over vibrancy the image is drawn directly.
     if !cfg!(target_os = "macos") || under.a < 1. {
         let image = Arc::new(Image::from_bytes(ImageFormat::Png, PNG.to_vec()));
@@ -414,6 +457,8 @@ impl Shell {
             security_cloud_available: false,
             scheduled_attention: false,
             profile_menu: false,
+            profile_help: false,
+            profile: Profile::default(),
             account: None,
             avatar_hovered: false,
             explore_menu: false,
@@ -1387,8 +1432,12 @@ impl Shell {
                 .justify_center()
                 .rounded(RADIUS_RAIL)
                 .on_hover(cx.listener(|this, hovered: &bool, _, _| this.avatar_hovered = *hovered))
-                .on_click(cx.listener(|this, _, _, cx| {
+                .on_click(cx.listener(|this, _, window, cx| {
                     this.profile_menu ^= true;
+                    this.profile_help = false;
+                    if this.profile_menu {
+                        window.dispatch_action(Box::new(RefreshProfile), cx);
+                    }
                     cx.notify();
                 }))
                 .child(motion::ButtonVisual {
@@ -1453,149 +1502,391 @@ impl Shell {
             }))
     }
 
-    /// Profile avatar menu (`codex.profileDropdown.*`) above the avatar: `Settings`, `Usage`
-    /// with the primary limit's `{n}% left`, `Personalization`, `Open config.toml`, the
-    /// free-plan upgrade link, then the `Help` submenu flattened under a `Help` heading.
-    /// `Log out` opens the `Log out?` confirmation.
-    /// shortcut: no `Profile` or `Invite a coworker`; the port has no profile page or referral
-    /// client yet.
+    /// Profile avatar menu (`codex.profileDropdown`, `refs/profile-menu`): the account header,
+    /// `Usage`, `Show Pet`, `Settings`, the `Help` flyout (`sidebarHelp.*`) and `Log out`.
+    /// shortcut: `Show Pet` keeps its label while Mini is open, a What's new post opens its
+    /// changelog page instead of the in-app post dialog, and rows take no arrow keys; add them
+    /// with a Mini visibility flag, a post dialog and menu focus handling.
     fn profile_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let hover = t.menu_item_hover;
-        let usage = cx.try_global::<screens::settings::usage::State>();
-        let remaining = usage.and_then(|state| match &state.limits {
-            screens::computer_use::Load::Ready(limits) => {
-                limits.rate_limits.primary.as_ref().map(|w| w.remaining())
-            }
-            _ => None,
-        });
-        let pricing = usage
-            .filter(|state| matches!(state.plan.as_str(), "free" | "go"))
-            .map(|state| {
-                if state.access.logged_in_pricing {
-                    "https://chatgpt.com/#pricing"
-                } else {
-                    "https://chatgpt.com/pricing/"
-                }
-            });
-        let item = |id: &'static str,
-                    label: &'static str,
-                    trailing: Option<String>,
-                    action: MenuAction| {
-            div()
-                .id(id)
-                .px(px(8.))
-                .py(px(6.))
-                .rounded(px(12.))
-                .flex()
-                .justify_between()
-                .hover(move |s| s.bg(hover))
-                .child(text(label, 14., 20., 430., t.text))
-                .children(trailing.map(|s| text(s, 13., 20., 430., t.text_tertiary)))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.profile_menu = false;
-                    cx.notify();
-                    action(window, cx);
-                }))
-        };
-        fn send<A: Action + Clone>(action: A) -> MenuAction {
-            Box::new(move |window, cx| window.dispatch_action(Box::new(action.clone()), cx))
+        fn send(action: impl Action + Clone) -> MenuAction {
+            Box::new(move |window, cx| window.dispatch_action(action.boxed_clone(), cx))
+        }
+        fn open(url: impl Into<SharedString>) -> MenuAction {
+            let url = url.into();
+            Box::new(move |_, cx| cx.open_url(&url))
         }
         let section = |label: &str| {
             send(screens::settings::subtrees::OpenSection {
                 label: label.into(),
             })
         };
-        let settings = item("profile-settings", "Settings", None, send(OpenSettings));
-        let usage = item(
+        let shortcut = |id: &str| {
+            let state = cx.try_global::<screens::settings::keyboard_shortcuts::KeyboardState>()?;
+            let command = screens::settings::keyboard_shortcuts::commands()
+                .iter()
+                .find(|c| c.id == id)?;
+            let keys = state.preferences.keys(command).next()?;
+            Some(screens::settings::keyboard_shortcuts::key_label(keys))
+        };
+        let pet_shortcut = shortcut("openAvatarOverlay");
+        let settings_shortcut = shortcut("settings");
+        // `CODEX_MOBILE_SETUP_COMPLETED` picks `Set up mobile` or `Set up remote`; both need
+        // ChatGPT sign-in and remote control.
+        let mobile = cx
+            .try_global::<screens::connections::ConnectionsState>()
+            .filter(|s| self.profile.plan.is_some() && s.gates.remote_control())
+            .filter(|s| s.connections.is_some())
+            .map(|s| s.setup_complete);
+        let p = &self.profile;
+        let hover = t.menu_item_hover;
+        let dim = t.text_tertiary;
+        let help_open = self.profile_help;
+        const MAIN_ROWS: [&str; 9] = [
             "profile-usage",
-            "Usage",
-            remaining.map(|r| format!("{r:.0}% left")),
-            section("Usage & billing"),
-        );
-        let personalization = item(
+            "profile-mini",
+            "profile-settings",
+            "profile-help",
+            "profile-log-out",
+            "profile-switch-account",
             "profile-personalization",
-            "Personalization",
-            None,
-            section("Personalization"),
-        );
-        let config = item(
             "profile-open-config-toml",
-            "Open config.toml",
-            None,
-            send(OpenUserConfig),
+            "profile-upgrade",
+        ];
+        let row = |id: SharedString,
+                   leading: Option<AnyElement>,
+                   label: SharedString,
+                   trailing: Option<AnyElement>,
+                   action: Option<MenuAction>| {
+            let is_help = id == "profile-help";
+            // Hovering another main-menu row closes the flyout; its own rows keep it open.
+            let in_main = MAIN_ROWS.contains(&id.as_ref());
+            div()
+                .id(ElementId::Name(id.clone()))
+                .debug_selector(move || id.to_string())
+                .h(px(28.5625))
+                .px(px(8.))
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .rounded(px(12.))
+                .when(is_help && help_open, |d| d.bg(hover))
+                .hover(move |s| s.bg(hover))
+                .children(leading)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .child(text(label, 13., 18.5714, 430., t.text)),
+                )
+                .children(trailing)
+                .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                    if *hovered && in_main && this.profile_help != is_help {
+                        this.profile_help = is_help;
+                        cx.notify();
+                    }
+                }))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if is_help {
+                        this.profile_help = true;
+                    } else if let Some(action) = &action {
+                        this.profile_menu = false;
+                        this.profile_help = false;
+                        action(window, cx);
+                    }
+                    cx.notify();
+                }))
+        };
+        let lead = |name: &str| {
+            Some(
+                icon::icon(name, 16., t.text)
+                    .opacity(0.75)
+                    .into_any_element(),
+            )
+        };
+        let trail = |s: String| Some(text(s, 12., 16., 430., dim).into_any_element());
+        let external = || {
+            Some(
+                icon::icon("profile-external", 16., t.text_secondary)
+                    .opacity(0.5)
+                    .into_any_element(),
+            )
+        };
+        // `ItemIcon` `size-[7px]` dots on the What's new timeline.
+        let dot = || {
+            Some(
+                div()
+                    .size(px(16.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .size(px(7.))
+                            .rounded_full()
+                            .border(px(1.33))
+                            .border_color(dim),
+                    )
+                    .into_any_element(),
+            )
+        };
+        let separator = || {
+            div()
+                .py(px(4.))
+                .px(px(8.))
+                .child(div().h(px(1.)).bg(t.border))
+        };
+        let header = div()
+            .py(px(5.))
+            .px(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(5.))
+            .child(
+                img(Arc::new(Image::from_bytes(
+                    ImageFormat::Png,
+                    AVATAR_PNG.to_vec(),
+                )))
+                .size(px(18.))
+                .rounded_full(),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .child(text(
+                        p.name
+                            .clone()
+                            .or_else(|| match &self.account {
+                                Some(ProfileAccount::Chatgpt(email)) => email.clone(),
+                                Some(ProfileAccount::ApiKey) => {
+                                    Some("Logged in with API key".into())
+                                }
+                                None => None,
+                            })
+                            .unwrap_or_default(),
+                        13.,
+                        18.5714,
+                        430.,
+                        t.text,
+                    ))
+                    .children(p.plan.clone().map(|plan| text(plan, 12., 14., 430., dim))),
+            );
+        let usage = row(
+            "profile-usage".into(),
+            lead("settings-usage"),
+            "Usage".into(),
+            p.usage_left.map(|left| {
+                text(format!("{left:.0}% left"), 13., 18.5714, 430., dim).into_any_element()
+            }),
+            Some(section("Usage & billing")),
         );
-        let upgrade = pricing.map(|url| {
-            item(
-                "profile-upgrade",
-                "Upgrade for higher limits",
+        let pet = row(
+            "profile-mini".into(),
+            lead("settings-mini-pets"),
+            "Show Pet".into(),
+            pet_shortcut.and_then(trail),
+            Some(send(OpenMini)),
+        );
+        let settings = row(
+            "profile-settings".into(),
+            lead("settings-general"),
+            "Settings".into(),
+            settings_shortcut.and_then(trail),
+            Some(send(OpenSettings)),
+        );
+        let switch_label = match &self.account {
+            Some(ProfileAccount::Chatgpt(_)) => "Add account",
+            _ => "Sign in with ChatGPT",
+        };
+        let switch = row(
+            "profile-switch-account".into(),
+            None,
+            switch_label.into(),
+            None,
+            Some(send(SwitchAccount)),
+        );
+        let personalization = row(
+            "profile-personalization".into(),
+            None,
+            "Personalization".into(),
+            None,
+            Some(section("Personalization")),
+        );
+        let config = row(
+            "profile-open-config-toml".into(),
+            None,
+            "Open config.toml".into(),
+            None,
+            Some(send(OpenUserConfig)),
+        );
+        let upgrade = cx
+            .try_global::<screens::settings::usage::State>()
+            .filter(|state| matches!(state.plan.as_str(), "free" | "go"))
+            .map(|state| {
+                let url = if state.access.logged_in_pricing {
+                    "https://chatgpt.com/#pricing"
+                } else {
+                    "https://chatgpt.com/pricing/"
+                };
+                row(
+                    "profile-upgrade".into(),
+                    None,
+                    "Upgrade for higher limits".into(),
+                    None,
+                    Some(open(url)),
+                )
+            });
+        let help = row(
+            "profile-help".into(),
+            lead("profile-help"),
+            "Help".into(),
+            Some(icon::icon("chevron-right", 16., dim).into_any_element()),
+            None,
+        );
+        let log_out = row(
+            "profile-log-out".into(),
+            lead("sidebar-cmd-log-out"),
+            "Log out".into(),
+            None,
+            Some(send(LogOut)),
+        );
+        let posts: Vec<_> = p
+            .changelog
+            .iter()
+            .enumerate()
+            .map(|(i, post)| {
+                row(
+                    format!("profile-changelog-{i}").into(),
+                    dot(),
+                    post.title.clone(),
+                    Some(
+                        text(post.date.clone(), 12., 16., 430., t.text_description)
+                            .into_any_element(),
+                    ),
+                    Some(open(post.url.clone())),
+                )
+            })
+            .collect();
+        let full_changelog = row(
+            "profile-full-changelog".into(),
+            dot(),
+            "Full changelog".into(),
+            external(),
+            Some(open(CHANGELOG_URL)),
+        );
+        let mobile = mobile.map(|done| {
+            row(
+                "profile-set-up-mobile".into(),
+                lead("settings-connections"),
+                if done {
+                    "Set up remote"
+                } else {
+                    "Set up mobile"
+                }
+                .into(),
                 None,
-                Box::new(move |_, cx| cx.open_url(url)),
+                Some(send(OpenMobileSetup)),
             )
         });
-        let mini = item("profile-mini", "Show Mini", None, send(OpenMini));
-        let log_out = item("profile-log-out", "Log out", None, send(LogOut));
-        let mobile = item(
-            "profile-set-up-mobile",
-            "Set up mobile",
+        let chrome = p.chrome_extension_setup.then(|| {
+            row(
+                "profile-chrome-extension".into(),
+                lead("profile-chrome"),
+                "Set up Chrome extension".into(),
+                None,
+                Some(section("Computer use")),
+            )
+        });
+        let shortcuts = row(
+            "profile-keyboard-shortcuts".into(),
+            lead("profile-keyboard-shortcuts"),
+            "Keyboard shortcuts".into(),
             None,
-            send(OpenMobileSetup),
+            Some(send(ShowKeyboardShortcuts)),
         );
-        let shortcuts = item(
-            "profile-keyboard-shortcuts",
-            "Keyboard Shortcuts",
+        let guide = row(
+            "profile-user-guide".into(),
+            lead("profile-user-guide"),
+            "User guide".into(),
             None,
-            send(ShowKeyboardShortcuts),
+            Some(open(USER_GUIDE_URL)),
         );
-        // `profileDropdown`: the signed-in account, then `Add account` (ChatGPT) or
-        // `Sign in with ChatGPT`; both open the sign-in screen through `SwitchAccount`.
-        let (account, switch) = match &self.account {
-            Some(ProfileAccount::Chatgpt(email)) => (email.clone(), "Add account"),
-            Some(ProfileAccount::ApiKey) => (
-                Some("Logged in with API key".into()),
-                "Sign in with ChatGPT",
-            ),
-            None => (None, "Sign in with ChatGPT"),
-        };
-        let switch = item("profile-switch-account", switch, None, send(SwitchAccount));
+        let privacy = p.privacy_center.then(|| {
+            row(
+                "profile-privacy-center".into(),
+                lead("profile-privacy-center"),
+                "Privacy center".into(),
+                external(),
+                Some(open(PRIVACY_CENTER_URL)),
+            )
+        });
+        // The timeline joins each post's dot to the next one (`border-s` from 8 px below a
+        // row's center to 8 px above the next row's).
+        let timeline = (!posts.is_empty()).then(|| {
+            div()
+                .absolute()
+                .left(px(16.))
+                .top(px(26.5625 + 28.5625 / 2. + 8.))
+                .h(px(28.5625 * posts.len() as f32 - 16.))
+                .w(px(1.))
+                .bg(t.border)
+        });
+        let flyout = help_open.then(|| {
+            composer::popover(t, 277.265_63, |d| {
+                d.relative()
+                    .child(
+                        div()
+                            .h(px(26.5625))
+                            .px(px(8.))
+                            .flex()
+                            .items_center()
+                            .child(text("What's new", 12., 16., 430., dim)),
+                    )
+                    .children(timeline)
+                    .children(posts)
+                    .child(full_changelog)
+                    .child(separator())
+                    .children(mobile)
+                    .children(chrome)
+                    .child(shortcuts)
+                    .child(guide)
+                    .children(privacy)
+            })
+            // `alignToParentBottom`: its last row lines up with `Help`.
+            .mb(px(28.8125))
+        });
         div()
             .absolute()
-            .left(px(8.))
-            .bottom(px(48.))
+            .left(px(48.))
+            .bottom(px(5.625))
+            .flex()
+            .items_end()
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 if !this.avatar_hovered {
                     this.profile_menu = false;
+                    this.profile_help = false;
                     cx.notify();
                 }
             }))
-            .child(composer::popover(t, 220., |d| {
-                d.when_some(account, |d, account| {
-                    d.child(
-                        div()
-                            .id("profile-account")
-                            .px(px(8.))
-                            .pt(px(6.))
-                            .pb(px(4.))
-                            .child(text(account, 12., 16., 400., t.text_tertiary)),
-                    )
-                })
-                .child(switch)
-                .child(settings)
-                .child(usage)
-                .child(personalization)
-                .child(config)
-                .children(upgrade)
-                .child(mini)
-                .child(log_out)
-                .child(div().px(px(8.)).pt(px(8.)).pb(px(4.)).child(text(
-                    "Help",
-                    12.,
-                    16.,
-                    400.,
-                    t.text_tertiary,
-                )))
-                .child(mobile)
-                .child(shortcuts)
+            // The original's 1 px border sits inside its 230 px box: rows start 5 px in.
+            .child(composer::popover(t, 230., |d| {
+                d.p(px(5.))
+                    .child(header)
+                    .child(switch)
+                    .child(separator())
+                    .child(usage)
+                    .child(pet)
+                    .child(settings)
+                    .child(personalization)
+                    .child(config)
+                    .children(upgrade)
+                    .child(separator())
+                    .child(help)
+                    .child(log_out)
             }))
+            .children(flyout)
     }
 
     /// `.sidebar-navigation`: its left corners come from `clip-path: inset(... round 12px)`.
@@ -1921,6 +2212,12 @@ impl Shell {
                         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                             new_tab_focus.read(cx).handle.clone().focus(window, cx);
                             cx.stop_propagation();
+                        })
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(crate::screens::diff::panel::OpenNewSideTab),
+                                cx,
+                            )
                         })
                         // Chromium squashes it into the titlebar's overlap layer, at whole
                         // device px (layer 44 at (380, 0) at 2x, layer 97 at (0, 0) at 110%).
@@ -2296,7 +2593,13 @@ impl Render for Shell {
                 .left_0()
                 .top(Theme::TITLEBAR_HEIGHT)
                 .bottom(PAGE_INSET)
-                .w(self.sidebar_width)
+                // Docked, the main surface covers the panel past its left edge while it moves.
+                .w(if self.overlay {
+                    self.sidebar_width
+                } else {
+                    main_left
+                })
+                .overflow_hidden()
                 .snap_origin()
                 .child(self.sidebar_panel(&t, progress));
             // An overlay floats over the main surface, so it casts a shadow.
