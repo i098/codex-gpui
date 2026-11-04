@@ -965,20 +965,20 @@ impl SettingsNav {
         self.page.update(cx, |p, cx| p.select_section(label, cx));
     }
 
-    /// A search result: a matching row's text over the page it is on.
+    /// A search result: a matching row's text over the page it is on. Pointer-only: the same
+    /// pages stay keyboard-reachable through the nav items, and result tab stops would
+    /// reorder the tab path into the page.
     fn result(
         &self,
         index: usize,
         label: &'static str,
         row: &'static str,
         t: &Theme,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let id = gpui::ElementId::NamedInteger("settings-search-result".into(), index as u64);
-        let focus = focus::handle(id.clone(), 0, window, cx);
         let fill = over(t.list_hover, sidebar_color(t));
-        let control = div()
+        div()
             .id(id)
             .role(gpui::Role::Button)
             .aria_label(format!("{row} in {label}"))
@@ -987,11 +987,10 @@ impl SettingsNav {
             .px(px(8.))
             .py(px(4.))
             .rounded(Theme::RADIUS_LG)
+            .cursor_pointer()
             .hover(move |s| s.bg(fill))
             .child(text(row, 14., 20., 400., t.text))
-            .child(text(label, 12., 16., 400., t.text_tertiary));
-        focus::ring(control, &focus, Theme::RADIUS_LG, px(2.), cx)
-            .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
+            .child(text(label, 12., 16., 400., t.text_tertiary))
             .on_click(cx.listener(move |this, _, window, cx| this.open(label, window, cx)))
     }
 }
@@ -1053,7 +1052,7 @@ impl Render for SettingsNav {
                 .filter(|(label, _)| visible(label))
                 .take(MAX_RESULTS)
                 .enumerate()
-                .map(|(i, (label, row))| self.result(i, label, row, &t, window, cx))
+                .map(|(i, (label, row))| self.result(i, label, row, &t, cx))
                 .collect();
             if !results.is_empty() {
                 sections.push(sidebar_section(
