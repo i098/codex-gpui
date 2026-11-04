@@ -77,6 +77,86 @@ impl Root {
         });
         crate::log_err(task, cx);
     }
+
+    /// `environmentAction1`…`environmentAction9` (`⌘⇧D` runs the first): types the command of
+    /// the selected local environment's action in that slot into a new terminal tab.
+    pub(crate) fn run_environment_action(
+        &mut self,
+        slot: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((_, cwd)) = self.terminal_target(cx) else {
+            return;
+        };
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move { environment_actions(&*host, &cwd) });
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let command = read
+                .await?
+                .get(slot)
+                .and_then(|action| action["command"].as_str().map(str::to_owned));
+            if let Some(command) = command {
+                this.update_in(cx, |this, window, cx| {
+                    this.run_in_terminal(&command, window, cx)
+                })?;
+            }
+            Ok(())
+        });
+        crate::log_err(task, cx);
+    }
+
+    /// Gives the open thread's header the names of its workspace's environment actions.
+    pub(crate) fn load_environment_actions(&mut self, cx: &mut Context<Self>) {
+        let Some(view) = self.thread.clone() else {
+            return;
+        };
+        let cwd = view.read(cx).cwd().to_owned();
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move { environment_actions(&*host, &cwd) });
+        let task = cx.spawn(async move |_, cx| -> Result<()> {
+            let names = read
+                .await?
+                .iter()
+                .filter_map(|action| action["name"].as_str())
+                .map(|name| gpui::SharedString::from(name.to_owned()))
+                .collect();
+            view.update(cx, |view, cx| view.set_environment_actions(names, cx));
+            Ok(())
+        });
+        crate::log_err(task, cx);
+    }
+
+    /// Runs `command` in a new tab of the route's terminal, shown where terminals open.
+    fn run_in_terminal(&mut self, command: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let before = self
+            .terminal_panel()
+            .map_or(0, |panel| panel.read(cx).sessions.len());
+        self.show_terminal(false, window, cx);
+        let Some(panel) = self.terminal_panel().cloned() else {
+            return;
+        };
+        panel.update(cx, |panel, cx| {
+            // `show_terminal` opened a first shell only for a panel that had none.
+            if panel.sessions.len() == before {
+                panel.open(cx);
+            }
+            panel.write(panel.active, format!("{command}\n").into_bytes());
+        });
+    }
+}
+
+/// The run actions of `cwd`'s selected local environment (`local-environment-actions`).
+fn environment_actions(host: &dyn crate::host::Host, cwd: &str) -> Result<Vec<Value>> {
+    let request = crate::host::Request::post(
+        "local-environment-actions",
+        Some(serde_json::json!({ "workspaceRoot": cwd })),
+    );
+    let mut response = crate::host::json_body(&host.fetch(&request)?)?;
+    Ok(match response["actions"].take() {
+        Value::Array(actions) => actions,
+        _ => Vec::new(),
+    })
 }
 
 async fn shell_command(
@@ -318,7 +398,8 @@ impl Root {
         }
     }
 
-    pub(crate) fn run_environment_action(
+    /// Runs an `environmentAction1`…`9` shortcut from the environment selected in settings.
+    pub(crate) fn run_selected_environment_action(
         &mut self,
         number: usize,
         window: &mut Window,

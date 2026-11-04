@@ -344,6 +344,9 @@ pub struct Identity {
     pub device_id: String,
 }
 
+/// The Codex app changelog feed (`codex-app-changelog`): public, read without credentials.
+pub const CHANGELOG_FEED: &str = "https://learn.chatgpt.com/docs/changelog/codex-app.json";
+
 /// The Scheduled page's read-only suggestion request.
 pub fn suggested_automations() -> Request {
     Request::Http(json!({
@@ -390,6 +393,42 @@ pub fn mfa_info() -> Request {
         },
         "returnErrorResponse": true,
     }))
+}
+
+/// An account settings call to the ChatGPT backend (`path` under `/backend-api`), with the
+/// original's default headers; the cloud host attaches the sign-in and the account header.
+pub fn backend(method: &str, path: &str, body: Option<&Value>) -> Request {
+    let mut request = json!({
+        "url": path,
+        "method": method,
+        "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "originator": "Codex Desktop",
+        },
+        "returnErrorResponse": true,
+    });
+    if let Some(body) = body {
+        request["body"] = body.to_string().into();
+    }
+    Request::Http(request)
+}
+
+/// The HTTP status and JSON body of a [`backend`] response; an empty or non-JSON body is
+/// `Null`. Only a transport failure is an error, so callers can read the backend's error codes.
+pub fn backend_response(response: &Value) -> Result<(u16, Value)> {
+    let response = response_wire(response);
+    if response["responseType"] == "error" {
+        bail!("host error {}: {}", response["status"], response["error"]);
+    }
+    let status = response["status"].as_u64().context("missing host status")?;
+    let body = response
+        .get("bodyJsonString")
+        .or_else(|| response.get("body"))
+        .and_then(Value::as_str)
+        .and_then(|body| serde_json::from_str(body).ok())
+        .unwrap_or(Value::Null);
+    Ok((u16::try_from(status)?, body))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2093,6 +2132,14 @@ impl Host for LocalHost {
                     .as_str()
                     .context("missing environment path")?,
             ))?,
+            "local-environment-actions" => environments::actions(
+                self,
+                Path::new(
+                    params["workspaceRoot"]
+                        .as_str()
+                        .context("missing workspace root")?,
+                ),
+            )?,
             "local-environment-config-save" => environments::save(&params)?,
             "local-environment-select" => self.select_environment(
                 params["workspaceRoot"]
@@ -2655,6 +2702,24 @@ impl Host for CloudHost {
                     "status": 200,
                     "headers": {"content-type": "application/json"},
                     "bodyJsonString": body.to_string()
+                }))
+            }
+            Request::Fetch { method, url, .. } if url == CHANGELOG_FEED => {
+                ensure!(method == "GET", "unsupported changelog method: {method}");
+                // `credentials: omit`, and no redirect: the original rejects another origin.
+                let mut response = self
+                    .agent
+                    .get(CHANGELOG_FEED)
+                    .config()
+                    .max_redirects(0)
+                    .build()
+                    .call()?;
+                Ok(json!({
+                    "type": "fetch-response",
+                    "responseType": "success",
+                    "status": response.status().as_u16(),
+                    "headers": {"content-type": "application/json"},
+                    "bodyJsonString": response.body_mut().read_to_string()?
                 }))
             }
             Request::Fetch { .. } => self.local.fetch(request),

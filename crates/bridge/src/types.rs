@@ -207,6 +207,9 @@ pub enum ThreadItem {
         /// Last known state of each receiver, by thread id.
         #[serde(default)]
         agents_states: std::collections::BTreeMap<String, CollabAgentState>,
+        /// The model of a `spawnAgent` call.
+        #[serde(default)]
+        model: Option<String>,
     },
     ImageView {
         id: String,

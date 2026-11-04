@@ -31,5 +31,6 @@ pub mod signin;
 pub mod sites;
 pub mod sources;
 pub mod space;
+pub mod subagents;
 pub mod terminal;
 pub mod thread;
