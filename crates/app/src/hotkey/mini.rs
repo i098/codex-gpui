@@ -6,7 +6,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, Window, WindowHandle, div, point, px, size,
 };
 use theme::ActiveTheme as _;
-use ui::screens::mini::{composer_bounds, pet_bounds};
+use ui::screens::mini::{BAR_SIZE, CustomPets, composer_bounds, pet_bounds, pet_size};
 
 #[derive(Default)]
 pub(super) struct State {
@@ -120,6 +120,7 @@ fn toggle_inner(from_hotkey: bool, cx: &mut App) -> Result<()> {
 }
 
 fn save_open(open: bool, cx: &mut App) {
+    cx.set_global(ui::screens::mini::MiniOpen(open));
     if cx.has_global::<crate::host_settings::Settings>() {
         let result = cx.update_global::<crate::host_settings::Settings, _>(|settings, _| {
             settings.write("electron-avatar-overlay-open", open.into())
@@ -156,12 +157,14 @@ pub(super) fn observe_pointer(handle: WindowHandle<Root>, cx: &mut App) -> Resul
         let task = cx.spawn(async move |cx| {
             while events.recv().await.is_ok() {
                 if handle
-                    .update(cx, |root, window, _| {
+                    .update(cx, |root, window, cx| {
                         let has_chat = root.thread.is_some()
                             && matches!(root.state.route, crate::Route::Thread(_));
+                        let figure = chosen(cx).1;
                         let Some(state) = state_mut(root) else { return };
                         let inside = ui::screens::mini::hit_bounds(
                             window.bounds().size,
+                            figure,
                             state.expanded,
                             has_chat,
                         )
@@ -231,21 +234,12 @@ pub(super) fn content(root: &Root, window: &Window, cx: &mut Context<Root>) -> A
         .as_ref()
         .and_then(|popout| popout.mini.as_ref())
         .is_some_and(|state| state.expanded);
-    let id = cx
-        .try_global::<crate::host_settings::Settings>()
-        .and_then(|settings| {
-            settings
-                .read_all()
-                .get("selected-avatar-id")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-        })
-        .unwrap_or_else(|| "codex".to_owned());
-    let id = id.as_str();
+    let (id, figure) = chosen(cx);
+    let width = (figure != BAR_SIZE).then_some(figure.width.as_f32());
     let reduced_motion = ui::motion::reduced(cx);
     let viewport = window.viewport_size();
-    let pet = pet_bounds(viewport);
-    let composer_at = composer_bounds(viewport);
+    let pet = pet_bounds(viewport, figure);
+    let composer_at = composer_bounds(viewport, figure);
     let t = cx.theme().clone();
     let mut body = div().size_full().relative();
     if expanded {
@@ -258,10 +252,23 @@ pub(super) fn content(root: &Root, window: &Window, cx: &mut Context<Root>) -> A
                 .child(root.home.read(cx).composer.clone()),
         );
     } else {
-        let image = ui::screens::mini::pet(id, window.scale_factor(), reduced_motion);
-        let artwork = match image {
-            Ok(image) => gpui::img(image).size_full().into_any_element(),
-            Err(error) => ui::text(error.to_string(), 12., 16., 400., t.text).into_any_element(),
+        let artwork = match width {
+            None => ui::screens::mini::bar(&t).into_any_element(),
+            Some(width) => {
+                let custom = cx.try_global::<CustomPets>().map_or(&[][..], |c| &c.pets);
+                match ui::screens::mini::pet(
+                    &id,
+                    custom,
+                    width,
+                    window.scale_factor(),
+                    reduced_motion,
+                ) {
+                    Ok(image) => gpui::img(image).size_full().into_any_element(),
+                    Err(error) => {
+                        ui::text(error.to_string(), 12., 16., 400., t.text).into_any_element()
+                    }
+                }
+            }
         };
         body = body.child(
             div()
@@ -313,7 +320,7 @@ pub(super) fn content(root: &Root, window: &Window, cx: &mut Context<Root>) -> A
         .filter(|_| matches!(root.state.route, crate::Route::Thread(_)))
     {
         let title = thread.read(cx).header_title();
-        let chat_at = ui::screens::mini::chat_bounds(viewport);
+        let chat_at = ui::screens::mini::chat_bounds(viewport, figure);
         body = body.child(
             div()
                 .id("mini-current-chat")
@@ -336,4 +343,29 @@ pub(super) fn content(root: &Root, window: &Window, cx: &mut Context<Root>) -> A
         );
     }
     body.into_any_element()
+}
+
+/// The chosen pet's id (`selected-avatar-id`, default `codex`) and the box Mini draws: the
+/// pet at `avatar-overlay-mascot-width-px`, or the bar when `None` is chosen
+/// (`avatar-overlay-pet-visible` false).
+fn chosen(cx: &App) -> (String, gpui::Size<Pixels>) {
+    let Some(settings) = cx.try_global::<crate::host_settings::Settings>() else {
+        return ("codex".into(), pet_size(ui::screens::mini::DEFAULT_WIDTH));
+    };
+    let values = settings.read_all();
+    let id = values
+        .get("selected-avatar-id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("codex")
+        .to_owned();
+    let figure = if values.get("avatar-overlay-pet-visible") == Some(&false.into()) {
+        BAR_SIZE
+    } else {
+        pet_size(ui::screens::mini::width(
+            values
+                .get("avatar-overlay-mascot-width-px")
+                .and_then(serde_json::Value::as_f64),
+        ))
+    };
+    (id, figure)
 }

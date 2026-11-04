@@ -54,6 +54,7 @@ mod account_page;
 pub mod backend;
 mod languages;
 pub mod personalization;
+pub mod pets;
 pub mod trusted_contact;
 pub mod workspace {
     use crate::{SANS, composer::popover, focus, icon::icon, text};
@@ -1011,6 +1012,7 @@ pub struct SettingsPane {
     storage: Entity<storage::StoragePage>,
     git_saved_until: std::collections::HashMap<&'static str, std::time::Instant>,
     appearance: appearance_settings::State,
+    pets: pets::State,
     /// `Available reasoning efforts` on the Configuration page.
     efforts: Option<(Vec<String>, Entity<crate::settings_kit::MultiSelect>)>,
 }
@@ -1080,6 +1082,10 @@ impl SettingsPane {
         .detach();
         cx.observe_global::<notifications::State>(|_, cx| cx.notify())
             .detach();
+        cx.observe_global::<super::mini::CustomPets>(|_, cx| cx.notify())
+            .detach();
+        cx.observe_global::<super::mini::MiniOpen>(|_, cx| cx.notify())
+            .detach();
         Self {
             storage: cx.new(|cx| storage::StoragePage::new(page.clone(), cx)),
             page,
@@ -1090,6 +1096,7 @@ impl SettingsPane {
             git_fields: Vec::new(),
             git_saved_until: Default::default(),
             appearance: Default::default(),
+            pets: Default::default(),
             efforts: None,
         }
     }
@@ -1643,6 +1650,9 @@ impl Render for SettingsPane {
         }
         if section == "Connections" {
             return super::connections::render(window, cx);
+        }
+        if section == "Mini & Pets" {
+            return self.render_pets(&t, window, cx);
         }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {

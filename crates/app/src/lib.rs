@@ -40,6 +40,7 @@ pub mod oauth;
 pub mod onboarding;
 mod permissions;
 mod personalization;
+mod pets;
 mod pull_requests;
 pub mod qa;
 mod routes;
@@ -726,6 +727,7 @@ impl Root {
         usage::install(this.clone(), cx);
         account_backend::install(this.clone(), cx);
         notifications::install(this.clone(), cx);
+        pets::install(cx);
         settings_git::init(this.clone(), cx);
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {
@@ -8922,6 +8924,14 @@ impl Render for Root {
                     this.open_plugin_creator(window, cx);
                 },
             ))
+            .on_action(
+                cx.listener(|this, _: &settings::pets::CreatePet, window, cx| {
+                    this.create_pet(window, cx);
+                }),
+            )
+            .on_action(cx.listener(|_, _: &settings::pets::RefreshPets, _, cx| {
+                pets::reload(cx);
+            }))
             .on_action(cx.listener(|this, _: &LogOut, window, cx| {
                 if !this.logout_pending {
                     let email = this.account_email.clone();
