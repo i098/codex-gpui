@@ -276,6 +276,7 @@ impl Bridge {
         (Self::new(backend, sink, None, false), events)
     }
 
+    /// The bridge over a pipe pair, for tests and embedding.
     pub fn from_io(
         read: impl Read + Send + 'static,
         write: impl Write + Send + 'static,
