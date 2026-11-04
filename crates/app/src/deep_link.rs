@@ -335,6 +335,7 @@ fn settings(sub: &[&str], params: &Params<'_>) -> Link {
             },
             _ => Link::Settings(Some("Worktrees")),
         },
+        ["trusted-contact"] => Link::Settings(Some("Trusted contact")),
         _ => Link::Settings(None),
     }
 }
