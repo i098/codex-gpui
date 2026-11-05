@@ -116,10 +116,20 @@ const STATES = {
     // The hunk body does not render here (header row only); README explains why.
     await d.waitFor(`/Last [Tt]urn/.test(document.body.innerText)`, "diff panel");
   },
+  // The Changes header's `Changes options` menu.
+  "diff-menu": async (d) => {
+    await STATES.diff(d);
+    await d.click(byText("Changes options"));
+    await d.waitFor(`document.body.innerText.includes("Copy git apply command")`, "Changes options menu");
+  },
   settings: async (d) => {
     await d.click(byText("Open profile menu"));
     await d.click(byText("Settings"));
     await d.waitFor(`document.body.innerText.includes("Default permissions")`, "settings general");
+  },
+  "profile-menu": async (d) => {
+    await d.click(byText("Open profile menu"));
+    await d.waitFor(`document.querySelector("[role=menu]")?.innerText.includes("Log out")`, "profile menu");
   },
   automations: async (d) => {
     await d.click(byText("Scheduled"));

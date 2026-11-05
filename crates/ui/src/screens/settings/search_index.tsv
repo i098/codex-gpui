@@ -1,0 +1,645 @@
+Configuration	High
+Configuration	Max
+Configuration	Medium
+Configuration	Minimal
+Configuration	None
+Configuration	Persistent
+Configuration	Ultra
+Configuration	Extra High
+Configuration	Extended
+Configuration	Standard
+Configuration	Agent defaults
+Configuration	Approval policy
+Configuration	Edit your config to customize agent behavior
+Configuration	Output detail
+Configuration	Include more detail in responses
+Configuration	Keep responses concise
+Configuration	Balance detail and brevity
+Configuration	Allow network access
+Configuration	Reasoning summary
+Configuration	Let the model choose the summary detail
+Configuration	Show a brief reasoning summary
+Configuration	Show a more detailed reasoning summary
+Configuration	Don't show reasoning summaries
+Configuration	Sandbox settings
+Configuration	Managed by admin policy
+Configuration	Web search
+Configuration	Use OpenAI's maintained search index
+Configuration	Don't allow web search
+Configuration	Allow indexed external web access
+Configuration	Allow unrestricted, current web access
+Configuration	Custom config.toml settings
+Configuration	Current version:
+Configuration	Run diagnostics or reinstall if tool calls fail
+Configuration	Checks the current bundle and records diagnostic logs
+Configuration	Diagnose issues in Codex Workspace
+Configuration	Allow ChatGPT to install and expose bundled Node.js and Python tools
+Configuration	Codex dependencies
+Configuration	Downloads a fresh bundle, installs it, and reloads tools
+Configuration	Reset and install Workspace
+Configuration	Workspace Dependencies
+Configuration	Choose which reasoning effort levels appear in model controls. Availability varies by model
+Configuration	Available reasoning efforts
+Configuration	Model features
+Configuration	Choose how ChatGPT works on your tasks
+Configuration	Allow Codex to ask questions outside Plan mode. Changes apply only to new threads
+Configuration	Request user input
+Configuration	Allow ChatGPT to use installed plugins
+Configuration	Plugins
+Usage & billing	Open analytics
+Usage & billing	Analytics has moved
+Usage & billing	See what used each of your plan limits
+Usage & billing	Plan usage history
+Usage & billing	Compare each chat’s plan and credit usage
+Usage & billing	Top chats
+Usage & billing	Compare total usage by day, including plan usage and credits.
+Usage & billing	See how plan usage and credits were consumed in Work, Codex, and other agentic tasks. Conversations in Chat are not included.
+Usage & billing	Usage history
+Usage & billing	Tool activity time range
+Usage & billing	See which plugins and skills were used over time
+Usage & billing	Tool activity
+Usage & billing	Credits used
+Usage & billing	Credits history time range
+Usage & billing	Credits history
+Usage & billing	Group credit usage history
+Usage & billing	Credit usage history time range
+Usage & billing	Track credits usage over time
+Usage & billing	Credit usage history
+Usage & billing	Credits spent
+Usage & billing	Credits usage history
+Usage & billing	Lines of code
+Usage & billing	Group messages by model or surface
+Usage & billing	Messages
+Usage & billing	Messages time range
+Usage & billing	Track the number of messages sent over time
+Usage & billing	Group personal usage by product or model
+Usage & billing	Plan usage
+Usage & billing	Personal usage history time range
+Usage & billing	Plugins called
+Usage & billing	Plugin calls
+Usage & billing	See how your activity varies across products and models
+Usage & billing	Product activity
+Usage & billing	Skills used
+Usage & billing	Spend in USD
+Usage & billing	Group spend history
+Usage & billing	Spend history time range
+Usage & billing	Track spend in USD over time
+Usage & billing	Spend history
+Usage & billing	Spend
+Usage & billing	Tokens by model
+Usage & billing	Tokens used
+Usage & billing	Filter token usage history by model
+Usage & billing	Token usage history time range
+Usage & billing	Track token usage over time
+Usage & billing	Token usage history
+Usage & billing	Total tokens
+Usage & billing	Group turns by model or surface
+Usage & billing	Turns and lines of code time range
+Usage & billing	Turns
+Usage & billing	Usage data is approximate and may be delayed by up to 6 hours
+Usage & billing	Work and Codex chats active in the last 30 days ranked by lifetime credits
+Usage & billing	Work and Codex chats active in the last 30 days ranked by lifetime spend
+Appearance	Use the full page width, just for you
+Appearance	Full width pages
+Appearance	Adjust the base size used for pages
+Appearance	Content font size
+Appearance	Automatically format quotes, dashes, ellipses, arrows, and math symbols as you type
+Appearance	Smart punctuation
+Appearance	Choose a theme, colors, and font for each
+Appearance	Adjust the base size used for ChatGPT
+Appearance	Adjust the base size used for code across chats and diffs
+Appearance	Show changes using colors or +/− markers
+Appearance	Diff markers
+Appearance	Dock icon
+Appearance	Choose the icon the app will use in the dock
+Appearance	Use native macOS font anti-aliasing
+Appearance	Font smoothing
+Appearance	Reduce animations or match your system
+Appearance	Reduce motion
+Appearance	Change the cursor to a pointer when hovering over interactive elements
+Appearance	Use pointer cursors
+Appshots	Hotkey
+Appshots	When Mini isn’t visible, Appshots use your chosen destination
+Appshots	Use Mini when visible
+Appshots	Appshots walkthrough video
+Appshots	Uses the current chat if used recently, otherwise starts a new chat
+Appshots	Choose where appshots go when you use the hotkey
+Appshots	Appshot destination
+Appshots	Always use the current chat
+Appshots	Always start a new chat
+Appshots	Appshots include visual and text content, including text scrolled offscreen
+Appshots	Take an appshot to show ChatGPT your frontmost window
+Appshots	Play sound effect
+Usage & billing	Use another payment method if your default payment method fails
+Usage & billing	Billing schedule options
+Usage & billing	If you cancel, access to your plan features will end immediately
+Usage & billing	If you cancel, you'll keep full access to your plan features until the end of your billing period
+Usage & billing	Cancel plan
+Usage & billing	Intelligence for everyday tasks
+Usage & billing	Check the tax ID and update it if needed
+Usage & billing	We couldn’t verify your tax ID
+Usage & billing	Transaction history
+Browser	Always ask
+Browser	Always allow
+Browser	Autofill and passwords
+Browser	Always include
+Browser	Screenshots help ChatGPT better understand and address comments, but increase plan usage
+Browser	Annotation screenshots
+Browser	Only on drag selection
+Browser	Cached images and files
+Browser	Clear browsing history, site data, cache, and download history from the in-app browser
+Browser	Browsing data
+Browser	Cookies
+Browser	Download history
+Browser	Browsing history
+Browser	Site data
+Browser	Try searching for a different page or address
+Browser	Add, delete, and edit saved addresses, phone numbers, and email addresses
+Browser	Contact info
+Browser	Contact info settings
+Browser	Let ChatGPT control the built-in browser
+Browser	Developer mode
+Browser	Files downloaded from the built-in browser will appear here
+Browser	Try searching for a different filename or address
+Browser	View and manage files downloaded from the built-in browser
+Browser	Location
+Browser	Show a save dialog for downloads you start in the built-in browser
+Browser	Ask where to save downloads
+Browser	Downloads
+Browser	Install, remove, and configure browser extensions
+Browser	Extension manager
+Browser	Extensions
+Browser	Extensions settings
+Browser	Elevated risk
+Browser	Enable full CDP access
+Browser	General
+Browser	View and manage pages visited in the built-in browser
+Browser	Ask before accessing history
+Browser	Do not allow access to history
+Browser	Disable
+Browser	History
+Browser	History access is disabled by your organization
+Browser	Access history without asking
+Browser	Choose whether ChatGPT can access your built-in browser history
+Browser	Where local development sites open by default
+Browser	Default browser
+Browser	Codex
+Browser	Local URL open destination
+Browser	Add, delete, and edit saved passwords
+Browser	Password manager
+Browser	Password manager settings
+Browser	Permissions
+Browser	Agent permissions
+Browser	Browser permissions
+Browser	Manage your Browser Use preferences and site access.
+Browser	Import from your browser
+Browser	Include the path, query, and fragment in the address bar
+Browser	Show full URL
+Browser	Uses the default permission
+Browser	Choose default permissions and add exceptions for specific sites
+Browser	Control camera and microphone permissions in the built-in browser
+Browser	Site settings
+Browser	Allow ChatGPT to discover and call tools provided by websites, including WebMCP, unless you set a different permission for a site
+Browser	Use site tools by default
+Browser	Site tools aren't available for this account
+Browser	Web URL and link open destination
+Computer history	History
+Computer history	ChatGPT can summarize your activity across the apps and websites you use without ever recording your screen or audio.
+Computer history	Let ChatGPT follow your work
+Computer history	Choose which apps and websites to exclude or include in computer history
+Computer history	Permissions
+Code Review	If a repository’s review setting differs from your personal preference, the repository setting takes priority
+Code Review	Automatic review
+Code Review	Allow credits to be consumed for reviews after rate limits
+Code Review	Use credits for reviews
+Code Review	Keep looking for findings until ChatGPT stops finding new issues
+Code Review	Exhaustive code review
+Code Review	Personal preferences
+Code Review	Choose when ChatGPT should review your pull requests
+Code Review	Review trigger
+Code Review	Choose a repository to configure its automatic reviews
+Code Review	Search repositories
+Code Review	Repositories
+Code Review	Choose the lowest severity Codex should report for automated reviews
+Code Review	Choose the lowest finding severity that should fail the Security Review GitHub check
+Code Review	Review code
+Code Review	Add review guidelines to AGENTS.md in this repository
+Code Review	Review instructions
+Code Review	Choose the lowest severity Codex should report for reviews requested with @codex
+Code Review	Publish a GitHub check that fails when Security Review reports a finding at or above the blocking severity. To block merges, also require this check in GitHub.
+Code Review	Override reporting severity for specific repository paths
+Code Review	Review security vulnerabilities
+Code Review	Manage how Codex reviews this repository
+Code Review	File path is relative to the repository root. If not specified, Codex generates a threat model for every review.
+Code Review	Automatic security review
+Code Review	Choose the lowest severity reported for automated reviews
+Code Review	Minimum automatic review reporting severity
+Code Review	Use credits for security reviews
+Code Review	Choose the lowest severity reported for reviews requested with @codex
+Code Review	Minimum manual review reporting severity
+Code Review	Personal security review preferences
+Code Review	Choose when Codex should review your pull requests for security
+Code Review	Security review trigger
+Code Review	App preferences
+Code Review	Open review links in
+Code Review	Repository access
+Code Review	Added to reviews you start in Code Review, across all repositories
+Codex Cloud	Save your own environment variables and network secrets for cloud environments in this workspace
+Codex Cloud	Personal vault
+Codex Cloud	Set up cloud environments with the repositories, tools, and settings Codex needs to work on your projects
+Codex Cloud	Search environments
+Codex Cloud	Publish to make available
+Computer use	Always ask
+Computer use	Always allow
+Computer use	Developer mode
+Computer use	Elevated risk
+Computer use	Enable full CDP access
+Computer use	Ask before accessing history
+Computer use	Choose if ChatGPT asks for approval before accessing your browser's history
+Computer use	Do not allow access to history
+Computer use	Disable
+Computer use	History
+Computer use	History access is disabled by your organization
+Computer use	Access history without asking
+Computer use	Permissions
+Computer use	Agent permissions
+Computer use	Browser permissions
+Computer use	Uses the default permission
+Computer use	Choose default permissions and add exceptions for specific sites
+Computer use	Allow ChatGPT to discover and call tools provided by websites, including WebMCP, unless you set a different permission for a site
+Computer use	Use site tools by default
+Computer use	Site tools aren't available for this account
+Computer use	None yet
+Computer use	Always-allowed apps
+Computer use	Let ChatGPT control apps on your computer
+Computer use	Any App
+Computer use	Locked use
+Computer use	Use a browser extension for added control
+Computer use	Google Chrome
+Computer use	Microsoft Edge
+Computer use	Control
+Computer use	Let ChatGPT read and send messages
+Computer use	Messages
+Computer use	Saved choices, including Never allow, don't apply
+Computer use	Allow reading chats without a saved choice
+Computer use	Ask before reading chats without a saved choice
+Computer use	ChatGPT asks before reading chats without a saved choice to answer your requests
+Computer use	ChatGPT can read chats without a saved choice to answer your requests
+Computer use	Reading behavior
+Computer use	Read access
+Computer use	When on, ChatGPT can send to any chat without asking you to approve the message or its recipients
+Computer use	Send access
+Computer use	Let ChatGPT use Microsoft Excel add-in for additional control
+Computer use	Microsoft Excel
+Computer use	Let ChatGPT use Microsoft PowerPoint add-in for additional control
+Computer use	Microsoft PowerPoint
+Computer use	Let ChatGPT use Microsoft Word add-in for additional control
+Computer use	Microsoft Word
+Computer use	Set up extensions for more browsers
+Computer use	More browsers
+Computer use	Safari extension support is coming soon
+Computer use	Safari
+Computer use	Manage how ChatGPT uses other applications on your computer
+Connections	Edit connection
+Connections	Connection color
+Connections	Scan QR code to set up a new phone or manage existing connections
+Connections	Remote
+Connections	Set up Remote
+Connections	Pairing QR code
+Connections	OpenAI API key
+Connections	Manage browser remote control environments
+Connections	Devices you can control from this Mac
+Connections	Access and control other devices from this computer
+Connections	Authenticate the Codex CLI on this remote machine to continue
+Connections	Login required
+Connections	Allow ChatGPT apps signed into your account to use this device
+Connections	Approve on your device to use this connection remotely
+Connections	Please update ChatGPT on the remote device to the latest version
+Connections	Requires authorization · Offline
+Connections	Requires authorization
+Connections	Connecting
+Connections	Connection failed
+Connections	Disconnected
+Connections	Initializing secure connection
+Connections	Offline
+Connections	Connected
+Connections	Signed in device
+Connections	Waiting for device
+Connections	SSH
+Connections	WSL
+Connections	Prevent sleep when computer is plugged in and remote access is enabled
+Connections	Keep this Mac awake
+Connections	Other settings
+Connections	Authorized devices on your ChatGPT account can discover and control this device
+Connections	Allow this device to be discovered and controlled
+Connections	Devices that can control this Mac
+Connections	Control this Mac from your phone or other device
+Connections	SSH connections from this Mac
+Connections	WSL connections
+Connections	Display name
+Data controls	Ads controls
+Data controls	Apps with access
+Data controls	Contact information
+Data controls	Information shared with apps
+General	Show alerts when your dot sends you a message
+General	Enable dot notifications
+General	Show alerts when notification permissions are required
+General	Enable permission notifications
+General	Show alerts when input is needed to continue
+General	Enable question notifications
+General	Choose notification sound
+General	Sound for task completion, permission requests, and questions
+General	Notification sound
+General	Turn on notifications in System Settings to use the options below
+General	Set when ChatGPT alerts you that it's finished
+General	Turn completion notifications
+General	1.5x speed, increased usage
+General	Fast
+General	Default speed
+General	Standard
+General	The fastest available responses for latency-sensitive work
+General	Ultrafast
+General	Suggested prompts
+General	Suggest what to do next by searching project files and connected apps
+General	Enable ambient suggestions
+General	By default, ChatGPT can read and edit files in its workspace. It can ask for additional access when needed
+General	Default permissions
+General	Full access
+General	Permissions
+General	Choose how quickly ChatGPT runs across chats, subagents, and compaction
+General	faster speed, increased usage
+General	Speed
+General	Choose where the agent runs on Windows
+General	Agent environment
+General	Run the agent directly in Windows
+General	Run the agent inside WSL
+General	Show the bottom panel control in the app header
+General	Bottom panel
+General	Composer
+General	Keep code, Markdown, and links as literal text while writing messages
+General	Plain text composer
+General	Show context window usage
+General	Daybreak Blue
+General	Daybreak Access
+General	How to use Daybreak
+General	Daybreak Red
+General	Choose where the terminal shortcut and environment actions open terminal tabs
+General	Default terminal location
+General	Start new tasks with Chat and content in a single tab strip
+General	Full view by default
+General	Try new desktop features and receive early app updates
+General	Desktop app beta features
+General	Show educational tips
+General	Send shortcut
+General	Set a global shortcut for Popout Window. Leave unset to keep it off.
+General	Popout Window hotkey
+General	Follow-up behavior
+General	General
+General	In-app updates
+General	Show in menu bar
+General	Predict your next message based on the conversation
+General	Show predictions
+General	Allow ChatGPT to use installed plugins
+General	Plugins
+General	Start new chats outside of any project
+General	Default to standalone chat
+General	Prevent sleep while running
+General	The location where tasks started outside of projects store their data by default.
+General	Projectless task folder
+General	Compress local chat history
+General	Where files and folders open by default
+General	Default file open destination
+General	Language for the app UI
+General	Language
+General	Choose which shell opens in the integrated terminal.
+General	Integrated terminal shell
+General	Third-party notices for bundled dependencies
+General	Open source licenses
+General	Animate conversation rails with system audio. Audio is processed on your device, never saved or uploaded.
+General	Audio visualizer
+General	Let Codex fire confetti in the app when you ask!
+General	Confetti cannon
+General	Toys
+Git	Start /review in the current chat when possible or launch a separate review chat
+Git	Review delivery
+Git	Prefix used when ChatGPT creates new branches
+Git	Branch prefix
+Git	Added to commit message generation prompts
+Git	Commit instructions
+Git	Use draft pull requests by default when creating PRs from ChatGPT
+Git	Create draft pull requests
+Git	Use --force-with-lease when pushing from ChatGPT
+Git	Always force push
+Git	Added to PR title/description generation prompts
+Git	Pull request instructions
+Git	Choose how ChatGPT merges pull requests
+Git	Pull request merge method
+Git	Continue watching until the pull request is merged
+Git	Auto-merge when ready
+Git	Watch and fix pull requests
+Git	Only show "Last Turn" in the Changes panel and disable Unstaged/Staged/Branch to avoid git operations
+Git	Disable Git-based diffs
+Hooks	Configured hooks will appear here
+Hooks	No hooks found
+Hooks	When a turn is interrupted
+Hooks	When permission is requested
+Hooks	After ChatGPT compacts the conversation
+Hooks	After a tool executes
+Hooks	Before ChatGPT compacts the conversation
+Hooks	Before a tool executes
+Hooks	When a session ends
+Hooks	When a new session starts
+Hooks	Right before ChatGPT ends its turn
+Hooks	When a subagent starts
+Hooks	When a subagent stops
+Hooks	When the user submits a prompt
+Hooks	Loading hooks…
+Keyboard shortcuts	Press the new key sequence
+Keyboard shortcuts	Hold the assigned keys while clicking a web link to open it in your default system browser
+Keyboard shortcuts	Open web link in default browser
+Keyboard shortcuts	Number shortcuts
+Worktrees	Remove local project
+Worktrees	Edit project
+Worktrees	Actions
+Worktrees	Runs at the project root on worktree creation
+Worktrees	These actions can run any command and will be displayed in the header
+Worktrees	Runs at the project root before worktree cleanup
+Worktrees	Cleanup script
+Worktrees	This script runs on worktree creation
+Worktrees	Source workspace path
+Worktrees	Setup script environment variables
+Worktrees	New worktree path
+Worktrees	Available projects
+Worktrees	Loading environment
+Worktrees	Select a project
+MCP servers	Clear site data and cache from all MCP apps
+MCP servers	App data
+MCP servers	MCP Apps
+MCP servers	Type
+MCP servers	Connect external tools and data sources
+Parental controls	Family members
+Passwords	Manage saved website logins
+Passwords	Passwords
+Personalization	Generate memories from chats that used MCP tools or web search
+Personalization	Save About you
+Personalization	About you
+Personalization	AGENTS.md
+Personalization	Codex instructions
+Personalization	Custom instructions
+Personalization	Instructions for Codex synced across desktop and web
+Personalization	Codex memory
+Personalization	Default rules
+Personalization	Delete rule?
+Personalization	Plugin permissions
+Personalization	Custom rules
+Personalization	Let ChatGPT use your chats, Library files, and connected apps to write in your style
+Personalization	Reference my writing style
+Personalization	Retry updating writing style
+Mini & Pets	The lightweight Codex companion
+Mini & Pets	Create pet
+Mini & Pets	None
+Mini & Pets	My pets
+Mini & Pets	Appearance
+Mini & Pets	Create your own pet
+Mini & Pets	Create
+Mini & Pets	Custom pets
+Mini & Pets	Mini manages threads and surfaces what needs attention
+Mini & Pets	Pick a pet
+Mini & Pets	Customize pet
+Mini & Pets	Adjust the size of your pet
+Mini & Pets	Keep your Mini on your desktop
+Mini & Pets	Choose whether your Mini stays on your desktop or appears on demand
+Plugins	Choose when ChatGPT should ask for permission when using this plugin
+Plugins	Connected accounts
+Plugins	Apps
+Plugins	App setup
+Plugins	Run deterministic scripts during the task lifecycle
+Plugins	Hooks
+Plugins	MCP servers
+Plugins	This plugin could not be loaded from its marketplace entry.
+Plugins	Settings
+Plugins	Manage plugins, skills, and MCPs
+Plugins	Git ref
+Plugins	Source
+Plugins	Sparse paths
+Plugins	Add plugin marketplace
+Plugins	No description
+Plugins	Host
+Plugins	Choose another host to browse and manage plugins
+Plugins	Plugins are not available for this host
+Plugins	Search apps
+Plugins	Search marketplaces
+Plugins	Search MCP servers
+Plugins	Search plugins
+Plugins	Search skills
+Storage	Restore or delete individual archived chats
+Storage	Review chats and their subagents before permanently deleting them
+Storage	Clean up old chats
+Storage	Manage chats and worktrees stored on this computer
+Storage	Codex home
+Storage	Review working copies and choose how many old worktrees to keep
+Trusted contact	Phone number
+Trusted contact	Learn more
+Trusted contact	What to expect
+Trusted contact	Who to invite
+Trusted contact	Invite a trusted contact
+Trusted contact	Invitation sent
+Trusted contact	Email
+Trusted contact	Name
+Trusted contact	Phone
+Trusted contact	Couldn’t add trusted contact
+Usage & billing	Usage remaining
+Usage & billing	Monthly reload limit (optional)
+Usage & billing	Maximum monthly spend (optional)
+Usage & billing	Target balance
+Usage & billing	Minimum balance
+Usage & billing	How your activity draws down your allowance
+Usage & billing	Recent plan usage
+Usage & billing	Shared workspace credits let you keep using Work and Codex beyond included usage.
+Usage & billing	Monthly credit limits are set by your workspace owner.
+Usage & billing	Shared workspace credits let you keep using Work and Codex beyond included usage. Monthly credit limits are set by your workspace owner.
+Usage & billing	Automatic reload
+Usage & billing	Buy credits for someone else
+Usage & billing	Buy credits to continue using Work and Codex when you reach usage limits
+Usage & billing	Your remaining credits
+Usage & billing	Credits
+Usage & billing	Applies to apps you’ve allowed to use your ChatGPT plan.
+Usage & billing	Allow other apps to use credits after reaching your usage limit
+Usage & billing	Credits power Codex. Valid for 12 months. View rate card
+Usage & billing	Add credits
+Usage & billing	Automatically add credits when your balance runs low
+Usage & billing	Minimum reload amount
+Usage & billing	Manage auto-reload
+Usage & billing	Auto-reload
+Usage & billing	Set up auto-reload
+Usage & billing	Purchase credits so you can continue using Codex if your usage runs out. View rate card
+Usage & billing	One time credit purchase
+Usage & billing	Reset your usage limits now
+Usage & billing	How buying a reset works
+Usage & billing	Daily usage limit
+Usage & billing	5 hour usage limit
+Usage & billing	Usage limit
+Usage & billing	Monthly limit
+Usage & billing	Monthly usage limit
+Usage & billing	Shared across Codex, Work, Workspace Agents, and ChatGPT for Excel. Chat conversations are not included.
+Usage & billing	Plan limits
+Usage & billing	Justification
+Usage & billing	GPT-5.3-Codex-Spark usage limits
+Usage & billing	General usage limits
+Usage & billing	Weekly usage limit
+Usage & billing	Your plan
+Usage & billing	Allow Codex to use resets
+Usage & billing	Use a reset to restore your 5-hour limit, weekly limit, or both
+Usage & billing	Usage reset
+Usage & billing	Usage limit resets
+Usage & billing	Confirm plan changes
+Usage & billing	Set limits for each app’s use of your ChatGPT plan and credits.
+Usage & billing	App limits
+Usage & billing	Usage sections
+Voice	Words or phrases dictation should recognize
+Voice	Dictation dictionary
+Voice	Recent recordings
+Voice	Hold to dictate, or double-tap for hands-free
+Voice	Dictation shortcut
+Voice	Press once to start, and again to finish
+Voice	Single-tap shortcut
+Voice	Used for voice chat and dictation
+Voice	Microphone
+Voice	Your account or workspace does not have access to voice chat
+Voice	Voice chat unavailable
+Voice	Easygoing and versatile
+Voice	Animated and earnest
+Voice	Composed and direct
+Voice	Choose the voice Codex uses for new voice chats
+Voice	Confident and optimistic
+Voice	Open and upbeat
+Voice	Voice
+Voice	Cheerful and candid
+Voice	Savvy and relaxed
+Voice	Calm and affirming
+Voice	Bright and inquisitive
+Voice	Start voice chat from anywhere on desktop
+Voice	Voice chat hotkey
+Voice	Let Codex inspect the foreground app when you refer to what's on screen. macOS asks for access the first time Codex needs it
+Voice	Screen context
+Voice	Dictation is not available in your current configuration
+Voice	Dictation unavailable
+Voice	Play sounds when dictation starts and stops
+Voice	Dictation sounds
+Voice	Toggle dictation sounds
+Voice	Voice dictionary
+Configuration	Ask for approval
+Configuration	Approve for me
+Configuration	Follow your saved Work settings
+Configuration	Loading…
+Configuration	Applies to native Work tasks. Classic Work currently forwards only on-request approvals
+Worktrees	Directory where ChatGPT creates managed worktrees. Leave blank to use the default location
+Worktrees	Worktree root
+Worktrees	Recommended for most users. Turn this off only if you want to manage old worktrees and disk usage yourself.
+Worktrees	Automatically delete old worktrees
+Worktrees	No worktrees yet
+Worktrees	Auto-delete limit
+Worktrees	Starts a fresh chat using the same files and branch
+Worktrees	Worktree
+Worktrees	Codex normally picks up branch updates during regular Git activity. This also fetches before each new worktree.
+Worktrees	Always fetch upstream before creating worktrees
