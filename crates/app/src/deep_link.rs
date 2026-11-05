@@ -339,6 +339,7 @@ fn settings(sub: &[&str], params: &Params<'_>) -> Link {
         ["trusted-contact"] => Link::Settings(Some("Trusted contact")),
         ["security"] => Link::Settings(Some("Security")),
         ["ads-controls"] => Link::Settings(Some("Ads controls")),
+        ["passwords"] => Link::Settings(Some("Passwords")),
         ["chronicle"] => Link::Settings(Some("Computer history")),
         ["code-review"] => Link::Settings(Some("Code Review")),
         [] => Link::Settings(None),

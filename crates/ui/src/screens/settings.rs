@@ -57,6 +57,7 @@ mod code_review;
 pub mod computer_history;
 mod languages;
 pub mod parental_controls;
+mod passwords;
 pub mod personalization;
 pub mod security_settings;
 pub mod pets;
@@ -1774,6 +1775,9 @@ impl Render for SettingsPane {
         }
         if section == "Ads controls" {
             return ads_controls::render(window, cx);
+        }
+        if section == "Passwords" {
+            return passwords::render(window, cx);
         }
         if section == "Parental controls" {
             return parental_controls::render(window, cx);
