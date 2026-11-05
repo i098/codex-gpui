@@ -28,7 +28,7 @@ fn contains_ignore_ascii_case(text: &str, query: &str) -> bool {
 
 type Shortcut = crate::screens::settings::keyboard_shortcuts::Shortcut;
 
-type ArtworkCache = Rc<
+pub(crate) type ArtworkCache = Rc<
     RefCell<
         Option<(
             Bounds<Pixels>,
@@ -138,6 +138,8 @@ pub enum Kind {
     Shortcuts,
     CloseWindow,
     FullAccess,
+    /// `Make Full Access available?` before Settings shows Full access in the composer.
+    FullAccessAvailable,
     LogOut,
     RevertChanges,
     ModelAnnouncement,
@@ -158,16 +160,26 @@ pub enum Kind {
     BranchConflict,
     DiscardInstructions,
     DeleteMemories,
+    /// `Chat memories` from `/memories` (`composer.memoriesSlashCommand`).
+    ChatMemories,
     WritingStyle,
+    /// `Hook stats` from a finished turn's actions (`hook-stats-dialog`).
+    HookStats,
 }
 
 #[derive(Clone)]
 pub enum Outcome {
     Dismiss,
     FullAccess,
+    FullAccessAvailable,
     LogOut,
     DiscardInstructions,
     DeleteMemories,
+    /// A `Chat memories` switch changed; the dialog stays open.
+    ChatMemories {
+        use_memories: bool,
+        generate: bool,
+    },
     DismissAnnouncement(SharedString),
     UseAnnouncedModel {
         model: SharedString,
@@ -179,10 +191,12 @@ pub enum Outcome {
     RevertChanges {
         do_not_ask_again: bool,
     },
-    /// `Save` or Enter in `Rename chat`: `thread/name/set` of `thread` to `name`.
+    /// `Save` or Enter in `Rename chat`: `thread/name/set` of `thread` to `name`, and the
+    /// picked `emoji` (`None` clears it).
     Rename {
         thread: String,
         name: String,
+        emoji: Option<String>,
     },
     SectionName {
         section: Option<String>,
@@ -262,6 +276,20 @@ struct BranchForm {
     conflicts: Vec<String>,
 }
 
+/// The `Chat memories` switches. `Use memories` is fixed once the chat has started.
+struct ChatMemories {
+    started: bool,
+    use_memories: bool,
+    generate: bool,
+}
+
+/// The `Hook stats` runs of one turn; each `<details>` row opens on its own.
+struct HookStatsForm {
+    stats: crate::screens::thread::view::HookStats,
+    open: Vec<bool>,
+    rows: Vec<FocusHandle>,
+}
+
 pub struct Dialog {
     kind: Kind,
     controls: [FocusHandle; 7],
@@ -287,7 +315,13 @@ pub struct Dialog {
     commit: Option<CommitForm>,
     branch: Option<BranchForm>,
     writing: Option<WritingSetup>,
+    memories: Option<ChatMemories>,
+    hook_stats: Option<HookStatsForm>,
     shortcuts: Vec<Shortcut>,
+    /// `Rename`: the chat's emoji (the original's `sidebar-thread-metadata` `emoji`), and
+    /// whether its `Choose emoji` picker is open.
+    emoji: Option<String>,
+    emoji_open: bool,
 }
 impl EventEmitter<Outcome> for Dialog {}
 impl Focusable for Dialog {
@@ -329,11 +363,15 @@ impl Dialog {
             commit: None,
             branch: None,
             writing: None,
+            memories: None,
+            hook_stats: None,
             shortcuts: if kind == Kind::Shortcuts {
                 crate::screens::settings::keyboard_shortcuts::active_shortcuts(cx)
             } else {
                 Vec::new()
             },
+            emoji: None,
+            emoji_open: false,
         }
     }
 
@@ -633,7 +671,7 @@ impl Dialog {
                         } else {
                             &WRITING_ARTWORK_LIGHT
                         },
-                        px(20.),
+                        top(px(20.)),
                         shapes::Corner::Squircle,
                     )),
             )
@@ -947,12 +985,403 @@ impl Dialog {
             ..Self::new(Kind::LogOut, cx)
         }
     }
-    /// `Rename chat` for `thread`, its input prefilled with `title` and all of it selected.
-    pub fn rename(thread: String, title: String, cx: &mut Context<Self>) -> Self {
+    /// `Chat memories` for the open chat (`started`) or for the chat the composer starts.
+    pub fn chat_memories(
+        started: bool,
+        use_memories: bool,
+        generate: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            selected: usize::from(started),
+            memories: Some(ChatMemories {
+                started,
+                use_memories,
+                generate,
+            }),
+            ..Self::new(Kind::ChatMemories, cx)
+        }
+    }
+
+    pub fn hook_stats(
+        stats: crate::screens::thread::view::HookStats,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            hook_stats: Some(HookStatsForm {
+                open: vec![false; stats.runs.len()],
+                rows: stats.runs.iter().map(|_| cx.focus_handle()).collect(),
+                stats,
+            }),
+            ..Self::new(Kind::HookStats, cx)
+        }
+    }
+
+    fn toggle_hook_run(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(open) = self.hook_stats.as_mut().and_then(|f| f.open.get_mut(index)) {
+            *open = !*open;
+            cx.notify();
+        }
+    }
+
+    /// Which `Hook stats` runs are open, in list order.
+    pub fn hook_runs_open(&self) -> Option<Vec<bool>> {
+        self.hook_stats.as_ref().map(|f| f.open.clone())
+    }
+
+    /// `Tab` walks the list, each run's summary, then `Close dialog`, like the original's
+    /// `<ul tabIndex=0>`, `<summary>` rows and close button; `Enter` and `Space` open a focused
+    /// run or close, arrows scroll the list.
+    fn hook_stats_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let form = self.hook_stats.as_ref().expect("hook stats");
+        let handles: Vec<FocusHandle> = std::iter::once(self.controls[0].clone())
+            .chain(form.rows.iter().cloned())
+            .chain(std::iter::once(self.controls[1].clone()))
+            .collect();
+        let n = handles.len();
+        let focused = handles.iter().position(|h| h.is_focused(window));
+        match e.keystroke.key.as_str() {
+            "escape" => self.dismiss(cx),
+            "tab" => {
+                let next = match focused {
+                    Some(i) if e.keystroke.modifiers.shift => (i + n - 1) % n,
+                    Some(i) => (i + 1) % n,
+                    None => 0,
+                };
+                handles[next].focus(window, cx);
+            }
+            "enter" | "space" => match focused {
+                Some(i) if i == n - 1 => self.dismiss(cx),
+                Some(i) if i > 0 => self.toggle_hook_run(i - 1, cx),
+                _ => {}
+            },
+            key @ ("up" | "down") if focused == Some(0) => {
+                let offset = self.scroll.offset();
+                let step = if key == "up" { 40. } else { -40. };
+                self.scroll.set_offset(point(offset.x, offset.y + px(step)));
+                cx.notify();
+            }
+            _ => return,
+        }
+        cx.stop_propagation();
+    }
+
+    /// `HookStatsDialogContent`: the counts, then the `Run history` list of `<details>` rows.
+    fn hook_stats_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        use crate::screens::settings::integrations::hook_event;
+        use crate::screens::thread::view::hook_stats::{
+            kind_label, no_output, source_label, status_label,
+        };
+        let form = self.hook_stats.as_ref().expect("hook stats");
+        let stats = &form.stats;
+        // Every line but the title is the dialog's `text-sm`: 13 px on an 18.57 px line, weight 430.
+        let line = |s: SharedString, color: gpui::Hsla| text(s, 13., 18.5714, 430., color);
+        let body = |s: String, color: gpui::Hsla| line(s.into(), color).whitespace_normal();
+        let count = |label: &'static str, value: usize| {
+            div()
+                .flex()
+                .justify_between()
+                .gap(px(12.))
+                .child(line(label.into(), t.text_secondary))
+                .child(line(value.to_string().into(), t.text))
+        };
+        let rows = stats.runs.iter().enumerate().map(|(index, run)| {
+            let open = form.open[index];
+            let warn = matches!(run.status.as_str(), "blocked" | "failed");
+            let status_color = if warn {
+                t.text_warning
+            } else {
+                t.text_secondary
+            };
+            let summary = div()
+                .id(("hook-run", index))
+                .track_focus(&form.rows[index])
+                .role(gpui::Role::Button)
+                .aria_label(format!(
+                    "{} {}",
+                    status_label(&run.status),
+                    hook_event(&run.event_name).0
+                ))
+                .aria_expanded(open)
+                .cursor_pointer()
+                .flex()
+                .gap(px(12.))
+                .rounded(px(4.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(icon(
+                            if open {
+                                "navigation-chevron-down"
+                            } else {
+                                "navigation-chevron-right"
+                            },
+                            12.,
+                            status_color,
+                        ))
+                        .child(line(status_label(&run.status).into(), status_color)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_wrap()
+                        .gap_x(px(12.))
+                        .gap_y(px(4.))
+                        .child(body(hook_event(&run.event_name).0.to_owned(), t.text))
+                        .child(line(
+                            source_label(run.source.as_deref()).into(),
+                            t.text_secondary,
+                        )),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| this.toggle_hook_run(index, cx)));
+            div().flex().flex_col().child(summary).when(open, |d| {
+                d.child(
+                    div()
+                        .mt(px(8.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .children(
+                            run.status_message
+                                .clone()
+                                .map(|m| body(m, t.text_secondary)),
+                        )
+                        .children(run.entries.iter().map(|entry| {
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(4.))
+                                .child(line(kind_label(entry).into(), t.text_secondary))
+                                .child(body(
+                                    entry.text.clone(),
+                                    if entry.kind == "error" {
+                                        t.text_warning
+                                    } else {
+                                        t.text
+                                    },
+                                ))
+                        }))
+                        .children(no_output(run).map(|m| body(m.into(), t.text_secondary))),
+                )
+            })
+        });
+        div()
+            .relative()
+            .size_full()
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(text("Hook stats", 20., 28., 600., t.text))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(count("Runs", stats.runs.len()))
+                    .child(count("Blocked", stats.blocked))
+                    .child(count("Failed", stats.failed)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(line("Run history".into(), t.text_secondary))
+                    .child(
+                        div()
+                            .id("hook-runs")
+                            .role(gpui::Role::List)
+                            .aria_label("Run history")
+                            .track_focus(&self.controls[0])
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.scroll)
+                            .flex()
+                            .flex_col()
+                            .gap(px(12.))
+                            .children(rows),
+                    ),
+            )
+            .child(
+                div()
+                    .id("hook-stats-close")
+                    .role(gpui::Role::Button)
+                    .aria_label("Close dialog")
+                    .track_focus(&self.controls[1])
+                    .absolute()
+                    .right(px(16.))
+                    .top(px(16.))
+                    .size(px(24.))
+                    .rounded(px(4.))
+                    .hover(|s| s.bg(t.ghost_hover))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("close", 16., t.text.opacity(0.8)))
+                    .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
+            )
+    }
+
+    /// The `Chat memories` switches `(use_memories, generate)`.
+    pub fn memory_switches(&self) -> Option<(bool, bool)> {
+        self.memories.as_ref().map(|m| (m.use_memories, m.generate))
+    }
+
+    /// Restores `Generate memories` after the app-server refused the change.
+    pub fn set_memory_generate(&mut self, generate: bool, cx: &mut Context<Self>) {
+        if let Some(memories) = &mut self.memories {
+            memories.generate = generate;
+            cx.notify();
+        }
+    }
+
+    fn toggle_memory(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(memories) = &mut self.memories else {
+            return;
+        };
+        match index {
+            0 if !memories.started => memories.use_memories = !memories.use_memories,
+            1 => memories.generate = !memories.generate,
+            _ => return,
+        }
+        cx.emit(Outcome::ChatMemories {
+            use_memories: memories.use_memories,
+            generate: memories.generate,
+        });
+        cx.notify();
+    }
+
+    fn chat_memories_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let memories = self.memories.as_ref().expect("chat memories");
+        let row = |index: usize, label: &'static str, description: &'static str, on: bool| {
+            let disabled = index == 0 && memories.started;
+            div()
+                .id(("memory-switch", index))
+                .role(gpui::Role::Switch)
+                .aria_label(label)
+                .aria_toggled(if on {
+                    gpui::Toggled::True
+                } else {
+                    gpui::Toggled::False
+                })
+                .aria_disabled(disabled)
+                .track_focus(&self.controls[index])
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .p(px(4.))
+                .rounded(px(8.))
+                .border_2()
+                .border_color(if self.selected == index {
+                    rgba(0x3a83f7ff)
+                } else {
+                    rgba(0)
+                })
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(text(label, 14., 20., 500., t.text))
+                        .child(
+                            text(description, 13., 18., 400., t.text_secondary).whitespace_normal(),
+                        ),
+                )
+                .child(crate::screens::settings::switch(
+                    ("memory-switch-track", index),
+                    on,
+                    disabled,
+                    t,
+                ))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.selected = index;
+                    this.controls[index].focus(window, cx);
+                    this.toggle_memory(index, cx);
+                }))
+        };
+        div()
+            .relative()
+            .size_full()
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .child(icon("project-marker-brain", 16., t.text).mt(px(6.)))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(text("Chat memories", 20., 28., 600., t.text))
+                            .child(text(
+                                if memories.started {
+                                    "These switches apply to the current chat"
+                                } else {
+                                    "These switches apply to the chat started from this composer"
+                                },
+                                14.,
+                                20.,
+                                430.,
+                                t.text_secondary,
+                            )),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(row(
+                        0,
+                        "Use memories",
+                        if memories.started {
+                            "Cannot be changed after conversation has started"
+                        } else {
+                            "Let ChatGPT bring existing memories into this chat's context"
+                        },
+                        memories.use_memories,
+                    ))
+                    .child(row(
+                        1,
+                        "Generate memories",
+                        "Allow ChatGPT to use this chat when creating new memories later",
+                        memories.generate,
+                    )),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .bottom(px(20.))
+                    .right(px(20.))
+                    .child(self.button(2, "Done", 72., t, cx)),
+            )
+    }
+
+    /// `Rename chat` for `thread`, its input prefilled with `title` and all of it selected,
+    /// and its leading emoji button showing `emoji`.
+    pub fn rename(
+        thread: String,
+        title: String,
+        emoji: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             query: title,
             select_all: true,
             thread,
+            emoji,
             ..Self::new(Kind::Rename, cx)
         }
     }
@@ -964,7 +1393,7 @@ impl Dialog {
                 Kind::NewSection
             },
             thread: id.unwrap_or_default(),
-            ..Self::rename(String::new(), name, cx)
+            ..Self::rename(String::new(), name, None, cx)
         }
     }
 
@@ -1495,8 +1924,8 @@ impl Dialog {
             (Kind::RevertChanges, 0) => "Cancel",
             (Kind::RevertChanges, 1) => "Confirm",
             (Kind::RevertChanges, _) => "Don't ask again",
-            (Kind::FullAccess, 0) => "Cancel",
-            (Kind::FullAccess, _) => "Confirm",
+            (Kind::FullAccess | Kind::FullAccessAvailable, 0) => "Cancel",
+            (Kind::FullAccess | Kind::FullAccessAvailable, _) => "Confirm",
             (Kind::DeleteTask, 0) => "Cancel",
             (Kind::DeleteTask, _) => "Delete scheduled task",
             (Kind::LogOut, 0) => "Cancel",
@@ -1514,7 +1943,11 @@ impl Dialog {
             (Kind::DeleteMemories, 0) => "Cancel",
             (Kind::DeleteMemories, 1) => "Delete",
             (Kind::DeleteMemories, _) => "Close dialog",
+            (Kind::ChatMemories, 0) => "Use memories",
+            (Kind::ChatMemories, 1) => "Generate memories",
+            (Kind::ChatMemories, _) => "Done",
             (Kind::WritingStyle, _) => "Writing style",
+            (Kind::HookStats, _) => "Hook stats",
             (Kind::ModelAnnouncement, 0) => "Close",
             (Kind::ModelAnnouncement, 1) => "Continue with current model",
             (Kind::ModelAnnouncement, _) => {
@@ -1692,9 +2125,11 @@ impl Dialog {
             }
             (Kind::ScheduleTask, 0 | 4) => {}
             (Kind::FullAccess, 1) => cx.emit(Outcome::FullAccess),
+            (Kind::FullAccessAvailable, 1) => cx.emit(Outcome::FullAccessAvailable),
             (Kind::LogOut, 1) => cx.emit(Outcome::LogOut),
             (Kind::ArchiveSection, 1) => cx.emit(Outcome::ArchiveSection(self.thread.clone())),
             (Kind::DiscardInstructions, 1) => cx.emit(Outcome::DiscardInstructions),
+            (Kind::ChatMemories, 0 | 1) => self.toggle_memory(self.selected, cx),
             (Kind::DeleteMemories, 1) => {
                 self.saving = true;
                 cx.emit(Outcome::DeleteMemories);
@@ -1720,6 +2155,7 @@ impl Dialog {
             (Kind::Rename, 0 | 1) => cx.emit(Outcome::Rename {
                 thread: self.thread.clone(),
                 name: self.query.clone(),
+                emoji: self.emoji.clone(),
             }),
             (Kind::NewSection | Kind::EditSection, 0 | 1) => {
                 let name = self.query.trim();
@@ -1813,6 +2249,10 @@ impl Dialog {
         let k = &e.keystroke;
         if self.saving {
             cx.stop_propagation();
+            return;
+        }
+        if self.kind == Kind::HookStats {
+            self.hook_stats_key(e, window, cx);
             return;
         }
         if self.kind == Kind::WritingStyle {
@@ -1922,11 +2362,20 @@ impl Dialog {
                 let order: Vec<usize> = match self.kind {
                     Kind::Shortcuts
                     | Kind::FullAccess
+                    | Kind::FullAccessAvailable
                     | Kind::LogOut
                     | Kind::ArchiveSection
                     | Kind::DiscardInstructions => vec![0, 1],
                     Kind::DeleteMemories => vec![0, 1, 2],
+                    Kind::ChatMemories => {
+                        if self.memories.as_ref().is_some_and(|m| m.started) {
+                            vec![1, 2]
+                        } else {
+                            vec![0, 1, 2]
+                        }
+                    }
                     Kind::DeleteTask => vec![0, 1],
+                    Kind::HookStats => unreachable!("hook stats keys"),
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
                     Kind::Branches => vec![0, 1],
                     Kind::BranchConflict => vec![1, 2],
@@ -1967,6 +2416,7 @@ impl Dialog {
                     self.kind,
                     Kind::CloseWindow
                         | Kind::FullAccess
+                        | Kind::FullAccessAvailable
                         | Kind::LogOut
                         | Kind::ArchiveSection
                         | Kind::DeleteTask
@@ -1974,6 +2424,7 @@ impl Dialog {
                         | Kind::RevertChanges
                         | Kind::DiscardInstructions
                         | Kind::DeleteMemories
+                        | Kind::ChatMemories
                 ) || (self.selected != 0 && !self.editing()) =>
             {
                 self.activate(cx);
@@ -2025,6 +2476,7 @@ impl Dialog {
                 matches!(
                     self.kind,
                     Kind::FullAccess
+                        | Kind::FullAccessAvailable
                         | Kind::RevertChanges
                         | Kind::ArchiveSection
                         | Kind::DiscardInstructions
@@ -2084,6 +2536,7 @@ impl Dialog {
                 if matches!(
                     self.kind,
                     Kind::FullAccess
+                        | Kind::FullAccessAvailable
                         | Kind::RevertChanges
                         | Kind::ArchiveSection
                         | Kind::DiscardInstructions
@@ -2203,7 +2656,7 @@ impl Dialog {
                             .child(draw_artwork(
                                 announcement.artwork.clone(),
                                 &ANNOUNCEMENT_ARTWORK,
-                                px(16.),
+                                top(px(16.)),
                                 shapes::Corner::Round,
                             )),
                     )
@@ -2482,6 +2935,47 @@ impl Dialog {
                     .justify_center()
                     .child(icon("close", 16., t.text_tertiary))
                     .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
+            )
+    }
+
+    fn full_access_available_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        div()
+            .relative()
+            .size_full()
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(text("Make Full Access available?", 20., 28., 600., t.text))
+            .child(
+                text(
+                    "When selected, ChatGPT can access the internet and read and edit files without asking for approval — including potentially destructive commands",
+                    14.,
+                    20.,
+                    430.,
+                    t.text_secondary,
+                )
+                .whitespace_normal(),
+            )
+            .child(
+                text(
+                    "Turning this on adds Full Access to the permissions menu. It does not turn Full Access on.",
+                    14.,
+                    20.,
+                    430.,
+                    t.text_secondary,
+                )
+                .whitespace_normal(),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .bottom(px(20.))
+                    .right(px(20.))
+                    .flex()
+                    .gap(px(12.))
+                    .child(self.button(0, "Cancel", 88., t, cx))
+                    .child(self.button(1, "Confirm", 115., t, cx)),
             )
     }
 
@@ -3034,8 +3528,12 @@ impl Dialog {
                     .px(px(10.))
                     .flex()
                     .items_center()
+                    .gap(px(6.))
                     .overflow_hidden()
                     .cursor_text()
+                    .when(self.kind == Kind::Rename, |d| {
+                        d.child(self.emoji_button(t, cx))
+                    })
                     .child(
                         text(
                             if self.query.is_empty() {
@@ -3074,6 +3572,7 @@ impl Dialog {
                         cx.notify();
                     })),
             )
+            .when(self.emoji_open, |d| d.child(self.emoji_picker(t, cx)))
             .child(
                 div()
                     .mt(px(12.))
@@ -3110,6 +3609,83 @@ impl Dialog {
                     .child(icon("close", 16., t.text.opacity(0.8)))
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(Outcome::Dismiss))),
             )
+    }
+
+    /// `Rename chat`'s leading `Choose emoji` / `Change emoji` button (the original's `kXo`):
+    /// the chat's emoji, or the `emoji-face-badge-plus` glyph when it has none.
+    fn emoji_button(&self, t: &Theme, cx: &Context<Self>) -> impl IntoElement {
+        div()
+            .id("rename-emoji")
+            .debug_selector(|| "rename-emoji".into())
+            .role(gpui::Role::Button)
+            .aria_label(if self.emoji.is_some() {
+                "Change emoji"
+            } else {
+                "Choose emoji"
+            })
+            .size(px(24.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(6.))
+            .cursor_pointer()
+            .hover(|s| s.bg(t.ghost_hover))
+            .child(match &self.emoji {
+                Some(emoji) => text(emoji.clone(), 14., 20., 430., t.text).into_any_element(),
+                None => icon("emoji-face-badge-plus", 16., t.text_tertiary).into_any_element(),
+            })
+            .on_click(cx.listener(|this, _, _, cx| {
+                cx.stop_propagation();
+                this.emoji_open = !this.emoji_open;
+                cx.notify();
+            }))
+    }
+
+    /// The emoji grid under the title input; the last cell clears a set emoji (`onClear`).
+    fn emoji_picker(&self, t: &Theme, cx: &Context<Self>) -> impl IntoElement {
+        let cell = |id: usize, label: SharedString| {
+            div()
+                .id(("rename-emoji-option", id))
+                .debug_selector(move || format!("rename-emoji-option-{id}"))
+                .role(gpui::Role::MenuItem)
+                .aria_label(label)
+                .size(px(EMOJI_CELL))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(6.))
+                .cursor_pointer()
+                .hover(|s| s.bg(t.ghost_hover))
+        };
+        div()
+            .mt(px(8.))
+            .flex()
+            .flex_wrap()
+            .w(px(EMOJI_CELL * 10.))
+            .children(EMOJIS.iter().enumerate().map(|(index, emoji)| {
+                cell(index, (*emoji).into())
+                    .when(self.emoji.as_deref() == Some(*emoji), |d| {
+                        d.bg(t.list_hover)
+                    })
+                    .child(text(*emoji, 16., 22., 430., t.text))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.emoji = Some((*emoji).to_owned());
+                        this.emoji_open = false;
+                        cx.notify();
+                    }))
+            }))
+            .when(self.emoji.is_some(), |d| {
+                d.child(
+                    cell(EMOJIS.len(), "Remove emoji".into())
+                        .child(icon("close", 16., t.text_tertiary))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.emoji = None;
+                            this.emoji_open = false;
+                            cx.notify();
+                        })),
+                )
+            })
     }
     fn shortcuts_content(&self, visible: &[&Shortcut], t: &Theme, cx: &Context<Self>) -> Div {
         let mut list = div().flex().flex_col().pr(px(12.));
@@ -3723,6 +4299,14 @@ impl Dialog {
     }
 }
 
+/// shortcut: the original's emoji `SymbolBrowser` (`j$r`) searches the full emoji catalog;
+/// this grid offers 20 common ones. Upgrade when that chunk is ported.
+const EMOJIS: [&str; 20] = [
+    "🚀", "🐛", "✨", "🔥", "📝", "🧪", "🛠️", "📦", "🎨", "🔒", "⚡", "📈", "🧹", "💡", "🔍", "🧭",
+    "🌱", "📚", "✅", "❤️",
+];
+const EMOJI_CELL: f32 = 28.;
+
 const REPEAT: [(&str, &str); 8] = [
     ("Daily", ""),
     ("Mondays", "MO"),
@@ -3760,17 +4344,29 @@ static WRITING_ARTWORK_LIGHT: LazyLock<RgbaImage> = LazyLock::new(|| {
     ))
 });
 
-fn draw_artwork(
-    cache: ArtworkCache,
-    image: &'static RgbaImage,
-    radius: Pixels,
-    corner: shapes::Corner,
-) -> impl IntoElement {
-    let radius = Corners {
+fn top(radius: Pixels) -> Corners<Pixels> {
+    Corners {
         top_left: radius,
         top_right: radius,
         ..Default::default()
-    };
+    }
+}
+
+/// The original's `gradient-e8375b62d61e.png`, covering its box (Settings ▸ Computer history).
+pub(crate) fn gradient_artwork(
+    cache: ArtworkCache,
+    radius: Pixels,
+    corner: shapes::Corner,
+) -> impl IntoElement {
+    draw_artwork(cache, &ANNOUNCEMENT_ARTWORK, Corners::all(radius), corner)
+}
+
+fn draw_artwork(
+    cache: ArtworkCache,
+    image: &'static RgbaImage,
+    radius: Corners<Pixels>,
+    corner: shapes::Corner,
+) -> impl IntoElement {
     canvas(
         move |bounds, window, _| {
             let scale = window.scale_factor();
@@ -3884,13 +4480,34 @@ impl Render for Dialog {
                 144. + 28. * (self.query.chars().count() + 8).div_ceil(32).clamp(1, 3) as f32,
             ),
             Kind::ScheduleTask => (680., 422.),
-            Kind::Rename | Kind::NewSection | Kind::EditSection => (420., 185.),
+            Kind::Rename | Kind::NewSection | Kind::EditSection => (
+                420.,
+                // The open emoji grid (its rows and 8 px gap) grows the card.
+                185. + if self.emoji_open {
+                    let cells = EMOJIS.len() + usize::from(self.emoji.is_some());
+                    8. + EMOJI_CELL * cells.div_ceil(10) as f32
+                } else {
+                    0.
+                },
+            ),
             Kind::ArchiveSection => (420., 181.),
             Kind::FullAccess => (520., 420.),
+            Kind::FullAccessAvailable => (420., 205.),
             Kind::LogOut => (380., 145. + if self.email.is_some() { 25. } else { 0. }),
             Kind::DiscardInstructions => (420., 180.),
             Kind::DeleteMemories => (420., 137.),
+            // Each long description wraps to a second 18 px line at this width.
+            Kind::ChatMemories => (
+                440.,
+                if self.memories.as_ref().is_some_and(|m| m.started) {
+                    270.
+                } else {
+                    288.
+                },
+            ),
             Kind::WritingStyle => (480., 600.),
+            // `xwideTall`: 680 px wide, min(92vh, 800px) tall.
+            Kind::HookStats => (680., 800.),
             Kind::ModelAnnouncement => (480., 432.),
             Kind::Commit => (420., self.commit_height()),
             Kind::Branches => (
@@ -3914,10 +4531,13 @@ impl Render for Dialog {
             Kind::Rename | Kind::NewSection | Kind::EditSection => self.rename_content(t, cx),
             Kind::ArchiveSection => self.archive_section_content(t, cx),
             Kind::FullAccess => self.full_access_content(t, cx),
+            Kind::FullAccessAvailable => self.full_access_available_content(t, cx),
             Kind::LogOut => self.logout_content(t, cx),
             Kind::DiscardInstructions => self.discard_instructions_content(t, cx),
             Kind::DeleteMemories => self.memory_delete_content(t, cx),
+            Kind::ChatMemories => self.chat_memories_content(t, cx),
             Kind::WritingStyle => self.writing_content(t, cx),
+            Kind::HookStats => self.hook_stats_content(t, cx),
             Kind::ModelAnnouncement => self.announcement_content(t, cx),
             Kind::Commit => self.commit_content(t, cx),
             Kind::Branches | Kind::CreateBranch | Kind::BranchConflict => {
@@ -3970,10 +4590,13 @@ impl Render for Dialog {
                             .clone()
                             .into(),
                         Kind::FullAccess => "Turn on Full Access?".into(),
+                        Kind::FullAccessAvailable => "Make Full Access available?".into(),
                         Kind::LogOut => "Log out?".into(),
                         Kind::DiscardInstructions => "Discard changes?".into(),
                         Kind::DeleteMemories => "Delete all Codex memories?".into(),
+                        Kind::ChatMemories => "Chat memories".into(),
                         Kind::WritingStyle => "Writing style".into(),
+                        Kind::HookStats => "Hook stats".into(),
                         Kind::Commit => "Commit or push".into(),
                         Kind::Branches => "Switch branch".into(),
                         Kind::CreateBranch => "Create and checkout branch".into(),
@@ -4046,7 +4669,10 @@ impl Render for Dialog {
                         20.
                     } else if schedule {
                         30.
-                    } else if matches!(self.kind, Kind::LogOut | Kind::DeleteMemories) {
+                    } else if matches!(
+                        self.kind,
+                        Kind::LogOut | Kind::DeleteMemories | Kind::HookStats
+                    ) {
                         25.
                     } else {
                         24.
@@ -4120,8 +4746,10 @@ impl Render for Dialog {
                                 false,
                                 shapes::Decoration {
                                     radius: Corners::all(px(
-                                        if matches!(self.kind, Kind::LogOut | Kind::DeleteMemories)
-                                        {
+                                        if matches!(
+                                            self.kind,
+                                            Kind::LogOut | Kind::DeleteMemories | Kind::HookStats
+                                        ) {
                                             25.
                                         } else {
                                             24.
@@ -4129,7 +4757,7 @@ impl Render for Dialog {
                                     )),
                                     corner: if matches!(
                                         self.kind,
-                                        Kind::LogOut | Kind::DeleteMemories
+                                        Kind::LogOut | Kind::DeleteMemories | Kind::HookStats
                                     ) {
                                         shapes::Corner::Squircle
                                     } else {

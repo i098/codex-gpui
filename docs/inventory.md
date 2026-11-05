@@ -223,7 +223,7 @@ Chunks: app-initial-6350d04672d0.js (sidebar, rows, sections, dialogs), sidebar-
 
 ### 4.2 Header items
 
-- Mode switch opens a menu with `ChatGPT`, `Codex` (`Build, debug, and ship`), `Work` (`Create, learn, and explore`); shortcuts `⌃1`, `⌃2`, `⌃3` (`switchToMode1..3`).
+- Mode switch opens a menu with `ChatGPT` (`Create, learn, and explore`) and `Codex` (`Build, debug, and ship`), with a check on the current one and no shortcut keys; shortcuts `⌃1` (Chat), `⌃2` (Work), `⌃3` (Codex) (`switchToMode1..3`).
 - Activity bell toggles the activity view (`togglePriorityFilter`, `⌘⌥U`); it shows `View activity, needs attention` when unread; options menu `Activity view options` with `Show` toggles (Chat, Work, Scheduled, Pinned, Priority section), `Mark all as read`, `Clear read chats`, `Turn off activity view`.
 - Search dispatches host message `chat-search-command-menu`, which opens `CommandMenuDialog` in chat-search mode (`codex.commandMenu.chatSearchPlaceholder` = `Search chats`); the tooltip shows the `openCommandMenu` keys (`⌘K`).
 - Command menu groups: `Quick actions`, `Pinned chats`, `Recent chats`, `Recently viewed chats`, `Chats`, `Settings`; empty `No matches`; loading `Loading chats…`; error `Couldn't search ChatGPT chats` + `Retry`.
@@ -948,7 +948,7 @@ The three resize widths are 1280 px (reference), 767 px (below the 768 px sideba
 | # | Item | Kind | Expected behavior | Source | Pass |
 |---|---|---|---|---|---|
 | 1 | Sidebar visible | entry | Rail 52 px plus panel 288 px at 1280 px. | refs/home spec `nav` rects | [ ] |
-| 2 | `Codex ⌄` mode switch | click | Menu: ChatGPT, Codex, Work with descriptions. | `sidebarElectron.productMode.*` | [ ] |
+| 2 | `Codex ⌄` mode switch | click | Menu: ChatGPT, Codex with descriptions. | `sidebarElectron.productMode.*` | [ ] |
 | 3 | `⌃1` `⌃2` `⌃3` | shortcut | Switch to Chat / Work / Codex mode. | commands `switchToMode1..3` | [ ] |
 | 4 | Bell `View activity` | click | Toggles the activity (priority) view of the thread list. | `sidebarElectron.priorityThreads.filterByPriority` | [ ] |
 | 5 | `⌘⌥U` | shortcut | Toggles the activity view. | command `togglePriorityFilter` | [ ] |

@@ -89,6 +89,19 @@ Writes other than the favorite-status reads have no exchange, so `ReplayHost` re
 `space-sites.json` holds synthetic offline HTTP exchanges for Sites (`/websites`, `/websites/shared`) and Space (`/files/library/nodes`, `/pages/{id}`, and two `/spaces/v2` list pages joined by `next_cursor`).
 The shapes come from the original zod schemas in Codex 26.1007.30912. No account call was made. Replay refuses every other request, including mutations.
 The clock is frozen at 2026-10-15T17:00:00-07:00. `crates/app/tests/space_sites.rs` replays each exchange.
+`site-detail.json` adds `GET /websites/{project_id}` for the first owned site, with the same list exchange; `crates/app/tests/rail_sites.rs` opens it from a Sites row.
+
+## Security Cloud fixture
+
+`security-cloud.jsonl` replays the `codex_security_cloud.defense_factory_*` reads of the Explore ▸ `Security Cloud` page through `mcpServer/tool/call`.
+The results come from a live macOS `codex app-server` 0.166.0-alpha.5.1 on 2026-10-30; the bootstrap keeps only the fields the page reads.
+`crates/app/tests/security_cloud.rs` replays them after `readback.jsonl`.
+
+## Owned Maps fixture
+
+`maps-home.json` holds one synthetic `/local/home` exchange for Maps, plus an empty `/conversations` page that gives `ReplayHost` its identity.
+The request is the one the original sends; the body follows the original's `maps-home` reader in Codex 26.1007.30912. No account call was made.
+`crates/app/tests/rail_maps.rs` replays it.
 
 ## Conversation streams
 
@@ -102,3 +115,8 @@ The contract comes from Codex 26.1007.30912 (`app-initial` callers and event dec
 It is constructed offline from the 26.1007.30912 webview paths and the native parsers, not recorded from an account; `provenance` names what is attested.
 The clock is frozen at 2026-10-15T17:00:00-07:00 (epoch 1792108800).
 Requests outside the file, including unlisted mutations, fail in the replay host; `crates/app/tests/orbit_tasks_fixture.rs` proves both.
+
+## Changelog feed
+
+`codex-app-changelog.json` records the original's What's new request: `GET https://learn.chatgpt.com/docs/changelog/codex-app.json` (`credentials: omit`).
+It was fetched on 2026-11-03 and keeps the feed's first four items; the Help flyout shows the first three.

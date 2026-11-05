@@ -79,9 +79,11 @@ impl Host for HomeHost {
                     label: name.into(),
                     new_chat_label: "New chat".into(),
                     root: Some(root.to_string_lossy().into_owned().into()),
+                    roots: vec![root.to_string_lossy().into_owned().into()],
                     worktree: false,
                     missing: false,
                     expanded: true,
+                    pinned: false,
                 }
             })
             .collect())

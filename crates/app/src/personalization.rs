@@ -65,6 +65,46 @@ fn read_unified_instructions(host: &dyn Host) -> Result<bool> {
         .unwrap_or(false))
 }
 
+/// `settings.response_presentation.mode`; anything but `standard` is the `rich` default.
+fn layout_mode(settings: &Value) -> &'static str {
+    if settings["settings"]["response_presentation"]["mode"] == "standard" {
+        "standard"
+    } else {
+        "rich"
+    }
+}
+
+/// The `Layout and visuals` mode, or `None` when the Statsig gate (`890187595`) is off.
+fn read_layout(host: &dyn Host) -> Result<Option<&'static str>> {
+    let identity = host
+        .identity()
+        .context("Layout and visuals require a ChatGPT account")?;
+    if crate::usage::statsig(host, &identity)["feature_gates"]["890187595"]["value"] != true {
+        return Ok(None);
+    }
+    let settings = crate::usage::http(host, &identity, "GET", "/settings/user", None)?;
+    Ok(Some(layout_mode(&settings)))
+}
+
+fn write_layout(host: &dyn Host, mode: &'static str) -> Result<&'static str> {
+    let identity = host
+        .identity()
+        .context("Layout and visuals require a ChatGPT account")?;
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("feature", "response_presentation")
+        .append_pair("value", &json!({ "mode": mode }).to_string())
+        .finish();
+    let settings = crate::usage::http(
+        host,
+        &identity,
+        "PATCH",
+        &format!("/settings/account_user_setting?{query}"),
+        None,
+    )?;
+    // The PATCH answers with the bare settings map (`ge({settings: r})` in the original).
+    Ok(layout_mode(&json!({ "settings": settings })))
+}
+
 pub fn read_memory(bridge: &Bridge) -> Result<MemoryRead> {
     let mut response = request(bridge, "config/read", json!({"includeLayers": true}))?;
     let file_path = response["layers"]
@@ -193,6 +233,60 @@ fn write_memory_config(bridge: &Bridge, previous: &MemorySettings, edits: Value)
 
 pub fn reset_memory(bridge: &Bridge) -> Result<()> {
     request(bridge, "memory/reset", Value::Null).map(|_| ())
+}
+
+impl Root {
+    pub(super) fn thread_memory_command(
+        &mut self,
+        command: &ui::composer::SlashCommand,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let crate::Route::Thread(id) = self.state.route.clone() else {
+            return;
+        };
+        let (method, params, mode) = match command {
+            ui::composer::SlashCommand::MemoryMode(mode) => (
+                "thread/memoryMode/set",
+                json!({"threadId": id, "mode": mode}),
+                Some(*mode),
+            ),
+            ui::composer::SlashCommand::MemoryStatus => ("memory/status", json!({}), None),
+            _ => return,
+        };
+        let resume = mode.is_some() && !self.loaded.contains(&id);
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let result = async {
+                crate::resume_if(resume, &bridge, &this, &id, cx).await?;
+                bridge.request::<_, Value>(method, params).await
+            }
+            .await;
+            this.update(cx, |this, cx| {
+                if this.state.route != crate::Route::Thread(id.clone()) {
+                    return;
+                }
+                match &result {
+                    Ok(value) => {
+                        let message = if let Some(mode) = mode {
+                            format!("Thread memory {mode}")
+                        } else {
+                            format!(
+                                "Memory ready: {}; consolidated threads: {}",
+                                value["v2Ready"], value["v2ConsolidatedThreads"]
+                            )
+                        };
+                        this.toast(Toast::info(message), cx);
+                    }
+                    Err(error) => {
+                        this.toast(Toast::danger(format!("Memory request failed: {error}")), cx)
+                    }
+                }
+            })?;
+            result.map(drop)
+        });
+        crate::log_err(task, cx);
+    }
 }
 
 const WRITING_APP: &str = "connector_openai_write_like_me";
@@ -1282,6 +1376,48 @@ impl Root {
         .detach();
     }
 
+    pub(super) fn refresh_layout(&mut self, cx: &mut Context<Self>) {
+        let Some(page) = &self.settings_page else {
+            return;
+        };
+        let view = page.read(cx).personalization.clone();
+        if !self.chatgpt_account {
+            view.update(cx, |view, cx| view.layout_loaded(Ok(None), cx));
+            return;
+        }
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move { read_layout(host.as_ref()) });
+        cx.spawn(async move |_, cx| {
+            let result = read.await.map_err(|error| error.to_string());
+            view.update(cx, |view, cx| view.layout_loaded(result, cx));
+        })
+        .detach();
+    }
+
+    pub(super) fn change_layout(&mut self, mode: &'static str, cx: &mut Context<Self>) {
+        let Some(page) = &self.settings_page else {
+            return;
+        };
+        let view = page.read(cx).personalization.clone();
+        let host = self.host.clone();
+        let write = cx.background_spawn(async move { write_layout(host.as_ref(), mode) });
+        cx.spawn(async move |this, cx| {
+            let result = write.await.map_err(|error| error.to_string());
+            if let Err(error) = &result {
+                eprintln!("codex-gpui: response_presentation: {error}");
+                this.update(cx, |this, cx| {
+                    this.toast(
+                        Toast::danger("Couldn't update visual answers. Please try again."),
+                        cx,
+                    )
+                })
+                .ok();
+            }
+            view.update(cx, |view, cx| view.layout_changed(result, cx));
+        })
+        .detach();
+    }
+
     /// Shows a Writing style write on `view`, then opens the authorization dialog or the
     /// setup that it needs.
     fn apply_writing_write(
@@ -1416,7 +1552,18 @@ impl Root {
             return;
         };
         let bridge = self.bridge.clone();
-        let write = cx.background_spawn(async move { write_memory(&bridge, &previous, change) });
+        let host = self.host.clone();
+        let write = cx.background_spawn(async move {
+            let write = write_memory(&bridge, &previous, change);
+            // Computer history needs Memories: the original's config-write hook stops it too.
+            if change == MemoryChange::Enabled(false)
+                && host.skysight_available()
+                && let Err(error) = crate::chronicle::disable(&bridge, host.as_ref())
+            {
+                eprintln!("codex-gpui: stop Computer history: {error:#}");
+            }
+            write
+        });
         cx.spawn(async move |this, cx| {
             let result = write.await;
             this.update(cx, |this, cx| {
@@ -1446,6 +1593,7 @@ impl Root {
                         if let Some(chronicle) = read.config["features"]["chronicle"].as_bool() {
                             this.config["features"]["chronicle"] = chronicle.into();
                         }
+                        this.refresh_config_globals(cx);
                         read.settings
                     })
                     .map_err(|error| error.to_string());
