@@ -1,0 +1,23 @@
+{
+  "exchanges": [
+    {
+      "request": {
+        "transport": "fetch",
+        "request": {
+          "method": "GET",
+          "url": "https://learn.chatgpt.com/docs/changelog/codex-app.json",
+          "body": ""
+        }
+      },
+      "response": {
+        "type": "fetch-response",
+        "responseType": "success",
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "bodyJsonString": "{\"schemaVersion\":1,\"locale\":\"en\",\"feed\":\"codex-app\",\"latestId\":\"codex/2026-10-09-composer-predictions\",\"next\":null,\"items\":[{\"id\":\"codex/2026-10-09-composer-predictions\",\"title\":\"Composer predictions in Codex\",\"date\":\"2026-10-09\",\"version\":null,\"topics\":[\"codex-app\"],\"changes\":[],\"summary\":null,\"image\":null,\"bodyMarkdown\":\"# Composer predictions in Codex\\n\\nComposer predictions adds autocomplete-style suggestions for your next message in\\nthe Codex desktop app. After Codex responds, it uses the current conversation to\\nsuggest a follow-up prompt in the message box. Press **Tab** to accept the suggestion\\nas an editable draft, or type your own message. Accepting a prediction doesn't send\\nit for you.\\n\\nThe feature is available in beta to users aged 18 and older with personal ChatGPT\\nPro plans in supported regions, in local and SSH threads with GPT-6 Astra and\\nGPT-6.1 Sol.\\n\\nLearn more about [composer predictions](/codex/features/composer-predictions).\",\"url\":\"https://developers.openai.com/codex/changelog#codex-2026-10-09-composer-predictions\",\"source\":\"content\"},{\"id\":\"codex/2026-10-08-app\",\"title\":\"Codex app\",\"date\":\"2026-10-08\",\"version\":\"26.1007\",\"topics\":[\"codex-app\"],\"changes\":[],\"summary\":null,\"image\":null,\"bodyMarkdown\":\"# Codex app\\n\\n### Performance improvements and bug fixes\\n\\n- Fixed queued messages getting stuck on **Sending** and restored **Steer** in\\n  secondary app windows.\\n- Improved scrolling and navigation between files in the **Changes** panel.\\n- Added clearer recovery guidance when a tool call needs approval but the chat's\\n  permissions prevent approval requests, with a link to those permissions when available.\",\"url\":\"https://developers.openai.com/codex/changelog#codex-2026-10-08-app\",\"source\":\"content\"},{\"id\":\"codex/2026-10-07-app\",\"title\":\"Codex app\",\"date\":\"2026-10-07\",\"version\":\"26.1002\",\"topics\":[\"codex-app\"],\"changes\":[],\"summary\":null,\"image\":null,\"bodyMarkdown\":\"# Codex app\\n\\n### Performance improvements and bug fixes\\n\\n- Fixed Windows sandbox refresh failures after app updates.\\n- Fixed worktree creation and chat forking for WSL repositories whose paths\\n  conflicted with Windows directories.\\n- Kept the recent chats section collapsed when switching between chats.\\n- Fixed **Remove from section** so it removes a chat from its sidebar section\\n  without pinning it.\",\"url\":\"https://developers.openai.com/codex/changelog#codex-2026-10-07-app\",\"source\":\"content\"},{\"id\":\"codex/2026-10-01-app\",\"title\":\"Codex app\",\"date\":\"2026-10-01\",\"version\":\"26.930\",\"topics\":[\"codex-app\"],\"changes\":[],\"summary\":null,\"image\":null,\"bodyMarkdown\":\"# Codex app\\n\\n### New features\\n\\n- Added the option to move selected chats to a project at once.\\n\\n### Performance improvements and bug fixes\\n\\n- Improved recovery when attaching managed worktrees to chats.\\n- Fixed large diffs appearing blank at some zoom levels.\\n- Improved retries after queued messages fail to send or chats fail to open.\",\"url\":\"https://developers.openai.com/codex/changelog#codex-2026-10-01-app\",\"source\":\"content\"}]}"
+      }
+    }
+  ]
+}

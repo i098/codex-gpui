@@ -1552,7 +1552,18 @@ impl Root {
             return;
         };
         let bridge = self.bridge.clone();
-        let write = cx.background_spawn(async move { write_memory(&bridge, &previous, change) });
+        let host = self.host.clone();
+        let write = cx.background_spawn(async move {
+            let write = write_memory(&bridge, &previous, change);
+            // Computer history needs Memories: the original's config-write hook stops it too.
+            if change == MemoryChange::Enabled(false)
+                && host.skysight_available()
+                && let Err(error) = crate::chronicle::disable(&bridge, host.as_ref())
+            {
+                eprintln!("codex-gpui: stop Computer history: {error:#}");
+            }
+            write
+        });
         cx.spawn(async move |this, cx| {
             let result = write.await;
             this.update(cx, |this, cx| {

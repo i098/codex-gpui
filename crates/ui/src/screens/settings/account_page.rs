@@ -14,7 +14,7 @@ use theme::Theme;
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn frame(
     id: &'static str,
-    title: &'static str,
+    title: impl Into<SharedString>,
     intro: Vec<AnyElement>,
     content: impl IntoElement,
     dialog: Option<&Entity<Confirmation>>,
@@ -91,7 +91,7 @@ pub(crate) enum Kind {
 
 /// A pill button, findable by `id` as a debug selector. A disabled button is dimmed.
 pub(crate) fn action(
-    id: &'static str,
+    id: impl Into<SharedString>,
     label: impl Into<SharedString>,
     kind: Kind,
     disabled: bool,
@@ -102,9 +102,10 @@ pub(crate) fn action(
         Kind::Secondary => (t.button_secondary, Some(t.border), t.text),
         Kind::Danger => (t.button_secondary, Some(t.border), t.text_error),
     };
+    let id: SharedString = id.into();
     div()
-        .id(id)
-        .debug_selector(move || id.into())
+        .id(id.clone())
+        .debug_selector(move || id.to_string())
         .h(px(28.))
         .px(px(12.))
         .flex()

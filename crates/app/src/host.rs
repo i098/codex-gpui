@@ -61,6 +61,11 @@ pub mod git_pr;
 mod native_apps;
 mod open_in;
 mod projectless;
+
+/// The installed macOS apps (`native-desktop-apps`), for Settings ▸ Computer history.
+pub(crate) fn native_desktop_apps(params: &Value) -> Result<Vec<native_apps::NativeApp>> {
+    native_apps::list(params)
+}
 pub use projectless::Workspace;
 mod github_pull_requests;
 pub(crate) mod run_now;
@@ -117,6 +122,17 @@ pub trait Host: Send + Sync {
     }
     fn computer_use_native(&self) -> Option<Arc<computer_use_native::NativeComputerUse>> {
         None
+    }
+    /// Sends a Computer History (`skysight`) Apple-Event request to the signed native service.
+    fn skysight(&self, request_type: &str, payload: &Value, timeout_seconds: u32) -> Result<Value> {
+        self.computer_use_native()
+            .context("Chronicle is unavailable")?
+            .service_request(request_type, payload, timeout_seconds)
+    }
+    /// Whether the Computer History service exists: macOS with the signed service installed.
+    fn skysight_available(&self) -> bool {
+        self.computer_use_native()
+            .is_some_and(|native| native.service_installed())
     }
 
     fn supports_cloud_search(&self) -> bool {
@@ -241,6 +257,12 @@ pub trait Host: Send + Sync {
         None
     }
 
+    /// The signed-in ChatGPT account user (`chatgpt_account_user_id`, else `account_user_id`);
+    /// `None` without a ChatGPT sign-in. Call this off the UI thread for a cloud host.
+    fn account_user_id(&self) -> Option<String> {
+        None
+    }
+
     /// The managed worktrees of `thread_id` that the original's archive queue has already
     /// detached or is still archiving for the signed-in owner (`getPendingArchives`); none
     /// without a ChatGPT sign-in. Call this off the UI thread.
@@ -291,6 +313,10 @@ impl Host for RemoteThreadHost {
 
     fn identity(&self) -> Option<Identity> {
         self.0.identity()
+    }
+
+    fn account_user_id(&self) -> Option<String> {
+        self.0.account_user_id()
     }
 
     fn invalidate_identity(&self) {
@@ -2157,7 +2183,9 @@ impl Host for LocalHost {
             "git-root" | "git-changes" | "git-stage" | "git-unstage" | "git-revert"
             | "git-init-repo" | "git-commit-status" | "git-commit-diff" | "git-commit"
             | "git-push" | "git-checkout" | "git-cat-file" | "git-review-patch"
-            | "git-file-url" | "git-blame-file" => git::fetch(endpoint, &params)?,
+            | "git-file-url" | "git-blame-file" | "git-review-commits" => {
+                git::fetch(endpoint, &params)?
+            }
             "gh-cli-status"
             | "gh-current-user"
             | "gh-pr-search"
@@ -2191,6 +2219,7 @@ impl Host for LocalHost {
             "read-git-file-binary" => diff_files::git_binary(&params)?,
             "recommended-skills" => skills::recommended(&self.home, &params),
             "install-recommended-skill" => skills::install(&self.home, &params),
+            "custom-pets" => json!({ "pets": crate::pets::load(&self.home)? }),
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             "workspace-directory-entries" => directories::read(&params)?,
             "native-desktop-apps" => json!({"apps": native_apps::list(&params)?}),
@@ -2786,6 +2815,10 @@ impl Host for CloudHost {
             device_id: self.device_id.clone(),
         })
     }
+
+    fn account_user_id(&self) -> Option<String> {
+        claims(&self.credentials(false).ok()?.token).account_user_id
+    }
 }
 
 fn event_stream(
@@ -2897,6 +2930,8 @@ struct Claims {
     principal_account: Option<String>,
     /// `chatgpt_user_id`, else `user_id`.
     user_id: Option<String>,
+    /// `chatgpt_account_user_id`, else `account_user_id`.
+    account_user_id: Option<String>,
     fedramp: bool,
 }
 
@@ -2913,6 +2948,7 @@ fn claims(token: &str) -> Claims {
         account_id: text("chatgpt_account_id"),
         principal_account: text("chatgpt_account_id").or_else(|| text("account_id")),
         user_id: text("chatgpt_user_id").or_else(|| text("user_id")),
+        account_user_id: text("chatgpt_account_user_id").or_else(|| text("account_user_id")),
         fedramp: auth["chatgpt_account_is_fedramp"] == true,
     }
 }
