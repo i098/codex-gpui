@@ -59,8 +59,8 @@ mod languages;
 pub mod parental_controls;
 mod passwords;
 pub mod personalization;
-pub mod security_settings;
 pub mod pets;
+pub mod security_settings;
 pub mod trusted_contact;
 pub mod workspace {
     use crate::{SANS, composer::popover, focus, icon::icon, text};
