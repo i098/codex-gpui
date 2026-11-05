@@ -3276,33 +3276,33 @@ impl Root {
             SidePanel::Changes => Some(Tab {
                 icon: "diff-tab-changes",
                 label: "Changes".into(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::Terminal => {
                 let (_, command, _) = view.read(cx).terminal()?;
                 Some(Tab {
                     icon: "thread-terminal",
                     label: command.into(),
-                    preview: false,
+                    detail: None,
                 })
             }
             SidePanel::Console => console.then(|| Tab {
                 icon: "terminal-interactive",
                 label: "Terminal".into(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::File(key) => {
                 let file = files.iter().find(|(k, _)| *k == key)?.1.read(cx);
                 Some(Tab {
                     icon: file.tab_icon(),
                     label: file.name(),
-                    preview: file.is_preview(),
+                    detail: Some(file.path.clone().into()),
                 })
             }
             SidePanel::Image => image.then(|| Tab {
                 icon: "diff-file-image",
                 label: "Image view".into(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::SideChat(key) => {
                 let chat = side_chats.iter().find(|chat| chat.key == key)?;
@@ -3314,35 +3314,35 @@ impl Root {
                         "side-chat"
                     },
                     label: chat.title.clone(),
-                    preview: false,
+                    detail: None,
                 })
             }
             SidePanel::Sources => Some(Tab {
                 icon: "navigation-files",
                 label: "Sources".into(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::Plan => Some(Tab {
                 icon: "navigation-files",
                 label: plan?.read(cx).title(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::NewTab => new_tab.then(|| Tab {
                 icon: "diff-new-tab",
                 label: "New tab".into(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::Subagents => subagents.then(|| Tab {
                 icon: "side-chat",
                 label: "Subagents".into(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::Browser(key) => {
                 let (_, tab) = browsers.iter().find(|(k, _)| *k == key)?;
                 Some(Tab {
                     icon: "sidebar-cmd-browser",
                     label: tab.read(cx).title(),
-                    preview: false,
+                    detail: None,
                 })
             }
         }

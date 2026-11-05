@@ -58,7 +58,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add Settings ▸ `Appshots` on macOS: press both ⌘, ⌥ or ⇧ keys to capture the frontmost window into the current chat, a new chat or a visible Mini, with destination and sound settings.
 - Show an image or PDF in the Files tab as a preview (PDFs with page arrows), not as text lines that fail with `Could not open file`.
 - Open the latest plan from Thread summary ▸ `Plan` in an editable `Plan` side panel tab that saves to `$CODEX_HOME/plans/<thread>/<plan item>/PLAN.md`.
-- Add the Files tab `Find in file…` bar (⌘F, Enter and ⇧Enter, match count), the Markdown preview with `View source` / `View preview` and `Copy Markdown`, several file tabs with one preview tab that the next opened file replaces until pinned, and the header `Open` menu with the host's open-in apps and `Copy path`.
+- Add the Files tab `Find in file…` bar (⌘F, Enter and ⇧Enter, match count), the Markdown live preview as the original's file editor draws it with `View source` / `View preview` and `Copy Markdown`, several file tabs with one preview tab that the next opened file replaces until pinned, a hover card with the path of a file tab, and the `Open` split button with the preferred app, its menu of open-in apps, `Open in folder` and `Save as…`.
 - Open the Maps page from the Explore menu: the ChatGPT backend `/local/home` prompt suggestions and map, with loading, error with Try again, and empty states.
 - Store app state, host settings, notification sounds and the QA profile in the per-OS user data directory (`%APPDATA%` on Windows, XDG config on Linux).
 - Show generated images in the chat, and open one in an `Image view` side panel tab with a click.

@@ -30,6 +30,22 @@ pub struct OpenTarget {
     pub(super) kind: String,
     #[serde(skip)]
     image: Option<ImageSource>,
+    /// The bundled `apps/<name>` image of `icon`.
+    #[serde(skip)]
+    asset: Option<SharedString>,
+}
+
+impl OpenTarget {
+    /// The bundled `apps/<name>` image of the target's icon.
+    pub(super) fn asset(&self) -> Option<SharedString> {
+        self.asset.clone()
+    }
+
+    /// The app's 18 px `icon-sm` image over the opaque `page`.
+    pub(super) fn icon_element(&self, page: Hsla) -> Option<gpui::AnyElement> {
+        let path = self.asset.clone()?;
+        Some(crate::screens::settings::app_icon(path, 255, page))
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -56,6 +72,12 @@ impl OpenTargets {
                 .retain(|target| available.contains(target.target.as_str()));
         }
         for target in &mut self.targets {
+            target.asset = target
+                .icon
+                .as_deref()
+                .and_then(|icon| icon.strip_prefix('/'))
+                .filter(|path| path.starts_with("apps/"))
+                .map(|path| path.to_owned().into());
             target.image = target.icon.take().and_then(image_source);
         }
         let primary = self

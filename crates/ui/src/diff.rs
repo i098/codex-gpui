@@ -44,6 +44,8 @@ mod navigation;
 
 #[path = "diff/find.rs"]
 mod find;
+#[path = "diff/live_markdown.rs"]
+mod live_markdown;
 pub use controls::DiffLayout;
 pub(crate) use find::find_scope_buttons;
 pub use find::{FindInChat, FindInDiff};
@@ -1888,23 +1890,19 @@ impl Render for DiffPanel {
     }
 }
 
-/// A side panel tab, with italic text for a preview file.
+/// A side panel tab. The original draws a preview file's tab like any other.
 #[derive(Clone)]
 pub struct Tab {
     pub icon: &'static str,
     pub label: SharedString,
-    pub preview: bool,
+    /// A file tab's path: its hover card shows it under the name.
+    pub detail: Option<SharedString>,
 }
 
 impl Tab {
     fn label_font(&self) -> Font {
         Font {
             weight: FontWeight(430.),
-            style: if self.preview {
-                gpui::FontStyle::Italic
-            } else {
-                gpui::FontStyle::Normal
-            },
             ..font(SANS)
         }
     }
@@ -2041,7 +2039,7 @@ impl SplitScreen {
             let Tab {
                 icon: tab_icon,
                 label,
-                preview,
+                ..
             } = tab;
             let selected = ix == self.active;
             let hovered = self.hovered == Some(ix);
@@ -2156,10 +2154,7 @@ impl SplitScreen {
                                 .min_w_0()
                                 .ml(px(-4.))
                                 .overflow_hidden()
-                                .child(
-                                    text(label, 13., 18.5714, 430., color)
-                                        .when(*preview, |label| label.italic()),
-                                )
+                                .child(text(label, 13., 18.5714, 430., color))
                                 .when(fade, |d| d.layer().child(shapes::x_fade(px(0.), px(FADE)))),
                         ),
                 )
@@ -2685,8 +2680,78 @@ impl Render for SplitScreen {
                     )
                 },
             )
+            .when_some(
+                self.hovered
+                    .filter(|ix| left.is_some() && *ix != self.active)
+                    .and_then(|ix| Some((ix, self.tabs.get(ix)?.detail.clone()?))),
+                |d, (ix, path)| {
+                    let slot = ((f32::from(panel_width(window, cx)) - 121.).round()
+                        / self.tabs.len().max(1) as f32)
+                        .clamp(90., 240.);
+                    let left = left.unwrap_or_default() + px(9. + ix as f32 * slot);
+                    let label = self.tabs[ix].label.clone();
+                    d.child(
+                        deferred(
+                            // Its own composited layer, whose tile starts at the shadow's ink.
+                            div()
+                                .absolute()
+                                .top(Theme::TITLEBAR_HEIGHT - px(3.5) - px(12.))
+                                .left(left - px(20.))
+                                .pl(px(20.))
+                                .pt(px(12.))
+                                .layer()
+                                .child(tab_card(label, path, cx.theme())),
+                        )
+                        .with_priority(4),
+                    )
+                },
+            )
             .children(menu)
     }
+}
+
+/// An unselected file tab's hover card: its name over its full path, as the original's tab
+/// preview shows it under the hovered tab.
+/// shortcut: opens at once on hover; the original waits its hover delay first.
+fn tab_card(label: SharedString, path: SharedString, t: &Theme) -> Div {
+    div()
+        .relative()
+        .w(px(320.))
+        .pt(px(12.))
+        .px(px(8.))
+        .pb(px(12.))
+        .flex()
+        .flex_col()
+        .gap(px(12.))
+        .child(shapes::decoration(Decoration {
+            radius: Corners::all(px(15.)),
+            fill: Some(t.menu_background),
+            shadows: vec![
+                shadow(t.border, 0., 0., 0.5, false),
+                shadow(t.border, 0., 0., 0.5, false),
+                shadow(black().opacity(0.12), 8., 16., -4., false),
+            ],
+            ..Default::default()
+        }))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(text(label, 13., 20., 500., t.text))
+                .child(
+                    div()
+                        .overflow_hidden()
+                        .text_size(px(12.))
+                        .line_height(px(16.))
+                        .font_weight(FontWeight(430.))
+                        .text_color(t.text_tertiary)
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(path),
+                ),
+        )
+        .child(div().h(px(8.)))
 }
 
 /// Chromium's composited `group/titlebar` layer around the thread `header` at `header_left`:
@@ -2748,7 +2813,7 @@ pub fn with_side_panel(
             vec![Tab {
                 icon,
                 label,
-                preview: false,
+                detail: None,
             }],
             0,
         )
@@ -2871,7 +2936,12 @@ pub struct FileView {
     /// The header `Open` menu over the targets the host reported for this file.
     open_menu: Option<OpenMenu>,
     open_targets: Vec<context::OpenTarget>,
-    open_at: gpui::Point<Pixels>,
+    /// The target the `Open` button opens: the host's preferred one.
+    open_preferred: Option<usize>,
+    /// The chevron asked for the targets: their answer opens the menu.
+    open_menu_requested: bool,
+    /// The `Open` split button, which the menu hangs from.
+    open_bounds: gpui::Bounds<Pixels>,
     local_controls: bool,
     /// An image or PDF ([`Self::previews`]) shown instead of text lines.
     media: Option<preview::FileMedia>,
@@ -2905,7 +2975,9 @@ impl FileView {
             show_source: line.is_some(),
             open_menu: None,
             open_targets: Vec::new(),
-            open_at: gpui::Point::default(),
+            open_preferred: None,
+            open_menu_requested: false,
+            open_bounds: gpui::Bounds::default(),
             local_controls: true,
             media: None,
         }
@@ -2963,27 +3035,41 @@ impl FileView {
         }
     }
 
-    /// The header `Open` button asks the host for this file's open-in targets.
-    fn request_open_targets(&mut self, at: gpui::Point<Pixels>, cx: &mut Context<Self>) {
-        self.open_at = at;
+    /// The header's chevron (or `Open` before the targets arrived) asks the host for this
+    /// file's open-in targets and shows them.
+    fn request_open_targets(&mut self, cx: &mut Context<Self>) {
+        self.open_menu_requested = true;
         cx.emit(FileTreeRequest::OpenTargets);
     }
 
-    /// The host's open-in catalog: shows the `Open` menu, one item per target, then `Copy path`.
+    /// The host's open-in catalog: the `Open` button shows the preferred target; after a
+    /// chevron click the menu lists the apps, then `Open in folder` and `Save as…`.
     pub fn show_open_targets(
         &mut self,
         catalog: Result<context::OpenTargets, String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (targets, _) = catalog.map(|catalog| catalog.visible()).unwrap_or_default();
-        let mut items: Vec<_> = targets
+        let (targets, preferred) = catalog.map(|catalog| catalog.visible()).unwrap_or_default();
+        self.open_targets = targets;
+        self.open_preferred = preferred;
+        cx.notify();
+        // A newer catalog also refreshes an open menu.
+        if !std::mem::take(&mut self.open_menu_requested) && self.open_menu.is_none() {
+            return;
+        }
+        let item = |index: usize, target: &context::OpenTarget| OpenMenuItem {
+            payload: Some(index.to_string().into()),
+            image: target.asset(),
+            ..OpenMenuItem::new("file-open-target", target.label.clone(), true)
+        };
+        let folder = |t: &&context::OpenTarget| t.target == "fileManager";
+        let mut items: Vec<_> = self
+            .open_targets
             .iter()
             .enumerate()
-            .map(|(index, target)| OpenMenuItem {
-                payload: Some(index.to_string().into()),
-                ..OpenMenuItem::new("file-open-target", target.label.clone(), true)
-            })
+            .filter(|(_, t)| !folder(t))
+            .map(|(index, target)| item(index, target))
             .collect();
         if items.is_empty() {
             items.push(OpenMenuItem::new(
@@ -2993,46 +3079,81 @@ impl FileView {
             ));
         }
         items.push(OpenMenuItem::separator("file-open-separator"));
-        items.push(OpenMenuItem::new("file-copy-path", "Copy path", true));
-        self.open_targets = targets;
-        let at = self.open_at + gpui::point(px(0.), px(12.));
-        self.open_menu = Some(OpenMenu::open(items, self.path.clone(), at, window, cx));
-        cx.notify();
+        if let Some(index) = self.open_targets.iter().position(|t| folder(&t)) {
+            items.push(OpenMenuItem {
+                payload: Some(index.to_string().into()),
+                ..OpenMenuItem::new("file-open-target", "Open in folder", true)
+            });
+        }
+        items.push(OpenMenuItem::new("file-save-as", "Save as…", true));
+        if let Some(menu) = self.open_menu.take() {
+            menu.close(window, cx);
+        }
+        self.open_menu = Some(OpenMenu::app_dropdown(
+            items,
+            self.path.clone(),
+            self.open_bounds,
+            window,
+            cx,
+        ));
+    }
+
+    fn open_target(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(target) = self.open_targets.get(index) else {
+            return;
+        };
+        let cwd = self.workspace_root().to_owned();
+        cx.emit(FileTreeRequest::OpenIn(context::OpenTargetRequest {
+            path: self.path.clone(),
+            line: self.line,
+            target: target.target.clone(),
+            app_path: target.app_path.clone(),
+            persist_preferred_target_path: (target.kind == "editor" && target.app_path.is_none())
+                .then_some(cwd.clone()),
+            cwd,
+        }));
     }
 
     fn open_menu_pick(&mut self, id: &'static str, subject: String, cx: &mut Context<Self>) {
         match id {
-            "file-copy-path" => cx.write_to_clipboard(gpui::ClipboardItem::new_string(subject)),
             "file-open-target" => {
-                let Some(target) = subject
-                    .parse()
-                    .ok()
-                    .and_then(|i: usize| self.open_targets.get(i))
-                else {
-                    return;
-                };
-                let cwd = self.workspace_root().to_owned();
-                cx.emit(FileTreeRequest::OpenIn(context::OpenTargetRequest {
-                    path: self.path.clone(),
-                    line: self.line,
-                    target: target.target.clone(),
-                    app_path: target.app_path.clone(),
-                    persist_preferred_target_path: (target.kind == "editor"
-                        && target.app_path.is_none())
-                    .then_some(cwd.clone()),
-                    cwd,
-                }));
+                if let Ok(index) = subject.parse() {
+                    self.open_target(index, cx);
+                }
             }
+            "file-save-as" => self.save_as(cx),
             _ => {}
         }
     }
 
-    /// The tab strip icon: the Python sprite for `.py`, else the file change card's file glyph.
+    /// `Save as…`: a copy of the file's text at a path the user picks.
+    fn save_as(&mut self, cx: &mut Context<Self>) {
+        let Some(Ok(contents)) = self.contents.clone() else {
+            return;
+        };
+        let path = std::path::Path::new(&self.path);
+        let directory = path
+            .parent()
+            .unwrap_or(std::path::Path::new("/"))
+            .to_owned();
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+        let picked = cx.prompt_for_new_path(&directory, name.as_deref());
+        cx.background_spawn(async move {
+            if let Ok(Ok(Some(target))) = picked.await
+                && let Err(error) = std::fs::write(&target, contents)
+            {
+                eprintln!("codex-gpui: cannot save {}: {error}", target.display());
+            }
+        })
+        .detach();
+    }
+
+    /// The tab strip icon: the Python sprite for `.py`, else the original's file glyph.
     pub fn tab_icon(&self) -> &'static str {
         if self.path.ends_with(".py") {
             "navigation-python"
         } else {
-            "thread-file-diff"
+            "side-tab-file"
         }
     }
 
@@ -3053,6 +3174,10 @@ impl FileView {
             let top = line.saturating_sub(3) as f32 * FILE_LINE_HEIGHT;
             self.scroll.set_offset(gpui::point(px(0.), -px(top)));
         }
+        // The `Open` button shows the preferred app as soon as the file is open.
+        if self.contents.is_none() && self.local_controls {
+            cx.emit(FileTreeRequest::OpenTargets);
+        }
         self.contents = Some(contents);
         if self.find.is_some() {
             self.find_active = 0;
@@ -3061,7 +3186,7 @@ impl FileView {
         cx.notify();
     }
 
-    fn header(&self, t: &Theme, clamped: bool, cx: &Context<Self>) -> Div {
+    fn header(&self, t: &Theme, clamped: bool, window: &Window, cx: &Context<Self>) -> Div {
         let last = self.crumbs.len().saturating_sub(1);
         let crumbs = self.crumbs.iter().enumerate().flat_map(|(i, crumb)| {
             let color = if i == last { t.text } else { t.text_secondary };
@@ -3101,64 +3226,12 @@ impl FileView {
                 ),
             )
             .when(self.local_controls, |d| {
+                // `Search in files`, then `View source` (Markdown), the tree toggle and the
+                // `Open` split button, 6 px apart.
                 d.child(
                     div()
                         .flex()
                         .gap(px(6.))
-                        .when(self.is_markdown(), |d| {
-                            d.child(
-                                capsule(t, clamped)
-                                    .id("file-markdown-mode")
-                                    .role(gpui::Role::Button)
-                                    .aria_label(if self.show_source {
-                                        "View preview"
-                                    } else {
-                                        "View source"
-                                    })
-                                    .focusable()
-                                    .tab_index(0)
-                                    .focus_visible(crate::composer::menu::trigger_focus)
-                                    .px(px(10.))
-                                    .cursor_pointer()
-                                    .child(text(
-                                        if self.show_source {
-                                            "View preview"
-                                        } else {
-                                            "View source"
-                                        },
-                                        13.,
-                                        18.,
-                                        430.,
-                                        t.text,
-                                    ))
-                                    .on_click(cx.listener(|view, _, _, cx| {
-                                        view.toggle_markdown_source(cx);
-                                        cx.stop_propagation();
-                                    })),
-                            )
-                            .child(
-                                capsule(t, clamped)
-                                    .w(px(32.))
-                                    .id("file-copy-markdown")
-                                    .role(gpui::Role::Button)
-                                    .aria_label("Copy Markdown")
-                                    .focusable()
-                                    .tab_index(0)
-                                    .rounded_full()
-                                    .focus_visible(crate::composer::menu::trigger_focus)
-                                    .justify_center()
-                                    .cursor_pointer()
-                                    .child(icon("thread-copy", 16., t.text))
-                                    .on_click(cx.listener(|view, _, _, cx| {
-                                        if let Some(Ok(source)) = &view.contents {
-                                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                                source.clone(),
-                                            ));
-                                        }
-                                        cx.stop_propagation();
-                                    })),
-                            )
-                        })
                         .child(
                             capsule(t, clamped)
                                 .w(px(32.))
@@ -3187,59 +3260,148 @@ impl FileView {
                                 // rasterizes on that layer's tiles.
                                 .layer(),
                         )
+                        .when(self.is_markdown(), |d| {
+                            let label = if self.show_source {
+                                "View preview"
+                            } else {
+                                "View source"
+                            };
+                            // `px-3` around the label's advance on the LayoutUnit grid.
+                            let advance = window.text_system().layout_line(
+                                label,
+                                px(13.),
+                                &[TextRun {
+                                    len: label.len(),
+                                    font: Font {
+                                        weight: FontWeight(430.),
+                                        ..font(SANS)
+                                    },
+                                    color: t.text,
+                                    background_color: None,
+                                    underline: None,
+                                    strikethrough: None,
+                                }],
+                                None,
+                            );
+                            d.child(
+                                capsule(t, clamped)
+                                    .w(crate::run_width(advance.width, window) + px(24.))
+                                    .id("file-markdown-mode")
+                                    .role(gpui::Role::Button)
+                                    .aria_label(if self.show_source {
+                                        "View preview"
+                                    } else {
+                                        "View source"
+                                    })
+                                    .focusable()
+                                    .tab_index(0)
+                                    .focus_visible(crate::composer::menu::trigger_focus)
+                                    .px(px(12.))
+                                    .cursor_pointer()
+                                    .child(text(
+                                        if self.show_source {
+                                            "View preview"
+                                        } else {
+                                            "View source"
+                                        },
+                                        13.,
+                                        20.,
+                                        430.,
+                                        t.text,
+                                    ))
+                                    .on_click(cx.listener(|view, _, _, cx| {
+                                        view.toggle_markdown_source(cx);
+                                        cx.stop_propagation();
+                                    })),
+                            )
+                        })
                         .child(self.file_tree_button(t, clamped, cx))
-                        .child(
-                            capsule(t, clamped)
-                                .p_0()
-                                .id("file-open-in")
-                                .role(gpui::Role::Button)
-                                .aria_label("Open in")
-                                .focusable()
-                                .tab_index(0)
-                                .focus_visible(crate::composer::menu::trigger_focus)
-                                .cursor_pointer()
-                                .on_click(cx.listener(|view, event: &gpui::ClickEvent, _, cx| {
-                                    view.request_open_targets(event.position(), cx);
-                                    cx.stop_propagation();
-                                }))
-                                .child(
-                                    div()
-                                        .h(px(32.))
-                                        .pl(px(9.))
-                                        .flex()
-                                        .items_center()
-                                        .child(text("Open", 13., 18., 430., t.text))
-                                        .child(
-                                            div()
-                                                .ml(px(4.))
-                                                .w(px(23.))
-                                                .h_full()
-                                                .flex()
-                                                .items_center()
-                                                .pl(px(2.))
-                                                .child(
-                                                    menu::backdrop_glyph(
-                                                        include_bytes!(
-                                                            "../../../assets/icons/chevron-down.svg"
-                                                        ),
-                                                        "navigation-open-chevron",
-                                                        t.text,
-                                                        128,
-                                                    )
-                                                    .size(px(14.)),
-                                                ),
-                                        ),
-                                ),
-                        ),
+                        .child(self.open_button(t, clamped, cx)),
                 )
             })
+    }
+
+    /// The `Open` split button: the preferred app's icon and `Open` open the file in it; the
+    /// chevron lists every target.
+    fn open_button(&self, t: &Theme, clamped: bool, cx: &Context<Self>) -> Stateful<Div> {
+        let preferred = self.open_preferred.and_then(|i| self.open_targets.get(i));
+        let entity = cx.entity();
+        capsule(t, clamped)
+            .p_0()
+            .gap_0()
+            .id("file-open")
+            .child(
+                div()
+                    .id("file-open-in")
+                    .role(gpui::Role::Button)
+                    .aria_label(match preferred {
+                        Some(target) => format!("Open in {}", target.label),
+                        None => "Open in".into(),
+                    })
+                    .focusable()
+                    .tab_index(0)
+                    .focus_visible(crate::composer::menu::trigger_focus)
+                    .cursor_pointer()
+                    .h(px(32.))
+                    .pl(px(9.))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .children(
+                        preferred.and_then(|target| target.icon_element(t.control_background)),
+                    )
+                    .child(text("Open", 13., 18., 430., t.text))
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        match view.open_preferred {
+                            Some(index) => view.open_target(index, cx),
+                            None => view.request_open_targets(cx),
+                        }
+                        cx.stop_propagation();
+                    })),
+            )
+            .child(
+                div()
+                    .id("file-open-options")
+                    .debug_selector(|| "file-open-options".into())
+                    .role(gpui::Role::Button)
+                    .aria_label("Open options")
+                    .cursor_pointer()
+                    .ml(px(4.))
+                    .w(px(23.))
+                    .h(px(32.))
+                    .flex()
+                    .items_center()
+                    .pl(px(2.))
+                    .child(
+                        menu::backdrop_glyph(
+                            include_bytes!("../../../assets/icons/chevron-down.svg"),
+                            "navigation-open-chevron",
+                            t.text,
+                            128,
+                        )
+                        .size(px(14.)),
+                    )
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        view.request_open_targets(cx);
+                        cx.stop_propagation();
+                    })),
+            )
+            .child(
+                gpui::canvas(
+                    |_, _, _| {},
+                    move |bounds, (), _, cx| {
+                        entity.update(cx, |view, _| view.open_bounds = bounds);
+                    },
+                )
+                .absolute()
+                .inset_0(),
+            )
     }
 
     fn file_content(
         &self,
         t: &Theme,
         blame: Option<String>,
-        window: &Window,
         cx: &Context<Self>,
     ) -> gpui::AnyElement {
         match &self.contents {
@@ -3251,16 +3413,46 @@ impl FileView {
                 .justify_center()
                 .child(text("Could not open file", 13., 20., 430., t.text_tertiary))
                 .into_any_element(),
+            // `.cm-scroller`: 16 px at the sides, 64 px below; `Copy Markdown` floats 8 px
+            // down at the top right.
             Some(Ok(contents)) if self.shows_markdown_preview() => div()
-                .id("file-markdown-preview")
+                .relative()
                 .flex_1()
                 .min_h_0()
-                .overflow_y_scroll()
-                .px(px(24.))
-                .py(px(16.))
-                .child(crate::screens::thread::view::markdown_preview(
-                    contents, window, t,
-                ))
+                .child(
+                    div()
+                        .id("file-markdown-preview")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .px(px(16.))
+                        .pb(px(64.))
+                        .child(live_markdown::view(contents, t)),
+                )
+                .child(
+                    div()
+                        .id("file-copy-markdown")
+                        .role(gpui::Role::Button)
+                        .aria_label("Copy Markdown")
+                        .absolute()
+                        .top(px(8.))
+                        .right(px(16.))
+                        .size(px(26.))
+                        .rounded(px(10.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.ghost_hover))
+                        .child(icon("thread-copy", 16., t.text_tertiary))
+                        .on_click(cx.listener(|view, _, _, cx| {
+                            if let Some(Ok(source)) = &view.contents {
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                    source.clone(),
+                                ));
+                            }
+                            cx.stop_propagation();
+                        })),
+                )
                 .into_any_element(),
             Some(Ok(contents)) => {
                 let lines: Vec<_> = controls::lines(contents).collect();
@@ -3357,7 +3549,7 @@ impl Render for FileView {
         self.request_media(window, cx);
         let body = match self.media_view(window, cx) {
             Some(media) => media,
-            None => self.file_content(&t, blame, window, cx),
+            None => self.file_content(&t, blame, cx),
         };
         div()
             .id("file-view")
@@ -3430,7 +3622,7 @@ impl Render for FileView {
                     .top_0()
                     .left_0()
                     .w_full()
-                    .child(self.header(&t, panel_clamped(window, cx), cx)),
+                    .child(self.header(&t, panel_clamped(window, cx), window, cx)),
             )
             .when(self.go_to_line.is_some(), |d| d.child(self.line_bar(cx)))
             .when(self.find.is_some(), |d| d.child(self.file_find_bar(cx)))
