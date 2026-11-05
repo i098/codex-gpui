@@ -10,9 +10,10 @@ if [[ ${1:-} != --assemble ]]; then
     [[ -z $(git status --porcelain) ]] || revision=$revision-dirty
     lane=bundle
     [[ $mode == normal ]] || { mode=qa; lane=qa-sync; }
-    printf -v update_env 'CODEX_GPUI_UPDATE_FEED=%q CODEX_GPUI_UPDATE_PUBLIC_KEY=%q CODEX_GPUI_SPARKLE_FRAMEWORK=%q CODEX_GPUI_SIGN_IDENTITY=%q' \
+    printf -v update_env 'CODEX_GPUI_UPDATE_FEED=%q CODEX_GPUI_UPDATE_PUBLIC_KEY=%q CODEX_GPUI_SPARKLE_FRAMEWORK=%q CODEX_GPUI_SIGN_IDENTITY=%q CODEX_GPUI_DEFAULT_BROWSER=%q' \
         "${CODEX_GPUI_UPDATE_FEED:-}" "${CODEX_GPUI_UPDATE_PUBLIC_KEY:-}" \
-        "${CODEX_GPUI_SPARKLE_FRAMEWORK:-}" "${CODEX_GPUI_SIGN_IDENTITY:--}"
+        "${CODEX_GPUI_SPARKLE_FRAMEWORK:-}" "${CODEX_GPUI_SIGN_IDENTITY:--}" \
+        "${CODEX_GPUI_DEFAULT_BROWSER:-}"
     tools/mac.sh -l "$lane" "$update_env bash tools/bundle.sh --assemble /tmp/cgx-mac/release-$lane $mode $revision archive"
     destination=/tmp/cgx/release
     filename=codex-gpui-$version-macos-arm64.zip
@@ -29,27 +30,45 @@ name='Codex GPUI' identifier=dev.codexgpui.app
 # The normal bundle declares the `codex://` URL scheme (the original's packaged
 # CFBundleURLTypes); the QA bundle stays out of it so it never contends with the real
 # ChatGPT.app for the scheme on a shared Mac.
-url_scheme=''
+url_schemes=()
 export CODEX_GPUI_REVISION=$revision
 unset CODEX_GPUI_QA
 if [[ $mode == qa ]]; then
     name='Codex GPUI QA' identifier=dev.codexgpui.qa
     export CODEX_GPUI_QA=1
 elif [[ $mode == normal ]]; then
-    url_scheme='codex'
+    url_schemes=(codex)
+    if [[ ${CODEX_GPUI_DEFAULT_BROWSER:-} == 1 ]]; then
+        url_schemes+=(http https)
+    fi
 else
     exit 2
 fi
 url_types=""
-if [[ -n $url_scheme ]]; then
-    url_types="<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>$identifier</string><key>CFBundleURLSchemes</key><array><string>$url_scheme</string></array></dict></array>"
+if ((${#url_schemes[@]})); then
+    url_types="<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>$identifier</string><key>CFBundleURLSchemes</key><array>"
+    for scheme in "${url_schemes[@]}"; do
+        url_types+="<string>$scheme</string>"
+    done
+    url_types+="</array></dict></array>"
 fi
-cargo build --locked --release -p app
+binary=$CARGO_TARGET_DIR/release/codex-gpui
+if [[ ${CODEX_GPUI_UNIVERSAL:-} == 1 ]]; then
+    # One fat binary (arm64 + x86_64) keeps a single zip and a single appcast item.
+    for triple in aarch64-apple-darwin x86_64-apple-darwin; do
+        cargo build --locked --release -p app --target "$triple"
+    done
+    mkdir -p "$out"
+    binary=$(mktemp "$out/codex-gpui.XXXXXX")
+    lipo -create -output "$binary" "$CARGO_TARGET_DIR"/{aarch64,x86_64}-apple-darwin/release/codex-gpui
+else
+    cargo build --locked --release -p app
+fi
 mkdir -p "$out"
 stage=$(mktemp -d "$out/stage.XXXXXX")
 app="$stage/$name.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp "$CARGO_TARGET_DIR/release/codex-gpui" "$app/Contents/MacOS/"
+cp "$binary" "$app/Contents/MacOS/codex-gpui"
 cp assets/app/AppIcon.icns "$app/Contents/Resources/"
 python3 tools/third-party-notices.py "$app/Contents/Resources/THIRD_PARTY_NOTICES.txt"
 cat >"$app/Contents/Info.plist" <<PLIST
@@ -71,6 +90,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>NSMicrophoneUsageDescription</key><string>Codex uses the microphone to turn your speech into text.</string>
 $url_types
+<key>CFBundleDocumentTypes</key><array><dict><key>CFBundleTypeName</key><string>Folder</string><key>CFBundleTypeRole</key><string>Viewer</string><key>LSItemContentTypes</key><array><string>public.folder</string></array></dict><dict><key>CFBundleTypeName</key><string>File</string><key>CFBundleTypeRole</key><string>Viewer</string><key>LSItemContentTypes</key><array><string>public.data</string></array></dict></array>
 </dict></plist>
 PLIST
 feed=${CODEX_GPUI_UPDATE_FEED:-}
@@ -104,11 +124,62 @@ if [[ -n $feed || -n $key ]]; then
     plutil -insert SUEnableAutomaticChecks -bool YES "$app/Contents/Info.plist"
 fi
 plutil -lint "$app/Contents/Info.plist"
+if [[ $identity != - ]]; then
+    # The hardened runtime blocks the microphone unless the bundle holds this entitlement.
+    entitlements="$stage/entitlements.plist"
+    cat >"$entitlements" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>com.apple.security.device.audio-input</key><true/></dict></plist>
+PLIST
+    sign_args+=(--entitlements "$entitlements")
+fi
 codesign "${sign_args[@]}" "$app"
 codesign --verify --strict --verbose=2 "$app"
 "$app/Contents/MacOS/codex-gpui" --qa-build-info
+# notarize SUBMISSION: send it to Apple, wait for the verdict, and staple the ticket.
+# The API key (App Store Connect) comes from CODEX_GPUI_NOTARY_KEY_P8 (the .p8 text), _KEY_ID and _ISSUER.
+notary_key=''
+notarize() {
+    local submission=$1 staple=$2
+    xcrun notarytool submit "$submission" --wait --key "$notary_key" \
+        --key-id "$CODEX_GPUI_NOTARY_KEY_ID" --issuer "$CODEX_GPUI_NOTARY_ISSUER"
+    xcrun stapler staple "$staple"
+    xcrun stapler validate "$staple"
+}
+if [[ -n ${CODEX_GPUI_NOTARY_KEY_ID:-} ]]; then
+    [[ $identity != - && -n ${CODEX_GPUI_NOTARY_KEY_P8:-} && -n ${CODEX_GPUI_NOTARY_ISSUER:-} ]] || {
+        echo 'notarization requires a signing identity, CODEX_GPUI_NOTARY_KEY_P8 and CODEX_GPUI_NOTARY_ISSUER' >&2
+        exit 2
+    }
+    notary_key="$stage/notary-key.p8"
+    trap 'rm -f -- "$notary_key"' EXIT
+    (umask 077 && printf '%s' "$CODEX_GPUI_NOTARY_KEY_P8" >"$notary_key")
+    (cd "$stage" && ditto -c -k --keepParent "$name.app" notarize.zip)
+    notarize "$stage/notarize.zip" "$app"
+    spctl --assess --type execute --verbose=2 "$app"
+fi
+if [[ ${CODEX_GPUI_UNIVERSAL:-} == 1 ]]; then
+    archs=$(lipo -archs "$app/Contents/MacOS/codex-gpui")
+    [[ $archs == *arm64* && $archs == *x86_64* ]] || { echo "binary is not universal: $archs" >&2; exit 1; }
+    rm -f -- "$binary"
+fi
 if [[ ${5:-} == archive ]]; then
     (cd "$stage" && ditto -c -k --keepParent "$name.app" "$out/bundle.zip")
+    if [[ ${CODEX_GPUI_DMG:-} == 1 ]]; then
+        # The disk image holds the app and an Applications link; it is signed and notarized like the app.
+        dmg_root="$stage/dmg"
+        mkdir "$dmg_root"
+        ditto "$app" "$dmg_root/$name.app"
+        ln -s /Applications "$dmg_root/Applications"
+        hdiutil create -volname "$name" -srcfolder "$dmg_root" -fs HFS+ -format UDZO -ov "$out/bundle.dmg"
+        if [[ $identity != - ]]; then
+            codesign --force --sign "$identity" --timestamp "$out/bundle.dmg"
+        fi
+        if [[ -n $notary_key ]]; then
+            notarize "$out/bundle.dmg" "$out/bundle.dmg"
+        fi
+    fi
     rm -rf -- "$stage"
 else
     printf 'verified bundle: %s\n' "$app"

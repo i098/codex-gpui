@@ -40,6 +40,103 @@ impl ThreadView {
         cx.notify();
     }
 
+    /// The selected local environment's run actions; the header's `Run` control runs them.
+    pub fn set_environment_actions(&mut self, names: Vec<SharedString>, cx: &mut Context<Self>) {
+        self.environment_actions = names;
+        self.run_menu = false;
+        cx.notify();
+    }
+
+    /// `Run: {actionName}` runs the first action; its chevron lists all of them (`Actions`).
+    fn run_control(&self, cx: &Context<Self>) -> impl IntoElement {
+        let t = cx.theme();
+        let hover = t.ghost_hover;
+        let first = &self.environment_actions[0];
+        div()
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .child(
+                div()
+                    .id("environment-run")
+                    .h(px(28.))
+                    .px(px(8.))
+                    .rounded(px(10.))
+                    .flex()
+                    .items_center()
+                    .hover(move |s| s.bg(hover))
+                    .child(text(
+                        format!("Run: {first}"),
+                        13.,
+                        18.,
+                        430.,
+                        t.text_secondary,
+                    ))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(RunEnvironmentAction(0)), cx)
+                    }),
+            )
+            .when(self.environment_actions.len() > 1, |d| {
+                d.child(
+                    icon_button(
+                        "environment-run-menu",
+                        icon("chevron-down", 16., t.text_tertiary),
+                        t,
+                    )
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        view.run_menu = true;
+                        cx.notify();
+                    })),
+                )
+            })
+            .when(self.run_menu, |d| d.child(self.run_menu_popup(cx)))
+    }
+
+    fn run_menu_popup(&self, cx: &Context<Self>) -> impl IntoElement {
+        let t = cx.theme();
+        let hover = t.menu_item_hover;
+        let content = crate::composer::popover(t, 220., |mut menu| {
+            for (index, name) in self.environment_actions.iter().enumerate() {
+                menu = menu.child(
+                    div()
+                        .id(("environment-action", index))
+                        .h(px(28.5625))
+                        .px(px(8.))
+                        .rounded(px(12.))
+                        .flex()
+                        .items_center()
+                        .hover(move |s| s.bg(hover))
+                        .child(text(name.clone(), 13., 18.5714, 430., t.text).flex_1())
+                        .on_click(cx.listener(move |view, _, window, cx| {
+                            view.run_menu = false;
+                            cx.notify();
+                            window.dispatch_action(Box::new(RunEnvironmentAction(index)), cx);
+                        })),
+                );
+            }
+            menu
+        });
+        deferred(
+            div().absolute().top(px(30.)).right_0().child(
+                anchored()
+                    .anchor(Anchor::TopRight)
+                    .snap_to_window_with_margin(Edges::all(px(7.)))
+                    .child(
+                        div()
+                            .id("environment-run-actions")
+                            .occlude()
+                            .on_mouse_down_out(cx.listener(|view, _, _, cx| {
+                                view.run_menu = false;
+                                cx.notify();
+                            }))
+                            .child(content),
+                    ),
+            ),
+        )
+        .with_priority(1)
+    }
+
     pub fn chat_action_labels(&self) -> Option<impl Iterator<Item = &'static str>> {
         self.chat_actions
             .as_ref()
@@ -226,6 +323,9 @@ impl ThreadView {
                     .flex_none()
                     .items_center()
                     .gap(px(6.))
+                    .when(!self.environment_actions.is_empty(), |d| {
+                        d.child(self.run_control(cx))
+                    })
                     .child(
                         icon_button(
                             "chat-actions",

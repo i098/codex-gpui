@@ -415,6 +415,28 @@ pub(super) fn selection(host: &LocalHost, workspace: &Path) -> Result<Selection>
     Ok(selected)
 }
 
+/// The run actions of `workspace`'s selected environment for this OS, in file order:
+/// `{actions: [{name, command, icon?}]}`, empty with no environment selected.
+pub(super) fn actions(host: &LocalHost, workspace: &Path) -> Result<Value> {
+    let Selection::Config(path) = selection(host, workspace)? else {
+        return Ok(json!({"actions": []}));
+    };
+    let platform = if cfg!(target_os = "macos") {
+        "darwin"
+    } else if cfg!(windows) {
+        "win32"
+    } else {
+        "linux"
+    };
+    let environment = config(&path)?;
+    let actions: Vec<&Action> = environment
+        .actions
+        .iter()
+        .filter(|action| action.platform.as_deref().is_none_or(|p| p == platform))
+        .collect();
+    Ok(json!({ "actions": actions }))
+}
+
 pub(super) fn select(host: &LocalHost, workspace: &Path, path: Option<&Path>) -> Result<()> {
     let key =
         workspace_key(workspace)?.context("Environment selection needs a non-root workspace")?;
@@ -603,6 +625,35 @@ mod tests {
             json!([])
         );
         assert_eq!(selection(&host, Path::new("/"))?, Selection::Unset);
+        Ok(())
+    }
+
+    #[test]
+    fn actions_follow_the_selection_and_this_platform() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let host = LocalHost::new(home.path());
+        let workspace = home.path().join("project");
+        let path = workspace.join(DIRECTORY).join("environment.toml");
+        let raw = format!(
+            "{RAW}[[actions]]\nname='Test'\ncommand='npm test'\n\
+             [[actions]]\nname='Mac'\ncommand='open .'\nplatform='{}'\n\
+             [[actions]]\nname='Run'\ncommand='npm start'\n",
+            if cfg!(target_os = "macos") {
+                "linux"
+            } else {
+                "darwin"
+            }
+        );
+        save(&json!({"configPath": path, "raw": raw, "expectedRevision": null}))?;
+        assert_eq!(actions(&host, &workspace)?["actions"], json!([]));
+        select(&host, &workspace, Some(&path))?;
+        let names: Vec<_> = actions(&host, &workspace)?["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|action| action["name"].clone())
+            .collect();
+        assert_eq!(names, [json!("Test"), json!("Run")]);
         Ok(())
     }
 }

@@ -27,17 +27,19 @@ fn permission_menu_matches_original_focus() -> Result<()> {
             std::thread::sleep(Duration::from_millis(ms));
         }
         match step["type"].as_str().unwrap() {
-            "click" => {
+            // The port's menu matches the original's geometry, so the recorded boxes apply.
+            "click" | "hover" => {
                 let b = &step["target"]["bbox"];
-                fx.click((
+                let at = (
                     (b["x"].as_f64().unwrap() + b["w"].as_f64().unwrap() / 2.) as f32,
                     (b["y"].as_f64().unwrap() + b["h"].as_f64().unwrap() / 2.) as f32,
-                ))?;
+                );
+                if step["type"] == "click" {
+                    fx.click(at)?;
+                } else {
+                    fx.hover(at)?;
+                }
             }
-            // The existing port menu is 320 px wide. Use the same item and heading, not the
-            // original's coordinates within its 417 px menu.
-            "hover" if step["target"]["text"] == "Full access" => fx.hover((790., 684.))?,
-            "hover" => fx.hover((700., 548.))?,
             "key" => {
                 let key = match step["key"].as_str().unwrap() {
                     "End" => "end",
@@ -85,9 +87,10 @@ fn permission_menu_matches_original_focus() -> Result<()> {
                 .split(',')
                 .map(|s| s.trim().parse())
                 .collect::<Result<_, _>>()?;
+            // An empty spot right of each row's text, clear of the check, mid-row.
             let scale = image.width() as f32 / 1280.;
-            let x = (790. * scale) as u32;
-            let y = ([580., 628., 684., 740.][item] * scale) as u32;
+            let x = (891. * scale) as u32;
+            let y = ([621., 663., 706., 748.][item] * scale) as u32;
             let base = unhighlighted.as_ref().unwrap().get_pixel(x, y);
             let painted = image.get_pixel(x, y);
             for channel in 0..3 {

@@ -8,7 +8,7 @@ use gpui::{
     prelude::FluentBuilder as _, px, radians,
 };
 use std::time::Duration;
-use theme::Theme;
+use theme::{ActiveTheme as _, Theme};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Status {
@@ -32,12 +32,22 @@ impl Status {
     }
 }
 
+/// The update Sparkle found: its display version and release notes page.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Release {
+    pub title: gpui::SharedString,
+    pub notes: Option<gpui::SharedString>,
+}
+
 #[derive(Default)]
 pub struct Updates {
     pub available: bool,
     pub managed: bool,
     pub automatic: bool,
     pub status: Status,
+    pub release: Option<Release>,
+    /// The release whose sidebar banner the user dismissed.
+    pub dismissed: Option<Release>,
 }
 
 impl Global for Updates {}
@@ -107,16 +117,7 @@ pub fn rail<T: 'static>(
                 .cursor_pointer()
                 .hover(|d| d.bg(t.ghost_hover))
                 .on_click(dispatch::<InstallUpdate>)
-                .on_key_down(|event, window, cx| {
-                    if matches!(event.keystroke.key.as_str(), "enter" | "space")
-                        && !event.keystroke.modifiers.platform
-                        && !event.keystroke.modifiers.control
-                        && !event.keystroke.modifiers.alt
-                    {
-                        window.dispatch_action(Box::new(InstallUpdate), cx);
-                        cx.stop_propagation();
-                    }
-                })
+                .on_key_down(install_on_key)
         })
         .when(!ready, |d| {
             d.role(Role::ProgressIndicator)
@@ -176,4 +177,170 @@ pub fn automatic_row(t: &Theme, cx: &App) -> Option<Div> {
             .into_any_element(),
         t,
     ))
+}
+
+/// The sidebar banner (`sidebar.updateBanner`): the new version, its download progress,
+/// `Restart to update` once staged, `Read more` for the release notes, and dismiss.
+pub fn banner<T: 'static>(window: &mut Window, cx: &mut Context<T>) -> Option<gpui::AnyElement> {
+    let updates = cx.try_global::<Updates>()?;
+    let release = updates.release.clone()?;
+    let status = updates.status;
+    if !updates.available
+        || updates.managed
+        || updates.dismissed.as_ref() == Some(&release)
+        || matches!(status, Status::Idle | Status::Checking)
+    {
+        return None;
+    }
+    let progress = match status {
+        Status::Downloading(Some(percent)) => Some(format!("Downloading update… {percent}%")),
+        Status::Downloading(None) => Some("Downloading update…".into()),
+        Status::Installing => Some("Installing…".into()),
+        _ => None,
+    };
+    let t = &cx.theme().clone();
+    let restart = focus::handle("update-banner-restart", 0, window, cx);
+    let dismissed = release.clone();
+    let card = div()
+        .id("update-banner")
+        .debug_selector(|| "update-banner".into())
+        .role(Role::Group)
+        .aria_label("Update")
+        .mx(px(8.))
+        .mb(px(8.))
+        .p(px(12.))
+        .flex()
+        .flex_col()
+        .gap(px(8.))
+        .rounded(px(16.))
+        .bg(t.surface_elevated)
+        .border_1()
+        .border_color(t.border)
+        .child(
+            div()
+                .flex()
+                .items_start()
+                .gap(px(8.))
+                .child(
+                    crate::text(
+                        format!("New Codex update available: {}", release.title),
+                        13.,
+                        18.,
+                        530.,
+                        t.text,
+                    )
+                    .flex_1()
+                    .min_w_0()
+                    .whitespace_normal(),
+                )
+                .child(
+                    div()
+                        .id("update-banner-dismiss")
+                        .debug_selector(|| "update-banner-dismiss".into())
+                        .role(Role::Button)
+                        .aria_label("Dismiss release announcement")
+                        .size(px(20.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(6.))
+                        .cursor_pointer()
+                        .hover(|d| d.bg(t.ghost_hover))
+                        .on_click(move |_, _, cx| {
+                            cx.global_mut::<Updates>().dismissed = Some(dismissed.clone());
+                            cx.refresh_windows();
+                        })
+                        .child(icon("close", 14., t.text_tertiary)),
+                ),
+        )
+        .children(progress.map(|label| {
+            let percent = match status {
+                Status::Downloading(Some(percent)) => f32::from(percent.min(100)) / 100.,
+                _ => 0.,
+            };
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .child(crate::text(label, 12., 16., 430., t.text_secondary))
+                .child(
+                    div()
+                        .id("update-banner-progress")
+                        .role(Role::ProgressIndicator)
+                        .aria_label("Update download progress")
+                        .aria_min_numeric_value(0.)
+                        .aria_max_numeric_value(100.)
+                        .aria_numeric_value(f64::from(percent * 100.))
+                        .h(px(4.))
+                        .w_full()
+                        .rounded(px(2.))
+                        .bg(t.ghost_hover)
+                        .child(
+                            div()
+                                .h_full()
+                                .w(gpui::relative(percent))
+                                .rounded(px(2.))
+                                .bg(t.info_solid),
+                        ),
+                )
+        }))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .when(status == Status::Ready, |d| {
+                    d.child(
+                        focus::ring(
+                            div().id("update-banner-restart"),
+                            &restart,
+                            px(8.),
+                            px(1.),
+                            cx,
+                        )
+                        .debug_selector(|| "update-banner-restart".into())
+                        .role(Role::Button)
+                        .h(px(28.))
+                        .px(px(10.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(8.))
+                        .bg(t.button_primary_solid)
+                        .hover(|d| d.bg(t.button_primary_solid_hover))
+                        .cursor_pointer()
+                        .on_click(dispatch::<InstallUpdate>)
+                        .on_key_down(install_on_key)
+                        .child(crate::text(
+                            "Restart to update",
+                            13.,
+                            18.,
+                            530.,
+                            t.surface,
+                        )),
+                    )
+                })
+                .children(release.notes.map(|url| {
+                    div()
+                        .id("update-banner-notes")
+                        .debug_selector(|| "update-banner-notes".into())
+                        .role(Role::Link)
+                        .cursor_pointer()
+                        .on_click(move |_, _, cx| cx.open_url(&url))
+                        .child(crate::text("Read more", 13., 18., 430., t.text_accent))
+                })),
+        );
+    Some(card.into_any_element())
+}
+
+/// Enter or Space on a focused install control installs the staged update.
+fn install_on_key(event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut App) {
+    if matches!(event.keystroke.key.as_str(), "enter" | "space")
+        && !event.keystroke.modifiers.platform
+        && !event.keystroke.modifiers.control
+        && !event.keystroke.modifiers.alt
+    {
+        window.dispatch_action(Box::new(InstallUpdate), cx);
+        cx.stop_propagation();
+    }
 }
