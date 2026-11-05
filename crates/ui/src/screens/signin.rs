@@ -78,6 +78,15 @@ pub mod policy {
             }
         }
     }
+    pub fn gateway_provider(response: &Value) -> Option<(String, String)> {
+        if !response.get("required")?.as_bool()? {
+            return None;
+        }
+        Some((
+            response.get("providerId")?.as_str()?.to_owned(),
+            response.get("providerName")?.as_str()?.to_owned(),
+        ))
+    }
     pub(super) fn supports_access_keys(user_agent: &str) -> bool {
         let Some(version) = user_agent
             .split_whitespace()
@@ -97,6 +106,24 @@ pub mod policy {
         use super::*;
         use serde_json::json;
 
+        #[test]
+        fn gateway_login_requires_a_complete_required_provider() {
+            assert_eq!(
+                gateway_provider(&json!({
+                    "required": true,
+                    "providerId": "corp",
+                    "providerName": "Company"
+                })),
+                Some(("corp".into(), "Company".into()))
+            );
+            for response in [
+                json!({"required": false, "providerId": "corp", "providerName": "Company"}),
+                json!({"required": true, "providerId": "corp"}),
+                json!({"required": true, "providerName": "Company"}),
+            ] {
+                assert_eq!(gateway_provider(&response), None);
+            }
+        }
         #[test]
         fn bedrock_access_keys_respect_prerelease_ordering() {
             for (version, supported) in [
@@ -408,6 +435,7 @@ pub enum LoginEvent {
         provider: Provider,
         email: Option<String>,
     },
+    OpenUrl(String),
     /// The sign-in requirements are read and the screen shows its methods.
     MethodsLoaded,
     Authenticated,
@@ -450,6 +478,7 @@ enum Stage {
 #[derive(Clone, Copy)]
 enum Command {
     Start(Provider),
+    GatewayOAuth,
     Recognized(usize),
     CreateKey,
     ShowApiKey,
@@ -458,6 +487,7 @@ enum Command {
     Submit,
     Cancel,
     CopyLink,
+    UseCode,
     Retry,
     PlaySnake,
     ShowBedrock,
@@ -488,16 +518,40 @@ pub struct Login {
     attempt: u64,
     login_id: Option<String>,
     login_url: Option<String>,
+    device_code: Option<String>,
     restart_blocked: bool,
     snake: Option<snake::Snake>,
     snake_timer: Option<gpui::Task<()>>,
     bedrock: Option<bedrock::Bedrock>,
     supports_access_keys: bool,
     browser_loading: bool,
+    gateway_pending: bool,
     hovered_button: Option<&'static str>,
+    gateway_provider: Option<(String, String)>,
 }
 
 impl EventEmitter<LoginEvent> for Login {}
+
+async fn gateway_oauth_request<R>(
+    request: impl Future<Output = anyhow::Result<R>>,
+    timeout: impl Future<Output = ()>,
+) -> (anyhow::Result<R>, bool) {
+    let mut request = std::pin::pin!(request);
+    let mut timeout = std::pin::pin!(timeout);
+    std::future::poll_fn(|cx| {
+        if let std::task::Poll::Ready(result) = request.as_mut().poll(cx) {
+            return std::task::Poll::Ready((result, false));
+        }
+        if timeout.as_mut().poll(cx).is_ready() {
+            return std::task::Poll::Ready((
+                Err(anyhow::anyhow!("Gateway sign-in timed out")),
+                true,
+            ));
+        }
+        std::task::Poll::Pending
+    })
+    .await
+}
 
 impl Login {
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -521,6 +575,7 @@ impl Login {
             attempt: 0,
             login_id: None,
             login_url: None,
+            device_code: None,
             restart_blocked: false,
             snake: None,
             snake_timer: None,
@@ -528,6 +583,8 @@ impl Login {
             supports_access_keys: false,
             browser_loading: false,
             hovered_button: None,
+            gateway_provider: None,
+            gateway_pending: false,
         };
         this.load_policy(cx);
         this
@@ -606,12 +663,18 @@ impl Login {
                 }
                 Err(_) => Policy::Error,
             };
+            let gateway_provider = bridge
+                .request::<_, Value>("account/gatewayOAuth/read", Option::<()>::None)
+                .await
+                .ok()
+                .and_then(|value| policy::gateway_provider(&value));
             this.update(cx, |this, cx| {
                 if generation != this.policy_generation {
                     return;
                 }
                 this.policy = policy;
                 this.supports_access_keys = supports_access_keys;
+                this.gateway_provider = gateway_provider;
                 if !policy.permits_api() {
                     this.stage = Stage::Welcome;
                 }
@@ -623,11 +686,37 @@ impl Login {
         .detach();
         cx.notify();
     }
-
     pub fn apply(&mut self, event: &bridge::Event, cx: &mut Context<Self>) {
         let bridge::Event::Notification { method, params } = event else {
             return;
         };
+        if method == "account/gatewayOAuth/changed" {
+            if !self.pending
+                || params["providerId"].as_str()
+                    != self.gateway_provider.as_ref().map(|(id, _)| id.as_str())
+            {
+                return;
+            }
+            match params["status"].as_str() {
+                Some("started") => {
+                    if let Some(url) = params["authUrl"].as_str() {
+                        cx.emit(LoginEvent::OpenUrl(url.to_owned()));
+                    }
+                }
+                Some("failed") => {
+                    self.gateway_pending = false;
+                    self.attempt += 1;
+                    self.pending = false;
+                    self.error = Some(format!(
+                        "Sign-in failed: {}",
+                        params["error"].as_str().unwrap_or("Gateway sign-in failed")
+                    ));
+                    cx.notify();
+                }
+                _ => {}
+            }
+            return;
+        }
         if method != "account/login/completed"
             || !self.pending
             || params["loginId"].as_str() != self.login_id.as_deref()
@@ -638,6 +727,7 @@ impl Login {
         self.pending = false;
         self.login_id = None;
         self.login_url = None;
+        self.device_code = None;
         if params["success"] == true {
             cx.emit(LoginEvent::Authenticated);
         } else {
@@ -646,6 +736,49 @@ impl Login {
                 params["error"].as_str().unwrap_or_default()
             ));
         }
+        cx.notify();
+    }
+
+    fn start_gateway_oauth(&mut self, cx: &mut Context<Self>) {
+        if self.pending || !self.policy.permits_chatgpt() || self.gateway_provider.is_none() {
+            return;
+        }
+        let Some(bridge) = self.bridge.clone() else {
+            return;
+        };
+        self.gateway_pending = true;
+        self.pending = true;
+        self.error = None;
+        self.restart_blocked = true;
+        self.attempt += 1;
+        let attempt = self.attempt;
+        cx.spawn(async move |this, cx| {
+            let (result, timed_out) = gateway_oauth_request(
+                bridge.request::<_, Value>("account/gatewayOAuth/login", Option::<()>::None),
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(240)),
+            )
+            .await;
+            if timed_out {
+                let _ = bridge
+                    .request::<_, Value>("account/gatewayOAuth/cancel", Option::<()>::None)
+                    .await;
+            }
+            this.update(cx, |this, cx| {
+                if this.attempt != attempt {
+                    return;
+                }
+                this.gateway_pending = false;
+                this.pending = false;
+                match result {
+                    Ok(_) => cx.emit(LoginEvent::Authenticated),
+                    Err(error) => this.error = Some(format!("Sign-in failed: {error}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
         cx.notify();
     }
 
@@ -658,6 +791,7 @@ impl Login {
         };
         self.pending = true;
         self.login_url = None;
+        self.device_code = None;
         self.restart_blocked = true;
         self.error = None;
         self.attempt += 1;
@@ -684,6 +818,64 @@ impl Login {
                 cx.notify();
             }).ok();
         }).detach();
+        cx.notify();
+    }
+
+    /// Sign in with a one-time code typed on a web page, for browsers that cannot reach the
+    /// loopback callback of the browser flow.
+    pub fn start_device_code(&mut self, cx: &mut Context<Self>) {
+        let Some(bridge) = self.bridge.clone() else {
+            return;
+        };
+        if let Some(id) = self.login_id.take() {
+            cancel(bridge.clone(), id, cx);
+        }
+        self.attempt += 1;
+        let attempt = self.attempt;
+        self.login_url = None;
+        self.device_code = None;
+        self.error = None;
+        cx.spawn(async move |this, cx| {
+            let result = bridge
+                .request::<_, Value>("account/login/start", json!({"type": "chatgptDeviceCode"}))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.attempt != attempt {
+                    if let Ok(value) = result
+                        && let Some(id) = value["loginId"].as_str()
+                    {
+                        cancel(bridge.clone(), id.to_owned(), cx);
+                    }
+                    return;
+                }
+                let parsed = result.as_ref().ok().and_then(|value| {
+                    Some((
+                        value["loginId"].as_str()?.to_owned(),
+                        value["verificationUrl"].as_str()?.to_owned(),
+                        value["userCode"].as_str()?.to_owned(),
+                    ))
+                });
+                match (parsed, result) {
+                    (Some((id, url, code)), _) => {
+                        this.login_id = Some(id);
+                        this.login_url = Some(url.clone());
+                        this.device_code = Some(code);
+                        cx.open_url(&url);
+                    }
+                    (None, Err(error)) => {
+                        this.pending = false;
+                        this.error = Some(format!("Sign-in failed: {error}"));
+                    }
+                    (None, Ok(_)) => {
+                        this.pending = false;
+                        this.error = Some("Sign-in failed: invalid sign-in response".into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
         cx.notify();
     }
 
@@ -728,8 +920,20 @@ impl Login {
     /// Abandons the browser sign-in in progress (`account/login/cancel`).
     pub fn cancel_pending(&mut self, cx: &mut Context<Self>) {
         self.attempt += 1;
+        if self.gateway_pending {
+            self.gateway_pending = false;
+            if let Some(bridge) = self.bridge.clone() {
+                cx.spawn(async move |_, _| {
+                    let _ = bridge
+                        .request::<_, Value>("account/gatewayOAuth/cancel", Option::<()>::None)
+                        .await;
+                })
+                .detach();
+            }
+        }
         self.pending = false;
         self.login_url = None;
+        self.device_code = None;
         if let Some(id) = self.login_id.take()
             && let Some(bridge) = self.bridge.clone()
         {
@@ -739,6 +943,7 @@ impl Login {
 
     fn command(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
         match command {
+            Command::GatewayOAuth => self.start_gateway_oauth(cx),
             Command::Start(provider) => self.start(provider, None, cx),
             Command::Recognized(index) => {
                 if let Some(profile) = self.options.browser_profiles.get(index) {
@@ -784,6 +989,7 @@ impl Login {
             }
             Command::Submit => self.submit(cx),
             Command::Cancel => self.cancel_pending(cx),
+            Command::UseCode if self.pending => self.start_device_code(cx),
             Command::CopyLink => {
                 if let Some(url) = &self.login_url {
                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(url.clone()));
@@ -1147,6 +1353,16 @@ impl Login {
     }
 
     fn chatgpt_controls(&self, mut body: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        if let Some((_, provider_name)) = &self.gateway_provider {
+            return body.child(self.button(
+                "gateway-oauth",
+                format!("Sign in with {provider_name}"),
+                Command::GatewayOAuth,
+                Style::Primary,
+                window,
+                cx,
+            ));
+        }
         let t = login_theme(cx);
         body = self.account_choices(body, window, cx);
         let recognized = !self.options.browser_profiles.is_empty();
@@ -1349,7 +1565,28 @@ impl Login {
                             .when(self.login_url.is_none(), |button| button.opacity(0.5)),
                         ),
                 )
-            });
+            })
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(text(
+                        "Page can't be reached?",
+                        14.,
+                        20.,
+                        400.,
+                        t.text_description,
+                    ))
+                    .child(self.button(
+                        "use-signin-code",
+                        "Sign in with a code",
+                        Command::UseCode,
+                        Style::Link,
+                        window,
+                        cx,
+                    )),
+            );
         frame.pb(px(48.)).child(
             div()
                 .w(px(340.))
@@ -1359,7 +1596,10 @@ impl Login {
                 .gap(px(32.))
                 .child(icon("signin-chatgpt", 40., t.text))
                 .child(text(
-                    "Continue signing in with your browser",
+                    match &self.device_code {
+                        Some(code) => format!("Enter code {code} on the page that opened"),
+                        None => "Continue signing in with your browser".to_owned(),
+                    },
                     14.,
                     20.,
                     400.,
@@ -1373,6 +1613,8 @@ impl Login {
         let t = login_theme(cx);
         let heading = if self.stage == Stage::OtherMethods {
             "Sign in another way"
+        } else if self.gateway_provider.is_some() {
+            "Sign in to your organization"
         } else if !self.policy.permits_chatgpt() {
             "Sign in with an API key"
         } else if self.stage == Stage::Welcome && !self.options.browser_profiles.is_empty() {
@@ -1497,5 +1739,36 @@ impl Login {
                     ),
             );
         body
+    }
+}
+
+#[cfg(test)]
+mod gateway_oauth_tests {
+    use super::*;
+    use std::task::{Context as TaskContext, Poll, Waker};
+
+    #[test]
+    fn gateway_oauth_request_races_completion_and_timeout() {
+        let mut completed = std::pin::pin!(gateway_oauth_request(
+            async { Ok::<_, anyhow::Error>(()) },
+            async {},
+        ));
+        assert!(matches!(
+            completed
+                .as_mut()
+                .poll(&mut TaskContext::from_waker(Waker::noop())),
+            Poll::Ready((Ok(()), false))
+        ));
+
+        let mut timed_out = std::pin::pin!(gateway_oauth_request(
+            std::future::pending::<anyhow::Result<()>>(),
+            async {},
+        ));
+        assert!(matches!(
+            timed_out
+                .as_mut()
+                .poll(&mut TaskContext::from_waker(Waker::noop())),
+            Poll::Ready((Err(_), true))
+        ));
     }
 }

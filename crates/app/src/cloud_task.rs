@@ -112,6 +112,9 @@ impl Root {
                     }
                 }
                 CloudAction::Cancel => root.cancel_cloud_task(cx),
+                CloudAction::CreatePullRequest { draft } => {
+                    root.create_cloud_pull_request(*draft, cx)
+                }
             },
         )
         .detach();
@@ -274,6 +277,8 @@ impl Root {
                 }
                 CloudAction::Apply { revert } => root.apply_cloud_changes(*revert, cx),
                 CloudAction::LoadImage(pointer) => root.load_cloud_image(pointer.clone(), cx),
+                // A setup thread has no diff turn, so it never offers `Create PR`.
+                CloudAction::CreatePullRequest { .. } => {}
             },
         )
         .detach();
@@ -308,6 +313,7 @@ impl Root {
                     turns: vec![CloudTurn { id: thread_id.clone(), thread, phase: Phase::SettingUp, error: None, logs: Vec::new(), images: Vec::new() }],
                     diff_turn: None, diff: String::new(), clone_url: None,
                     environment_label: config["name"].as_str().map(str::to_owned), working,
+                    pull_request: None,
                 }, cx));
                 while let Ok(event) = events.recv().await {
                     ensure!(host.identity().as_ref() == Some(&identity), "Your account changed during cloud setup");
@@ -538,6 +544,66 @@ impl Root {
                 })
                 .ok();
             }
+        })
+        .detach();
+    }
+
+    /// `POST /wham/tasks/{task}/turns/{turn}/pr` (`mode: draft` for a draft), then reads the
+    /// turn until its `pull_request_data.url` is set, like the original's turn poll.
+    fn create_cloud_pull_request(&self, draft: bool, cx: &mut Context<Self>) {
+        let Some(page) = self.cloud.as_ref().map(|session| session.page.clone()) else {
+            return;
+        };
+        let Some((id, turn)) = page
+            .read(cx)
+            .data
+            .as_ref()
+            .and_then(|data| Some((data.id.clone(), data.diff_turn.clone()?)))
+        else {
+            return;
+        };
+        let host = self.host.clone();
+        let work = cx.background_spawn(async move {
+            let identity = host
+                .identity()
+                .context("Cloud tasks require a ChatGPT account")?;
+            let path = format!("/wham/tasks/{}/turns/{}", segment(&id), segment(&turn));
+            let body = if draft {
+                json!({"mode":"draft"})
+            } else {
+                json!({})
+            };
+            json_body(&host.fetch(&request(
+                &identity,
+                &format!("{path}/pr"),
+                "POST",
+                Some(body),
+            ))?)?;
+            for _ in 0..60 {
+                let turn = fetch_json(&*host, &identity, &path)?;
+                if let Some(url) = turn
+                    .pointer("/turn/pull_request_data/url")
+                    .and_then(Value::as_str)
+                {
+                    return Ok(url.to_owned());
+                }
+                ensure!(
+                    turn.pointer("/turn/pull_request_status") != Some(&json!("failed")),
+                    "pull request failed"
+                );
+                std::thread::sleep(Duration::from_secs(2));
+            }
+            bail!("pull request was not created in time")
+        });
+        cx.spawn(async move |root, cx| {
+            let result = work.await;
+            root.update(cx, |root, cx| {
+                if result.is_err() {
+                    root.toast(Toast::danger("Failed to create pull request"), cx);
+                }
+                page.update(cx, |page, cx| page.finish_pull_request(result.ok(), cx));
+            })
+            .ok();
         })
         .detach();
     }
@@ -1026,6 +1092,7 @@ pub fn parse_task_response(detail: &Value, turns: &Value) -> Result<CloudTask> {
                     id: format!("cloud-assistant-message:{assistant_id}"),
                     text,
                     phase: None,
+                    memory_citation: None,
                 });
             }
         }
@@ -1051,7 +1118,9 @@ pub fn parse_task_response(detail: &Value, turns: &Value) -> Result<CloudTask> {
                 section: None,
                 status: ThreadStatus::Idle,
                 git_info: None,
+                forked_from_id: None,
                 turns: vec![turn],
+                older_cursor: None,
             },
             phase,
             error: assistant
@@ -1106,6 +1175,10 @@ pub fn parse_task_response(detail: &Value, turns: &Value) -> Result<CloudTask> {
                 Some("pending" | "in_progress")
             )
         }),
+        pull_request: diff_turn
+            .and_then(|value| value.pointer("/pull_request_data/url"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     })
 }
 
@@ -1165,7 +1238,11 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::CommandExecution { id, .. }
         | ThreadItem::FileChange { id, .. }
         | ThreadItem::McpToolCall { id, .. }
-        | ThreadItem::ContextCompaction { id } => Some(id),
+        | ThreadItem::ContextCompaction { id }
+        | ThreadItem::WebSearch { id, .. }
+        | ThreadItem::CollabAgentToolCall { id, .. }
+        | ThreadItem::ImageGeneration { id, .. }
+        | ThreadItem::ImageView { id, .. } => Some(id),
         _ => None,
     }
 }

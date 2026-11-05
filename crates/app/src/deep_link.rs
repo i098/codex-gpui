@@ -1,7 +1,7 @@
 //! Native Codex URL parsing and page-family dispatch (SH-151..155).
 
 use crate::{Root, Route, State, windows};
-use gpui::{App, AppContext as _, Context, Focusable, Window};
+use gpui::{App, AppContext as _, BorrowAppContext as _, Context, Focusable, Window};
 use std::borrow::Cow;
 use ui::screens::connections::Tab;
 use url::Url;
@@ -32,6 +32,11 @@ pub enum Link {
         project_path: Option<String>,
         enabled: bool,
     },
+    /// `codex://settings/local-environments/create`: opens the environment editor.
+    CreateEnvironment {
+        workspace_root: String,
+        config_path: Option<String>,
+    },
     Scheduled,
     Automation {
         id: String,
@@ -40,6 +45,8 @@ pub enum Link {
     },
     OAuth(String),
     Launch,
+    /// A local file or folder handed over by the OS (`open -a`, Dock drop).
+    Path(String),
     Browser(Url),
     Space,
     CloudEnvironmentCreate,
@@ -49,6 +56,10 @@ pub enum Link {
 /// Parses the original native URL grammar without accepting excluded products.
 pub fn parse(value: &str) -> Option<Link> {
     let url = Url::parse(value).ok()?;
+    if url.scheme() == "file" {
+        let path = url.to_file_path().ok()?;
+        return Some(Link::Path(path.to_string_lossy().into_owned()));
+    }
     if url.scheme() == "https" {
         return https_link(&url);
     }
@@ -317,7 +328,16 @@ fn settings(sub: &[&str], params: &Params<'_>) -> Link {
         }
         ["connections", "ssh"] => Link::Connections(Tab::Ssh),
         ["browser-use"] => Link::Settings(Some("Browser")),
-        _ => Link::Settings(None),
+        ["local-environments", "create"] => match params.value("workspaceRoot") {
+            Some(workspace_root) if workspace_root.starts_with('/') => Link::CreateEnvironment {
+                workspace_root,
+                config_path: params.value("configPath"),
+            },
+            _ => Link::Settings(Some("Worktrees")),
+        },
+        ["trusted-contact"] => Link::Settings(Some("Trusted contact")),
+        [] => Link::Settings(None),
+        [slug, ..] => Link::Settings(Some(ui::screens::settings::slug_section(slug))),
     }
 }
 
@@ -407,7 +427,10 @@ impl Root {
     /// (and focus) of the route's composer.
     pub fn open_deep_link(&mut self, link: &Link, window: &mut Window, cx: &mut Context<Self>) {
         if self.host_id() != "local"
-            && !matches!(link, Link::Thread { .. } | Link::OAuth(_) | Link::Launch)
+            && !matches!(
+                link,
+                Link::Thread { .. } | Link::OAuth(_) | Link::Launch | Link::Path(_)
+            )
         {
             self.open_link_host("local", link, window, cx);
             return;
@@ -455,6 +478,16 @@ impl Root {
             }
             Link::Settings(None) => self.navigate(Route::Settings, window, cx),
             Link::Settings(Some(label)) => self.open_settings_section(label, window, cx),
+            Link::CreateEnvironment {
+                workspace_root,
+                config_path,
+            } => {
+                let create = (workspace_root.clone(), config_path.clone());
+                cx.update_global::<ui::screens::settings::environments::State, _>(|state, _| {
+                    state.create = Some(create)
+                });
+                self.open_settings_section("Worktrees", window, cx);
+            }
             Link::Connections(tab) => self.open_connections(*tab, window, cx),
             Link::AddSsh {
                 name,
@@ -472,6 +505,9 @@ impl Root {
             Link::OAuth(value) => {
                 self.receive_oauth_redirect(value, window, cx);
                 return;
+            }
+            Link::Path(path) => {
+                self.open_path_link(path.clone(), window, cx);
             }
             Link::Browser(url) => {
                 self.open_browser_tab(Some(url.clone()), window, cx);
@@ -595,6 +631,16 @@ mod tests {
     const ID: &str = "00000000-0000-4000-8000-000000000001";
 
     #[test]
+    fn file_urls_become_decoded_paths() {
+        assert_eq!(
+            parse("file:///tmp/a%20b/c"),
+            Some(Link::Path("/tmp/a b/c".into()))
+        );
+        assert!(parse("file://remote/tmp/x").is_none() || cfg!(windows));
+        assert!(parse("https://example.com").is_none());
+    }
+
+    #[test]
     fn preserves_thread_host_access_and_prompt() {
         assert_eq!(
             parse(&format!(
@@ -689,6 +735,39 @@ mod tests {
         );
         let callback = "codex://connector/oauth_callback?state=s&code=a%2Bb&returnTo=%2Fsettings";
         assert_eq!(parse(callback), Some(Link::OAuth(callback.into())));
+    }
+
+    #[test]
+    fn local_environment_create_requires_an_absolute_workspace_root() {
+        assert_eq!(
+            parse(
+                "codex://settings/local-environments/create?workspaceRoot=%2Fwork&configPath=%2Fwork%2F.codex%2Fenvironments%2Fa.toml"
+            ),
+            Some(Link::CreateEnvironment {
+                workspace_root: "/work".into(),
+                config_path: Some("/work/.codex/environments/a.toml".into()),
+            })
+        );
+        assert_eq!(
+            parse("codex://settings/local-environments/create?workspaceRoot=work"),
+            Some(Link::Settings(Some("Worktrees")))
+        );
+    }
+
+    #[test]
+    fn settings_slugs_open_their_section() {
+        for (url, section) in [
+            ("codex://settings/git-settings", "Git"),
+            ("codex://settings/mcp-settings/servers", "MCP servers"),
+            ("codex://settings/work-settings", "Configuration"),
+            ("codex://settings/usage?tab=analytics", "Usage & billing"),
+            ("codex://settings/analytics", "Usage & billing"),
+            ("codex://settings/local-environments", "Worktrees"),
+            ("codex://settings/no-such-slug", "General"),
+        ] {
+            assert_eq!(parse(url), Some(Link::Settings(Some(section))), "{url}");
+        }
+        assert_eq!(parse("codex://settings"), Some(Link::Settings(None)));
     }
 
     #[test]
@@ -871,10 +950,15 @@ mod tests {
                     | Link::CloudEnvironmentCreate
                     | Link::Onboarding,
                 ) => assert!(!expected.is_null(), "{value}"),
-                Some(Link::Settings(_) | Link::Connections(_) | Link::AddSsh { .. }) => {
+                Some(
+                    Link::Settings(_)
+                    | Link::Connections(_)
+                    | Link::AddSsh { .. }
+                    | Link::CreateEnvironment { .. },
+                ) => {
                     assert_eq!(expected["kind"], "settings", "{value}")
                 }
-                Some(Link::Launch) | None => {}
+                Some(Link::Launch | Link::Path(_)) | None => {}
             }
         }
         for value in [

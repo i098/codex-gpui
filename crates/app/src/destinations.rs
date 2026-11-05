@@ -397,6 +397,11 @@ fn unread(destinations: Vec<Destination>, persisted: &Persisted) -> Arc<[SharedS
         .collect()
 }
 
+/// The Explore menu's `Security Cloud` (`codex_security_cloud.open_defense_factory`).
+fn security_cloud_id() -> SharedString {
+    destination_id("connector_openai_defense_factory", "open_defense_factory")
+}
+
 impl Root {
     pub(crate) fn set_unread_destinations(
         &mut self,
@@ -407,6 +412,16 @@ impl Root {
         for shell in std::iter::once(&self.shell).chain(self.page.iter()) {
             shell.update(cx, |shell, cx| {
                 shell.unread_destinations = unread.clone();
+                cx.notify();
+            });
+        }
+    }
+
+    pub(crate) fn set_security_cloud(&mut self, available: bool, cx: &mut Context<Self>) {
+        self.security_cloud = available;
+        for shell in std::iter::once(&self.shell).chain(self.page.iter()) {
+            shell.update(cx, |shell, cx| {
+                shell.security_cloud_available = available;
                 cx.notify();
             });
         }
@@ -434,10 +449,16 @@ impl Root {
                 let current = cx.background_spawn(async move { scope(host.identity()) }).await?;
                 ensure!(current == persisted.scope, "navigation account changed during the read");
                 let destinations = eligible(catalog.as_ref(), persisted.cached.as_deref());
-                Ok(unread(destinations, &persisted))
+                let security_cloud = destinations
+                    .iter()
+                    .any(|destination| destination.id == security_cloud_id());
+                Ok((unread(destinations, &persisted), security_cloud))
             }.await;
             this.update(cx, |this, cx| match result {
-                Ok(unread) => this.set_unread_destinations(Some(unread), cx),
+                Ok((unread, security_cloud)) => {
+                    this.set_unread_destinations(Some(unread), cx);
+                    this.set_security_cloud(security_cloud, cx);
+                }
                 Err(error) => eprintln!("codex-gpui: cannot read navigation destinations: {error:#}"),
             }).ok();
         }));
@@ -488,6 +509,21 @@ mod tests {
             unread(destinations, &state).as_ref(),
             &[SharedString::from(canonical)]
         );
+    }
+
+    /// The recorded `codex_security_cloud.open_defense_factory` tool is the Explore entry.
+    #[test]
+    fn recorded_security_cloud_tool_is_the_explore_entry() {
+        let readback = include_str!("../../../fixtures/readback.jsonl");
+        let catalog: Value = serde_json::from_str(readback.lines().nth(42).unwrap()).unwrap();
+        let tool = &catalog["msg"]["result"]["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|server| server["name"] == "codex_apps")
+            .unwrap()["tools"]["codex_security_cloud.open_defense_factory"];
+        let destination = destination("codex_apps", tool).unwrap();
+        assert_eq!(destination.id, security_cloud_id());
     }
 
     #[test]

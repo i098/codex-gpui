@@ -124,6 +124,7 @@ pub async fn import_items(
     bridge: &Bridge,
     host: &dyn host::Host,
     selected: &[DetectedItem],
+    progress: async_channel::Sender<(usize, usize)>,
 ) -> Result<ImportOutcome> {
     ensure!(!selected.is_empty(), "no import items selected");
     ensure!(
@@ -162,12 +163,17 @@ pub async fn import_items(
                 let event = events
                     .recv_timeout(deadline.saturating_duration_since(Instant::now()))
                     .context("external agent import did not complete")?;
-                if let Event::Notification { method, params } = event
-                    && method == "externalAgentConfig/import/completed"
-                    && params["importId"] == id
-                {
-                    let roots = imported_project_roots(&params, &items, &workspaces, host)?;
-                    return Ok::<_, anyhow::Error>((params, roots));
+                if let Event::Notification { method, params } = event {
+                    if method == "externalAgentConfig/import/progress" && params["importId"] == id {
+                        progress
+                            .try_send(import_progress_counts(&params["itemTypeResults"]))
+                            .ok();
+                    } else if method == "externalAgentConfig/import/completed"
+                        && params["importId"] == id
+                    {
+                        let roots = imported_project_roots(&params, &items, &workspaces, host)?;
+                        return Ok::<_, anyhow::Error>((params, roots));
+                    }
                 }
             }
         }
@@ -184,6 +190,18 @@ pub async fn import_items(
         }
     }
     Ok(outcome)
+}
+fn import_progress_counts(results: &Value) -> (usize, usize) {
+    results
+        .as_array()
+        .into_iter()
+        .flatten()
+        .fold((0, 0), |(successes, failures), result| {
+            (
+                successes + result["successes"].as_array().map_or(0, Vec::len),
+                failures + result["failures"].as_array().map_or(0, Vec::len),
+            )
+        })
 }
 
 fn register_imported_projects(host: &dyn host::Host, roots: &BTreeSet<String>) -> Result<()> {
@@ -832,19 +850,36 @@ impl Root {
             state.pending = true;
             state.error = None;
             state.running = Some(Arc::new(items.clone()));
+            state.progress = None;
         });
         let bridge = self.bridge.clone();
         let host = self.host.clone();
+        let (progress_sender, progress_receiver) = async_channel::unbounded();
         let run = cx.background_spawn(async move {
-            let result = pollster::block_on(import_items(&bridge, host.as_ref(), &items));
+            let result = pollster::block_on(import_items(
+                &bridge,
+                host.as_ref(),
+                &items,
+                progress_sender,
+            ));
             let projects = result.as_ref().map_or_else(
                 |_| Ok(()),
                 |outcome| register_imported_projects(host.as_ref(), &outcome.project_roots),
             );
             (result, projects)
         });
+        let progress_task = cx.spawn(async move |root, cx| {
+            while let Ok(progress) = progress_receiver.recv().await {
+                root.update(cx, |_, cx| {
+                    cx.update_global::<ImportState, _>(|state, _| state.progress = Some(progress));
+                    cx.notify();
+                })
+                .ok();
+            }
+        });
         cx.spawn(async move |root, cx| {
             let outcome = run.await;
+            progress_task.await;
             root.update(cx, |root, cx| root.finish_import(outcome, automatic, cx))
                 .ok();
         })
@@ -875,6 +910,7 @@ impl Root {
         cx.update_global::<ImportState, _>(|state, _| {
             state.pending = false;
             state.running = None;
+            state.progress = None;
             state.error = if succeeded {
                 None
             } else {
@@ -929,7 +965,102 @@ fn imported_thread_id(target: &str) -> Option<String> {
 #[cfg(test)]
 mod imported_project_tests {
     use super::*;
+    #[test]
+    fn import_progress_counts_all_provider_results() {
+        use serde_json::json;
 
+        assert_eq!(
+            import_progress_counts(&json!([
+                {"successes": [{}, {}], "failures": [{}]},
+                {"successes": [{}], "failures": []}
+            ])),
+            (3, 1)
+        );
+        assert_eq!(import_progress_counts(&json!([])), (0, 0));
+    }
+
+    #[test]
+    fn import_items_reports_progress_before_completion() -> Result<()> {
+        use serde_json::json;
+        use std::io::{BufRead as _, BufReader, BufWriter, Write as _};
+
+        let (client_input, server_output) = std::io::pipe()?;
+        let (server_input, client_output) = std::io::pipe()?;
+        let (bridge, _) = Bridge::from_io(client_input, client_output, None);
+        let server = std::thread::spawn(move || {
+            let mut request = String::new();
+            BufReader::new(server_input)
+                .read_line(&mut request)
+                .expect("read import request");
+            let request: Value = serde_json::from_str(&request).expect("parse import request");
+            let mut output = BufWriter::new(server_output);
+            let results = json!([{
+                "itemType": "CONFIG",
+                "successes": [{
+                    "itemType": "CONFIG",
+                    "cwd": null,
+                    "source": "settings.json",
+                    "target": "config/settings.json",
+                    "title": null
+                }],
+                "failures": [{
+                    "itemType": "CONFIG",
+                    "errorType": null,
+                    "subErrorType": null,
+                    "failureStage": "import",
+                    "message": "fixture failure",
+                    "cwd": null,
+                    "source": "hooks.json"
+                }]
+            }]);
+            writeln!(
+                output,
+                "{}",
+                json!({"id": request["id"], "result": {"importId": "fixture-import"}})
+            )
+            .expect("write import response");
+            for method in [
+                "externalAgentConfig/import/progress",
+                "externalAgentConfig/import/completed",
+            ] {
+                writeln!(
+                    output,
+                    "{}",
+                    json!({"method": method, "params": {
+                        "importId": "fixture-import",
+                        "itemTypeResults": results
+                    }})
+                )
+                .expect("write import notification");
+            }
+            output.flush().expect("flush import notifications");
+        });
+        let directory = tempfile::tempdir()?;
+        let host = host::LocalHost::new(directory.path().join("codex"));
+        let item = DetectedItem {
+            item: MigrationItem {
+                item_type: ItemType::Config,
+                description: "Settings".into(),
+                cwd: None,
+                details: None,
+            },
+            provider_id: Provider::ClaudeCode,
+        };
+        let (progress_sender, progress_receiver) = async_channel::unbounded();
+
+        let outcome = pollster::block_on(import_items(
+            &bridge,
+            &host,
+            std::slice::from_ref(&item),
+            progress_sender,
+        ))?;
+
+        assert_eq!(progress_receiver.try_recv()?, (1, 1));
+        assert_eq!(outcome.completions.len(), 1);
+        assert!(outcome.failure.is_none());
+        server.join().expect("import server");
+        Ok(())
+    }
     #[test]
     fn registration_continues_after_an_invalid_root() -> Result<()> {
         let directory = tempfile::tempdir()?;

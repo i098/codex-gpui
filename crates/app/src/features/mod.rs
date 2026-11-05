@@ -19,6 +19,7 @@ pub(crate) mod debug;
 pub(crate) mod feedback;
 mod keymap;
 pub(crate) mod memories;
+mod new_tab;
 pub(crate) mod shortcuts;
 mod slash_commands;
 mod thread_menu;
@@ -41,7 +42,10 @@ pub(crate) fn actions(root: Div, owner: &Root, cx: &mut Context<Root>) -> Div {
         shortcuts::actions(
             copy_directory::actions(
                 thread_menu::actions(
-                    command_destinations::actions(crate::windows::actions(root, cx), cx),
+                    command_destinations::actions(
+                        new_tab::actions(crate::windows::actions(root, cx), cx),
+                        cx,
+                    ),
                     cx,
                 ),
                 cx,
