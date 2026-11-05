@@ -105,7 +105,9 @@ fn type_into(fx: &mut Fx, field: &str, text: &str) -> Result<()> {
 
 fn posts(backend: &Backend) -> usize {
     let log = backend.log.lock().unwrap();
-    log.iter().filter(|(m, ..)| m != "GET").count()
+    log.iter()
+        .filter(|(m, url, ..)| m != "GET" && !url.starts_with("/wham/"))
+        .count()
 }
 
 fn shot(fx: &mut Fx, name: &str) -> Result<()> {
