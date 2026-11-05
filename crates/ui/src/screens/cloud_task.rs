@@ -1002,6 +1002,7 @@ mod tests {
                 started_at: None,
                 completed_at: None,
                 duration_ms: None,
+                interrupt_id: None,
             }],
             older_cursor: None,
         };

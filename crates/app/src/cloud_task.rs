@@ -1065,6 +1065,7 @@ pub fn parse_task_response(detail: &Value, turns: &Value) -> Result<CloudTask> {
             started_at: None,
             completed_at: None,
             duration_ms: None,
+            interrupt_id: None,
         };
         let text = content(&user["input_items"]);
         if !text.is_empty() {

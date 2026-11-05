@@ -61,6 +61,11 @@ pub mod git_pr;
 mod native_apps;
 mod open_in;
 mod projectless;
+
+/// The installed macOS apps (`native-desktop-apps`), for Settings ▸ Computer history.
+pub(crate) fn native_desktop_apps(params: &Value) -> Result<Vec<native_apps::NativeApp>> {
+    native_apps::list(params)
+}
 pub use projectless::Workspace;
 mod github_pull_requests;
 pub(crate) mod run_now;
@@ -117,6 +122,17 @@ pub trait Host: Send + Sync {
     }
     fn computer_use_native(&self) -> Option<Arc<computer_use_native::NativeComputerUse>> {
         None
+    }
+    /// Sends a Computer History (`skysight`) Apple-Event request to the signed native service.
+    fn skysight(&self, request_type: &str, payload: &Value, timeout_seconds: u32) -> Result<Value> {
+        self.computer_use_native()
+            .context("Chronicle is unavailable")?
+            .service_request(request_type, payload, timeout_seconds)
+    }
+    /// Whether the Computer History service exists: macOS with the signed service installed.
+    fn skysight_available(&self) -> bool {
+        self.computer_use_native()
+            .is_some_and(|native| native.service_installed())
     }
 
     fn supports_cloud_search(&self) -> bool {
@@ -2157,7 +2173,9 @@ impl Host for LocalHost {
             "git-root" | "git-changes" | "git-stage" | "git-unstage" | "git-revert"
             | "git-init-repo" | "git-commit-status" | "git-commit-diff" | "git-commit"
             | "git-push" | "git-checkout" | "git-cat-file" | "git-review-patch"
-            | "git-file-url" | "git-blame-file" => git::fetch(endpoint, &params)?,
+            | "git-file-url" | "git-blame-file" | "git-review-commits" => {
+                git::fetch(endpoint, &params)?
+            }
             "gh-cli-status"
             | "gh-current-user"
             | "gh-pr-search"
