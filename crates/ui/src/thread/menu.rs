@@ -498,6 +498,30 @@ impl ThreadView {
         cx.notify();
     }
 
+    /// Opens the `Rate response` menu for turn `turn_id` at `at`.
+    pub fn open_rating(
+        &mut self,
+        turn_id: String,
+        at: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.context_image = None;
+        let items = super::actions::RATINGS
+            .iter()
+            .enumerate()
+            .flat_map(|(index, &(id, label, classification))| {
+                let separator = (index > 0 && classification.is_empty())
+                    .then(|| Item::separator("rating-separator"));
+                separator
+                    .into_iter()
+                    .chain([Item::new(id, label, !classification.is_empty())])
+            })
+            .collect();
+        self.menu = Some(ContextMenu::open(items, turn_id, at, window, cx));
+        cx.notify();
+    }
+
     fn activate_context_item(
         &mut self,
         id: &str,
@@ -592,7 +616,20 @@ impl ThreadView {
                 })
                 .detach();
             }
-            _ => unreachable!(),
+            id => {
+                let &(_, reason, classification) = super::actions::RATINGS
+                    .iter()
+                    .find(|rating| rating.0 == id)
+                    .expect("rating menu item");
+                _window.dispatch_action(
+                    Box::new(super::actions::SubmitRating {
+                        turn_id: url,
+                        classification,
+                        reason,
+                    }),
+                    cx,
+                );
+            }
         }
     }
 
@@ -605,6 +642,8 @@ impl ThreadView {
                 "Image actions"
             } else if menu.items.iter().any(|item| item.id == "copy") {
                 "Text actions"
+            } else if menu.items.iter().any(|item| item.id == "good-heading") {
+                "Rate response"
             } else if menu.items.iter().any(|item| item.id == "create-site") {
                 "Create a file or site"
             } else if menu.items.iter().any(|item| item.id == "attach-files") {

@@ -589,24 +589,33 @@ impl Composer {
         div()
             .flex()
             .flex_col()
-            .child(div().px(px(8.)).py(px(6.)).child(text(
+            .child(div().px(px(8.)).py(px(4.)).child(text(
                 "Select model",
-                12.,
-                16.,
-                400.,
+                13.,
+                18.5714,
+                430.,
                 t.text_tertiary,
             )))
             .children(self.models.iter().enumerate().map(|(i, m)| {
                 div()
                     .id(("model", i))
-                    .h(px(32.))
                     .px(px(8.))
+                    .py(px(5.))
                     .flex()
                     .items_center()
-                    .rounded(px(12.))
-                    .when(i == self.model, |d| d.bg(hover))
+                    .gap(px(6.))
+                    .rounded(px(15.))
                     .hover(move |s| s.bg(hover))
-                    .child(text(m.label.clone(), 14., 20., 430., t.text))
+                    .child(div().flex_1().min_w_0().child(text(
+                        m.label.clone(),
+                        13.,
+                        18.5714,
+                        430.,
+                        t.text,
+                    )))
+                    .when(i == self.model, |d| {
+                        d.child(icon("menu-check", 16., t.text).opacity(0.75))
+                    })
                     .when(interactive, |d| {
                         d.track_focus(&self.menu_focus.items[i])
                             .focus(move |s| s.bg(hover))
@@ -617,19 +626,36 @@ impl Composer {
             }))
     }
 
-    /// `How should ChatGPT actions be approved?`
+    /// `How should ChatGPT actions be approved?` with `Learn more`, then one row per mode: its
+    /// leading icon, label, description and, on the current mode, the check.
     pub(super) fn permissions_menu(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
         let hover = t.menu_item_hover;
-        popover(t, 320., |d| {
-            d.child(div().px(px(8.)).py(px(6.)).child(text(
-                "How should ChatGPT actions be approved?",
-                12.,
-                16.,
-                400.,
-                t.text_tertiary,
-            )))
+        let presets = permission_presets(cx);
+        popover(t, 417., |d| {
+            d.child(
+                div()
+                    .px(px(8.))
+                    .py(px(5.))
+                    .flex()
+                    .gap(px(16.))
+                    .child(div().flex_1().child(text(
+                        "How should ChatGPT actions be approved?",
+                        13.,
+                        16.,
+                        430.,
+                        t.text_tertiary,
+                    )))
+                    .child(
+                        div()
+                            .id("permissions-learn-more")
+                            .cursor_pointer()
+                            .underline()
+                            .child(text("Learn more", 13., 16., 430., t.text_tertiary))
+                            .on_click(|_, _, cx| cx.open_url(PERMISSIONS_DOCS)),
+                    ),
+            )
             .children(
-                Permission::ALL
+                presets
                     .iter()
                     .map(|p| (p, p.description()))
                     .chain(
@@ -639,6 +665,12 @@ impl Composer {
                     )
                     .enumerate()
                     .map(|(i, (p, description))| {
+                        // `Full access` is all `text-warning`.
+                        let (color, tertiary) = if *p == Permission::FullAccess {
+                            (t.text_warning, t.text_warning)
+                        } else {
+                            (t.text, t.text_tertiary)
+                        };
                         div()
                             .id(("permission-option", i))
                             .track_focus(&self.menu_focus.items[i])
@@ -654,25 +686,47 @@ impl Composer {
                                 }
                             }))
                             .px(px(8.))
-                            .py(px(6.))
+                            .py(px(5.))
                             .flex()
-                            .flex_col()
-                            .rounded(px(12.))
+                            .items_center()
+                            .gap(px(6.))
+                            .rounded(px(15.))
                             .hover(move |s| s.bg(hover))
-                            .child(text(p.option_label().to_owned(), 14., 20., 430., t.text))
+                            // The 18 px `icon-sm` svg overhangs its 16 px `_leadingIcon` slot.
+                            .child(icon(p.menu_icon(), 18., color).mx(px(-1.)).opacity(0.75))
                             .child(
                                 div()
-                                    .text_size(px(12.))
-                                    .line_height(px(16.))
-                                    .text_color(t.text_tertiary)
-                                    .child(description.to_owned()),
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .child(text(
+                                        p.option_label().to_owned(),
+                                        13.,
+                                        18.5714,
+                                        430.,
+                                        color,
+                                    ))
+                                    .child(
+                                        div()
+                                            .whitespace_nowrap()
+                                            .text_size(px(12.))
+                                            .line_height(px(14.))
+                                            .text_color(tertiary)
+                                            .child(description.to_owned()),
+                                    ),
                             )
+                            .when(*p == self.permission, |d| {
+                                d.child(icon("archive-check", 16., t.text).opacity(0.75))
+                            })
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.activate_menu_item(i, window, cx)
                             }))
                     }),
             )
         })
+        // `sideOffset` 0: 6 px lower than the model menu's slot.
+        .mb(px(-6.))
     }
 
     /// Pending approval request card (`PendingRequestItemPanel`).

@@ -168,6 +168,21 @@ pub trait Host: Send + Sync {
         bail!("creating a local project is unsupported by this host")
     }
 
+    /// `Pin`/`Unpin` on a project row: adds `id` to or drops it from `pinned-project-ids`.
+    fn set_project_pinned(&self, _id: &str, _pinned: bool) -> Result<()> {
+        bail!("pinning a project is unsupported by this host")
+    }
+
+    /// Each chat's emoji from `sidebar-thread-metadata` (`{threadId: {emoji}}`).
+    fn thread_emojis(&self) -> Result<Vec<(String, String)>> {
+        Ok(Vec::new())
+    }
+
+    /// `Change emoji` in `Rename chat`: sets or (`None`) clears the chat's emoji.
+    fn set_thread_emoji(&self, _thread: &str, _emoji: Option<&str>) -> Result<()> {
+        bail!("chat emoji is unsupported by this host")
+    }
+
     fn prepare_projectless(&self, _prompt: &str) -> Result<Workspace> {
         bail!("projectless workspaces are unsupported by this host")
     }
@@ -329,6 +344,9 @@ pub struct Identity {
     pub device_id: String,
 }
 
+/// The Codex app changelog feed (`codex-app-changelog`): public, read without credentials.
+pub const CHANGELOG_FEED: &str = "https://learn.chatgpt.com/docs/changelog/codex-app.json";
+
 /// The Scheduled page's read-only suggestion request.
 pub fn suggested_automations() -> Request {
     Request::Http(json!({
@@ -375,6 +393,42 @@ pub fn mfa_info() -> Request {
         },
         "returnErrorResponse": true,
     }))
+}
+
+/// An account settings call to the ChatGPT backend (`path` under `/backend-api`), with the
+/// original's default headers; the cloud host attaches the sign-in and the account header.
+pub fn backend(method: &str, path: &str, body: Option<&Value>) -> Request {
+    let mut request = json!({
+        "url": path,
+        "method": method,
+        "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "originator": "Codex Desktop",
+        },
+        "returnErrorResponse": true,
+    });
+    if let Some(body) = body {
+        request["body"] = body.to_string().into();
+    }
+    Request::Http(request)
+}
+
+/// The HTTP status and JSON body of a [`backend`] response; an empty or non-JSON body is
+/// `Null`. Only a transport failure is an error, so callers can read the backend's error codes.
+pub fn backend_response(response: &Value) -> Result<(u16, Value)> {
+    let response = response_wire(response);
+    if response["responseType"] == "error" {
+        bail!("host error {}: {}", response["status"], response["error"]);
+    }
+    let status = response["status"].as_u64().context("missing host status")?;
+    let body = response
+        .get("bodyJsonString")
+        .or_else(|| response.get("body"))
+        .and_then(Value::as_str)
+        .and_then(|body| serde_json::from_str(body).ok())
+        .unwrap_or(Value::Null);
+    Ok((u16::try_from(status)?, body))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -515,6 +569,8 @@ fn project_rows(
     };
     let managed_root = normalized_project_path(&codex_home.join("worktrees").to_string_lossy());
     let mut rows = Vec::with_capacity(projects.len());
+    // The original's `na.PINNED_PROJECT_IDS`: a top-level global state key.
+    let pinned = &state["pinned-project-ids"];
     for stored in projects.values() {
         let (Some(id), Some(name), Some(roots)) = (
             stored["id"].as_str(),
@@ -555,9 +611,16 @@ fn project_rows(
                 format!("Start new chat in {label}").into()
             },
             root: root.map(|root| root.to_owned().into()),
+            roots: roots
+                .iter()
+                .filter_map(|root| Some(root.as_str()?.to_owned().into()))
+                .collect(),
             worktree,
             missing,
             expanded: state["electron-persisted-atom-state"][&expanded_key] != false,
+            pinned: pinned
+                .as_array()
+                .is_some_and(|ids| ids.iter().any(|pin| pin == id)),
         });
     }
     if let Some(order) = state["project-order"].as_array() {
@@ -568,6 +631,8 @@ fn project_rows(
             .collect();
         rows.sort_by_key(|project| ranks.get(project.id.as_ref()).copied());
     }
+    // Stable: pinned projects first, each group in `project-order`.
+    rows.sort_by_key(|project| !project.pinned);
     Ok(rows)
 }
 
@@ -1904,6 +1969,58 @@ impl Host for LocalHost {
         result
     }
 
+    fn set_project_pinned(&self, id: &str, pinned: bool) -> Result<()> {
+        self.update_global_state(|state| {
+            let mut ids: Vec<Value> = state["pinned-project-ids"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let present = ids.iter().any(|other| other == id);
+            if present == pinned {
+                return Ok(false);
+            }
+            if pinned {
+                ids.push(id.into());
+            } else {
+                ids.retain(|other| other != id);
+            }
+            state["pinned-project-ids"] = ids.into();
+            Ok(true)
+        })
+    }
+
+    fn thread_emojis(&self) -> Result<Vec<(String, String)>> {
+        let state = self.read_global_state()?;
+        let Some(metadata) = state["sidebar-thread-metadata"].as_object() else {
+            return Ok(Vec::new());
+        };
+        Ok(metadata
+            .iter()
+            .filter_map(|(id, entry)| Some((id.clone(), entry["emoji"].as_str()?.to_owned())))
+            .collect())
+    }
+
+    fn set_thread_emoji(&self, thread: &str, emoji: Option<&str>) -> Result<()> {
+        self.update_global_state(|state| {
+            if !state["sidebar-thread-metadata"].is_object() {
+                state["sidebar-thread-metadata"] = json!({});
+            }
+            let entry = &mut state["sidebar-thread-metadata"][thread];
+            if entry["emoji"].as_str() == emoji {
+                return Ok(false);
+            }
+            match emoji {
+                Some(emoji) => entry["emoji"] = emoji.into(),
+                None => {
+                    if let Some(fields) = entry.as_object_mut() {
+                        fields.remove("emoji");
+                    }
+                }
+            }
+            Ok(true)
+        })
+    }
+
     fn fetch(&self, request: &Request) -> Result<Value> {
         let Request::Fetch { method, url, body } = request else {
             bail!("authenticated remote HTTP is unsupported by LocalHost");
@@ -2015,6 +2132,14 @@ impl Host for LocalHost {
                     .as_str()
                     .context("missing environment path")?,
             ))?,
+            "local-environment-actions" => environments::actions(
+                self,
+                Path::new(
+                    params["workspaceRoot"]
+                        .as_str()
+                        .context("missing workspace root")?,
+                ),
+            )?,
             "local-environment-config-save" => environments::save(&params)?,
             "local-environment-select" => self.select_environment(
                 params["workspaceRoot"]
@@ -2033,10 +2158,14 @@ impl Host for LocalHost {
             | "git-init-repo" | "git-commit-status" | "git-commit-diff" | "git-commit"
             | "git-push" | "git-checkout" | "git-cat-file" | "git-review-patch"
             | "git-file-url" | "git-blame-file" => git::fetch(endpoint, &params)?,
-            "gh-cli-status" | "gh-current-user" | "gh-pr-search" | "gh-pr-detail"
-            | "gh-pr-patch" | "gh-pr-media" => {
-                github_pull_requests::fetch(self, endpoint, &params)?
-            }
+            "gh-cli-status"
+            | "gh-current-user"
+            | "gh-pr-search"
+            | "gh-pr-detail"
+            | "gh-pr-patch"
+            | "gh-pr-media"
+            | "pull-request-chat"
+            | "pull-request-chat-link" => github_pull_requests::fetch(self, endpoint, &params)?,
             "create-worktree" => self.create_worktree(&params)?,
             "set-worktree-owner-thread" | "worktree-set-owner-thread" => {
                 let worktree = params["worktree"].as_str().context("missing worktree")?;
@@ -2534,6 +2663,18 @@ impl Host for CloudHost {
         self.local.create_project(name, roots, appearance, threads)
     }
 
+    fn set_project_pinned(&self, id: &str, pinned: bool) -> Result<()> {
+        self.local.set_project_pinned(id, pinned)
+    }
+
+    fn thread_emojis(&self) -> Result<Vec<(String, String)>> {
+        self.local.thread_emojis()
+    }
+
+    fn set_thread_emoji(&self, thread: &str, emoji: Option<&str>) -> Result<()> {
+        self.local.set_thread_emoji(thread, emoji)
+    }
+
     fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<Option<bool>> {
         self.local.finish_run(thread_id, turn)
     }
@@ -2561,6 +2702,24 @@ impl Host for CloudHost {
                     "status": 200,
                     "headers": {"content-type": "application/json"},
                     "bodyJsonString": body.to_string()
+                }))
+            }
+            Request::Fetch { method, url, .. } if url == CHANGELOG_FEED => {
+                ensure!(method == "GET", "unsupported changelog method: {method}");
+                // `credentials: omit`, and no redirect: the original rejects another origin.
+                let mut response = self
+                    .agent
+                    .get(CHANGELOG_FEED)
+                    .config()
+                    .max_redirects(0)
+                    .build()
+                    .call()?;
+                Ok(json!({
+                    "type": "fetch-response",
+                    "responseType": "success",
+                    "status": response.status().as_u16(),
+                    "headers": {"content-type": "application/json"},
+                    "bodyJsonString": response.body_mut().read_to_string()?
                 }))
             }
             Request::Fetch { .. } => self.local.fetch(request),

@@ -247,18 +247,14 @@ fn copy_working_directory_prefers_the_newest_attached_worktree() -> Result<()> {
     })))?;
     fx.keys("cmd-1")?;
     fx.wait_thread(GREETING)?;
-    for keys in ["cmd-shift-c", "alt-cmd-shift-c"] {
-        fx.cx
-            .update(|cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string(String::new())));
-        fx.keys(keys)?;
-        fx.wait(keys, |fx| {
-            clipboard(fx).is_some_and(|text| !text.is_empty())
-        })?;
-        ensure!(
-            clipboard(&mut fx).as_deref() == Some("/w/new/app"),
-            "{keys}"
-        );
-    }
+    // `⌥⌘⇧C` now copies the conversation path; `thread_row_menu` covers it.
+    fx.cx
+        .update(|cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string(String::new())));
+    fx.keys("cmd-shift-c")?;
+    fx.wait("cmd-shift-c", |fx| {
+        clipboard(fx).is_some_and(|text| !text.is_empty())
+    })?;
+    ensure!(clipboard(&mut fx).as_deref() == Some("/w/new/app"));
     Ok(())
 }
 

@@ -21,8 +21,10 @@ pub use cloud::CLOUD_ENDPOINT;
 pub mod imports;
 mod replay;
 pub mod security;
+pub mod security_cloud;
 pub mod storage;
 pub mod types;
+pub mod widget;
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -274,7 +276,8 @@ impl Bridge {
         (Self::new(backend, sink, None, false), events)
     }
 
-    fn from_io(
+    /// The bridge over a pipe pair, for tests and embedding.
+    pub fn from_io(
         read: impl Read + Send + 'static,
         write: impl Write + Send + 'static,
         child: Option<Child>,

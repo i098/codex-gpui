@@ -37,6 +37,20 @@ pub enum SlashCommand {
     MemoryMode(&'static str),
     MemoryStatus,
     Memories,
+    /// Hotkey window `/new`: back to the Popout Window home.
+    HotkeyNew,
+    /// Hotkey window `/resume`: open this recent chat (its id) in the hotkey window.
+    Resume(String),
+    Status,
+    Init,
+    Side,
+    Chat,
+    Worktree,
+    /// `/review-mode` opened: the app reads the branches for `Composer::set_review_branches`.
+    ReviewBranches,
+    /// Start a review of the working tree (`None`) or against a branch.
+    Review(Option<String>),
+    Personality(&'static str),
 }
 
 impl gpui::EventEmitter<SlashCommand> for Composer {}
@@ -62,6 +76,13 @@ const COMMANDS: &[Command] = &[
         title: "Archive",
         description: "Archive the current chat",
         icon: "sidebar-archive",
+        requires_empty: true,
+    },
+    Command {
+        id: "chat",
+        title: "Chat",
+        description: "Start a chat without a project",
+        icon: "sidebar-cmd-new-chat",
         requires_empty: true,
     },
     Command {
@@ -163,10 +184,24 @@ const COMMANDS: &[Command] = &[
         requires_empty: true,
     },
     Command {
+        id: "hotkey-window-new",
+        title: "New",
+        description: "Return to the Popout Window home",
+        icon: "sidebar-cmd-new-chat",
+        requires_empty: true,
+    },
+    Command {
         id: "pet",
         title: "Pet",
         description: "Wake or tuck away the desktop pet",
         icon: "slash-pet",
+        requires_empty: false,
+    },
+    Command {
+        id: "personality",
+        title: "Personality",
+        description: "Friendly or Pragmatic",
+        icon: "settings-personalization",
         requires_empty: false,
     },
     Command {
@@ -198,6 +233,13 @@ const COMMANDS: &[Command] = &[
         requires_empty: true,
     },
     Command {
+        id: "hotkey-window-resume",
+        title: "Resume",
+        description: "Resume a recent chat",
+        icon: "settings-computer-history",
+        requires_empty: true,
+    },
+    Command {
         id: "share",
         title: "Share chat",
         description: "Create a link to a snapshot of this chat",
@@ -216,6 +258,13 @@ const COMMANDS: &[Command] = &[
         title: "Sketch",
         description: "Draw a sketch",
         icon: "slash-sketch",
+        requires_empty: false,
+    },
+    Command {
+        id: "worktree",
+        title: "Worktree",
+        description: "Run the next chat in a new worktree",
+        icon: "thread-fork",
         requires_empty: false,
     },
     Command {
@@ -273,6 +322,12 @@ pub(super) struct Slash {
     pub(super) sub: Option<Sub>,
     /// Home's projects for `/project`: label and root path.
     pub(super) projects: Vec<(SharedString, String)>,
+    /// The composer runs in the hotkey (Popout) window: `/new` and `/resume` replace `New chat`.
+    pub(super) hotkey_window: bool,
+    /// `/resume` rows: recent chats' id, title and project short name, newest first.
+    pub(super) recents: Vec<(String, String, String)>,
+    /// Local branches offered by `/review-mode`.
+    review_branches: Vec<String>,
     scroll: gpui::ScrollHandle,
     goal: Option<Value>,
     pub(super) search: mention::Search,
@@ -314,6 +369,9 @@ enum SubAction {
     Fork,
     ForkWorktree,
     Project(String),
+    Resume(String),
+    Review(Option<String>),
+    Personality(&'static str),
     Command(SlashCommand),
 }
 
@@ -437,9 +495,12 @@ impl Composer {
             let query = self.content[range.start + 1..range.end].to_lowercase();
             for (index, command) in COMMANDS.iter().enumerate() {
                 let available = match command.id {
-                    "archive" | "review-mode" | "compact" | "fork" | "init" | "new" | "pin"
-                    | "rename" | "share" | "side" | "goal" | "memory" => self.docked,
-                    "project" => !self.docked,
+                    "new" => self.docked && !self.slash.hotkey_window,
+                    "hotkey-window-new" => self.docked && self.slash.hotkey_window,
+                    "hotkey-window-resume" => self.slash.hotkey_window,
+                    "archive" | "review-mode" | "compact" | "fork" | "init" | "pin" | "rename"
+                    | "share" | "side" | "status" | "goal" | "memory" => self.docked,
+                    "project" | "chat" | "worktree" => !self.docked,
                     "plan-mode" => self.current_model().is_some() && self.plan_supported(),
                     "fast" | "model" | "reasoning" | "ultrafast" => self.current_model().is_some(),
                     "memories" => self.slash.memories,
@@ -593,13 +654,36 @@ impl Composer {
             "export" => SlashCommand::Export,
             "recap" => SlashCommand::Recap,
             "memories" => SlashCommand::Memories,
-            "model" | "reasoning" | "fork" | "project" | "goal" | "memory" => {
+            "hotkey-window-new" => SlashCommand::HotkeyNew,
+            "status" => SlashCommand::Status,
+            "init" => SlashCommand::Init,
+            "side" => SlashCommand::Side,
+            "chat" => SlashCommand::Chat,
+            "worktree" => SlashCommand::Worktree,
+            "model"
+            | "reasoning"
+            | "fork"
+            | "project"
+            | "personality"
+            | "goal"
+            | "memory"
+            | "hotkey-window-resume" => {
                 self.open_sub(command.id, cx);
+                return;
+            }
+            "review-mode" => {
+                self.open_sub(command.id, cx);
+                cx.emit(SlashCommand::ReviewBranches);
                 return;
             }
             "plan-mode" => {
                 self.finish_command(window, cx);
                 self.toggle_plan(cx);
+                return;
+            }
+            "sketch" => {
+                self.finish_command(window, cx);
+                self.open_sketch(cx);
                 return;
             }
             "ultrafast" => {
@@ -634,14 +718,46 @@ impl Composer {
         self.slash.sub.is_none() && index >= COMMANDS.len()
     }
 
+    /// The local branches `/review-mode` offers as comparison bases, read by the app on
+    /// `SlashCommand::ReviewBranches`. An open submenu shows them at once.
+    pub fn set_review_branches(&mut self, branches: Vec<String>, cx: &mut Context<Self>) {
+        self.slash.review_branches = branches;
+        if self
+            .slash
+            .sub
+            .as_ref()
+            .is_some_and(|sub| sub.id == "review-mode")
+        {
+            let items = self.sub_items("review-mode");
+            if let Some(sub) = &mut self.slash.sub {
+                sub.items = items;
+            }
+            self.refresh_sub(cx);
+        }
+    }
+
     /// The projects `/project` offers on Home: label and root path.
     pub fn set_slash_projects(&mut self, projects: Vec<(SharedString, String)>) {
         self.slash.projects = projects;
     }
 
+    pub fn slash_projects(&self) -> &[(SharedString, String)] {
+        &self.slash.projects
+    }
+
     /// Offers `/memories` while the app-server's `memories` feature is on.
     pub fn set_memories_available(&mut self, available: bool) {
         self.slash.memories = available;
+    }
+
+    /// Marks this composer as the hotkey window's, which offers `/new` and `/resume`.
+    pub fn set_hotkey_window(&mut self) {
+        self.slash.hotkey_window = true;
+    }
+
+    /// The recent chats `/resume` offers: id, title and project short name, newest first.
+    pub fn set_slash_recents(&mut self, recents: Vec<(String, String, String)>) {
+        self.slash.recents = recents;
     }
 
     fn sub_items(&self, id: &str) -> Vec<SubItem> {
@@ -750,6 +866,45 @@ impl Composer {
                     action: SubAction::ForkWorktree,
                 },
             ],
+            "hotkey-window-resume" => self
+                .slash
+                .recents
+                .iter()
+                .map(|(id, title, project)| SubItem {
+                    title: title.clone(),
+                    description: project.clone(),
+                    icon: "sidebar-cmd-new-chat",
+                    action: SubAction::Resume(id.clone()),
+                })
+                .collect(),
+            "review-mode" => std::iter::once(SubItem {
+                title: "Review uncommitted changes".into(),
+                description: "Review the changes in the working tree".into(),
+                icon: "code-review",
+                action: SubAction::Review(None),
+            })
+            .chain(self.slash.review_branches.iter().map(|branch| SubItem {
+                title: format!("Review against {branch}"),
+                description: "Compare this branch with the base branch".into(),
+                icon: "code-review",
+                action: SubAction::Review(Some(branch.clone())),
+            }))
+            .collect(),
+            "personality" => [
+                (
+                    "Friendly",
+                    "Warm, collaborative and encouraging",
+                    "friendly",
+                ),
+                ("Pragmatic", "Concise, direct and task focused", "pragmatic"),
+            ]
+            .map(|(title, description, name)| SubItem {
+                title: title.into(),
+                description: description.into(),
+                icon: "settings-personalization",
+                action: SubAction::Personality(name),
+            })
+            .into(),
             _ => self
                 .slash
                 .projects
@@ -862,10 +1017,13 @@ impl Composer {
             }
             SubAction::Fork => cx.emit(SlashCommand::Fork),
             SubAction::ForkWorktree => cx.emit(SlashCommand::ForkWorktree),
+            SubAction::Review(branch) => cx.emit(SlashCommand::Review(branch)),
+            SubAction::Personality(name) => cx.emit(SlashCommand::Personality(name)),
             SubAction::Command(command) => cx.emit(command),
             SubAction::Project(root) => {
                 window.dispatch_action(Box::new(SelectProject(root)), cx);
             }
+            SubAction::Resume(id) => cx.emit(SlashCommand::Resume(id)),
         }
         cx.notify();
     }
@@ -973,10 +1131,14 @@ impl Composer {
             if self.slash.matches.is_empty() {
                 list = list.child(
                     text(
-                        if self.slash.sub.is_some() {
-                            "No results"
-                        } else {
-                            "No commands"
+                        match &self.slash.sub {
+                            Some(sub)
+                                if sub.id == "hotkey-window-resume" && sub.items.is_empty() =>
+                            {
+                                "No recent chats"
+                            }
+                            Some(_) => "No results",
+                            None => "No commands",
                         },
                         13.,
                         18.5714,
