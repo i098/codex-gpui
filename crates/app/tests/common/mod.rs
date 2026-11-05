@@ -242,13 +242,7 @@ impl Fx {
             .map(PathBuf::from)
             .unwrap_or_else(|| script.with_extension("log"));
         fs::write(&log, "")?;
-        let mut cmd = Command::new(env::current_exe()?);
-        // Quiet and uncaptured: libtest then prints only a "running 1 test" line to stdout,
-        // which the bridge skips as unparsable, before the proxy's JSON lines.
-        cmd.args(["--exact", "proxy", "--nocapture", "--quiet"])
-            .env(PROXY_SCRIPT, &script)
-            .env(PROXY_LOG, &log);
-        let (bridge, events) = Bridge::spawn(cmd)?;
+        let (bridge, events) = Bridge::spawn(proxy_command(&script, &log)?)?;
         let mut fx = Self::boot(theme, size, bridge, events, settings, Route::Home, true)?;
         fx.log = Some(log);
         Ok(fx)
@@ -344,15 +338,9 @@ impl Fx {
     /// (`id` stripped) or, for an answer to a server request, `{reply: id, result}`. Needs
     /// [`Fx::captured`].
     pub fn sent(&mut self) -> Result<Vec<Value>> {
-        let log = self.log.as_ref().context("not a captured Fx")?;
-        // The proxy handles its stdin in order, so its answer to the barrier means that every
-        // earlier message is in the log.
+        let log = self.log.clone().context("not a captured Fx")?;
         let bridge = self.cx.update(|cx| cx.global::<AppServer>().0.clone());
-        block_on(bridge.request::<_, Value>(PROXY_BARRIER, json!({})))?;
-        fs::read_to_string(log)?
-            .lines()
-            .map(|l| Ok(serde_json::from_str(l)?))
-            .collect()
+        proxy_sent(&bridge, &log)
     }
 
     pub fn read<R>(&self, f: impl FnOnce(&Root, &App) -> R) -> R {
@@ -673,6 +661,33 @@ pub fn script(session: Option<&str>, edit: fn(&mut Value)) -> Result<Vec<Value>>
             lines.push(v);
         }
     }
+    // The app opens a chat with a header read and a newest-first turns page; the recording
+    // holds the original's single full read. Exact params: the replay otherwise answers in
+    // recording order per method.
+    let threads: Vec<Value> = lines
+        .iter()
+        .filter_map(|l| l.pointer("/msg/result/thread"))
+        .filter(|t| t["turns"].is_array())
+        .cloned()
+        .collect();
+    for mut thread in threads {
+        let id = thread["id"].clone();
+        let mut turns = thread["turns"].take();
+        thread["turns"] = json!([]);
+        let mut read = exchange("thread/read", json!({ "thread": thread }));
+        read[0]["msg"]["params"] = json!({"threadId": id, "includeTurns": false});
+        turns.as_array_mut().expect("turns").reverse();
+        let mut page = exchange(
+            "thread/turns/list",
+            json!({"data": turns, "nextCursor": null}),
+        );
+        page[0]["msg"]["params"] = json!({
+            "threadId": id, "cursor": null, "limit": 10,
+            "itemsView": "full", "sortDirection": "desc",
+        });
+        lines.extend(read);
+        lines.extend(page);
+    }
     Ok(lines)
 }
 
@@ -718,6 +733,16 @@ pub fn recorded_resume(id: &str) -> Result<Value> {
                 .then_some(result)
         })
         .with_context(|| format!("no thread/resume of {id}"))
+}
+
+/// The center of profile menu row `id` (`profile-settings`, `profile-help`, ...).
+pub fn profile_row(fx: &mut Fx, id: &str) -> Result<(f32, f32)> {
+    let rect = fx
+        .cx
+        .debug_bounds(fx.window, id)?
+        .with_context(|| format!("no {id} row"))?;
+    let center = rect.center();
+    Ok((f32::from(center.x), f32::from(center.y)))
 }
 
 /// Device pixels that differ inside the CSS-px `rect` (the window is 2x).
@@ -833,6 +858,39 @@ pub fn parity_flow(screen: &str, reach: fn(&mut Fx) -> Result<()>) -> Result<Str
 const PROXY_SCRIPT: &str = "CGX_PROXY_SCRIPT";
 const PROXY_LOG: &str = "CGX_PROXY_LOG";
 const PROXY_BARRIER: &str = "proxy/barrier";
+
+/// This test binary as a replay proxy app-server on `script` that logs to `log`. The binary
+/// must have a `#[test] fn proxy() { proxy_child() }`.
+fn proxy_command(script: &Path, log: &Path) -> Result<Command> {
+    let mut cmd = Command::new(env::current_exe()?);
+    // Quiet and uncaptured: libtest then prints only a "running 1 test" line to stdout,
+    // which the bridge skips as unparsable, before the proxy's JSON lines.
+    cmd.args(["--exact", "proxy", "--nocapture", "--quiet"])
+        .env(PROXY_SCRIPT, script)
+        .env(PROXY_LOG, log);
+    Ok(cmd)
+}
+
+/// A second proxy app-server on `lines`, such as a remote host's: its bridge and its request
+/// log, read with [`proxy_sent`].
+pub fn proxy_bridge(lines: &[Value]) -> Result<(Arc<Bridge>, PathBuf)> {
+    let script = write_script(lines)?;
+    let log = script.with_extension("log");
+    fs::write(&log, "")?;
+    let (bridge, _) = Bridge::spawn(proxy_command(&script, &log)?)?;
+    Ok((Arc::new(bridge), log))
+}
+
+/// Every message [`proxy_bridge`]'s app-server got, as [`Fx::sent`] reports them.
+pub fn proxy_sent(bridge: &Bridge, log: &Path) -> Result<Vec<Value>> {
+    // The proxy handles its stdin in order, so its answer to the barrier means that every
+    // earlier message is in the log.
+    block_on(bridge.request::<_, Value>(PROXY_BARRIER, json!({})))?;
+    fs::read_to_string(log)?
+        .lines()
+        .map(|l| Ok(serde_json::from_str(l)?))
+        .collect()
+}
 
 /// Writes the replay script under the process's temporary directory.
 fn write_script(lines: &[Value]) -> Result<PathBuf> {
@@ -1043,6 +1101,18 @@ impl app::host::Host for ActivityFixtureHost {
             if http["url"] == "/wham/remote/control/mfa_requirement" || http["url"] == "/accounts/mfa_info")
         {
             return app::host::Host::fetch(&*MFA, request);
+        }
+        // The Help flyout's What's new feed, as the original fetched it.
+        static CHANGELOG: std::sync::LazyLock<app::host::ReplayHost> =
+            std::sync::LazyLock::new(|| {
+                app::host::ReplayHost::from_recording(include_str!(
+                    "../../../../fixtures/codex-app-changelog.json"
+                ))
+                .expect("changelog recording")
+            });
+        if matches!(request, app::host::Request::Fetch { url, .. } if url == app::host::CHANGELOG_FEED)
+        {
+            return app::host::Host::fetch(&*CHANGELOG, request);
         }
         if matches!(request, app::host::Request::Http(http) if http["url"] == "/wham/statsig/bootstrap")
         {

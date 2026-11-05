@@ -121,6 +121,17 @@ struct PanelWidth(Pixels);
 
 impl Global for PanelWidth {}
 
+/// The tab menu's `Move to left pane` (`true`) / `Move to right pane`: the side panel's
+/// side of the chat (the original's `contentSide`).
+// shortcut: kept for the session only, not per workspace; persist it when a restart must keep it.
+pub struct ContentLeft(pub bool);
+
+impl Global for ContentLeft {}
+
+pub fn content_left(cx: &App) -> bool {
+    cx.try_global::<ContentLeft>().is_some_and(|side| side.0)
+}
+
 /// Panel width for the current window, as the original clamps its stored width: at least
 /// `MIN_CHAT`, and the chat keeps `MIN_CHAT` beside it.
 /// ponytail: assumes the sidebar is open; a collapsed sidebar only leaves the chat wider.
@@ -322,6 +333,8 @@ pub struct RepositoryChanges {
     pub hide_whitespace: bool,
     #[serde(default)]
     pub not_repository: bool,
+    #[serde(default)]
+    pub generated_paths: Vec<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -366,6 +379,7 @@ pub struct DiffPanel {
     active_file: usize,
     filter: controls::TextField,
     filter_focus: Option<FocusHandle>,
+    generated: controls::GeneratedFiles,
     scroll: ScrollHandle,
     standalone: bool,
     container_width: Option<Pixels>,
@@ -387,6 +401,8 @@ pub struct DiffPanel {
     context: context::State,
     full_view: Option<gpui::WeakEntity<Shell>>,
     viewed_files: serde_json::Map<String, serde_json::Value>,
+    /// `git-review-mode` is `last-turn-only`: the panel never asks git for changes.
+    last_turn_only: bool,
 }
 
 impl DiffPanel {
@@ -530,6 +546,7 @@ impl DiffPanel {
             active_file: 0,
             filter: Default::default(),
             filter_focus: None,
+            generated: Default::default(),
             scroll: ScrollHandle::new(),
             standalone: false,
             container_width: None,
@@ -548,6 +565,7 @@ impl DiffPanel {
             context: context::State::default(),
             full_view: None,
             viewed_files: Default::default(),
+            last_turn_only: false,
         };
         panel
             .annotations
@@ -726,6 +744,7 @@ impl DiffPanel {
                 self.error = Some(error);
             }
         }
+        self.update_generated_paths();
         if self.source != DiffSource::LastTurn {
             self.show_repository();
         }
@@ -764,9 +783,12 @@ impl DiffPanel {
     }
 
     fn select_source(&mut self, source: DiffSource, cx: &mut Context<Self>) {
+        if self.last_turn_only && !matches!(source, DiffSource::LastTurn | DiffSource::Cloud) {
+            return;
+        }
         let previous = self.source;
         if previous == DiffSource::LastTurn && source != previous {
-            self.turn_files = std::mem::take(&mut self.files);
+            self.turn_files = self.unfiltered_files();
         }
         self.source = source;
         if source == DiffSource::LastTurn && source != previous {
@@ -934,6 +956,7 @@ impl DiffPanel {
                 .unwrap_or(self.files_expanded);
         }
         self.files = files;
+        self.hide_generated_files();
         self.refresh_jump();
         self.selection = None;
         self.selecting = false;
@@ -2053,6 +2076,16 @@ pub struct ActivateSideTab(pub usize);
 #[action(namespace = ui, no_json)]
 pub struct CloseSideTab(pub usize);
 
+/// The strip's and the titlebar's `New tab` button: opens the side panel's `New tab` page.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = ui, no_json)]
+pub struct OpenNewSideTab;
+
+/// A tab menu's `Move to bottom pane` (the interactive terminal's tab): index into the strip.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = ui, no_json)]
+pub struct MoveSideTabToBottom(pub usize);
+
 fn side_tab_icon(name: &'static str, index: usize, color: Hsla) -> gpui::AnyElement {
     let icon = icon(name, 16., color);
     if name != "sidebar-cmd-spinner" {
@@ -2092,6 +2125,57 @@ impl SplitScreen {
         {
             tab.label = label;
             cx.notify();
+        }
+    }
+
+    /// Right-click on tab `ix` (`tab-context-menu`): `Move to left pane` / `Move to right pane`
+    /// in split view (the pane the panel is in disabled), and `Move to bottom pane` for the
+    /// interactive terminal.
+    fn open_tab_menu(
+        &mut self,
+        ix: usize,
+        position: gpui::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::screens::thread::view::menu::{ContextMenu, Item};
+        let split = self.layout == WorkspaceLayout::Split;
+        let left = content_left(cx);
+        let mut items = vec![
+            Item::new("move-left", "Move to left pane", split && !left),
+            Item::new("move-right", "Move to right pane", split && left),
+        ];
+        if self.tabs[ix].icon == "terminal-interactive" {
+            items.push(Item::new("move-bottom", "Move to bottom pane", true));
+        }
+        self.menu = Some(ContextMenu::open(
+            items,
+            ix.to_string(),
+            position,
+            window,
+            cx,
+        ));
+        cx.notify();
+    }
+
+    fn activate_tab_menu(
+        &mut self,
+        id: &'static str,
+        tab: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match id {
+            "move-left" | "move-right" => {
+                cx.set_global(ContentLeft(id == "move-left"));
+                window.refresh();
+            }
+            "move-bottom" => {
+                if let Ok(ix) = tab.parse() {
+                    window.dispatch_action(Box::new(MoveSideTabToBottom(ix)), cx);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -2162,6 +2246,13 @@ impl SplitScreen {
                 .pr(px(7.))
                 // `no-drag`: the titlebar behind must not start a window move.
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        this.open_tab_menu(ix, event.position, window, cx);
+                        cx.stop_propagation();
+                    }),
+                )
                 .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                     this.hovered = hovered.then_some(ix);
                     cx.notify();
@@ -2294,9 +2385,13 @@ impl SplitScreen {
                     .child(tab(ix, t, cx))
             }))
             .child(
-                div()
-                    .pl(px(6.))
-                    .child(strip_button("diff-new-tab", t.text_tertiary, None)),
+                div().pl(px(6.)).child(
+                    strip_button("diff-new-tab", t.text_tertiary, None)
+                        .id("strip-new-tab")
+                        .role(gpui::Role::Button)
+                        .aria_label("New tab")
+                        .on_click(dispatch_action(OpenNewSideTab)),
+                ),
             )
             .child(self.layout_controls(t))
     }
@@ -2475,22 +2570,26 @@ impl Render for SplitMain {
             .clone()
             .tab_stop(false);
         let t = cx.theme();
+        let left = content_left(cx);
+        let thread = div().flex_1().min_w_0().child(self.thread.clone());
+        let panel = div()
+            .w(width)
+            .flex_none()
+            .track_focus(&self.focus)
+            .map(|d| if left { d.border_r_1() } else { d.border_l_1() })
+            // The panel content's `[contain:layout_paint]`.
+            .snap_origin()
+            .border_color(over(t.border, t.surface))
+            .child(self.panel.clone());
         div()
             .size_full()
             .relative()
             .flex()
-            .child(div().flex_1().min_w_0().child(self.thread.clone()))
-            .child(
-                div()
-                    .w(width)
-                    .flex_none()
-                    .track_focus(&self.focus)
-                    .border_l_1()
-                    // The panel content's `[contain:layout_paint]`.
-                    .snap_origin()
-                    .border_color(over(t.border, t.surface))
-                    .child(self.panel.clone()),
-            )
+            .children(if left {
+                [panel, thread]
+            } else {
+                [thread, panel]
+            })
             .child(
                 div()
                     .id("panel-resize")
@@ -2499,14 +2598,24 @@ impl Render for SplitMain {
                     .absolute()
                     .top_0()
                     .bottom_0()
-                    .right(width - px(if summary_open { 8. } else { 16. }))
+                    .map(|d| {
+                        if left {
+                            d.left(width - px(8.))
+                        } else {
+                            d.right(width - px(if summary_open { 8. } else { 16. }))
+                        }
+                    })
                     .w(px(16.))
                     .cursor(CursorStyle::ResizeLeftRight)
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, e: &MouseDownEvent, window, cx| {
                             window.focus(&resizer_focus, cx);
-                            this.drag_anchor = Some(width + e.position.x);
+                            this.drag_anchor = Some(if left {
+                                e.position.x - width
+                            } else {
+                                width + e.position.x
+                            });
                             cx.stop_propagation();
                             cx.notify();
                         }),
@@ -2516,9 +2625,8 @@ impl Render for SplitMain {
                 let released = cx.entity().downgrade();
                 d.child(drag_layer(
                     move |x, window, cx| {
-                        cx.set_global(PanelWidth(
-                            (anchor - x).clamp(px(MIN_CHAT), panel_max(window)),
-                        ));
+                        let width = if left { x - anchor } else { anchor - x };
+                        cx.set_global(PanelWidth(width.clamp(px(MIN_CHAT), panel_max(window))));
                     },
                     move |cx| {
                         released
@@ -2545,6 +2653,8 @@ pub struct SplitScreen {
     hovered: Option<usize>,
     layout: WorkspaceLayout,
     panel_focus: FocusHandle,
+    /// The open tab menu: its subject is the tab's strip index.
+    menu: Option<crate::screens::thread::view::menu::ContextMenu>,
 }
 
 impl gpui::Focusable for SplitScreen {
@@ -2556,17 +2666,20 @@ impl gpui::Focusable for SplitScreen {
 impl Render for SplitScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The panel ends at the main panel's right edge, 4 px
-        // (`--app-shell-page-inline-end-inset`) from the window's.
+        // (`--app-shell-page-inline-end-inset`) from the window's; moved to the left pane, it
+        // starts at the main panel's left edge and the thread header follows it.
+        let main_left = if self.shell.read(cx).sidebar_open {
+            self.shell.read(cx).sidebar_width
+        } else {
+            crate::RAIL_WIDTH
+        };
+        let content_left = self.layout == WorkspaceLayout::Split && content_left(cx);
         let left = match self.layout {
             WorkspaceLayout::Chat => None,
-            WorkspaceLayout::Split => {
+            WorkspaceLayout::Split if !content_left => {
                 Some(window.viewport_size().width - px(4.) - panel_width(window, cx))
             }
-            WorkspaceLayout::Full => Some(if self.shell.read(cx).sidebar_open {
-                self.shell.read(cx).sidebar_width
-            } else {
-                crate::RAIL_WIDTH
-            }),
+            WorkspaceLayout::Split | WorkspaceLayout::Full => Some(main_left),
         };
         let open = self.shell.read(cx).sidebar_open;
         let chat = self.layout == WorkspaceLayout::Chat;
@@ -2590,6 +2703,34 @@ impl Render for SplitScreen {
         } else {
             TITLEBAR_LAYER_X
         };
+        let panel_end = main_left + panel_width(window, cx);
+        let (header_x, header_width) = if content_left {
+            (
+                panel_end,
+                Some(window.viewport_size().width - px(4.) - panel_end),
+            )
+        } else {
+            (header_left, left.map(|left| left - header_left))
+        };
+        // Over the leading titlebar controls the strip starts where the header would.
+        let left = left.map(|left| {
+            if content_left {
+                left.max(header_left)
+            } else {
+                left
+            }
+        });
+        let menu = self.menu.as_ref().map(|menu| {
+            menu.overlay(
+                "side-tab-menu",
+                "Tab actions",
+                |this: &mut Self| &mut this.menu,
+                Self::activate_tab_menu,
+                window,
+                cx,
+            )
+            .into_any_element()
+        });
         div()
             .size_full()
             .relative()
@@ -2601,11 +2742,11 @@ impl Render for SplitScreen {
                     open.then_some(sidebar_width),
                     self.thread
                         .update(cx, |view, cx| view.titlebar_header(left.is_some(), cx))
-                        .when_some(left, |h, left| h.w(left - header_left))
+                        .when_some(header_width, |h, width| h.w(width))
                         .when(compact, |h| {
                             h.w(window.viewport_size().width - header_left - COMPACT_CONTROLS_WIDTH)
                         }),
-                    header_left,
+                    header_x,
                 ))
             })
             // Without a panel the shell's `New tab` group follows the header behind a divider.
@@ -2661,7 +2802,13 @@ impl Render for SplitScreen {
                                 .absolute()
                                 .top_0()
                                 .left(left - TITLEBAR_LAYER_X)
-                                .right_0(),
+                                .map(|strip| {
+                                    if content_left {
+                                        strip.w(panel_end - left)
+                                    } else {
+                                        strip.right_0()
+                                    }
+                                }),
                         ),
                 )
             })
@@ -2694,6 +2841,7 @@ impl Render for SplitScreen {
                     )
                 },
             )
+            .children(menu)
     }
 }
 
@@ -2814,6 +2962,7 @@ pub fn with_side_tabs(
             hovered: None,
             layout,
             panel_focus,
+            menu: None,
         }
     })
 }
