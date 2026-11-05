@@ -1769,6 +1769,18 @@ impl Shell {
                 )
             })
             .collect();
+        // Each post's `border-s` at `start-4 -translate-x-1/2` (its dot's center) runs from
+        // 8 px below that dot (`top-1/2 my-2`) to 8 px above the next row's (`-bottom-1/2`).
+        // Positioned, it paints above every row's hover fill, so it follows the rows here.
+        let rails = (0..posts.len()).map(|i| {
+            div()
+                .absolute()
+                .left(px(4. + 15.5))
+                .top(px(4. + 26.5625 + 28.5625 * (i as f32 + 0.5) + 8.))
+                .h(px(28.5625 - 16.))
+                .w(px(1.))
+                .bg(t.border)
+        });
         let full_changelog = row(
             "profile-full-changelog".into(),
             dot(),
@@ -1822,17 +1834,6 @@ impl Shell {
                 Some(open(PRIVACY_CENTER_URL)),
             )
         });
-        // The timeline joins each post's dot to the next one (`border-s` from 8 px below a
-        // row's center to 8 px above the next row's).
-        let timeline = (!posts.is_empty()).then(|| {
-            div()
-                .absolute()
-                .left(px(16.))
-                .top(px(26.5625 + 28.5625 / 2. + 8.))
-                .h(px(28.5625 * posts.len() as f32 - 16.))
-                .w(px(1.))
-                .bg(t.border)
-        });
         let flyout = help_open.then(|| {
             composer::popover(t, 277.265_63, |d| {
                 d.relative()
@@ -1844,9 +1845,9 @@ impl Shell {
                             .items_center()
                             .child(text("What's new", 12., 16., 430., dim)),
                     )
-                    .children(timeline)
                     .children(posts)
                     .child(full_changelog)
+                    .children(rails)
                     .child(separator())
                     .children(mobile)
                     .children(chrome)

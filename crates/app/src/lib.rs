@@ -3,11 +3,14 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+mod account;
 mod account_backend;
 mod activity_access;
 mod archived_chats;
 mod chatgpt_chats;
+mod chronicle;
 mod cloud_task;
+mod data_controls;
 pub use cloud_task::parse_task_response;
 mod cloud;
 pub use cloud::{CloudTaskRequest, create_cloud_task};
@@ -40,6 +43,7 @@ pub mod oauth;
 pub mod onboarding;
 mod permissions;
 mod personalization;
+mod pets;
 mod profile_menu;
 mod pull_requests;
 pub mod qa;
@@ -729,8 +733,12 @@ impl Root {
         features::install_shortcuts(cx);
         let this = cx.weak_entity();
         usage::install(this.clone(), cx);
+        data_controls::install(this.clone(), cx);
+        account::install(this.clone(), cx);
         account_backend::install(this.clone(), cx);
+        chronicle::install(this.clone(), cx);
         notifications::install(this.clone(), cx);
+        pets::install(this.clone(), cx);
         settings_git::init(this.clone(), cx);
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {
@@ -835,7 +843,18 @@ impl Root {
                     ui::composer::SlashCommand::Init => this.init_agents(window, cx),
                     ui::composer::SlashCommand::Side => this.start_side_chat(window, cx),
                     ui::composer::SlashCommand::ReviewBranches => this.load_review_branches(composer.clone(), cx),
-                    ui::composer::SlashCommand::Review(branch) => this.start_review(branch.clone(), window, cx),
+                    ui::composer::SlashCommand::Review(branch) => {
+                        let target = match branch {
+                            None => json!({"type": "uncommittedChanges"}),
+                            Some(branch) => json!({"type": "baseBranch", "branch": branch}),
+                        };
+                        this.start_review(target, window, cx)
+                    }
+                    ui::composer::SlashCommand::ReviewCommit(sha, title) => this.start_review(
+                        json!({"type": "commit", "sha": sha, "title": title}),
+                        window,
+                        cx,
+                    ),
                     ui::composer::SlashCommand::Personality(name) => this.set_personality(name, cx),
                     ui::composer::SlashCommand::Chat => this.new_special_chat(features::shortcuts::NewChatMode::Standalone, window, cx),
                     ui::composer::SlashCommand::Worktree => this.toggle_worktree_run(cx),
@@ -1386,6 +1405,7 @@ impl Root {
                 this.ready = this.login.is_none();
                 hotkey::policy::refresh(this, cx);
                 connections::startup(this, cx);
+                chronicle::reconcile_on_launch(this, cx);
                 #[cfg(target_os = "windows")]
                 this.check_windows_sandbox_readiness(cx);
                 this.select_route(cx);
@@ -1608,6 +1628,7 @@ impl Root {
             thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         }
         self.host = host;
+        pets::reload(self.host.clone(), cx);
         hotkey::refresh_home(self, cx);
         self.refresh_activity_access(cx);
         hotkey::policy::refresh(self, cx);
@@ -5681,7 +5702,7 @@ impl Root {
             .iter()
             .rev()
             .find(|turn| turn.status == TurnStatus::InProgress)
-            .map(|turn| turn.id.clone());
+            .map(|turn| turn.interrupt_id.as_ref().unwrap_or(&turn.id).clone());
         self.loaded.remove(&id);
         self.failed_queued.retain(|row| row.thread_id != id);
         let bridge = self.bridge.clone();
@@ -5791,6 +5812,7 @@ impl Root {
             return;
         };
         let (thread_id, turn_id) = (view.id().to_owned(), turn.id.clone());
+        let interrupt_id = turn.interrupt_id.clone().unwrap_or_else(|| turn_id.clone());
         if !self
             .interrupting
             .insert((thread_id.clone(), turn_id.clone()))
@@ -5799,7 +5821,7 @@ impl Root {
         }
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
-            let result = bridge.turn_interrupt(&thread_id, &turn_id).await;
+            let result = bridge.turn_interrupt(&thread_id, &interrupt_id).await;
             if result.is_err() {
                 this.update(cx, |this, cx| {
                     this.interrupting.remove(&(thread_id, turn_id));
@@ -8936,10 +8958,23 @@ impl Render for Root {
                 },
             ))
             .on_action(cx.listener(
+                |this, action: &settings::computer_history::PrefillPrompt, window, cx| {
+                    this.plugin_prefill(&action.0, window, cx);
+                },
+            ))
+            .on_action(cx.listener(
                 |this, _: &settings::integrations::OpenPluginCreator, window, cx| {
                     this.open_plugin_creator(window, cx);
                 },
             ))
+            .on_action(
+                cx.listener(|this, _: &settings::pets::CreatePet, window, cx| {
+                    this.create_pet(window, cx);
+                }),
+            )
+            .on_action(cx.listener(|this, _: &settings::pets::RefreshPets, _, cx| {
+                pets::reload(this.host.clone(), cx);
+            }))
             .on_action(cx.listener(|this, _: &LogOut, window, cx| {
                 if !this.logout_pending {
                     let email = this.account_email.clone();

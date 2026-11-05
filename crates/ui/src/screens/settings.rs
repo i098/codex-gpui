@@ -51,9 +51,16 @@ fn focus_on_pointer(
 }
 
 mod account_page;
+mod ads_controls;
 pub mod backend;
+mod code_review;
+pub mod computer_history;
 mod languages;
+pub mod parental_controls;
+mod passwords;
 pub mod personalization;
+pub mod pets;
+pub mod security_settings;
 pub mod trusted_contact;
 pub mod workspace {
     use crate::{SANS, composer::popover, focus, icon::icon, text};
@@ -285,8 +292,10 @@ pub mod storage;
 #[path = "settings_integrations.rs"]
 pub mod integrations;
 
+pub mod account;
 #[path = "archived_chats.rs"]
 pub mod archived_chats;
+pub mod data_controls;
 
 #[path = "git_settings.rs"]
 mod git_settings;
@@ -450,6 +459,7 @@ const NAV: &[(&str, &[(&str, &str)])] = &[
             ("Keyboard shortcuts", "settings-keyboard-shortcuts"),
             ("Usage & billing", "settings-usage"),
             ("Data controls", "settings-data-controls"),
+            ("Ads controls", "settings-data-controls"),
             ("Debug", "settings-configuration"),
         ],
     ),
@@ -1023,11 +1033,17 @@ impl Render for SettingsNav {
             .as_ref()
             .map(|cloud| cloud.read(cx).access())
             .unwrap_or_default();
+        let integrations = page.integrations.read(cx);
+        let history_visible =
+            computer_history::visible(&integrations.evaluations, integrations.gates_loaded);
         let visible = |label: &str| match label {
             "Import" => import_visible,
             "Cloud computer" => false,
             "Codex Cloud" => cloud_access.cloud,
             "Legacy Codex Cloud" => cloud_access.legacy,
+            "Computer history" => history_visible,
+            // The original lists Code Review for its cloud review surface (`sx`).
+            "Code Review" => cloud_access.legacy,
             "Debug" => debug::allowed(),
             _ => true,
         };
@@ -1132,6 +1148,7 @@ pub struct SettingsPane {
     storage: Entity<storage::StoragePage>,
     git_saved_until: std::collections::HashMap<&'static str, std::time::Instant>,
     appearance: appearance_settings::State,
+    pets: pets::State,
     /// `Available reasoning efforts` on the Configuration page.
     efforts: Option<(Vec<String>, Entity<crate::settings_kit::MultiSelect>)>,
 }
@@ -1201,6 +1218,10 @@ impl SettingsPane {
         .detach();
         cx.observe_global::<notifications::State>(|_, cx| cx.notify())
             .detach();
+        cx.observe_global::<super::mini::CustomPets>(|_, cx| cx.notify())
+            .detach();
+        cx.observe_global::<super::mini::MiniOpen>(|_, cx| cx.notify())
+            .detach();
         Self {
             storage: cx.new(|cx| storage::StoragePage::new(page.clone(), cx)),
             page,
@@ -1211,6 +1232,7 @@ impl SettingsPane {
             git_fields: Vec::new(),
             git_saved_until: Default::default(),
             appearance: Default::default(),
+            pets: Default::default(),
             efforts: None,
         }
     }
@@ -1744,6 +1766,25 @@ impl Render for SettingsPane {
         if section == "Archived chats" {
             return archived_chats::render(window, cx);
         }
+        // Only `codex://settings/security` opens it: the original keeps it out of the nav.
+        if section == "Security" {
+            return security_settings::render(window, cx);
+        }
+        if section == "Ads controls" {
+            return ads_controls::render(window, cx);
+        }
+        if section == "Passwords" {
+            return passwords::render(window, cx);
+        }
+        if section == "Parental controls" {
+            return parental_controls::render(window, cx);
+        }
+        if section == "Data controls" {
+            return data_controls::render(window, cx);
+        }
+        if section == "Account" {
+            return account::render(window, cx);
+        }
         if section == "Trusted contact" {
             return trusted_contact::render(window, cx);
         }
@@ -1761,6 +1802,15 @@ impl Render for SettingsPane {
         }
         if section == "Connections" {
             return super::connections::render(window, cx);
+        }
+        if section == "Mini & Pets" {
+            return self.render_pets(&t, window, cx);
+        }
+        if section == "Computer history" {
+            return computer_history::render(self.page.clone(), window, cx);
+        }
+        if section == "Code Review" {
+            return code_review::render(self.page.clone(), window, cx);
         }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {

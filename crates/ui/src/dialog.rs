@@ -28,7 +28,7 @@ fn contains_ignore_ascii_case(text: &str, query: &str) -> bool {
 
 type Shortcut = crate::screens::settings::keyboard_shortcuts::Shortcut;
 
-type ArtworkCache = Rc<
+pub(crate) type ArtworkCache = Rc<
     RefCell<
         Option<(
             Bounds<Pixels>,
@@ -671,7 +671,7 @@ impl Dialog {
                         } else {
                             &WRITING_ARTWORK_LIGHT
                         },
-                        px(20.),
+                        top(px(20.)),
                         shapes::Corner::Squircle,
                     )),
             )
@@ -2656,7 +2656,7 @@ impl Dialog {
                             .child(draw_artwork(
                                 announcement.artwork.clone(),
                                 &ANNOUNCEMENT_ARTWORK,
-                                px(16.),
+                                top(px(16.)),
                                 shapes::Corner::Round,
                             )),
                     )
@@ -4344,17 +4344,29 @@ static WRITING_ARTWORK_LIGHT: LazyLock<RgbaImage> = LazyLock::new(|| {
     ))
 });
 
-fn draw_artwork(
-    cache: ArtworkCache,
-    image: &'static RgbaImage,
-    radius: Pixels,
-    corner: shapes::Corner,
-) -> impl IntoElement {
-    let radius = Corners {
+fn top(radius: Pixels) -> Corners<Pixels> {
+    Corners {
         top_left: radius,
         top_right: radius,
         ..Default::default()
-    };
+    }
+}
+
+/// The original's `gradient-e8375b62d61e.png`, covering its box (Settings ▸ Computer history).
+pub(crate) fn gradient_artwork(
+    cache: ArtworkCache,
+    radius: Pixels,
+    corner: shapes::Corner,
+) -> impl IntoElement {
+    draw_artwork(cache, &ANNOUNCEMENT_ARTWORK, Corners::all(radius), corner)
+}
+
+fn draw_artwork(
+    cache: ArtworkCache,
+    image: &'static RgbaImage,
+    radius: Corners<Pixels>,
+    corner: shapes::Corner,
+) -> impl IntoElement {
     canvas(
         move |bounds, window, _| {
             let scale = window.scale_factor();
