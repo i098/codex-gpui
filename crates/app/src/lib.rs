@@ -295,9 +295,8 @@ pub struct State {
     pub confirm_before_close: ConfirmBeforeClose,
     pub project_root: Option<String>,
     pub zoom: f32,
-    /// The Recents header's `Sort chats by` and ChatGPT filter choices.
-    pub chat_sort: ui::screens::sidebar::ChatSort,
-    pub chat_filter: ui::screens::sidebar::ChatFilter,
+    /// The Recents header's `Chat sidebar options` choices.
+    pub chat_options: ui::screens::sidebar::ChatOptions,
     /// The composer's sent prompts ([`ui::composer::PromptHistory`]).
     pub prompt_history: Vec<String>,
     /// The unsent composer text of each thread (`draftKey`), by thread id.
@@ -318,8 +317,7 @@ impl Default for State {
             confirm_before_close: ConfirmBeforeClose::default(),
             project_root: None,
             zoom: 1.,
-            chat_sort: Default::default(),
-            chat_filter: Default::default(),
+            chat_options: Default::default(),
             prompt_history: Vec::new(),
             drafts: HashMap::new(),
             path: None,
@@ -868,8 +866,7 @@ impl Root {
             sidebar.threads_state = ListState::Loading;
             sidebar.set_activity_archive_supported(!bridge.is_acp());
             sidebar.activity_available = false;
-            sidebar.chat_sort = state.chat_sort;
-            sidebar.chat_filter = state.chat_filter;
+            sidebar.chat_options = state.chat_options.clone();
             sidebar
         });
         cx.subscribe_in(
@@ -898,12 +895,18 @@ impl Root {
             &sidebar,
             window,
             |this, sidebar, _: &ui::screens::sidebar::ChatOrderChanged, window, cx| {
-                let sidebar = sidebar.read(cx);
-                this.state.chat_sort = sidebar.chat_sort;
-                this.state.chat_filter = sidebar.chat_filter;
+                this.state.chat_options = sidebar.read(cx).chat_options.clone();
                 let threads = std::mem::take(&mut this.threads);
                 this.set_threads(&threads, cx);
                 this.save(window, cx);
+            },
+        )
+        .detach();
+        cx.subscribe_in(
+            &sidebar,
+            window,
+            |this, _, _: &ui::screens::sidebar::NewSectionRequested, window, cx| {
+                this.new_section(None, window, cx)
             },
         )
         .detach();

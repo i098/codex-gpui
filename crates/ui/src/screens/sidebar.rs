@@ -43,7 +43,7 @@ pub use priority::{ActivityOpened, ArchiveActivity};
 pub mod projects;
 pub mod sections;
 mod sort;
-pub use sort::{ChatFilter, ChatOrderChanged, ChatSort};
+pub use sort::{ChatOptions, ChatOrderChanged, ChatSort, NewSectionRequested, Organize};
 
 /// `.sidebar-item`: `--radius-lg` (12.5 px) with `corner-shape: superellipse(1.5)`.
 const RADIUS_ROW: Pixels = px(12.5);
@@ -353,11 +353,10 @@ pub struct HomeSidebar {
     /// The open row context menu.
     menu: Option<ThreadMenu>,
     native_menu_snapshot: Option<serde_json::Value>,
-    /// `Sort chats by` and the ChatGPT filter, from the app's saved state.
-    pub chat_sort: ChatSort,
-    pub chat_filter: ChatFilter,
+    /// The `Chat sidebar options` choices, from the app's saved state.
+    pub chat_options: ChatOptions,
     /// The open `Chat sidebar options` menu.
-    chat_options: Option<crate::screens::thread::view::menu::ContextMenu>,
+    options_menu: Option<sort::OptionsMenu>,
     /// Thread id to the `cwd` it runs in: a project lists the chats in its root.
     cwds: HashMap<String, SharedString>,
     /// Projects whose `Show more` was clicked: they list every loaded chat.
@@ -500,9 +499,8 @@ impl HomeSidebar {
             scroll: ScrollHandle::new(),
             menu: None,
             native_menu_snapshot: None,
-            chat_sort: ChatSort::default(),
-            chat_filter: ChatFilter::default(),
-            chat_options: None,
+            chat_options: ChatOptions::default(),
+            options_menu: None,
             cwds: thread_cwds(threads),
             projects_shown_all: HashSet::new(),
         }
@@ -1091,7 +1089,9 @@ impl HomeSidebar {
             .iter()
             .enumerate()
             .filter(|(index, (id, _, _))| {
-                !self.pinned.contains(id) && !self.grouped_rows.contains(index)
+                !self.pinned.contains(id)
+                    && !self.grouped_rows.contains(index)
+                    && self.in_recents(id)
             })
             .map(|(_, thread)| thread)
     }
@@ -1130,8 +1130,10 @@ impl HomeSidebar {
             .filter(|index| match group {
                 ThreadGroup::Pinned => self.pinned.contains(&self.threads[*index].0),
                 ThreadGroup::Recents => {
-                    !self.pinned.contains(&self.threads[*index].0)
+                    let id = &self.threads[*index].0;
+                    !self.pinned.contains(id)
                         && !self.grouped_rows.contains(index)
+                        && self.in_recents(id)
                 }
                 ThreadGroup::Custom(_) => true,
             })
@@ -1317,14 +1319,11 @@ impl HomeSidebar {
         };
         // shortcut: ChatGPT rows follow the local ones instead of merging by update time;
         // interleave when Recents sorts both sources together.
-        let filter = self.filter_in_effect();
         div()
             .flex()
             .flex_col()
-            .when(filter != ChatFilter::Chats, |d| d.child(local))
-            .when(filter != ChatFilter::Work, |d| {
-                d.child(self.chatgpt_rows(window, cx))
-            })
+            .child(local)
+            .child(self.chatgpt_rows(window, cx))
             .into_any_element()
     }
 
@@ -1424,6 +1423,7 @@ impl Render for HomeSidebar {
                     .child(
                         div()
                             .group(key.clone())
+                            .when(i == 0, |d| d.debug_selector(|| "projects-header".into()))
                             .when(i == 1, |d| d.debug_selector(|| "recents-header".into()))
                             .relative()
                             .h(px(30.))
@@ -1519,7 +1519,9 @@ impl Render for HomeSidebar {
                 .gap(px(16.))
                 .px(px(8.))
                 .children(pinned)
-                .child(projects)
+                .when(self.chat_options.organize == Organize::Project, |d| {
+                    d.child(projects)
+                })
                 .children((0..self.sections.len()).map(|index| {
                     let body = self.custom_body(index, window, cx);
                     section(

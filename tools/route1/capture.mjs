@@ -24,10 +24,14 @@ function driver(p, w, h) {
     throw new Error(`timeout waiting for ${what}`);
   };
   const mouse = (type, x, y, extra = {}) => p.send("Input.dispatchMouseEvent", { type, x, y, ...extra });
-  const click = async (expr, what = expr) => {
+  const hover = async (expr, what = expr) => {
     await waitFor(expr, what);
     const [x, y] = await p.evaluate(`(() => { const r = (${expr}).getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
     await mouse("mouseMoved", x, y);
+    return [x, y];
+  };
+  const click = async (expr, what = expr) => {
+    const [x, y] = await hover(expr, what);
     await mouse("mousePressed", x, y, { button: "left", clickCount: 1 });
     await mouse("mouseReleased", x, y, { button: "left", clickCount: 1 });
     await sleep(300);
@@ -39,7 +43,7 @@ function driver(p, w, h) {
   const type = (text) => p.send("Input.insertText", { text });
   // The pointer rests on the empty titlebar centre, where nothing reacts to hover.
   const park = () => mouse("mouseMoved", Math.round(w * 0.6), 6);
-  return { waitFor, click, key, type, park, sleep, evaluate: p.evaluate };
+  return { waitFor, hover, click, key, type, park, sleep, evaluate: p.evaluate };
 }
 
 // Each state starts on a freshly loaded Home route.
@@ -130,6 +134,27 @@ const STATES = {
   "profile-menu": async (d) => {
     await d.click(byText("Open profile menu"));
     await d.waitFor(`document.querySelector("[role=menu]")?.innerText.includes("Log out")`, "profile menu");
+  },
+  "chat-options": async (d) => {
+    // The button shows (and takes its width) only while its section title is hovered.
+    await d.hover(`document.querySelector('[data-app-action-sidebar-section-heading=Recents] [class*="group/nav-section-title"]')`, "Recents title");
+    await d.sleep(300);
+    await d.click(byText("Chat sidebar options"));
+    await d.waitFor(`document.querySelector("[role=menu]")?.innerText.includes("Sort chats by")`, "chat options menu");
+  },
+  // By keys: the pointer then rests on the titlebar without closing the submenu.
+  "chat-options-organize": async (d) => {
+    await STATES["chat-options"](d);
+    await d.key("ArrowDown", "ArrowDown", 40);
+    await d.key("ArrowRight", "ArrowRight", 39);
+    await d.waitFor(`[...document.querySelectorAll("[role=menu]")].some((m) => m.innerText.includes("In one list"))`, "organize submenu");
+  },
+  "chat-options-sort": async (d) => {
+    await STATES["chat-options"](d);
+    await d.key("ArrowDown", "ArrowDown", 40);
+    await d.key("ArrowDown", "ArrowDown", 40);
+    await d.key("ArrowRight", "ArrowRight", 39);
+    await d.waitFor(`[...document.querySelectorAll("[role=menu]")].some((m) => m.innerText.includes("Manual order"))`, "sort submenu");
   },
   automations: async (d) => {
     await d.click(byText("Scheduled"));

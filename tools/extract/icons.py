@@ -37,6 +37,10 @@ NAMES = {
     "fb6a94331e": "arrow-left",  # Back; Forward is the same glyph mirrored (-scale-x-100)
     "d3e3e867e7": "sidebar",
     "915d9f4750": "new-tab",
+    # Recents `Chat sidebar options` menu
+    "86c54dea26": "sidebar-sort",
+    "95ef661454": "sidebar-organize-project",
+    "d818a5d859": "sidebar-organize-list",
     # Home
     "6e15153969": "codex-logo",
     "9191379992": "close",
