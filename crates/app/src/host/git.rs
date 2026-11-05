@@ -919,6 +919,9 @@ pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
     if endpoint == "git-file-url" {
         return file_url::read(root, params);
     }
+    if endpoint == "git-review-commits" {
+        return review_commits(root);
+    }
     if let Some(result) = commit_flow(endpoint, root, params) {
         return result;
     }
@@ -997,6 +1000,26 @@ fn commit_flow(endpoint: &str, root: &Path, params: &Value) -> Option<Result<Val
         "git-checkout" => checkout(root, params),
         _ => return None,
     })
+}
+
+/// The 50 latest commits of `HEAD` that `Code review` can target, newest first.
+fn review_commits(root: &Path) -> Result<Value> {
+    let log = if commit_id(root, "HEAD")?.is_some() {
+        String::from_utf8(checked(run(
+            root,
+            &["log", "-50", "--format=%H%x00%s", "HEAD", "--"],
+        )?)?)?
+    } else {
+        String::new()
+    };
+    let commits: Vec<_> = log
+        .lines()
+        .filter_map(|line| {
+            let (sha, subject) = line.split_once('\0')?;
+            Some(json!({"sha": sha, "subject": subject}))
+        })
+        .collect();
+    Ok(json!({"commits": commits}))
 }
 
 fn current_branch(root: &Path) -> Result<Option<String>> {

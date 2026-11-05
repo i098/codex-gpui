@@ -50,6 +50,8 @@ pub enum SlashCommand {
     ReviewBranches,
     /// Start a review of the working tree (`None`) or against a branch.
     Review(Option<String>),
+    /// Start a review of one commit: its sha and subject.
+    ReviewCommit(String, String),
     Personality(&'static str),
 }
 
@@ -328,6 +330,8 @@ pub(super) struct Slash {
     pub(super) recents: Vec<(String, String, String)>,
     /// Local branches offered by `/review-mode`.
     review_branches: Vec<String>,
+    /// The chat's latest commits offered by `/review-mode`: sha and subject.
+    review_commits: Vec<(String, String)>,
     scroll: gpui::ScrollHandle,
     goal: Option<Value>,
     pub(super) search: mention::Search,
@@ -371,6 +375,7 @@ enum SubAction {
     Project(String),
     Resume(String),
     Review(Option<String>),
+    ReviewCommit(String, String),
     Personality(&'static str),
     Command(SlashCommand),
 }
@@ -720,8 +725,14 @@ impl Composer {
 
     /// The local branches `/review-mode` offers as comparison bases, read by the app on
     /// `SlashCommand::ReviewBranches`. An open submenu shows them at once.
-    pub fn set_review_branches(&mut self, branches: Vec<String>, cx: &mut Context<Self>) {
+    pub fn set_review_branches(
+        &mut self,
+        branches: Vec<String>,
+        commits: Vec<(String, String)>,
+        cx: &mut Context<Self>,
+    ) {
         self.slash.review_branches = branches;
+        self.slash.review_commits = commits;
         if self
             .slash
             .sub
@@ -889,6 +900,17 @@ impl Composer {
                 icon: "code-review",
                 action: SubAction::Review(Some(branch.clone())),
             }))
+            .chain(
+                self.slash
+                    .review_commits
+                    .iter()
+                    .map(|(sha, subject)| SubItem {
+                        title: subject.clone(),
+                        description: format!("Review commit {}", sha.get(..7).unwrap_or(sha)),
+                        icon: "commit-branch",
+                        action: SubAction::ReviewCommit(sha.clone(), subject.clone()),
+                    }),
+            )
             .collect(),
             "personality" => [
                 (
@@ -1018,6 +1040,7 @@ impl Composer {
             SubAction::Fork => cx.emit(SlashCommand::Fork),
             SubAction::ForkWorktree => cx.emit(SlashCommand::ForkWorktree),
             SubAction::Review(branch) => cx.emit(SlashCommand::Review(branch)),
+            SubAction::ReviewCommit(sha, title) => cx.emit(SlashCommand::ReviewCommit(sha, title)),
             SubAction::Personality(name) => cx.emit(SlashCommand::Personality(name)),
             SubAction::Command(command) => cx.emit(command),
             SubAction::Project(root) => {
