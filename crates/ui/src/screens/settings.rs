@@ -55,6 +55,7 @@ pub mod backend;
 mod code_review;
 pub mod computer_history;
 mod languages;
+pub mod parental_controls;
 pub mod personalization;
 pub mod trusted_contact;
 pub mod workspace {
@@ -1756,6 +1757,9 @@ impl Render for SettingsPane {
         }
         if section == "Archived chats" {
             return archived_chats::render(window, cx);
+        }
+        if section == "Parental controls" {
+            return parental_controls::render(window, cx);
         }
         if section == "Data controls" {
             return data_controls::render(window, cx);

@@ -328,6 +328,7 @@ fn settings(sub: &[&str], params: &Params<'_>) -> Link {
         }
         ["connections", "ssh"] => Link::Connections(Tab::Ssh),
         ["browser-use"] => Link::Settings(Some("Browser")),
+        ["parental-controls"] => Link::Settings(Some("Parental controls")),
         ["local-environments", "create"] => match params.value("workspaceRoot") {
             Some(workspace_root) if workspace_root.starts_with('/') => Link::CreateEnvironment {
                 workspace_root,

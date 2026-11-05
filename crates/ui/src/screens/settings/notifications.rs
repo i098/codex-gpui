@@ -89,6 +89,8 @@ pub struct State {
     pub opening_settings: bool,
     pub importing_sound: bool,
     pub account: Account,
+    /// The signed-in user while `account` is [`Account::Personal`].
+    pub user_id: Option<String>,
     /// `GET /notifications/settings`.
     pub channels: Load<Arc<Value>>,
     /// `GET /me`: the email and phone number the Family channels need.
