@@ -833,7 +833,46 @@ fn changes(root: &Path, params: &Value) -> Result<Value> {
         }
         _ => json!([]),
     };
+    let mut paths: Vec<&str> = ["unstaged", "staged", "review"]
+        .iter()
+        .flat_map(|key| body[*key].as_array().into_iter().flatten())
+        .filter_map(|file| file["path"].as_str())
+        .collect();
+    paths.sort_unstable();
+    paths.dedup();
+    let generated = generated_paths(root, &paths).unwrap_or_else(|error| {
+        eprintln!("codex-gpui: cannot read linguist-generated attributes: {error:#}");
+        Vec::new()
+    });
+    body["generated_paths"] = generated.into();
     Ok(body)
+}
+
+/// The `paths` whose `linguist-generated` attribute is set, as the original's review filter.
+fn generated_paths(root: &Path, paths: &[&str]) -> Result<Vec<String>> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut args = vec!["check-attr", "-z", "linguist-generated", "--"];
+    args.extend_from_slice(paths);
+    let output =
+        String::from_utf8(checked(run(root, &args)?)?).context("Git paths must be UTF-8")?;
+    Ok(parse_generated(&output))
+}
+
+/// `check-attr -z` output: `path\0attribute\0value\0` triples.
+fn parse_generated(output: &str) -> Vec<String> {
+    output
+        .split('\0')
+        .collect::<Vec<_>>()
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .filter(|[_, name, value]| {
+            *name == "linguist-generated" && matches!(*value, "set" | "true")
+        })
+        .map(|[path, ..]| (*path).to_owned())
+        .collect()
 }
 
 pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
@@ -881,6 +920,9 @@ pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
     }
     if endpoint == "git-file-url" {
         return file_url::read(root, params);
+    }
+    if endpoint == "git-review-commits" {
+        return review_commits(root);
     }
     if let Some(result) = commit_flow(endpoint, root, params) {
         return result;
@@ -960,6 +1002,26 @@ fn commit_flow(endpoint: &str, root: &Path, params: &Value) -> Option<Result<Val
         "git-checkout" => checkout(root, params),
         _ => return None,
     })
+}
+
+/// The 50 latest commits of `HEAD` that `Code review` can target, newest first.
+fn review_commits(root: &Path) -> Result<Value> {
+    let log = if commit_id(root, "HEAD")?.is_some() {
+        String::from_utf8(checked(run(
+            root,
+            &["log", "-50", "--format=%H%x00%s", "HEAD", "--"],
+        )?)?)?
+    } else {
+        String::new()
+    };
+    let commits: Vec<_> = log
+        .lines()
+        .filter_map(|line| {
+            let (sha, subject) = line.split_once('\0')?;
+            Some(json!({"sha": sha, "subject": subject}))
+        })
+        .collect();
+    Ok(json!({"commits": commits}))
 }
 
 fn current_branch(root: &Path) -> Result<Option<String>> {
@@ -2245,6 +2307,15 @@ fn login_env(dir: &Path) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generated_paths_keep_set_and_true_values() {
+        let output = "gen/a.rs\0linguist-generated\0set\0b.rs\0linguist-generated\0false\0\
+            c.rs\0linguist-generated\0unspecified\0d.rs\0linguist-generated\0true\0\
+            e.rs\0linguist-generated\0unset\0";
+        assert_eq!(parse_generated(output), ["gen/a.rs", "d.rs"]);
+        assert!(parse_generated("").is_empty());
+    }
 
     #[test]
     fn unstarted_removal_refuses_foreign_and_owned_worktrees() -> Result<()> {
