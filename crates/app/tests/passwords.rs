@@ -63,6 +63,7 @@ impl Backend {
                 manager.0 = "disconnected".into();
                 (204, Value::Null)
             }
+            ("DELETE", id) if id.starts_with("/saved-credentials/") => (204, Value::Null),
             ("GET", "/saved-credentials") => (
                 200,
                 json!({
