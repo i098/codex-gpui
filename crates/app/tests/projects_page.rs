@@ -10,10 +10,12 @@ use app::host::LocalHost;
 use bridge::Bridge;
 use common::{CAPTURE_CLOCK, Fx, exchange, script};
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 use ui::screens::projects::{Event, Load};
 
 const RAIL_EXPLORE: (f32, f32) = (26., 246.);
+/// The first row's `Start new chat in project`.
+const FIRST_NEW_CHAT: (f32, f32) = (1164., 196.);
 
 #[test]
 fn proxy() {
@@ -40,16 +42,22 @@ fn emit(fx: &mut Fx, event: Event) -> Result<()> {
     fx.advance(std::time::Duration::ZERO)
 }
 
-/// The project's app-server `project/list` entry, updated `hours` before the capture clock.
-fn project(id: &str, name: &str, hours: i64) -> Value {
+/// The project's app-server `project/list` entry rooted in `home/<id>`, updated `hours` before
+/// the capture clock.
+fn project(home: &Path, id: &str, name: &str, hours: i64) -> Value {
     let now = CAPTURE_CLOCK.pinned_now.unwrap_or_default();
-    json!({"id": id, "name": name, "roots": [{"path": format!("/work/{id}")}],
+    json!({"id": id, "name": name, "roots": [{"path": home.join(id)}],
            "metadata": {}, "createdAt": 1, "updatedAt": now - hours * 3600})
 }
 
 #[test]
 fn projects_page_lists_renames_and_opens() -> Result<()> {
-    let list = json!({"data": [project("website", "Website", 8 * 24), project("proj", "proj", 12)],
+    let home = tempfile::tempdir()?;
+    for id in ["website", "proj"] {
+        std::fs::create_dir_all(home.path().join(id))?;
+    }
+    let list = json!({"data": [project(home.path(), "website", "Website", 8 * 24),
+                               project(home.path(), "proj", "proj", 12)],
                       "nextCursor": null});
     // The host's own app-server answers every `project/list` the page and sidebar send.
     let replies: Vec<Value> = (0..8)
@@ -64,10 +72,9 @@ fn projects_page_lists_renames_and_opens() -> Result<()> {
             .collect::<String>(),
     )?;
     let (host_bridge, _events) = Bridge::replay(path.path())?;
-    let home = tempfile::tempdir()?;
 
     let mut lines = script(None, |_| {})?;
-    let edited = project("proj", "proj", 12);
+    let edited = project(home.path(), "proj", "proj", 12);
     for _ in 0..2 {
         lines.extend(exchange("project/read", json!({"project": edited})));
     }
@@ -122,7 +129,7 @@ fn projects_page_lists_renames_and_opens() -> Result<()> {
         fx.route()
     );
 
-    emit(&mut fx, Event::Open("/work/proj".into()))?;
-    ensure!(fx.route() == Route::Home, "open: {:?}", fx.route());
+    fx.click(FIRST_NEW_CHAT)?;
+    ensure!(fx.route() == Route::Home, "new chat: {:?}", fx.route());
     Ok(())
 }

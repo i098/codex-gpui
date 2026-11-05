@@ -46,6 +46,8 @@ pub struct Page {
     descending: bool,
     /// The project whose `Project actions` menu is open.
     menu: Option<SharedString>,
+    /// The pointer is on a `Project actions` button, whose own click toggles its menu.
+    menu_button_hovered: bool,
     clock: Clock,
 }
 
@@ -62,6 +64,7 @@ impl Page {
             sort: SortKey::Updated,
             descending: true,
             menu: None,
+            menu_button_hovered: false,
             clock,
         }
     }
@@ -233,6 +236,9 @@ impl Page {
                             "Project actions",
                             t,
                         )
+                        .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                            this.menu_button_hovered = *hovered;
+                        }))
                         .on_click(cx.listener({
                             let id = id.clone();
                             move |this, _, _, cx| {
@@ -290,8 +296,10 @@ impl Page {
                         })
                         .on_mouse_down_out(cx.listener(
                             |this, _, _, cx| {
-                                this.menu = None;
-                                cx.notify();
+                                if !this.menu_button_hovered {
+                                    this.menu = None;
+                                    cx.notify();
+                                }
                             },
                         )),
                     ),
