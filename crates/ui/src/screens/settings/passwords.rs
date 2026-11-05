@@ -439,7 +439,7 @@ impl Passwords {
             .flex_col()
             .gap(px(8.))
             .child(text("Password manager", 16., 22., 500., t.text))
-            .child(card(vec![row.into_any_element()], Some(&self.layer), t))
+            .child(card(vec![row], Some(&self.layer), t))
     }
 
     fn list_view(&self, t: &Theme, cx: &mut Context<Self>) -> gpui::Div {
@@ -465,7 +465,7 @@ impl Passwords {
                 action("passwords-refresh", "Refresh", Kind::Secondary, busy, t)
                     .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
             );
-        let rows: Vec<AnyElement> = shown
+        let rows: Vec<gpui::Div> = shown
             .iter()
             .enumerate()
             .map(|(index, password)| {
@@ -485,20 +485,21 @@ impl Passwords {
                 });
                 let id = SharedString::from(format!("password-row-{index}"));
                 let password = (*password).clone();
-                div()
-                    .id(id.clone())
-                    .debug_selector(move || id.to_string())
-                    .cursor_pointer()
-                    .child(settings_row_content(
-                        password.site(),
-                        Some(status(password.account.clone(), false, t).into_any_element()),
-                        remove.into_any_element(),
-                        t,
-                    ))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_details(password.clone(), window, cx)
-                    }))
-                    .into_any_element()
+                div().child(
+                    div()
+                        .id(id.clone())
+                        .debug_selector(move || id.to_string())
+                        .cursor_pointer()
+                        .child(settings_row_content(
+                            password.site(),
+                            Some(status(password.account.clone(), false, t).into_any_element()),
+                            remove.into_any_element(),
+                            t,
+                        ))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_details(password.clone(), window, cx)
+                        })),
+                )
             })
             .collect();
         let empty = !self.loading && !self.list_error && rows.is_empty();
