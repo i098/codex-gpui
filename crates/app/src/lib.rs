@@ -533,6 +533,7 @@ pub struct Root {
     maps_page: Option<Entity<ui::screens::maps::Page>>,
     images_page: Option<Entity<ui::screens::images::Page>>,
     gpts_page: Option<Entity<ui::screens::gpts::Page>>,
+    projects_page: Option<Entity<ui::screens::projects::Page>>,
     cloud_modal: Option<Entity<ui::screens::cloud::CloudModal>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
@@ -1061,6 +1062,7 @@ impl Root {
             maps_page: None,
             images_page: None,
             gpts_page: None,
+            projects_page: None,
             cloud_modal: None,
             settings_section: None,
             settings_page: None,
@@ -1525,6 +1527,10 @@ impl Root {
         self.gpts_page.as_ref()
     }
 
+    pub fn projects_page(&self) -> Option<&Entity<ui::screens::projects::Page>> {
+        self.projects_page.as_ref()
+    }
+
     /// The Home route's main panel.
     pub fn home(&self) -> &Entity<HomeMain> {
         &self.home
@@ -1739,6 +1745,7 @@ impl Root {
                         eprintln!("codex-gpui: cannot read sidebar projects: {error:#}");
                         this.sidebar
                             .update(cx, |s, cx| s.set_projects_state(ListState::Failed, cx));
+                        this.show_projects(Err(format!("{error:#}")), cx);
                     }
                 }
             })
@@ -1910,6 +1917,7 @@ impl Root {
         self.refresh_automation_editor_options(Some(&projects), cx);
         let composer = self.home.read(cx).composer.clone();
         composer.update(cx, |composer, _| composer.set_slash_projects(choices));
+        self.show_projects(Ok(projects.as_slice()), cx);
         self.sidebar
             .update(cx, |sidebar, cx| sidebar.set_projects(projects, cx));
     }

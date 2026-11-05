@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Open the Projects page from the Explore menu (`/projects`): the app-server's projects (`project/list`) with `Search projects`, the `Name` and `Updated` sort, `Create`, `Edit project` (`project/update`), `Start new chat in project`, and the empty, no-match and load-error states.
 - Add the Settings ▸ Mini & Pets page (also `codex://pets/install`): Show or Hide mini, a preview of the chosen pet over the Mini bar, a Customize dialog with the pet size slider (80–224, Reset to 112), and a My pets grid with None, the bundled pets and custom pets from `$CODEX_HOME/pets`, plus Refresh and Create pet (installs and enables the Hatch Pet skill and starts a chat with it).
 - Add the Settings ▸ Code Review page (also `codex://settings/code-review`) on the ChatGPT backend's `/wham/settings` review service: personal automatic review, trigger, exhaustive review and credits, Security review preferences, the repository list with search and paging, and each repository's review, security review, threat model, path rules and AGENTS.md link.
 - Browse a connected SSH host's folders when adding a folder to a remote project in `File > New Project...`: `Add` with an empty path lists the host's folders (`fs/readDirectory`), and `Choose` adds the folder.
