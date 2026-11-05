@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Browse a connected SSH host's folders when adding a folder to a remote project in `File > New Project...`: `Add` with an empty path lists the host's folders (`fs/readDirectory`), and `Choose` adds the folder.
 - Open the local environment editor from `codex://settings/local-environments/create?workspaceRoot=…&configPath=…`, as the original `local-environments/create` route does: Settings ▸ Worktrees ▸ Environments opens with the new environment editor for that project.
 - Add `Disable Git-based diffs` to Settings ▸ Git: with it on, the Changes panel shows only `Last Turn`, hides `View branch diff`, and runs no git repository discovery (`git-review-mode` = `last-turn-only`).
 - Search settings rows: the Settings search lists matching row titles and descriptions under `Matching settings` and opens their page, and a `Clear settings search` button clears the query.
