@@ -6,7 +6,9 @@
 //! User-message controls appear on hover or focus without moving the transcript.
 //! Copy writes plain text and HTML on macOS and shows a checkmark for 1500 ms.
 //! Answer text is selectable by drag (`thread/select.rs`); `Copy` writes the selection.
-//! Find searches user and agent messages, including collapsed activity, without server requests.
+//! Find searches user and agent messages, including collapsed activity. While older turns are
+//! unloaded, the app asks `thread/searchOccurrences` and pages them in until the matches show.
+//! Opening loads the newest page of turns; `Load earlier messages` fetches the one before.
 //! The last text message opens an inline editor. Send reverts that turn before resending it.
 //! Response copy adds HTML. Response actions use the shared delayed tooltip.
 //! A failed resume or revert leaves the draft open and shows `Failed to edit message`.
@@ -22,8 +24,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bridge::Event;
 use bridge::types::{
-    AgentMessageDeltaNotification, CommandAction, FileUpdateChange, ItemNotification, Thread,
-    ThreadItem, Turn, TurnNotification, TurnStatus, UserInput,
+    AgentMessageDeltaNotification, CommandAction, FileUpdateChange, HookNotification, HookRun,
+    ItemNotification, MemoryCitation, Thread, ThreadItem, Turn, TurnNotification, TurnStatus,
+    UserInput, WebSearchAction,
 };
 use gpui::{
     Action, AnyView, App, Bounds, ClipboardItem, Context, Corners, Div, FontWeight, Hsla,
@@ -47,6 +50,8 @@ mod actions;
 mod context;
 #[path = "thread/header.rs"]
 mod header;
+#[path = "thread/hook_stats.rs"]
+pub(crate) mod hook_stats;
 #[path = "thread/items.rs"]
 mod items;
 #[path = "thread/markdown.rs"]
@@ -58,11 +63,17 @@ mod recovery;
 #[path = "thread/select.rs"]
 mod select;
 pub use context::ReasoningVisibility;
+pub use items::{ImageView, OpenImage};
 
 pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
-pub use actions::{EditMessage, ForkThread, PatchTurn, RevertTurn, ThreadPressed};
+pub use actions::{
+    EditMessage, ForkThread, PatchTurn, RevertTurn, RunEnvironmentAction, SubmitRating,
+    ThreadPressed,
+};
+
 use actions::{TurnFocus, action_row};
+pub use hook_stats::{HookStats, OpenHookStats};
 pub enum GitAction {
     Refresh,
     OpenForm,
@@ -80,7 +91,38 @@ pub struct OpenAutomationCard {
 
 impl gpui::EventEmitter<OpenAutomationCard> for ThreadView {}
 
-use items::{activity, cache_automation_result, diff_card, disclosure, user_bubble, wrap_row};
+/// The `Load earlier messages` row was pressed (or find needs older turns).
+pub struct LoadOlderTurns;
+
+impl gpui::EventEmitter<LoadOlderTurns> for ThreadView {}
+
+/// The realtime voice session shown under the transcript.
+pub struct VoiceCard {
+    pub status: SharedString,
+    /// Starting or live: the card offers `End voice chat`; otherwise `Dismiss`.
+    pub live: bool,
+    pub lines: Vec<VoiceLine>,
+}
+
+pub struct VoiceLine {
+    pub user: bool,
+    pub text: SharedString,
+}
+
+/// The voice card's end or dismiss button was pressed.
+pub struct EndVoice;
+
+impl gpui::EventEmitter<EndVoice> for ThreadView {}
+
+/// The find query changed while older turns are unloaded: ask the server where it occurs.
+pub struct SearchHistory(pub String);
+
+impl gpui::EventEmitter<SearchHistory> for ThreadView {}
+
+use items::{
+    activity, cache_automation_result, diff_card, disclosure, memory_citations, user_bubble,
+    wrap_row,
+};
 use markdown::{markdown, tones};
 pub use select::Selection;
 use select::{Carets, block_end, frame_start, highlight};
@@ -103,6 +145,15 @@ const CONTENT_MAX_WIDTH: Pixels = px(768.);
 struct Disclosure {
     chevron: HoverFade,
     content: HoverFade,
+    height: Rc<Cell<f32>>,
+}
+
+/// An activity row body's open/close track and its last measured natural height. The original
+/// (`sites-end-resource` chunk, transition `no`) animates height and opacity over 300 ms
+/// `ease-enter` both ways; motion values are set at once under reduced motion.
+struct Expansion {
+    epoch: Instant,
+    fade: HoverFade,
     height: Rc<Cell<f32>>,
 }
 
@@ -138,10 +189,16 @@ pub struct ThreadView {
     branch: Option<SharedString>,
     /// Remote environment link (`thread/environment/connected` / `disconnected`).
     environment_connected: Option<bool>,
+    /// Names of the selected local environment's run actions (`Run` in the header).
+    environment_actions: Vec<SharedString>,
+    /// The header's run-actions menu is open.
+    run_menu: bool,
     /// Workspace folder; its name heads the summary panel.
     cwd: String,
     /// The `Toggle summary` panel is open.
     pub summary_open: bool,
+    /// A projectless chat (`projectless-thread-ids`): the summary shows `Sources`.
+    projectless: bool,
     /// The view fills the main surface (no side panel): it draws its px at the surface's
     /// rounded right corners through the clip (`Shell::main_clips_right`).
     pub clip_right: bool,
@@ -157,6 +214,7 @@ pub struct ThreadView {
     chat_actions_hovered: bool,
     git_repository: Option<Result<crate::dialog::CommitRepository, String>>,
     git_phase: Option<&'static str>,
+    worktree_status: Option<&'static str>,
     git_actions: Option<(gpui::FocusHandle, Option<usize>)>,
     /// The open More actions menu under a turn: its turn id and focus.
     turn_menu: Option<(String, gpui::FocusHandle)>,
@@ -170,10 +228,16 @@ pub struct ThreadView {
     patch_pending: bool,
     render_errors: RefCell<HashMap<String, String>>,
     stream_errors: HashMap<String, Vec<(bridge::types::TurnError, bool)>>,
+    /// Inline notices of each turn (model reroute, verification) and the turns whose safety
+    /// buffering banner shows (`context.rs`).
+    notices: HashMap<String, Vec<String>>,
+    safety_buffering: HashSet<String>,
     usage_limit_notice: UsageLimitNotice,
     clock: Clock,
     composer: AnyView,
     embedded: bool,
+    /// `forkedFromId`: the chat this one continues.
+    forked_from: Option<String>,
     _tick: Option<Task<()>>,
     running_since: HashMap<String, Instant>,
     /// A running turn's worked seconds, frozen when its final answer started streaming.
@@ -192,6 +256,9 @@ pub struct ThreadView {
     manual_compacted: HashSet<String>,
     /// The latest `turn/plan/updated` steps of each turn: `(step, status)`.
     todo_plans: HashMap<String, Vec<(String, String)>>,
+    /// Each turn's `hook/started` and `hook/completed` runs.
+    hook_runs: HashMap<String, Vec<HookRun>>,
+    patch_output: HashMap<String, String>,
     /// A turn's `Undo`, `View changes`, copy and fork focus handles. They belong to the view,
     /// not to its place in the element tree: the view moves when a side panel opens, and a
     /// pressed control must keep its focus across that.
@@ -200,6 +267,8 @@ pub struct ThreadView {
     /// Open disclosures: turns whose `Worked for` is expanded, by turn id, and activity groups
     /// whose rows show, by the id of their first item.
     expanded: HashSet<String>,
+    /// Activity disclosure bodies' open/close tracks and heights, by key (`items::activity`).
+    expansions: RefCell<HashMap<String, Expansion>>,
     pending_question: Option<String>,
     scroll: ScrollHandle,
     /// The turns as last laid out, to stand in for the ones far off screen.
@@ -211,6 +280,12 @@ pub struct ThreadView {
     /// press that focuses it).
     press_focus: Option<gpui::FocusHandle>,
     find: Option<FindState>,
+    /// `thread/turns/list` cursor of the turns before `turns`; `None` once all are loaded.
+    older_cursor: Option<String>,
+    loading_older: bool,
+    voice: Option<VoiceCard>,
+    /// The turn that stays put when older turns are prepended, and its top in the viewport.
+    older_anchor: Rc<RefCell<Option<(String, Pixels)>>>,
     /// The link menu (`menu.rs`): `subject` is the right-clicked link.
     menu: Option<menu::ContextMenu>,
     context_image: Option<crate::image_context::ImageContext>,
@@ -339,6 +414,11 @@ impl ThreadView {
         cx.notify();
     }
 
+    pub fn set_projectless(&mut self, projectless: bool, cx: &mut Context<Self>) {
+        self.projectless = projectless;
+        cx.notify();
+    }
+
     /// The main surface's rounded corners the view draws (`clip_right`, `clip_top_left`).
     pub fn set_clips(&mut self, right: bool, top_left: bool, cx: &mut Context<Self>) {
         if (self.clip_right, self.clip_top_left) != (right, top_left) {
@@ -350,6 +430,11 @@ impl ThreadView {
 
     pub fn set_git_phase(&mut self, phase: Option<&'static str>, cx: &mut Context<Self>) {
         self.git_phase = phase;
+        cx.notify();
+    }
+
+    pub fn set_worktree_status(&mut self, status: Option<&'static str>, cx: &mut Context<Self>) {
+        self.worktree_status = status;
         cx.notify();
     }
 
@@ -647,6 +732,7 @@ impl ThreadView {
             chat_actions_hovered: false,
             git_repository: None,
             git_phase: None,
+            worktree_status: None,
             git_actions: None,
             turn_menu: None,
             turn_menu_trigger_hovered: false,
@@ -656,8 +742,11 @@ impl ThreadView {
             thread_id: thread.id,
             branch: None,
             environment_connected: None,
+            environment_actions: Vec::new(),
+            run_menu: false,
             cwd: thread.cwd,
             summary_open: false,
+            projectless: false,
             clip_right: false,
             clip_top_left: false,
             docked_below: false,
@@ -666,10 +755,13 @@ impl ThreadView {
             patch_pending: false,
             render_errors: RefCell::default(),
             stream_errors: HashMap::new(),
+            notices: HashMap::new(),
+            safety_buffering: HashSet::new(),
             usage_limit_notice: UsageLimitNotice::RetryLater,
             clock,
             composer,
             embedded: false,
+            forked_from: thread.forked_from_id,
             _tick: None,
             running_since: HashMap::new(),
             answer_secs: HashMap::new(),
@@ -681,9 +773,12 @@ impl ThreadView {
             manual_compactions: 0,
             manual_compacted: HashSet::new(),
             todo_plans: HashMap::new(),
+            hook_runs: HashMap::new(),
+            patch_output: HashMap::new(),
             turn_focus: RefCell::default(),
             mcp_images: RefCell::default(),
             expanded: HashSet::new(),
+            expansions: RefCell::default(),
             pending_question: None,
             scroll: ScrollHandle::new(),
             laid_out: Rc::default(),
@@ -691,6 +786,10 @@ impl ThreadView {
             carets: Carets::default(),
             press_focus: None,
             find: None,
+            older_cursor: thread.older_cursor,
+            loading_older: false,
+            voice: None,
+            older_anchor: Rc::default(),
             menu: None,
             context_image: None,
         }
@@ -710,6 +809,109 @@ impl ThreadView {
 
     pub fn id(&self) -> &str {
         &self.thread_id
+    }
+
+    pub fn set_voice(&mut self, voice: Option<VoiceCard>, cx: &mut Context<Self>) {
+        self.voice = voice;
+        cx.notify();
+    }
+
+    fn voice_card(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
+        let voice = self.voice.as_ref()?;
+        let t = cx.theme().clone();
+        let button = recovery::retry_button(
+            "end-voice",
+            if voice.live {
+                "End voice chat"
+            } else {
+                "Dismiss"
+            },
+            window,
+            cx,
+        )
+        .on_click(cx.listener(|_, _, _, cx| cx.emit(EndVoice)));
+        let lines = voice.lines.iter().map(|line| {
+            let who = if line.user { "You" } else { "Codex" };
+            text(format!("{who}: {}", line.text), 14., 21., 400., t.text)
+        });
+        Some(
+            div()
+                .mx_auto()
+                .w_full()
+                .max_w(CONTENT_MAX_WIDTH)
+                .px(px(16.))
+                .pb(px(12.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .p(px(12.))
+                        .rounded(Theme::RADIUS_XL_BASE)
+                        .border_1()
+                        .border_color(t.border)
+                        .bg(t.surface_secondary)
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(text(voice.status.clone(), 14., 21., 500., t.text_secondary))
+                                .child(button),
+                        )
+                        .children(lines),
+                ),
+        )
+    }
+
+    pub fn has_turn(&self, id: &str) -> bool {
+        self.turns.iter().any(|turn| turn.id == id)
+    }
+
+    /// The cursor to fetch the next older page with, once; `None` while one is in flight.
+    pub fn begin_older(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        if self.loading_older {
+            return None;
+        }
+        let cursor = self.older_cursor.clone()?;
+        self.loading_older = true;
+        cx.notify();
+        Some(cursor)
+    }
+
+    /// Adds a fetched older page above the loaded turns without moving what is on screen.
+    pub fn prepend_turns(
+        &mut self,
+        mut turns: Vec<Turn>,
+        cursor: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        for item in turns.iter_mut().flat_map(|turn| &mut turn.items) {
+            cache_automation_result(item);
+        }
+        if let Some(first) = self.turns.first() {
+            let top = self
+                .laid_out
+                .borrow()
+                .turns
+                .get(&first.id)
+                .map(|&(top, _)| top);
+            *self.older_anchor.borrow_mut() =
+                top.map(|top| (first.id.clone(), top + self.scroll.offset().y));
+        }
+        turns.append(&mut self.turns);
+        self.turns = turns;
+        self.older_cursor = cursor;
+        self.loading_older = false;
+        if let Some(find) = &mut self.find {
+            find.dirty = true;
+        }
+        cx.notify();
+    }
+
+    pub fn older_failed(&mut self, cx: &mut Context<Self>) {
+        self.loading_older = false;
+        cx.notify();
     }
 
     /// The thread's working directory, as the server reports it.
@@ -876,6 +1078,10 @@ impl ThreadView {
         let cursor = find.selection.start + text.len();
         find.selection = cursor..cursor;
         find.dirty = true;
+        let query = find.query.trim().to_owned();
+        if self.older_cursor.is_some() && !query.is_empty() {
+            cx.emit(SearchHistory(query));
+        }
         cx.notify();
     }
 
@@ -1183,7 +1389,7 @@ impl ThreadView {
         .with_priority(3)
     }
     /// Only the last user message is editable, and only when its later turns have stopped.
-    /// Non-text content stays read-only because `UserInput::Other` cannot retain attachments.
+    /// Content the app cannot resend (`UserInput::Other`: audio, ...) stays read-only.
     pub fn can_edit(&self, turn_id: &str) -> bool {
         if self.embedded {
             return false;
@@ -1197,7 +1403,7 @@ impl ThreadView {
                     return turn.id == turn_id
                         && content
                             .iter()
-                            .all(|input| matches!(input, UserInput::Text { .. }));
+                            .all(|input| !matches!(input, UserInput::Other));
                 }
             }
         }
@@ -1264,36 +1470,7 @@ impl ThreadView {
     /// `Toggle summary` panel: project changes and background processes.
     fn summary(&mut self, window: &mut Window, t: &Theme, cx: &mut Context<Self>) -> Div {
         let project = self.cwd.rsplit('/').next().unwrap_or(&self.cwd).to_owned();
-        // `sticky` headers: their background (and their `before:` 8 px above) paints again in
-        // the panel's rounded `overflow: hidden` clip, over the panel's corner.
-        let header = |label: String| {
-            div()
-                .relative()
-                .child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .top(px(-8.))
-                        .child(shapes::decoration(shapes::Decoration {
-                            fill: Some(t.surface_elevated_secondary),
-                            ..Default::default()
-                        })),
-                )
-                .h(px(28.))
-                .pb(px(2.))
-                .pl(px(20.))
-                .pr(px(14.))
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .child(div().flex_1().min_w_0().py(px(2.)).child(text(
-                    label,
-                    13.,
-                    18.5714,
-                    400.,
-                    t.text_secondary,
-                )))
-        };
+        let header = |label: String| summary_header(label.into(), t);
         // `trailing`: the row's hover-only actions keep their space. A label that overflows its
         // viewport gets the marquee's mask (`_overflowingViewport`: 0.571429em left fade over
         // the track's padding, 1.14286em right fade), a masked box in its own layer.
@@ -1344,42 +1521,63 @@ impl ThreadView {
         let row_hover = t.ghost_hover;
         let git_control = self.git_control(cx);
         let has_terminals = self.background_terminal_items().next().is_some();
-        let mut sections = vec![
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(2.))
-                .child(
-                    header(project).child(
-                        div()
-                            .size(px(24.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(icon("thread-summary-actions", 18., t.text_tertiary)),
-                    ),
-                )
-                .when(has_changes, |d| {
-                    d.child(
-                        row("thread-summary-changes", "Changes".into(), 32., 0, window)
-                            .relative()
-                            .group("summary-changes")
-                            .mx(px(12.))
-                            .px(px(8.))
-                            .rounded(Theme::RADIUS_SM)
-                            .when(git_row_active, |d| d.bg(row_hover))
-                            .hover(move |style| style.bg(row_hover))
-                            .child(
-                                div()
-                                    .absolute()
-                                    .right(px(2.))
-                                    .top(px(2.))
-                                    .child(git_control),
-                            )
-                            .on_click(crate::dispatch::<crate::OpenChangesPanel>),
+        // The original drops the project section (name and `Changes`) in a projectless chat.
+        let mut sections: Vec<Div> = (!self.projectless)
+            .then(|| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        header(project).child(
+                            div()
+                                .size(px(24.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(icon("thread-summary-actions", 18., t.text_tertiary)),
+                        ),
                     )
-                }),
-        ];
+                    .when(has_changes, |d| {
+                        d.child(
+                            row("thread-summary-changes", "Changes".into(), 32., 0, window)
+                                .relative()
+                                .group("summary-changes")
+                                .mx(px(12.))
+                                .px(px(8.))
+                                .rounded(Theme::RADIUS_SM)
+                                .when(git_row_active, |d| d.bg(row_hover))
+                                .hover(move |style| style.bg(row_hover))
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .right(px(2.))
+                                        .top(px(2.))
+                                        .child(git_control),
+                                )
+                                .on_click(crate::dispatch::<crate::OpenChangesPanel>),
+                        )
+                    })
+            })
+            .into_iter()
+            .collect();
+        // `Outputs` stays empty here (`Create a file or site`) in a projectless or non-git
+        // workspace; `Sources` (`Attach files or connect apps`) in a projectless chat.
+        // shortcut: produced outputs and used sources are not listed yet, so the empty rows always show.
+        // `Outputs` is the one section the original draws without its rule (`divider: false`).
+        let mut outputs = None;
+        if self.projectless || matches!(self.git_repository, Some(Err(_))) {
+            outputs = Some(sections.len());
+            let button = self.summary_bounds("summary-outputs-add", window, cx);
+            let row_bounds = self.summary_bounds("summary-outputs-row", window, cx);
+            sections.push(self.summary_section(
+                ("Outputs", "Create a file or site"),
+                &CREATE_ITEMS,
+                (button, row_bounds),
+                t,
+                cx,
+            ));
+        }
         if has_terminals {
             sections.push(
                 div()
@@ -1495,6 +1693,50 @@ impl ThreadView {
                     )),
             );
         }
+        let sources = crate::screens::sources::sources(&self.turns);
+        if !sources.is_empty() {
+            let open = |row: gpui::Stateful<Div>| {
+                row.mx(px(12.))
+                    .px(px(8.))
+                    .rounded(Theme::RADIUS_SM)
+                    .hover(move |style| style.bg(row_hover))
+                    .on_click(crate::dispatch::<crate::OpenSourcesPanel>)
+            };
+            let summary = sources
+                .files
+                .iter()
+                .map(|(path, _)| {
+                    let name = path.rsplit('/').next().unwrap_or(path);
+                    ("diff-file-default", name.to_owned())
+                })
+                .chain(
+                    sources
+                        .tools
+                        .iter()
+                        .map(|(server, _)| ("thread-mcp", server.clone())),
+                )
+                .chain(
+                    sources
+                        .web
+                        .iter()
+                        .map(|_| ("cloud-web", "Web search".to_owned())),
+                )
+                .take(3)
+                .enumerate()
+                .map(|(ix, (name, label))| open(row(name, label, 16., ix, window)));
+            sections.push(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(header("Sources".into()))
+                    .children(summary)
+                    .child(open(
+                        row("navigation-files", "View all".into(), 16., 3, window)
+                            .aria_label("View all sources"),
+                    )),
+            );
+        }
         if let Some((_, plan)) = crate::screens::plan::latest_plan(&self.turns) {
             let title = crate::screens::plan::plan_title(plan);
             sections.push(
@@ -1513,6 +1755,16 @@ impl ThreadView {
                             .on_click(crate::dispatch::<crate::OpenPlanPanel>),
                     ),
             );
+        }
+        if self.projectless {
+            let button = self.summary_bounds("summary-sources-add", window, cx);
+            sections.push(self.summary_section(
+                ("Sources", "Attach files or connect apps"),
+                &SOURCE_ITEMS,
+                (button.clone(), button),
+                t,
+                cx,
+            ));
         }
         let n = sections.len();
         // A fixed popover: its own composited layer, whose rect (and tile grid) starts at the
@@ -1555,18 +1807,127 @@ impl ThreadView {
                             .children(sections.into_iter().enumerate().map(|(i, s)| {
                                 s.when(i + 1 < n, |s| {
                                     // Half-px rule under every section but the last.
-                                    s.relative().pb(px(8.)).child(
-                                        div()
-                                            .absolute()
-                                            .bottom_0()
-                                            .left(px(20.))
-                                            .right(px(20.))
-                                            .h(px(0.5))
-                                            .bg(over(t.border, t.surface_elevated_secondary)),
-                                    )
+                                    s.relative().pb(px(8.)).when(outputs != Some(i), |s| {
+                                        s.child(
+                                            div()
+                                                .absolute()
+                                                .bottom_0()
+                                                .left(px(20.))
+                                                .right(px(20.))
+                                                .h(px(0.5))
+                                                .bg(over(t.border, t.surface_elevated_secondary)),
+                                        )
+                                    })
                                 })
                             })),
                     )),
+            )
+    }
+
+    fn summary_bounds(
+        &self,
+        key: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Entity<Bounds<Pixels>> {
+        window.use_keyed_state(
+            SharedString::from(format!("{key}-{:?}", cx.entity().entity_id())),
+            cx,
+            |_, _| Bounds::default(),
+        )
+    }
+
+    /// A summary section with nothing to list: its title, a `+` that opens `items` under itself
+    /// (`align: end`), and a dimmed row (`tone: conversation-summary`, `text-text/40`, hover
+    /// `text-default`) that opens them under `anchors.1`.
+    fn summary_section(
+        &self,
+        (title, prompt): (&'static str, &'static str),
+        items: &'static [(&'static str, &'static str, &'static [u8])],
+        (button, row): (gpui::Entity<Bounds<Pixels>>, gpui::Entity<Bounds<Pixels>>),
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let measure = |bounds: &gpui::Entity<Bounds<Pixels>>| {
+            let bounds = bounds.clone();
+            canvas(
+                move |rect, _, cx| bounds.update(cx, |stored, _| *stored = rect),
+                |_, (), _, _| {},
+            )
+            .absolute()
+            .size_full()
+        };
+        let open = |anchor: gpui::Entity<Bounds<Pixels>>| {
+            cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+                let items = items
+                    .iter()
+                    .map(|&(id, label, icon)| menu::Item {
+                        icon: Some(icon),
+                        ..menu::Item::new(id, label, true)
+                    })
+                    .collect();
+                let anchor = *anchor.read(cx);
+                this.menu = Some(menu::ContextMenu::dropdown(
+                    items,
+                    String::new(),
+                    anchor,
+                    window,
+                    cx,
+                ));
+                cx.notify();
+            })
+        };
+        let dim = t.text.opacity(0.4);
+        let hover_text = t.text;
+        let label = format!("Add {}", title.to_lowercase());
+        let group = SharedString::from(format!("summary-{title}-row"));
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .child(
+                summary_header(title.into(), t).child(tooltip(
+                    div()
+                        .id(SharedString::from(format!("summary-{title}-add")))
+                        .relative()
+                        .child(measure(&button))
+                        .size(px(24.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(10.))
+                        .role(gpui::Role::Button)
+                        .aria_label(SharedString::from(label.clone()))
+                        .tab_index(0)
+                        .cursor_pointer()
+                        .hover(|style| style.bg(t.ghost_hover))
+                        .child(icon("automations-plus", 18., dim))
+                        .on_click(open(button.clone())),
+                    label,
+                    None,
+                    Side::Bottom,
+                )),
+            )
+            .child(
+                div()
+                    .id(group.clone())
+                    .group(group.clone())
+                    .relative()
+                    .child(measure(&row))
+                    .h(px(28.))
+                    .px(px(20.))
+                    .py(px(4.))
+                    .flex()
+                    .items_center()
+                    .role(gpui::Role::Button)
+                    .aria_label(prompt)
+                    .tab_index(0)
+                    .cursor_pointer()
+                    .child(
+                        text(prompt, 13., 18.5714, 430., dim)
+                            .group_hover(group, move |style| style.text_color(hover_text)),
+                    )
+                    .on_click(open(row)),
             )
     }
 
@@ -1582,6 +1943,18 @@ impl ThreadView {
             find.dirty = true;
         }
         match method.as_str() {
+            "item/fileChange/outputDelta" => {
+                let (Some(id), Some(delta)) = (params["itemId"].as_str(), params["delta"].as_str())
+                else {
+                    return;
+                };
+                if matches!(self.item_mut(id), Some(ThreadItem::FileChange { .. })) {
+                    self.patch_output
+                        .entry(id.to_owned())
+                        .or_default()
+                        .push_str(delta);
+                }
+            }
             "item/commandExecution/terminalInteraction" => {
                 let (Some(id), Some(stdin)) = (params["itemId"].as_str(), params["stdin"].as_str())
                 else {
@@ -1593,6 +1966,12 @@ impl ThreadView {
                 {
                     aggregated_output.get_or_insert_default().push_str(stdin);
                 }
+            }
+            "hook/started" | "hook/completed" => {
+                let Ok(n) = serde_json::from_value::<HookNotification>(params.clone()) else {
+                    return;
+                };
+                hook_stats::upsert(self.hook_runs.entry(n.turn_id).or_default(), n.run);
             }
             "turn/started" | "turn/completed" => {
                 let Ok(mut n) = serde_json::from_value::<TurnNotification>(params.clone()) else {
@@ -1878,12 +2257,16 @@ impl ThreadView {
         &self,
         turn: &Turn,
         last: bool,
+        separator: Option<i64>,
         window: &mut Window,
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> Div {
         let group = SharedString::from(format!("turn-{}", turn.id));
         let mut col = div().group(group.clone()).flex().flex_col();
+        if let Some(at) = separator {
+            col = col.child(self.timestamp(at, window, t));
+        }
         let sent_at = turn.started_at.and_then(|at| {
             chrono::DateTime::from_timestamp(at + self.clock.utc_offset, 0)
                 .map(|at| at.format("%A %-I:%M %p").to_string())
@@ -1906,16 +2289,18 @@ impl ThreadView {
         focus.reverted = self.reverted_turns.contains(&turn.id);
         focus.patch_pending = self.patch_pending;
         let user = turn.items.iter().find_map(|i| match i {
-            ThreadItem::UserMessage { id, content } => Some((id, user_text(content))),
+            ThreadItem::UserMessage { id, content } => Some((id, user_text(content), content)),
             _ => None,
         });
-        if let Some((item, user)) = user {
-            if let Some(started) = turn.started_at {
-                col = col.child(self.timestamp(started, window, t));
-            }
+        if let Some((item, user, content)) = user {
             col = col.child(actions::UserMessage {
                 id: format!("user-message-{}", turn.id).into(),
                 message: user.into(),
+                attachments: content
+                    .iter()
+                    .filter(|input| !matches!(input, UserInput::Text { .. }))
+                    .cloned()
+                    .collect(),
                 find: self.find_paint(item),
                 thread_id: self.thread_id.clone(),
                 editable_turn: self.can_edit(&turn.id).then(|| turn.id.clone()),
@@ -2074,6 +2459,14 @@ impl ThreadView {
                 self.find_paint(item).as_ref(),
                 self.fades(item),
             ));
+            if let Some(ThreadItem::AgentMessage {
+                id,
+                memory_citation: Some(citation),
+                ..
+            }) = turn.items.last()
+            {
+                col = col.children(memory_citations(id, citation, &self.expanded, t, cx));
+            }
             if running {
                 return col;
             }
@@ -2086,15 +2479,23 @@ impl ThreadView {
                 .filter(|(id, _)| *id == turn.id)
                 .map(|_| self.turn_menu_popup(turn.started_at, cx));
             let id = turn.id.clone();
+            let rate = cx.listener(move |view, event: &gpui::ClickEvent, window, cx| {
+                view.open_rating(id.clone(), event.position(), window, cx)
+            });
+            let id = turn.id.clone();
             let toggle = cx.listener(move |view, _: &gpui::ClickEvent, window, cx| {
                 view.toggle_turn_menu(&id, window, cx)
             });
             let hover = cx.listener(|view, hovered: &bool, _, _| {
                 view.turn_menu_trigger_hovered = *hovered;
             });
+            let hooks = self
+                .hook_runs
+                .get(&turn.id)
+                .and_then(|runs| HookStats::new(runs));
             return col.when(!self.embedded, |col| {
                 col.child(action_row(
-                    last, &group, answer, sent_at, menu, toggle, hover, &focus, t,
+                    last, &group, answer, sent_at, menu, rate, toggle, hover, hooks, &focus, t,
                 ))
             });
         }
@@ -2150,6 +2551,92 @@ impl ThreadView {
             .get(item)
             .map(Vec::as_slice)
             .unwrap_or_default()
+    }
+
+    /// Toggles activity disclosure `key` and starts its body's height and opacity track.
+    fn toggle_activity(&mut self, key: String, cx: &App) {
+        let open = !self.expanded.remove(&key);
+        if open {
+            self.expanded.insert(key.clone());
+        }
+        let now = cx.background_executor().now();
+        let duration = if motion::reduced(cx) {
+            Duration::ZERO
+        } else {
+            motion::RELAXED
+        };
+        let mut expansions = self.expansions.borrow_mut();
+        let expansion = expansions.entry(key).or_insert_with(|| Expansion {
+            epoch: now,
+            fade: HoverFade::settled(!open as u8 as f32),
+            height: Rc::default(),
+        });
+        expansion.fade.transition(
+            open as u8 as f32,
+            now - expansion.epoch,
+            duration,
+            motion::EASE_ENTER,
+        );
+    }
+
+    /// `body` of activity disclosure `key`, clipped to its track's height and faded with it;
+    /// `None` once closed, without building the body.
+    fn expansion(
+        &self,
+        key: &str,
+        open: bool,
+        body: impl FnOnce() -> Div,
+        window: &Window,
+        cx: &App,
+    ) -> Option<Div> {
+        let now = cx.background_executor().now();
+        // Released before `body` runs: a body can hold disclosures of its own.
+        let (progress, height) = {
+            let mut expansions = self.expansions.borrow_mut();
+            if !open && !expansions.contains_key(key) {
+                return None;
+            }
+            let expansion = expansions
+                .entry(key.to_owned())
+                .or_insert_with(|| Expansion {
+                    epoch: now,
+                    fade: HoverFade::settled(1.),
+                    height: Rc::default(),
+                });
+            let at = now - expansion.epoch;
+            let progress = if expansion.fade.is_animating(at) {
+                window.request_animation_frame();
+                expansion.fade.value(at)
+            } else {
+                open as u8 as f32
+            };
+            (progress, expansion.height.clone())
+        };
+        if progress <= 0. {
+            return None;
+        }
+        let natural = height.get();
+        let content = div()
+            .relative()
+            .w_full()
+            .child(
+                canvas(
+                    move |b, _, _| height.set(b.size.height.into()),
+                    |_, (), _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .child(body());
+        Some(if progress < 1. {
+            div()
+                .w_full()
+                .overflow_hidden()
+                .h(px(natural * progress))
+                .child(content.opacity(progress))
+        } else {
+            content
+        })
     }
 
     /// [`activity`], with find highlights painted over the agent messages while find has
@@ -2232,11 +2719,10 @@ impl ThreadView {
             ))
     }
 
-    /// `Yesterday 9:54 PM` above a turn's user message.
+    /// `Yesterday 9:54 PM` above a turn the original marks with a timestamp separator.
     fn timestamp(&self, at: i64, window: &Window, t: &Theme) -> Div {
+        // The joining text is the `<time>` text's (400), not the bold day span's.
         let (day, time) = day_and_time(at, self.clock.now(), self.clock.utc_offset);
-        // The space is the `<time>` text's (400), not the bold day span's.
-        let time = format!(" {time}");
         div()
             .flex()
             .justify_center()
@@ -2252,6 +2738,37 @@ impl ThreadView {
                 None,
             ))
     }
+}
+
+/// `localConversation.forkedFromConversation`: the divider at the top of a forked chat. Its
+/// `Continued from chat` link opens the source chat.
+// shortcut: the original draws it after the copied history (fork point is client-side state); here it heads the chat.
+fn forked_marker(parent: &str, t: &Theme) -> Div {
+    let parent = parent.to_owned();
+    let line = || div().flex_1().h(px(1.)).bg(t.border);
+    div()
+        .w_full()
+        .py(px(16.))
+        .flex()
+        .items_center()
+        .gap(px(12.))
+        .child(line())
+        .child(
+            div()
+                .id("forked-from-conversation")
+                .cursor_pointer()
+                .hover(|s| s.underline())
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(
+                        Box::new(crate::screens::settings::usage::analytics::OpenChat(
+                            parent.clone(),
+                        )),
+                        cx,
+                    )
+                })
+                .child(text("Continued from chat", 13., 18., 430., t.text_tertiary)),
+        )
+        .child(line())
 }
 
 impl Render for ThreadView {
@@ -2288,6 +2805,7 @@ impl Render for ThreadView {
         let following_bottom = offset <= -self.scroll.max_offset().y + px(1.);
         let laid_out = self.laid_out.borrow();
         markdown::set_line_width(laid_out.width);
+        let separators = separators(&self.turns, self.clock.now());
         let turns: Vec<Div> = self
             .turns
             .iter()
@@ -2304,7 +2822,7 @@ impl Render for ThreadView {
                     .then(|| laid_out.turns.get(&turn.id))
                     .flatten()
                     .filter(|&&(top, h)| far(top + offset, h, view));
-                match stand_in {
+                let body = match stand_in {
                     Some(&(_, h)) => div().h(h),
                     None => {
                         let errors = self.render_errors.borrow();
@@ -2313,9 +2831,11 @@ impl Render for ThreadView {
                         } else {
                             drop(errors);
                             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                self.turn(turn, i + 1 == n, window, &t, cx)
+                                self.turn(turn, i + 1 == n, separators[i], window, &t, cx)
                             })) {
-                                Ok(body) => body.children(self.turn_errors(turn, window, cx)),
+                                Ok(body) => body
+                                    .children(self.turn_errors(turn, window, cx))
+                                    .children(self.turn_notices(turn, cx)),
                                 Err(error) => {
                                     let error = error
                                         .downcast_ref::<String>()
@@ -2336,6 +2856,14 @@ impl Render for ThreadView {
                             }
                         }
                     }
+                };
+                match &self.forked_from {
+                    Some(parent) if i == 0 && stand_in.is_none() => div()
+                        .flex()
+                        .flex_col()
+                        .child(forked_marker(parent, &t))
+                        .child(body),
+                    _ => body,
                 }
             })
             .collect();
@@ -2350,6 +2878,7 @@ impl Render for ThreadView {
             .as_ref()
             .map(|find| (find.target.clone(), find.scroll_pending.clone()));
         let view_id = cx.entity().entity_id();
+        let older_anchor = self.older_anchor.clone();
         let measure = move |bounds: Vec<Bounds<Pixels>>, window: &mut Window, cx: &mut App| {
             let origin = scroll.bounds().top() + scroll.offset().y;
             let width = bounds.first().map_or(px(0.), |b| b.size.width);
@@ -2378,6 +2907,14 @@ impl Render for ThreadView {
                 .zip(&bounds)
                 .map(|(id, b)| (id.clone(), (b.top() - origin, b.size.height)))
                 .collect();
+            if let Some((id, viewport_top)) = older_anchor.borrow_mut().take()
+                && let Some(&(top, _)) = l.turns.get(&id)
+            {
+                let mut offset = scroll.offset();
+                offset.y = (viewport_top - top).clamp(-scroll.max_offset().y, px(0.));
+                scroll.set_offset(offset);
+                window.defer(cx, move |_, cx| cx.notify(view_id));
+            }
             if let Some((target, pending)) = &find_scroll
                 && pending.replace(false)
                 && let Some((layout, index)) = target.borrow().as_ref()
@@ -2587,6 +3124,22 @@ impl Render for ThreadView {
                             .size_0(),
                     )
                     .children(tracker)
+                    .children(self.older_cursor.is_some().then(|| {
+                        let label = if self.loading_older {
+                            "Loading earlier messages"
+                        } else {
+                            "Load earlier messages"
+                        };
+                        div().mx_auto().max_w(CONTENT_MAX_WIDTH).pb(px(12.)).child(
+                            recovery::retry_button("load-older", label, window, cx).on_click(
+                                cx.listener(|view, _, _, cx| {
+                                    if !view.loading_older {
+                                        cx.emit(LoadOlderTurns);
+                                    }
+                                }),
+                            ),
+                        )
+                    }))
                     .child(
                         div()
                             .mx_auto()
@@ -2597,9 +3150,16 @@ impl Render for ThreadView {
                             .flex()
                             .flex_col()
                             .gap(px(12.))
+                            .when_some(self.git_phase, |d, phase| {
+                                d.child(text(phase, 14., 20., 400., t.text_secondary))
+                            })
+                            .when_some(self.worktree_status, |d, status| {
+                                d.child(text(status, 14., 20., 400., t.text))
+                            })
                             .children(turns)
                             .on_children_prepainted(measure),
                     )
+                    .children(self.voice_card(window, cx))
                     // Room for the docked composer.
                     .child(div().h(px(114.)))
                     .child(top_fade),
@@ -2661,6 +3221,75 @@ impl Render for ThreadView {
     }
 }
 
+/// A summary section's title row. `sticky`: its background (and its `before:` 8 px above)
+/// paints again in the panel's rounded `overflow: hidden` clip, over the panel's corner.
+fn summary_header(label: SharedString, t: &Theme) -> Div {
+    div()
+        .relative()
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .top(px(-8.))
+                .child(shapes::decoration(shapes::Decoration {
+                    fill: Some(t.surface_elevated_secondary),
+                    ..Default::default()
+                })),
+        )
+        .h(px(28.))
+        .pb(px(2.))
+        .pl(px(20.))
+        .pr(px(14.))
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .child(div().flex_1().min_w_0().py(px(2.)).child(text(
+            label,
+            13.,
+            18.5714,
+            400.,
+            t.text_secondary,
+        )))
+}
+
+/// `summary-panel-create-output-menu`: `(id, label, icon)`.
+const CREATE_ITEMS: [(&str, &str, &[u8]); 4] = [
+    (
+        "create-document",
+        "Create document",
+        include_bytes!("../../../assets/icons/summary-create-document.svg"),
+    ),
+    (
+        "create-presentation",
+        "Create presentation",
+        include_bytes!("../../../assets/icons/summary-create-presentation.svg"),
+    ),
+    (
+        "create-spreadsheet",
+        "Create spreadsheet",
+        include_bytes!("../../../assets/icons/summary-create-spreadsheet.svg"),
+    ),
+    (
+        "create-site",
+        "Create site",
+        include_bytes!("../../../assets/icons/summary-create-site.svg"),
+    ),
+];
+
+/// `add-source-menu` with plugins off: `Use plugins`, then `Attach files or folders`.
+const SOURCE_ITEMS: [(&str, &str, &[u8]); 2] = [
+    (
+        "use-plugins",
+        "Use plugins",
+        include_bytes!("../../../assets/icons/sidebar-cmd-plugins.svg"),
+    ),
+    (
+        "attach-files",
+        "Attach files or folders",
+        include_bytes!("../../../assets/icons/summary-attach-files.svg"),
+    ),
+];
+
 pub(crate) fn render_comment_markdown(source: &str, window: &Window, theme: &Theme) -> Div {
     markdown::markdown(source, window, theme, &[])
 }
@@ -2687,9 +3316,16 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::Plan { id, .. }
         | ThreadItem::Reasoning { id, .. }
         | ThreadItem::CommandExecution { id, .. }
-        | ThreadItem::FileChange { id, .. }
         | ThreadItem::McpToolCall { id, .. }
-        | ThreadItem::ContextCompaction { id } => Some(id),
+        | ThreadItem::FileChange { id, .. }
+        | ThreadItem::ImageGeneration { id, .. }
+        | ThreadItem::DynamicToolCall { id, .. }
+        | ThreadItem::ContextCompaction { id }
+        | ThreadItem::WebSearch { id, .. }
+        | ThreadItem::CollabAgentToolCall { id, .. }
+        | ThreadItem::ImageView { id, .. }
+        | ThreadItem::EnteredReviewMode { id, .. }
+        | ThreadItem::ExitedReviewMode { id, .. } => Some(id),
         ThreadItem::Other => None,
     }
 }
@@ -2745,16 +3381,57 @@ fn duration(secs: i64) -> String {
     }
 }
 
-/// (`Today` | `Yesterday` | `Oct 14`, `9:54 PM`) of a unix time in local time.
+/// Per turn, the time of the original's timestamp separator (`timestamps.js`): the first send
+/// (`started_at`) or final answer (`completed_at`) that is the thread's first send and over an
+/// hour old, or comes over an hour (send) or ten minutes (answer) after the previous answer.
+fn separators(turns: &[Turn], now: i64) -> Vec<Option<i64>> {
+    let (mut sent, mut answered_at) = (false, None);
+    turns
+        .iter()
+        .map(|turn| {
+            let has = |answer: bool| {
+                turn.items.iter().any(|item| match item {
+                    ThreadItem::UserMessage { .. } => !answer,
+                    ThreadItem::AgentMessage { .. } => answer,
+                    _ => false,
+                })
+            };
+            let mut separator = None;
+            for (user, at) in [(true, turn.started_at), (false, turn.completed_at)] {
+                if !has(!user) {
+                    continue;
+                }
+                let gap = if user { 3_600 } else { 600 };
+                if separator.is_none()
+                    && let Some(at) = at
+                    && ((user && !sent && now.saturating_sub(at) > 3_600)
+                        || answered_at.is_some_and(|answered| at.saturating_sub(answered) > gap))
+                {
+                    separator = Some(at);
+                }
+                sent |= user;
+                answered_at = if user { None } else { at };
+            }
+            separator
+        })
+        .collect()
+}
+
+/// (`Today` | `Yesterday` | `Wednesday` | `Wed, Oct 14` | `Oct 14, 2025`, ` 9:54 PM`) of a
+/// unix time in local time; past a week the time reads ` at 9:54 PM`.
 fn day_and_time(at: i64, now: i64, utc_offset: i64) -> (String, String) {
     let (local, today) = (at + utc_offset, now + utc_offset);
     let t = chrono::DateTime::from_timestamp(local, 0).unwrap_or_default();
-    let day = match today.div_euclid(86_400) - local.div_euclid(86_400) {
+    let days = (today.div_euclid(86_400) - local.div_euclid(86_400)).max(0);
+    let day = match days {
         0 => "Today".to_owned(),
         1 => "Yesterday".to_owned(),
-        _ => t.format("%b %-d").to_string(),
+        2..=7 => t.format("%A").to_string(),
+        8..=365 => t.format("%a, %b %-d").to_string(),
+        _ => t.format("%b %-d, %Y").to_string(),
     };
-    (day, t.format("%-I:%M %p").to_string())
+    let join = if days > 7 { " at " } else { " " };
+    (day, format!("{join}{}", t.format("%-I:%M %p")))
 }
 
 /// Exact layout width of a single-line run. GPUI rounds measured text boxes up to whole px;
@@ -3099,6 +3776,53 @@ mod tests {
         let (hidden, answer) = work(&streaming);
         assert_eq!(answer, Some(("a", "Done")));
         assert_eq!(hidden.len(), 1);
+    }
+
+    #[gpui::test]
+    fn live_patch_output_keeps_item_boundaries(cx: &mut gpui::TestAppContext) {
+        let thread = serde_json::from_value(serde_json::json!({
+            "id": "live", "preview": "", "modelProvider": "test", "cwd": "/tmp",
+            "createdAt": 0, "updatedAt": 0, "status": {"type": "idle"},
+            "turns": [{"id": "turn", "items": [
+                {"type": "fileChange", "id": "patch", "changes": [], "status": "inProgress"}
+            ], "status": "inProgress"}]
+        }))
+        .unwrap();
+        let composer = cx.new(|_| gpui::EmptyView).into();
+        let view = cx.new(|_| {
+            ThreadView::new(
+                thread,
+                Clock {
+                    utc_offset: 0,
+                    pinned_now: Some(0),
+                    elapsed_since: None,
+                },
+                composer,
+            )
+        });
+        view.update(cx, |view, cx| {
+            let mut send = |method: &str, params| view.apply(&Event::Notification {
+                method: method.into(), params,
+            }, cx);
+            for delta in ["Applying ", "patch\n"] {
+                send("item/fileChange/outputDelta", serde_json::json!({
+                    "threadId": "live", "turnId": "turn", "itemId": "patch", "delta": delta,
+                }));
+            }
+            send("item/fileChange/outputDelta", serde_json::json!({
+                "threadId": "other", "turnId": "turn", "itemId": "patch", "delta": "foreign",
+            }));
+            send("item/fileChange/outputDelta", serde_json::json!({
+                "threadId": "live", "turnId": "turn", "itemId": "unknown", "delta": "unknown",
+            }));
+            send("item/completed", serde_json::json!({
+                "threadId": "live", "turnId": "turn",
+                "item": {"type": "fileChange", "id": "patch", "changes": [], "status": "completed"},
+            }));
+            assert_eq!(view.patch_output["patch"], "Applying patch\n");
+            assert_eq!(view.patch_output.len(), 1);
+            assert!(view.activity_labels("turn", cx).unwrap().iter().any(|label| label == "Applying patch\n"));
+        });
     }
 
     #[gpui::test]
@@ -3582,10 +4306,44 @@ mod tests {
         let at = 1_792_040_071;
         assert_eq!(
             day_and_time(at, at + 36_000, -25_200),
-            ("Yesterday".into(), "9:54 PM".into())
+            ("Yesterday".into(), " 9:54 PM".into())
         );
-        assert_eq!(day_and_time(at, at + 3 * 86_400, -25_200).0, "Oct 14");
+        assert_eq!(day_and_time(at, at + 3 * 86_400, -25_200).0, "Wednesday");
+        assert_eq!(
+            day_and_time(at, at + 8 * 86_400, -25_200),
+            ("Wed, Oct 14".into(), " at 9:54 PM".into())
+        );
+        assert_eq!(
+            day_and_time(at, at + 400 * 86_400, -25_200).0,
+            "Oct 14, 2026"
+        );
         assert_eq!(duration(17), "17s");
+    }
+
+    #[test]
+    fn separators_follow_original_gaps() {
+        let turn = |started: i64, completed: i64| -> Turn {
+            serde_json::from_value(serde_json::json!({
+                "id": started.to_string(), "status": "completed",
+                "startedAt": started, "completedAt": completed, "items": [
+                    {"type": "userMessage", "id": "u", "content": []},
+                    {"type": "agentMessage", "id": "a", "text": "ok"}
+                ]
+            }))
+            .unwrap()
+        };
+        let now = 100_000;
+        // A fresh thread: no separator at all (issue #1108).
+        let fresh = [turn(now - 120, now - 100), turn(now - 60, now - 30)];
+        assert_eq!(separators(&fresh, now), [None, None]);
+        // First send over an hour old; a send an hour after the answer; an answer
+        // over ten minutes after the previous answer is not a gap (a send sits between).
+        let old = [
+            turn(10_000, 10_030),
+            turn(10_030 + 3_601, 10_030 + 3_700),
+            turn(13_731, 13_731 + 700),
+        ];
+        assert_eq!(separators(&old, now), [Some(10_000), Some(13_631), None]);
     }
 
     #[test]

@@ -43,7 +43,6 @@ fn pick(fx: &mut Fx, row: usize) -> Result<()> {
     fx.keys("enter")
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn created_sort_reorders_recents_and_last_updated_restores_it() -> Result<()> {
     // The last created chat was updated most recently, so `thread/list` puts it first.
@@ -73,7 +72,6 @@ fn created_sort_reorders_recents_and_last_updated_restores_it() -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn cloud_group_lists_current_tasks_and_opens_one() -> Result<()> {
     // The recording has no `oai-did` header, so `ReplayHost` reports no account.

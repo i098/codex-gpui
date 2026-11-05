@@ -51,12 +51,12 @@ impl SectionMenuTarget {
     }
 }
 
-pub(super) struct Outcome {
+pub(crate) struct Outcome {
     pub selected: Option<usize>,
     pub snapshot: Value,
 }
 
-pub(super) fn popup(
+pub(crate) fn popup(
     items: &[Item],
     enabled: &[bool],
     anchor: Point<Pixels>,
