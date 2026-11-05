@@ -1,7 +1,7 @@
 //! Native Codex URL parsing and page-family dispatch (SH-151..155).
 
 use crate::{Root, Route, State, windows};
-use gpui::{App, AppContext as _, Context, Focusable, Window};
+use gpui::{App, AppContext as _, BorrowAppContext as _, Context, Focusable, Window};
 use std::borrow::Cow;
 use ui::screens::connections::Tab;
 use url::Url;
@@ -23,12 +23,19 @@ pub enum Link {
         host_id: Option<String>,
         shared: bool,
     },
+    Plugins(String),
+    PetInstall,
     Settings(Option<&'static str>),
     Connections(Tab),
     AddSsh {
         name: String,
         project_path: Option<String>,
         enabled: bool,
+    },
+    /// `codex://settings/local-environments/create`: opens the environment editor.
+    CreateEnvironment {
+        workspace_root: String,
+        config_path: Option<String>,
     },
     Scheduled,
     Automation {
@@ -38,6 +45,8 @@ pub enum Link {
     },
     OAuth(String),
     Launch,
+    /// A local file or folder handed over by the OS (`open -a`, Dock drop).
+    Path(String),
     Browser(Url),
     Space,
     CloudEnvironmentCreate,
@@ -47,6 +56,10 @@ pub enum Link {
 /// Parses the original native URL grammar without accepting excluded products.
 pub fn parse(value: &str) -> Option<Link> {
     let url = Url::parse(value).ok()?;
+    if url.scheme() == "file" {
+        let path = url.to_file_path().ok()?;
+        return Some(Link::Path(path.to_string_lossy().into_owned()));
+    }
     if url.scheme() == "https" {
         return https_link(&url);
     }
@@ -61,6 +74,10 @@ pub fn parse(value: &str) -> Option<Link> {
     let sub: Vec<_> = url.path().split('/').filter(|s| !s.is_empty()).collect();
     let params = Params(url.query_pairs().collect());
     match destination {
+        "plugins" => Some(Link::Plugins(plugin_route(&sub)?)),
+        "mcp-app" if sub.is_empty() => Some(Link::Plugins("/plugins".into())),
+        "skills" if sub.is_empty() => Some(Link::Plugins("/skills".into())),
+        "pets" if sub.as_slice() == ["install"] => Some(Link::PetInstall),
         "threads" if sub.as_slice() == ["new"] => new_thread(&params, false),
         "threads" => thread(sub.first()?, &params),
         "new" if sub.is_empty() => new_thread(&params, true),
@@ -74,6 +91,18 @@ pub fn parse(value: &str) -> Option<Link> {
         "browser" => browser_link(&params),
         "codex-app" => codex_app_link(&sub),
         "space" if sub.is_empty() => Some(Link::Space),
+        _ => None,
+    }
+}
+
+fn plugin_route(sub: &[&str]) -> Option<String> {
+    match sub {
+        [] => Some("/plugins".into()),
+        [id] if *id != "install" => {
+            let id = component(id)?;
+            (!id.contains('/')).then(|| format!("/plugins/{id}"))
+        }
+        ["install", _] => Some("/plugins".into()),
         _ => None,
     }
 }
@@ -201,6 +230,7 @@ fn https_link(url: &Url) -> Option<Link> {
         _ => None,
     }
 }
+
 fn thread(id: &str, params: &Params<'_>) -> Option<Link> {
     if !uuid(id) {
         return None;
@@ -298,7 +328,16 @@ fn settings(sub: &[&str], params: &Params<'_>) -> Link {
         }
         ["connections", "ssh"] => Link::Connections(Tab::Ssh),
         ["browser-use"] => Link::Settings(Some("Browser")),
-        _ => Link::Settings(None),
+        ["local-environments", "create"] => match params.value("workspaceRoot") {
+            Some(workspace_root) if workspace_root.starts_with('/') => Link::CreateEnvironment {
+                workspace_root,
+                config_path: params.value("configPath"),
+            },
+            _ => Link::Settings(Some("Worktrees")),
+        },
+        ["trusted-contact"] => Link::Settings(Some("Trusted contact")),
+        [] => Link::Settings(None),
+        [slug, ..] => Link::Settings(Some(ui::screens::settings::slug_section(slug))),
     }
 }
 
@@ -388,7 +427,10 @@ impl Root {
     /// (and focus) of the route's composer.
     pub fn open_deep_link(&mut self, link: &Link, window: &mut Window, cx: &mut Context<Self>) {
         if self.host_id() != "local"
-            && !matches!(link, Link::Thread { .. } | Link::OAuth(_) | Link::Launch)
+            && !matches!(
+                link,
+                Link::Thread { .. } | Link::OAuth(_) | Link::Launch | Link::Path(_)
+            )
         {
             self.open_link_host("local", link, window, cx);
             return;
@@ -426,8 +468,26 @@ impl Root {
                 self.navigate(Route::Thread(id.clone()), window, cx);
                 prompt = prefill.clone();
             }
+            Link::Plugins(path) => {
+                self.open_plugins(path, window, cx);
+                return;
+            }
+            Link::PetInstall => {
+                self.open_settings_section("Mini & Pets", window, cx);
+                return;
+            }
             Link::Settings(None) => self.navigate(Route::Settings, window, cx),
             Link::Settings(Some(label)) => self.open_settings_section(label, window, cx),
+            Link::CreateEnvironment {
+                workspace_root,
+                config_path,
+            } => {
+                let create = (workspace_root.clone(), config_path.clone());
+                cx.update_global::<ui::screens::settings::environments::State, _>(|state, _| {
+                    state.create = Some(create)
+                });
+                self.open_settings_section("Worktrees", window, cx);
+            }
             Link::Connections(tab) => self.open_connections(*tab, window, cx),
             Link::AddSsh {
                 name,
@@ -445,6 +505,9 @@ impl Root {
             Link::OAuth(value) => {
                 self.receive_oauth_redirect(value, window, cx);
                 return;
+            }
+            Link::Path(path) => {
+                self.open_path_link(path.clone(), window, cx);
             }
             Link::Browser(url) => {
                 self.open_browser_tab(Some(url.clone()), window, cx);
@@ -531,11 +594,51 @@ pub fn open(url: &str, cx: &mut App) {
     }
 }
 
+/// Opens a supported path in the primary window.
+pub fn open_path(path: &str, cx: &mut App) -> bool {
+    let Some(route) = Route::remote_path(path)
+        .or_else(|| Route::pull_request_path(path))
+        .or_else(|| crate::onboarding::route(path))
+    else {
+        return false;
+    };
+    if let Some(handle) = windows::primary(cx).and_then(|window| window.downcast::<Root>()) {
+        let result = handle
+            .update(cx, |root, window, cx| root.navigate(route, window, cx))
+            .and_then(|()| windows::show(handle.into(), windows::Presentation::Foreground, cx));
+        if let Err(error) = result {
+            eprintln!("codex-gpui: cannot open launch path: {error:#}");
+        }
+        return true;
+    }
+
+    let mut state = State::load();
+    state.route = route;
+    let cwd = std::env::current_dir()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    if let Err(error) = windows::open_primary(state, cwd, cx) {
+        eprintln!("codex-gpui: cannot open launch path: {error:#}");
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const ID: &str = "00000000-0000-4000-8000-000000000001";
+
+    #[test]
+    fn file_urls_become_decoded_paths() {
+        assert_eq!(
+            parse("file:///tmp/a%20b/c"),
+            Some(Link::Path("/tmp/a b/c".into()))
+        );
+        assert!(parse("file://remote/tmp/x").is_none() || cfg!(windows));
+        assert!(parse("https://example.com").is_none());
+    }
 
     #[test]
     fn preserves_thread_host_access_and_prompt() {
@@ -566,6 +669,36 @@ mod tests {
         );
         assert!(parse("codex://threads/new?mode=invalid").is_none());
         assert!(parse("codex://threads/new?mode=chat&mode=chat").is_none());
+    }
+
+    #[test]
+    fn routes_plugin_skill_mcp_app_and_pet_links() {
+        assert_eq!(
+            parse("codex://plugins"),
+            Some(Link::Plugins("/plugins".into()))
+        );
+        assert_eq!(
+            parse("codex://plugins/code-review%40openai-bundled"),
+            Some(Link::Plugins("/plugins/code-review@openai-bundled".into()))
+        );
+        assert_eq!(
+            parse("codex://plugins/install/my-plugin?marketplace=public"),
+            Some(Link::Plugins("/plugins".into()))
+        );
+        assert_eq!(
+            parse("codex://mcp-app?appId=calendar"),
+            Some(Link::Plugins("/plugins".into()))
+        );
+        assert_eq!(
+            parse("codex://skills"),
+            Some(Link::Plugins("/skills".into()))
+        );
+        assert_eq!(
+            parse("codex://pets/install?name=Mini"),
+            Some(Link::PetInstall)
+        );
+        assert!(parse("codex://plugins/a%2Fb").is_none());
+        assert!(parse("codex://plugins/install").is_none());
     }
 
     #[test]
@@ -602,6 +735,39 @@ mod tests {
         );
         let callback = "codex://connector/oauth_callback?state=s&code=a%2Bb&returnTo=%2Fsettings";
         assert_eq!(parse(callback), Some(Link::OAuth(callback.into())));
+    }
+
+    #[test]
+    fn local_environment_create_requires_an_absolute_workspace_root() {
+        assert_eq!(
+            parse(
+                "codex://settings/local-environments/create?workspaceRoot=%2Fwork&configPath=%2Fwork%2F.codex%2Fenvironments%2Fa.toml"
+            ),
+            Some(Link::CreateEnvironment {
+                workspace_root: "/work".into(),
+                config_path: Some("/work/.codex/environments/a.toml".into()),
+            })
+        );
+        assert_eq!(
+            parse("codex://settings/local-environments/create?workspaceRoot=work"),
+            Some(Link::Settings(Some("Worktrees")))
+        );
+    }
+
+    #[test]
+    fn settings_slugs_open_their_section() {
+        for (url, section) in [
+            ("codex://settings/git-settings", "Git"),
+            ("codex://settings/mcp-settings/servers", "MCP servers"),
+            ("codex://settings/work-settings", "Configuration"),
+            ("codex://settings/usage?tab=analytics", "Usage & billing"),
+            ("codex://settings/analytics", "Usage & billing"),
+            ("codex://settings/local-environments", "Worktrees"),
+            ("codex://settings/no-such-slug", "General"),
+        ] {
+            assert_eq!(parse(url), Some(Link::Settings(Some(section))), "{url}");
+        }
+        assert_eq!(parse("codex://settings"), Some(Link::Settings(None)));
     }
 
     #[test]
@@ -777,20 +943,25 @@ mod tests {
                 }
                 Some(Link::Scheduled) => assert_eq!(expected["kind"], "automations", "{value}"),
                 Some(
-                    Link::Browser(_)
+                    Link::Plugins(_)
+                    | Link::PetInstall
+                    | Link::Browser(_)
                     | Link::Space
                     | Link::CloudEnvironmentCreate
                     | Link::Onboarding,
                 ) => assert!(!expected.is_null(), "{value}"),
-                Some(Link::Settings(_) | Link::Connections(_) | Link::AddSsh { .. }) => {
+                Some(
+                    Link::Settings(_)
+                    | Link::Connections(_)
+                    | Link::AddSsh { .. }
+                    | Link::CreateEnvironment { .. },
+                ) => {
                     assert_eq!(expected["kind"], "settings", "{value}")
                 }
-                Some(Link::Launch) | None => {}
+                Some(Link::Launch | Link::Path(_)) | None => {}
             }
         }
         for value in [
-            "codex://plugins",
-            "codex://skills",
             "codex://sites/edit",
             "codex://connector/callback",
             "https://chatgpt.com/",

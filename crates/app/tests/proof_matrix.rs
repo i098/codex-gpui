@@ -151,7 +151,7 @@ fn capture_cell() -> Result<()> {
             ensure!(mobile_step(&fx) == SetupStep::AllowHost);
             "mobile-continuation"
         }
-        ("diff", "rest") => {
+        ("diff", "rest" | "menu") => {
             fx.click(fx.at("home", "Add a subtract")?)?;
             fx.wait_thread(SUBTRACT)?;
             fx.keys("alt-cmd-b")?;
@@ -160,7 +160,13 @@ fn capture_cell() -> Result<()> {
             let panel_left =
                 width as f32 - 4. - 664.17f32.min((width as f32 - 344.5 - 320.).max(320.));
             fx.click((panel_left + 100., 111.))?;
-            "diff"
+            if state == "menu" {
+                // `Changes options`, the header's first button (28 px, 88 px from the right).
+                fx.click((width as f32 - 88., 68.))?;
+                "diff-menu"
+            } else {
+                "diff"
+            }
         }
         ("automations", "empty") => {
             let host = RecordedScheduled {
@@ -231,10 +237,9 @@ fn capture_cell() -> Result<()> {
     Ok(())
 }
 
-/// Profile menu ▸ Help ▸ `Set up mobile`, as `flows::open_mobile` clicks it.
+/// What Profile menu ▸ Help ▸ `Set up mobile` dispatches, as `flows::open_mobile` does.
 fn open_mobile(fx: &mut Fx) -> Result<()> {
-    fx.click((26., fx.size.1 - 26.))?;
-    fx.click((118., fx.size.1 - 100.))?;
+    fx.action(Box::new(ui::OpenMobileSetup))?;
     ensure!(fx.route() == Route::Mobile, "route {:?}", fx.route());
     Ok(())
 }
