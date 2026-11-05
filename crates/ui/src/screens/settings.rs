@@ -285,6 +285,7 @@ pub mod storage;
 #[path = "settings_integrations.rs"]
 pub mod integrations;
 
+pub mod account;
 #[path = "archived_chats.rs"]
 pub mod archived_chats;
 pub mod data_controls;
@@ -1750,6 +1751,9 @@ impl Render for SettingsPane {
         }
         if section == "Data controls" {
             return data_controls::render(window, cx);
+        }
+        if section == "Account" {
+            return account::render(window, cx);
         }
         if section == "Trusted contact" {
             return trusted_contact::render(window, cx);
