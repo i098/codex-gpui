@@ -343,7 +343,7 @@ impl FileView {
         true
     }
 
-    /// The matched `(line index, byte range)`s of the query, case-insensitive.
+    /// The matched `(line index, byte range)`s of the query under [`FindOptions`].
     pub fn find_matches(&self) -> &[(usize, Range<usize>)] {
         &self.find_matches
     }
@@ -354,16 +354,15 @@ impl FileView {
         let (Some(find), Some(Ok(contents))) = (&self.find, &self.contents) else {
             return;
         };
-        let query = find.text.to_lowercase();
-        for (index, line) in controls::lines(contents).enumerate() {
-            let (ranges, total) = crate::screens::thread::view::find_ranges(
-                line,
-                &query,
-                FILE_FIND_LIMIT - self.find_matches.len(),
-            );
-            self.find_matches
-                .extend(ranges.into_iter().map(|range| (index, range)));
-            self.find_total += total;
+        if let Some(pattern) = self.find_options.pattern(&find.text) {
+            for (index, line) in controls::lines(contents).enumerate() {
+                for found in pattern.find_iter(line).filter(|m| !m.is_empty()) {
+                    self.find_total += 1;
+                    if self.find_matches.len() < FILE_FIND_LIMIT {
+                        self.find_matches.push((index, found.range()));
+                    }
+                }
+            }
         }
         self.find_active = self
             .find_active
@@ -402,27 +401,8 @@ impl FileView {
         true
     }
 
-    pub(super) fn file_find_bar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
-        find_bar(
-            FindBar {
-                label: "Find in file",
-                placeholder: "Find in file…",
-                query: self.find.as_ref().map_or("", |find| find.text.as_str()),
-                active: self.find_active,
-                shown: self.find_matches.len(),
-                total: self.find_total,
-                scope: None,
-                top: px(56.),
-            },
-            Self::close_find,
-            |this, previous, cx| {
-                this.next_find(previous, cx);
-            },
-            cx,
-        )
-    }
-
-    /// The match highlights of line `index`: the selected match orange, the others yellow.
+    /// The match highlights of line `index`, as CodeMirror's search marks them: the selected
+    /// match in the selection color, the others `rgba(255, 150, 50, 0.4)`.
     pub(super) fn find_highlights(
         &self,
         index: usize,
@@ -433,22 +413,220 @@ impl FileView {
             .enumerate()
             .take_while(move |(_, (line, _))| *line == index)
             .map(move |(offset, (_, range))| {
+                let background: gpui::Hsla = if start + offset == self.find_active {
+                    rgb(0x1f375d).into()
+                } else {
+                    gpui::rgba(0xff963266).into()
+                };
                 (
                     range.clone(),
                     gpui::HighlightStyle {
-                        background_color: Some(
-                            rgb(if start + offset == self.find_active {
-                                0xfb6a22
-                            } else {
-                                0xffd240
-                            })
-                            .into(),
-                        ),
-                        color: Some(gpui::white()),
+                        background_color: Some(background),
                         ..Default::default()
                     },
                 )
             })
+    }
+
+    fn toggle_find_option(
+        &mut self,
+        option: fn(&mut FindOptions) -> &mut bool,
+        cx: &mut Context<Self>,
+    ) {
+        let flag = option(&mut self.find_options);
+        *flag = !*flag;
+        self.find_active = 0;
+        self.search_file();
+        cx.notify();
+    }
+
+    /// The original's file search panel (CodeMirror's, restyled): the query field with its
+    /// `Match case`, `Match whole word` and `Use regular expression` toggles, `N of M`, the
+    /// previous and next arrows, and the round close button on its top right corner.
+    /// shortcut: geometry measured from `refs/files-find` pixels (the panel is in a shadow
+    /// root the spec does not see); check it against the ref on a Mac.
+    pub(super) fn file_find_bar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let t = cx.theme();
+        let query = self
+            .find
+            .as_ref()
+            .map_or(String::new(), |find| find.text.clone());
+        let count = if self.find_total == 0 {
+            "No results".to_owned()
+        } else {
+            format!("{} of {}", self.find_active + 1, self.find_total)
+        };
+        let options = self.find_options;
+        let toggle = |id: &'static str,
+                      label: &'static str,
+                      glyph: &'static str,
+                      on: bool,
+                      option: fn(&mut FindOptions) -> &mut bool| {
+            div()
+                .id(id)
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .aria_toggled(if on {
+                    gpui::Toggled::True
+                } else {
+                    gpui::Toggled::False
+                })
+                .h(px(20.))
+                .px(px(3.))
+                .flex()
+                .items_center()
+                .rounded(px(6.))
+                .cursor_pointer()
+                .when(on, |d| d.bg(t.text_alpha_10))
+                .child(text(
+                    glyph,
+                    12.,
+                    16.,
+                    430.,
+                    if on { t.text } else { t.text_tertiary },
+                ))
+                .on_click(cx.listener(move |this, _, _, cx| this.toggle_find_option(option, cx)))
+        };
+        let arrow = |id: &'static str, label: &'static str, previous: bool| {
+            let up = icon("composer-arrow-up", 16., t.text_secondary);
+            let glyph = if previous {
+                up
+            } else {
+                up.with_transformation(gpui::Transformation::rotate(gpui::radians(
+                    std::f32::consts::PI,
+                )))
+            };
+            div()
+                .id(id)
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .size(px(24.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(8.))
+                .cursor_pointer()
+                .hover(|s| s.bg(t.text_alpha_10))
+                .child(glyph)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.next_find(previous, cx);
+                }))
+        };
+        let panel = div()
+            .relative()
+            .w(px(318.))
+            .h(px(37.))
+            .pl(px(5.))
+            .pr(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .rounded(px(12.))
+            .border_1()
+            .border_color(t.border)
+            .bg(rgb(0x111111))
+            .child(
+                div()
+                    .id("file-find-input")
+                    .role(gpui::Role::TextInput)
+                    .aria_label("Find in file")
+                    .aria_value(query.clone())
+                    .w(px(200.))
+                    .h(px(28.))
+                    .pl(px(7.))
+                    .pr(px(4.))
+                    .flex()
+                    .items_center()
+                    .rounded(px(9.))
+                    .border_1()
+                    .border_color(t.accent)
+                    .cursor_text()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(text(query, 13., 18., 430., t.text)),
+                    )
+                    .child(toggle(
+                        "file-find-case",
+                        "Match case",
+                        "Aa",
+                        options.case,
+                        |o| &mut o.case,
+                    ))
+                    .child(toggle(
+                        "file-find-word",
+                        "Match whole word",
+                        "ab",
+                        options.word,
+                        |o| &mut o.word,
+                    ))
+                    .child(toggle(
+                        "file-find-regex",
+                        "Use regular expression",
+                        ".*",
+                        options.regex,
+                        |o| &mut o.regex,
+                    )),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .child(text(count, 13., 18., 430., t.text_tertiary)),
+            )
+            .child(arrow("file-find-previous", "Previous match", true))
+            .child(arrow("file-find-next", "Next match", false))
+            .child(
+                div()
+                    .id("file-find-close")
+                    .role(gpui::Role::Button)
+                    .aria_label("Close search")
+                    .absolute()
+                    .top(px(-10.5))
+                    .right(px(-10.5))
+                    .size(px(20.))
+                    .rounded_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(t.text_tertiary)
+                    .cursor_pointer()
+                    .child(icon("diff-find-close", 12., rgb(0x111111).into()))
+                    .on_click(cx.listener(|this, _, _, cx| this.close_find(cx))),
+            );
+        deferred(div().absolute().top(px(64.5)).right(px(34.)).child(panel)).with_priority(3)
+    }
+}
+
+/// The file search panel's toggles. The query matches as typed, case-insensitively, unless
+/// one says otherwise.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct FindOptions {
+    pub case: bool,
+    pub word: bool,
+    pub regex: bool,
+}
+
+impl FindOptions {
+    /// The query as a pattern; `None` for an empty query or an invalid expression.
+    fn pattern(&self, query: &str) -> Option<regex::Regex> {
+        if query.is_empty() {
+            return None;
+        }
+        let body = if self.regex {
+            query.to_owned()
+        } else {
+            regex::escape(query)
+        };
+        let body = if self.word {
+            format!(r"\b(?:{body})\b")
+        } else {
+            body
+        };
+        regex::RegexBuilder::new(&body)
+            .case_insensitive(!self.case)
+            .build()
+            .ok()
     }
 }
 
@@ -536,5 +714,42 @@ mod tests {
         let line: Vec<_> = view.find_highlights(2).map(|(range, _)| range).collect();
         assert_eq!((line.len(), line[0].clone()), (1, 1..4));
         assert_eq!(view.find_highlights(1).count(), 0);
+    }
+
+    #[test]
+    fn file_find_options_match_case_whole_words_and_expressions() {
+        let mut view = FileView::new("/w", "/w/a.txt".into(), None);
+        view.contents = Some(Ok("the Theme then\nThe end".into()));
+        view.find = Some(controls::TextField {
+            text: "the".into(),
+            selected: false,
+        });
+        fn search(
+            view: &mut FileView,
+            query: &str,
+            options: FindOptions,
+        ) -> Vec<(usize, Range<usize>)> {
+            view.find.as_mut().unwrap().text = query.into();
+            view.find_options = options;
+            view.search_file();
+            view.find_matches().to_vec()
+        }
+        assert_eq!(search(&mut view, "the", FindOptions::default()).len(), 4);
+        let case = FindOptions {
+            case: true,
+            ..Default::default()
+        };
+        assert_eq!(search(&mut view, "the", case), [(0, 0..3), (0, 10..13)]);
+        let word = FindOptions {
+            word: true,
+            ..Default::default()
+        };
+        assert_eq!(search(&mut view, "the", word), [(0, 0..3), (1, 0..3)]);
+        let regex = FindOptions {
+            regex: true,
+            ..Default::default()
+        };
+        assert_eq!(search(&mut view, "th(e|en)$", regex), [(0, 10..14)]);
+        assert_eq!(search(&mut view, "(", regex), []);
     }
 }
