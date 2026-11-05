@@ -44,15 +44,21 @@ pub fn bridge(host_id: &str, cx: &App) -> Option<Arc<Bridge>> {
         .map(|peer| peer.bridge.clone())
 }
 
-/// Registers `bridge` as the connected `host_id`, as `connect` does after its handshake.
-/// Integration tests use it to stand a replayed app-server in for an SSH host.
-pub fn register(host_id: &str, bridge: Arc<Bridge>, cx: &App) {
-    if let Some(registry) = cx.try_global::<Registry>()
-        && let Ok(mut peers) = registry.0.peers.lock()
-    {
-        let version = String::new();
-        peers.insert(host_id.to_owned(), Peer { bridge, version });
-    }
+/// Registers `bridge` as connected remote `host_id`, as a successful `connect` does; for
+/// flows that drive a remote host without SSH.
+#[doc(hidden)]
+pub fn connect_for_test(host_id: &str, bridge: Arc<Bridge>, cx: &App) {
+    let registry = cx.global::<Registry>();
+    let peer = Peer {
+        bridge,
+        version: String::new(),
+    };
+    registry
+        .0
+        .peers
+        .lock()
+        .unwrap()
+        .insert(host_id.into(), peer);
 }
 
 impl Drop for Runtime {
@@ -1114,8 +1120,7 @@ impl Root {
             }));
     }
 
-    /// Opens a window on the connected `id` host, then selects `project` (an existing remote folder).
-    pub(crate) fn finish_link_host(
+    fn finish_link_host(
         &mut self,
         id: String,
         project: Option<String>,

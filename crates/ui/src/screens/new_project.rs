@@ -70,15 +70,15 @@ pub enum Outcome {
     AddRemote,
     /// List `path` (`None`: the host's default folder) on the connected remote `host_id`.
     Browse {
-        host_id: SharedString,
+        host_id: String,
         path: Option<String>,
     },
     Create {
+        host_id: String,
+        project_id: Option<String>,
         name: String,
         sources: Vec<String>,
         appearance: Option<Value>,
-        /// `Some`: a remote project on that connected host, with one remote folder.
-        host_id: Option<SharedString>,
     },
 }
 
@@ -103,11 +103,12 @@ pub struct Dialog {
     sources: Vec<String>,
     /// `(color, marker)` indices into [`COLORS`] and [`MARKERS`]; `None` keeps the folder default.
     appearance: Option<(usize, usize)>,
+    appearance_changed: bool,
     popover: Option<Popover>,
-    /// `(host id, display name)` of each connected remote host.
-    remotes: Vec<(SharedString, SharedString)>,
-    /// Index into `remotes`; `None` is this computer.
-    device: Option<usize>,
+    remotes: Vec<(String, SharedString)>,
+    host_id: String,
+    project_id: Option<String>,
+    remote_source: Entity<Composer>,
     browser: Option<Browser>,
     saving: bool,
     focus: FocusHandle,
@@ -122,21 +123,64 @@ impl Focusable for Dialog {
 }
 
 impl Dialog {
-    /// `remotes`: `(host id, display name)` of the connected remote hosts the device menu lists.
-    pub fn new(remotes: Vec<(SharedString, SharedString)>, cx: &mut Context<Self>) -> Self {
+    /// `remotes`: display names of the connected remote hosts the device menu lists.
+    pub fn new(remotes: Vec<(String, SharedString)>, cx: &mut Context<Self>) -> Self {
         let name = cx.new(|cx| Composer::dialog_field("Name", "Project name", "", cx));
+        let remote_source =
+            cx.new(|cx| Composer::dialog_field("Remote folder", "/path/to/project", "", cx));
         cx.observe(&name, |_, _, cx| cx.notify()).detach();
         Self {
             name,
             sources: Vec::new(),
             appearance: None,
+            appearance_changed: false,
             popover: None,
             remotes,
-            device: None,
+            host_id: "local".into(),
+            project_id: None,
+            remote_source,
             browser: None,
             saving: false,
             focus: cx.focus_handle(),
         }
+    }
+
+    pub fn on_host(mut self, host_id: String) -> Self {
+        self.host_id = host_id;
+        self
+    }
+
+    pub fn appearance_changed(&self) -> bool {
+        self.appearance_changed
+    }
+
+    pub fn edit(&mut self, project: &Value, host_id: String, cx: &mut Context<Self>) {
+        self.project_id = project["id"].as_str().map(str::to_owned);
+        self.host_id = host_id;
+        self.appearance_changed = false;
+        self.name.update(cx, |name, cx| {
+            name.set_text(project["name"].as_str().unwrap_or_default(), cx)
+        });
+        self.sources = project["roots"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|root| root["path"].as_str().map(str::to_owned))
+            .collect();
+        self.appearance = project["metadata"]["appearance.marker"]
+            .as_str()
+            .and_then(|value| serde_json::from_str::<Value>(value).ok())
+            .and_then(|marker| {
+                Some((
+                    COLORS.iter().position(|color| {
+                        Some(color.0) == project["metadata"]["appearance.color"].as_str()
+                    })?,
+                    MARKERS
+                        .iter()
+                        .position(|icon| Some(*icon) == marker["icon"].as_str())?,
+                ))
+            });
+        cx.notify();
     }
 
     /// Appends picked folders after the existing ones, skipping duplicates (`jZr`).
@@ -164,30 +208,19 @@ impl Dialog {
         cx.notify();
     }
 
-    /// Creation failed or was declined: the form stays open with its input.
-    pub fn finish(&mut self, cx: &mut Context<Self>) {
-        self.saving = false;
+    /// Picks the device the folders belong to; the sources and picker belong to one device.
+    pub fn select_host(&mut self, host_id: &str, cx: &mut Context<Self>) {
+        if self.host_id != host_id {
+            self.sources.clear();
+            self.browser = None;
+            self.host_id = host_id.to_owned();
+        }
         cx.notify();
     }
 
-    pub fn appearance(&self) -> Option<Value> {
-        self.appearance.map(|(color, marker)| {
-            json!({"color": COLORS[color].0, "marker": {"kind": "icon", "icon": MARKERS[marker]}})
-        })
-    }
-
-    fn host_id(&self) -> Option<SharedString> {
-        self.device.map(|index| self.remotes[index].0.clone())
-    }
-
-    /// Picks this computer (`None`) or a connected remote; the sources belong to one device.
-    pub fn select_device(&mut self, device: Option<usize>, cx: &mut Context<Self>) {
-        self.popover = None;
-        if self.device != device {
-            self.device = device;
-            self.sources.clear();
-            self.browser = None;
-        }
+    /// Creation failed or was declined: the form stays open with its input.
+    pub fn finish(&mut self, cx: &mut Context<Self>) {
+        self.saving = false;
         cx.notify();
     }
 
@@ -210,39 +243,44 @@ impl Dialog {
         cx.notify();
     }
 
+    /// Lists `path` (`None`: the host's default folder) on the dialog's remote host.
     pub fn browse(&mut self, path: Option<String>, cx: &mut Context<Self>) {
-        let Some(host_id) = self.host_id() else {
-            return;
-        };
         let browser = self.browser.get_or_insert_default();
         browser.loading = true;
         browser.error = None;
-        cx.emit(Outcome::Browse { host_id, path });
+        cx.emit(Outcome::Browse {
+            host_id: self.host_id.clone(),
+            path,
+        });
         cx.notify();
     }
 
-    /// `remoteFilePicker.add`: a remote project has one folder, so the choice replaces it.
+    /// `remoteFilePicker.add`: adds the browsed folder to the sources.
     pub fn choose(&mut self, cx: &mut Context<Self>) {
         if let Some(browser) = self.browser.take() {
-            self.sources = vec![browser.path];
+            self.add_sources([browser.path], cx);
         }
         cx.notify();
+    }
+
+    pub fn appearance(&self) -> Option<Value> {
+        self.appearance.map(|(color, marker)| {
+            json!({"color": COLORS[color].0, "marker": {"kind": "icon", "icon": MARKERS[marker]}})
+        })
     }
 
     fn submit(&mut self, cx: &mut Context<Self>) {
         if self.saving {
             return;
         }
-        if self.device.is_some() && self.sources.is_empty() {
-            return self.pick(cx);
-        }
         self.saving = true;
         self.popover = None;
         cx.emit(Outcome::Create {
+            host_id: self.host_id.clone(),
+            project_id: self.project_id.clone(),
             name: self.name.read(cx).field_text().trim().to_owned(),
             sources: self.sources.clone(),
             appearance: self.appearance(),
-            host_id: self.host_id(),
         });
         cx.notify();
     }
@@ -254,16 +292,27 @@ impl Dialog {
     }
 
     fn toggle(&mut self, popover: Popover, cx: &mut Context<Self>) {
+        if popover == Popover::Device && self.project_id.is_some() {
+            return;
+        }
         self.popover = (self.popover != Some(popover)).then_some(popover);
         cx.notify();
     }
 
     fn pick(&mut self, cx: &mut Context<Self>) {
         self.popover = None;
-        if self.device.is_some() {
-            return self.browse(None, cx);
+        if self.host_id == "local" {
+            cx.emit(Outcome::PickFolders);
+        } else {
+            let path = self.remote_source.read(cx).field_text().trim().to_owned();
+            if path.is_empty() {
+                self.browse(None, cx);
+            } else {
+                self.add_sources([path], cx);
+                self.remote_source
+                    .update(cx, |field, cx| field.set_text("", cx));
+            }
         }
-        cx.emit(Outcome::PickFolders);
         cx.notify();
     }
 
@@ -381,6 +430,7 @@ impl Dialog {
                 .child(icon(&format!("project-marker-{name}"), 16., color))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.appearance = Some((selected_color, index));
+                    this.appearance_changed = true;
                     this.popover = None;
                     cx.notify();
                 }))
@@ -415,6 +465,7 @@ impl Dialog {
                     .child(div().size(px(16.)).rounded_full().bg(fill))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.appearance = Some((index, selected_marker));
+                        this.appearance_changed = true;
                         cx.notify();
                     }))
             });
@@ -454,6 +505,7 @@ impl Dialog {
                                                 .child(text("Clear", 13., 20., 430., t.text))
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     this.appearance = None;
+                                                    this.appearance_changed = true;
                                                     this.popover = None;
                                                     cx.notify();
                                                 })),
@@ -501,11 +553,12 @@ impl Dialog {
                     )
                     .role(gpui::Role::MenuItem)
                     .hover(|s| s.bg(t.menu_item_hover))
-                    .aria_selected(self.device.is_none())
-                    .when(self.device.is_none(), |row| {
-                        row.child(icon("menu-check", 16., t.text))
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| this.select_device(None, cx))),
+                    .child(icon("menu-check", 16., t.text))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.popover = None;
+                        this.select_host("local", cx);
+                        cx.notify();
+                    })),
                 )
                 .child(div().px(px(8.)).pt(px(8.)).pb(px(4.)).child(text(
                     "Remote devices",
@@ -522,8 +575,8 @@ impl Dialog {
                     t.text_disabled,
                 ));
             }
-            for (index, (_, remote)) in self.remotes.iter().enumerate() {
-                let selected = self.device == Some(index);
+            for (index, (host_id, remote)) in self.remotes.iter().enumerate() {
+                let host_id = host_id.clone();
                 list = list.child(
                     item(
                         "project-device-remote",
@@ -533,12 +586,12 @@ impl Dialog {
                     )
                     .id(("project-device-remote", index))
                     .role(gpui::Role::MenuItem)
-                    .aria_selected(selected)
                     .hover(|s| s.bg(t.menu_item_hover))
-                    .when(selected, |row| row.child(icon("menu-check", 16., t.text)))
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.select_device(Some(index), cx)),
-                    ),
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.select_host(&host_id, cx);
+                        this.popover = None;
+                        cx.notify();
+                    })),
                 );
             }
             list = list.child(
@@ -575,9 +628,11 @@ impl Dialog {
                 .tab_index(0)
                 .child(text("Add a folder on", 13., 20., 430., t.text_secondary))
                 .child(text(
-                    self.device.map_or("this computer".into(), |index| {
-                        self.remotes[index].1.clone()
-                    }),
+                    self.remotes
+                        .iter()
+                        .find(|(id, _)| *id == self.host_id)
+                        .map(|(_, name)| name.clone())
+                        .unwrap_or_else(|| "this computer".into()),
                     13.,
                     20.,
                     430.,
@@ -736,6 +791,9 @@ impl Dialog {
                     .items_center()
                     .gap(px(12.))
                     .child(self.device_picker(t, cx))
+                    .when(self.host_id != "local", |body| {
+                        body.child(self.remote_source.clone())
+                    })
                     .child(
                         div()
                             .id("project-add-source")
@@ -933,6 +991,11 @@ impl Render for Dialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let viewport = window.viewport_size();
+        let title = if self.project_id.is_some() {
+            "Edit project"
+        } else {
+            "Create project"
+        };
         let label_row = div()
             .flex()
             .items_center()
@@ -945,7 +1008,7 @@ impl Render for Dialog {
             .p(px(20.))
             .flex()
             .flex_col()
-            .child(text("Create project", 20., 28., 600., t.text))
+            .child(text(title, 20., 28., 600., t.text))
             .child(div().pt(px(12.)).child(self.name_input(window, &t, cx)))
             .child(
                 div()
@@ -954,7 +1017,11 @@ impl Render for Dialog {
                     .flex_col()
                     .gap(px(8.))
                     .child(label_row)
-                    .child(self.sources_box(&t, cx)),
+                    .child(self.sources_box(&t, cx))
+                    .when(
+                        self.host_id != "local" && !self.sources.is_empty(),
+                        |body| body.child(self.remote_source.clone()),
+                    ),
             )
             .child(
                 div()
@@ -963,7 +1030,17 @@ impl Render for Dialog {
                     .justify_end()
                     .gap(px(12.))
                     .child(self.button("new-project-cancel", "Cancel", false, &t, cx))
-                    .child(self.button("new-project-create", "Create project", true, &t, cx)),
+                    .child(self.button(
+                        "new-project-create",
+                        if self.project_id.is_some() {
+                            "Save"
+                        } else {
+                            "Create project"
+                        },
+                        true,
+                        &t,
+                        cx,
+                    )),
             );
         let frame = div()
             .id("new-project-dialog")
@@ -971,7 +1048,7 @@ impl Render for Dialog {
             .w(px(520.))
             .max_w(viewport.width * 0.92)
             .role(gpui::Role::Dialog)
-            .aria_label("Create project")
+            .aria_label(title)
             .track_focus(&self.focus)
             .on_mouse_down(
                 MouseButton::Left,
@@ -991,7 +1068,7 @@ impl Render for Dialog {
                 }
             }))
             .on_action(cx.listener(|this, _: &Dismiss, _, cx| {
-                if this.popover.take().is_some() || this.browser.take().is_some() {
+                if this.popover.take().is_some() {
                     cx.notify();
                 } else {
                     this.dismiss(cx);
@@ -1068,46 +1145,6 @@ mod tests {
                 view.appearance(),
                 Some(json!({"color": "blue", "marker": {"kind": "icon", "icon": "brain"}}))
             );
-        });
-    }
-
-    /// A remote device owns its one folder: the picker's listing feeds `Choose`, a reply that
-    /// lands after the picker closed is dropped, and switching devices clears the sources.
-    #[gpui::test]
-    fn remote_folder_choice_belongs_to_its_device(cx: &mut gpui::TestAppContext) {
-        let remotes = vec![("ssh:dev".into(), "dev".into())];
-        let view = cx.new(|cx| Dialog::new(remotes, cx));
-        view.update(cx, |view, cx| {
-            view.add_sources(["/local".into()], cx);
-            view.select_device(Some(0), cx);
-            assert!(view.sources().is_empty());
-            view.pick(cx);
-            assert!(view.browser().is_some_and(|browser| browser.loading));
-            view.set_listing(
-                Ok(Browser {
-                    path: "/home/me".into(),
-                    parent: Some("/home".into()),
-                    folders: vec!["repo".into()],
-                    ..Default::default()
-                }),
-                cx,
-            );
-            view.browse(Some("/home/me/repo".into()), cx);
-            view.set_listing(Err("Permission denied".into()), cx);
-            let browser = view.browser().unwrap();
-            assert_eq!(browser.error.as_deref(), Some("Permission denied"));
-            view.browser = None;
-            view.set_listing(Ok(Browser::default()), cx);
-            assert!(view.browser().is_none());
-            view.browser = Some(Browser {
-                path: "/home/me/repo".into(),
-                ..Default::default()
-            });
-            view.choose(cx);
-            assert_eq!(view.sources(), ["/home/me/repo"]);
-            assert_eq!(view.host_id().as_deref(), Some("ssh:dev"));
-            view.select_device(None, cx);
-            assert!(view.sources().is_empty() && view.host_id().is_none());
         });
     }
 }

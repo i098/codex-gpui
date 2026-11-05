@@ -31,13 +31,23 @@ impl Focusable for Feedback {
 
 impl Feedback {
     fn new(cx: &mut Context<Self>) -> Self {
+        let crash = crate::crash::take();
+        let reason = cx.new(|cx| match &crash {
+            Some(report) => Composer::form_field(
+                "Describe the problem",
+                &format!("The app crashed on the last launch:\n{report}"),
+                true,
+                cx,
+            ),
+            None => Composer::form_field("Describe the problem", "", true, cx),
+        });
         Self {
-            reason: cx.new(|cx| Composer::form_field("Describe the problem", "", true, cx)),
+            reason,
             path: cx.new(|cx| {
                 Composer::form_field("Absolute ZIP path on the app-server host", "", false, cx)
             }),
             controls: std::array::from_fn(|_| cx.focus_handle()),
-            include_logs: false,
+            include_logs: crash.is_some(),
             pending: false,
             error: None,
         }
@@ -191,6 +201,35 @@ impl Root {
         window.focus(&dialog.focus_handle(cx), cx);
         self.feedback = Some(dialog);
         cx.notify();
+    }
+
+    /// `Rate response`: sends the picked option as `feedback/upload` for the open thread.
+    pub(crate) fn submit_rating(
+        &mut self,
+        rating: &ui::screens::thread::view::SubmitRating,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Route::Thread(thread) = &self.state.route else {
+            return;
+        };
+        let params = json!({"classification": rating.classification, "reason": rating.reason,
+            "includeLogs": false, "threadId": thread, "tags": {"turn_id": rating.turn_id}});
+        let bridge = self.bridge.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = bridge.request::<_, Value>("feedback/upload", params).await;
+            this.update(cx, |this, cx| {
+                this.toast(
+                    match result {
+                        Ok(_) => Toast::success("Thanks for your feedback"),
+                        Err(error) => Toast::danger(format!("Failed to send feedback: {error}")),
+                    },
+                    cx,
+                )
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub(crate) fn recap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
