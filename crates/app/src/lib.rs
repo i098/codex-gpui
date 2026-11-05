@@ -6808,6 +6808,8 @@ impl Root {
             settings::personalization::Event::Writing(enabled) => {
                 self.change_writing(*enabled, window, cx)
             }
+            settings::personalization::Event::LoadLayout => self.refresh_layout(cx),
+            settings::personalization::Event::Layout(mode) => self.change_layout(mode, cx),
         }
     }
 
