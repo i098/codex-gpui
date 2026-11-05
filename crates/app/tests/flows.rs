@@ -1051,22 +1051,36 @@ fn profile_menu_rows() -> Result<String> {
     ensure!(name.as_deref() == Some("user@example.com"), "name {name:?}");
     ensure!(plan.as_deref() == Some("Pro"), "plan {plan:?}");
     ensure!(left == Some(99.), "usage left {left:?}");
-    // The replay host records no `/me` or changelog feed: show the original capture's.
+    // The recorded feed's newest three posts, as the original capture shows them.
+    let posts = fx.shell(|s| {
+        s.profile
+            .changelog
+            .iter()
+            .map(|p| (p.title.to_string(), p.date.to_string(), p.url.to_string()))
+            .collect::<Vec<_>>()
+    });
+    let post = |title: &str, date: &str, anchor: &str| {
+        let url = format!("https://developers.openai.com/codex/changelog#codex-{anchor}");
+        (title.to_owned(), date.to_owned(), url)
+    };
+    ensure!(
+        posts
+            == [
+                post(
+                    "Composer predictions in Codex",
+                    "9 Oct",
+                    "2026-10-09-composer-predictions"
+                ),
+                post("Codex app", "8 Oct", "2026-10-08-app"),
+                post("Codex app", "7 Oct", "2026-10-07-app"),
+            ],
+        "changelog {posts:?}"
+    );
+    // The replay host records no `/me` or Statsig gates: show the original capture's.
     let shell = fx.read(|root, _| root.shell().clone());
     fx.cx.update(|cx| {
         shell.update(cx, |shell, cx| {
             shell.profile.name = Some("Demo User".into());
-            shell.profile.changelog = [
-                ("Composer predictions in Codex", "9 Oct"),
-                ("Codex app", "8 Oct"),
-                ("Codex app", "7 Oct"),
-            ]
-            .map(|(title, date)| ui::ChangelogPost {
-                title: title.into(),
-                date: date.into(),
-                url: "https://developers.openai.com/codex/changelog".into(),
-            })
-            .into();
             shell.profile.chrome_extension_setup = true;
             shell.profile.privacy_center = true;
             cx.notify();
