@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Start a cloud task from Home's `Cloud` mode with no saved environment: the project's tracked and untracked files, uncommitted edits included, are packed into a tarball and uploaded through `/wham/worktree_snapshots/upload_url` and `finish_upload`, and `POST /wham/tasks` starts from that `local_worktree` snapshot. Local files and the Git index are only read; a failed step restores the draft.
 - Add the Settings ▸ Mini & Pets page (also `codex://pets/install`): Show or Hide mini, a preview of the chosen pet over the Mini bar, a Customize dialog with the pet size slider (80–224, Reset to 112), and a My pets grid with None, the bundled pets and custom pets from `$CODEX_HOME/pets`, plus Refresh and Create pet (installs and enables the Hatch Pet skill and starts a chat with it).
 - Add the Settings ▸ Code Review page (also `codex://settings/code-review`) on the ChatGPT backend's `/wham/settings` review service: personal automatic review, trigger, exhaustive review and credits, Security review preferences, the repository list with search and paging, and each repository's review, security review, threat model, path rules and AGENTS.md link.
 - Browse a connected SSH host's folders when adding a folder to a remote project in `File > New Project...`: `Add` with an empty path lists the host's folders (`fs/readDirectory`), and `Choose` adds the folder.

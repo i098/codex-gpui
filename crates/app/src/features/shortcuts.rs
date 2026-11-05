@@ -666,6 +666,12 @@ impl Root {
         let mode = self.shortcut_state.new_chat_mode;
         let host = self.host.clone();
         let hotkey_options = hotkey::start_options(self, cx);
+        if let Some(options) = hotkey_options.as_ref().filter(|options| {
+            options.mode == ui::screens::hotkey::Mode::Cloud && options.environment.is_none()
+        }) {
+            let options = options.clone();
+            return self.start_local_cloud_task(s, options, window, cx);
+        }
         let preparing_worktree = mode != NewChatMode::Standalone
             && hotkey_options
                 .as_ref()
