@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   quick:
-    runs-on: [self-hosted, codex-gpui-quick]
+    runs-on: codex-gpui-quick
     timeout-minutes: 30
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
@@ -54,7 +54,7 @@ jobs:
         run: rm -rf -- "$CARGO_TARGET_DIR"
   rust:
     if: ${{ github.event_name == 'workflow_dispatch' || !github.event.pull_request.draft }}
-    runs-on: [self-hosted, codex-gpui]
+    runs-on: codex-gpui
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
