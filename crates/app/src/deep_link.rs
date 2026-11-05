@@ -336,6 +336,7 @@ fn settings(sub: &[&str], params: &Params<'_>) -> Link {
             _ => Link::Settings(Some("Worktrees")),
         },
         ["trusted-contact"] => Link::Settings(Some("Trusted contact")),
+        ["chronicle"] => Link::Settings(Some("Computer history")),
         ["code-review"] => Link::Settings(Some("Code Review")),
         [] => Link::Settings(None),
         [slug, ..] => Link::Settings(Some(ui::screens::settings::slug_section(slug))),

@@ -8,6 +8,7 @@ mod account_backend;
 mod activity_access;
 mod archived_chats;
 mod chatgpt_chats;
+mod chronicle;
 mod cloud_task;
 mod data_controls;
 pub use cloud_task::parse_task_response;
@@ -734,6 +735,7 @@ impl Root {
         data_controls::install(this.clone(), cx);
         account::install(this.clone(), cx);
         account_backend::install(this.clone(), cx);
+        chronicle::install(this.clone(), cx);
         notifications::install(this.clone(), cx);
         settings_git::init(this.clone(), cx);
         let computer_use = this.clone();
@@ -1401,6 +1403,7 @@ impl Root {
                 this.ready = this.login.is_none();
                 hotkey::policy::refresh(this, cx);
                 connections::startup(this, cx);
+                chronicle::reconcile_on_launch(this, cx);
                 #[cfg(target_os = "windows")]
                 this.check_windows_sandbox_readiness(cx);
                 this.select_route(cx);
@@ -8949,6 +8952,11 @@ impl Render for Root {
             .on_action(cx.listener(
                 |this, action: &settings::integrations::OpenExtensionDirectory, window, cx| {
                     this.open_plugins(action.0, window, cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |this, action: &settings::computer_history::PrefillPrompt, window, cx| {
+                    this.plugin_prefill(&action.0, window, cx);
                 },
             ))
             .on_action(cx.listener(

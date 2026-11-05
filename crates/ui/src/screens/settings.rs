@@ -53,6 +53,7 @@ fn focus_on_pointer(
 mod account_page;
 pub mod backend;
 mod code_review;
+pub mod computer_history;
 mod languages;
 pub mod personalization;
 pub mod trusted_contact;
@@ -1026,11 +1027,15 @@ impl Render for SettingsNav {
             .as_ref()
             .map(|cloud| cloud.read(cx).access())
             .unwrap_or_default();
+        let integrations = page.integrations.read(cx);
+        let history_visible =
+            computer_history::visible(&integrations.evaluations, integrations.gates_loaded);
         let visible = |label: &str| match label {
             "Import" => import_visible,
             "Cloud computer" => false,
             "Codex Cloud" => cloud_access.cloud,
             "Legacy Codex Cloud" => cloud_access.legacy,
+            "Computer history" => history_visible,
             // The original lists Code Review for its cloud review surface (`sx`).
             "Code Review" => cloud_access.legacy,
             "Debug" => debug::allowed(),
@@ -1775,6 +1780,9 @@ impl Render for SettingsPane {
         }
         if section == "Connections" {
             return super::connections::render(window, cx);
+        }
+        if section == "Computer history" {
+            return computer_history::render(self.page.clone(), window, cx);
         }
         if section == "Code Review" {
             return code_review::render(self.page.clone(), window, cx);
