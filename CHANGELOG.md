@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Add the Settings ▸ Code Review page (also `codex://settings/code-review`) on the ChatGPT backend's `/wham/settings` review service: personal automatic review, trigger, exhaustive review and credits, Security review preferences, the repository list with search and paging, and each repository's review, security review, threat model, path rules and AGENTS.md link.
 - Browse a connected SSH host's folders when adding a folder to a remote project in `File > New Project...`: `Add` with an empty path lists the host's folders (`fs/readDirectory`), and `Choose` adds the folder.
 - Open the local environment editor from `codex://settings/local-environments/create?workspaceRoot=…&configPath=…`, as the original `local-environments/create` route does: Settings ▸ Worktrees ▸ Environments opens with the new environment editor for that project.
 - Add `Disable Git-based diffs` to Settings ▸ Git: with it on, the Changes panel shows only `Last Turn`, hides `View branch diff`, and runs no git repository discovery (`git-review-mode` = `last-turn-only`).

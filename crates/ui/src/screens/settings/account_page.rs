@@ -14,7 +14,7 @@ use theme::Theme;
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn frame(
     id: &'static str,
-    title: &'static str,
+    title: impl Into<SharedString>,
     intro: Vec<AnyElement>,
     content: impl IntoElement,
     dialog: Option<&Entity<Confirmation>>,
