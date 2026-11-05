@@ -419,6 +419,39 @@ pub struct TurnNotification {
     pub turn: Turn,
 }
 
+/// `hook/started`, `hook/completed`: one hook run of a turn.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookNotification {
+    pub turn_id: String,
+    pub run: HookRun,
+}
+
+/// The app-server's `HookRunSummary`, the fields the turn's `Hook stats` reads.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookRun {
+    pub id: String,
+    pub event_name: String,
+    #[serde(default)]
+    pub source: Option<String>,
+    /// `running`, `completed`, `blocked`, `failed` or `stopped`.
+    pub status: String,
+    #[serde(default)]
+    pub status_message: Option<String>,
+    #[serde(default)]
+    pub entries: Vec<HookOutputEntry>,
+    #[serde(default)]
+    pub completed_at: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HookOutputEntry {
+    /// `warning`, `stop`, `feedback`, `context` or `error`.
+    pub kind: String,
+    pub text: String,
+}
+
 /// `item/started`, `item/completed`
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

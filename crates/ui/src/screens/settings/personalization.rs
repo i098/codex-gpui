@@ -57,6 +57,17 @@ enum WritingState {
     Ready(Arc<WritingPreference>),
 }
 
+/// `Layout and visuals`: the ChatGPT `response_presentation` mode, `rich` (Default) or
+/// `standard` (Simple).
+enum LayoutState {
+    Loading,
+    Hidden,
+    Failed,
+    Ready(&'static str),
+}
+
+pub const LAYOUT_MODES: [(&str, &str); 2] = [("rich", "Default"), ("standard", "Simple")];
+
 #[derive(Clone)]
 pub enum Event {
     Load(u64),
@@ -68,6 +79,8 @@ pub enum Event {
     DeleteMemory,
     LoadWriting,
     Writing(bool),
+    LoadLayout,
+    Layout(&'static str),
 }
 
 pub struct Personalization {
@@ -90,6 +103,10 @@ pub struct Personalization {
     writing_pending: bool,
     writing_error: bool,
     writing_retry: Option<bool>,
+    layout: LayoutState,
+    layout_menu: bool,
+    /// The mode being saved; the dropdown shows it until the save settles.
+    layout_pending: Option<&'static str>,
 }
 
 impl EventEmitter<Event> for Personalization {}
@@ -116,6 +133,9 @@ impl Personalization {
             writing_pending: false,
             writing_error: false,
             writing_retry: None,
+            layout: LayoutState::Loading,
+            layout_menu: false,
+            layout_pending: None,
         }
     }
 
@@ -256,6 +276,39 @@ impl Personalization {
             cx.emit(Event::LoadWriting);
             cx.notify();
         }
+    }
+
+    /// `Ok(None)` hides the row: no ChatGPT account, or the Statsig gate is off.
+    pub fn layout_loaded(
+        &mut self,
+        result: Result<Option<&'static str>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.layout = match result {
+            Ok(Some(mode)) => LayoutState::Ready(mode),
+            Ok(None) => LayoutState::Hidden,
+            Err(_) => LayoutState::Failed,
+        };
+        self.layout_pending = None;
+        cx.notify();
+    }
+
+    /// A failed save keeps the previous mode; the app shows the error toast.
+    pub fn layout_changed(&mut self, result: Result<&'static str, String>, cx: &mut Context<Self>) {
+        if let Ok(mode) = result {
+            self.layout = LayoutState::Ready(mode);
+        }
+        self.layout_pending = None;
+        cx.notify();
+    }
+
+    fn change_layout(&mut self, mode: &'static str, cx: &mut Context<Self>) {
+        self.layout_menu = false;
+        if self.layout_pending.is_none() && matches!(self.layout, LayoutState::Ready(_)) {
+            self.layout_pending = Some(mode);
+            cx.emit(Event::Layout(mode));
+        }
+        cx.notify();
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
@@ -847,6 +900,79 @@ impl Personalization {
             .children(error))
     }
 
+    fn layout_section(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
+        let current = match self.layout {
+            LayoutState::Hidden => return None,
+            LayoutState::Ready(mode) => Some(self.layout_pending.unwrap_or(mode)),
+            LayoutState::Loading | LayoutState::Failed => None,
+        };
+        let t = cx.theme().clone();
+        let disabled = current.is_none() || self.layout_pending.is_some();
+        let shown = current.unwrap_or("rich");
+        let label = LAYOUT_MODES
+            .iter()
+            .find(|(mode, _)| *mode == shown)
+            .map_or("Default", |(_, label)| label);
+        let menu = (self.layout_menu && !disabled).then(|| {
+            div()
+                .absolute()
+                .top(px(32.))
+                .right_0()
+                .child(popover(&t, 160., |menu| {
+                    menu.children(LAYOUT_MODES.map(|(mode, label)| {
+                        div()
+                            .id(("layout-mode", usize::from(mode == "rich")))
+                            .role(gpui::Role::MenuItemRadio)
+                            .aria_label(label)
+                            .aria_toggled(if mode == shown {
+                                gpui::Toggled::True
+                            } else {
+                                gpui::Toggled::False
+                            })
+                            .px(px(10.))
+                            .py(px(8.))
+                            .flex()
+                            .justify_between()
+                            .child(text(label, 13., 18., 430., t.text))
+                            .when(mode == shown, |d| d.child(icon("check", 16., t.text)))
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.change_layout(mode, cx)),
+                            )
+                    }))
+                }))
+        });
+        let focus = focus::handle("layout-and-visuals", 0, window, cx);
+        let control = focus::ring(
+            super::select(label, 430., None, disabled, self.layout_menu, &t)
+                .id("layout-and-visuals")
+                .relative()
+                .aria_label("Layout and visuals")
+                .aria_expanded(self.layout_menu),
+            &focus,
+            px(10.),
+            px(2.),
+            cx,
+        )
+        .when(!disabled, |d| {
+            d.on_click(cx.listener(|this, _, _, cx| {
+                this.layout_menu = !this.layout_menu;
+                cx.notify();
+            }))
+        })
+        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+            if this.layout_menu {
+                this.layout_menu = false;
+                cx.notify();
+            }
+        }))
+        .children(menu)
+        .into_any_element();
+        Some(preference_group(
+            [super::settings_row("Layout and visuals", None, control, &t)],
+            &t,
+        ))
+    }
+
     /// The editor's Back, mode, Cancel and Save controls; an empty bar until it opens.
     fn toolbar(&self, document: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
         if !self.opened {
@@ -1061,6 +1187,7 @@ impl Personalization {
         .on_click(cx.listener(|this, _, _, cx| this.load(cx)));
         let memory = self.memory_section(window, cx);
         let writing = self.writing_section(window, cx);
+        let layout = self.layout_section(window, cx);
         div()
             .flex()
             .flex_col()
@@ -1092,7 +1219,8 @@ impl Personalization {
                             )
                             .child(row),
                     )
-                    .children(writing),
+                    .children(writing)
+                    .children(layout),
             )
     }
 
@@ -1194,6 +1322,7 @@ impl Render for Personalization {
             self.memory_requested = true;
             cx.emit(Event::LoadMemory);
             cx.emit(Event::LoadWriting);
+            cx.emit(Event::LoadLayout);
         }
         let t = cx.theme().clone();
         let instructions_title = if self.unified_instructions {

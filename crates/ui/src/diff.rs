@@ -401,6 +401,8 @@ pub struct DiffPanel {
     context: context::State,
     full_view: Option<gpui::WeakEntity<Shell>>,
     viewed_files: serde_json::Map<String, serde_json::Value>,
+    /// `git-review-mode` is `last-turn-only`: the panel never asks git for changes.
+    last_turn_only: bool,
 }
 
 impl DiffPanel {
@@ -563,6 +565,7 @@ impl DiffPanel {
             context: context::State::default(),
             full_view: None,
             viewed_files: Default::default(),
+            last_turn_only: false,
         };
         panel
             .annotations
@@ -780,6 +783,9 @@ impl DiffPanel {
     }
 
     fn select_source(&mut self, source: DiffSource, cx: &mut Context<Self>) {
+        if self.last_turn_only && !matches!(source, DiffSource::LastTurn | DiffSource::Cloud) {
+            return;
+        }
         let previous = self.source;
         if previous == DiffSource::LastTurn && source != previous {
             self.turn_files = self.unfiltered_files();
@@ -2070,6 +2076,11 @@ pub struct ActivateSideTab(pub usize);
 #[action(namespace = ui, no_json)]
 pub struct CloseSideTab(pub usize);
 
+/// The strip's and the titlebar's `New tab` button: opens the side panel's `New tab` page.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = ui, no_json)]
+pub struct OpenNewSideTab;
+
 /// A tab menu's `Move to bottom pane` (the interactive terminal's tab): index into the strip.
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = ui, no_json)]
@@ -2374,9 +2385,13 @@ impl SplitScreen {
                     .child(tab(ix, t, cx))
             }))
             .child(
-                div()
-                    .pl(px(6.))
-                    .child(strip_button("diff-new-tab", t.text_tertiary, None)),
+                div().pl(px(6.)).child(
+                    strip_button("diff-new-tab", t.text_tertiary, None)
+                        .id("strip-new-tab")
+                        .role(gpui::Role::Button)
+                        .aria_label("New tab")
+                        .on_click(dispatch_action(OpenNewSideTab)),
+                ),
             )
             .child(self.layout_controls(t))
     }

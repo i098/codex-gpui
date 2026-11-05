@@ -163,6 +163,8 @@ pub enum Kind {
     /// `Chat memories` from `/memories` (`composer.memoriesSlashCommand`).
     ChatMemories,
     WritingStyle,
+    /// `Hook stats` from a finished turn's actions (`hook-stats-dialog`).
+    HookStats,
 }
 
 #[derive(Clone)]
@@ -281,6 +283,13 @@ struct ChatMemories {
     generate: bool,
 }
 
+/// The `Hook stats` runs of one turn; each `<details>` row opens on its own.
+struct HookStatsForm {
+    stats: crate::screens::thread::view::HookStats,
+    open: Vec<bool>,
+    rows: Vec<FocusHandle>,
+}
+
 pub struct Dialog {
     kind: Kind,
     controls: [FocusHandle; 7],
@@ -307,6 +316,7 @@ pub struct Dialog {
     branch: Option<BranchForm>,
     writing: Option<WritingSetup>,
     memories: Option<ChatMemories>,
+    hook_stats: Option<HookStatsForm>,
     shortcuts: Vec<Shortcut>,
     /// `Rename`: the chat's emoji (the original's `sidebar-thread-metadata` `emoji`), and
     /// whether its `Choose emoji` picker is open.
@@ -354,6 +364,7 @@ impl Dialog {
             branch: None,
             writing: None,
             memories: None,
+            hook_stats: None,
             shortcuts: if kind == Kind::Shortcuts {
                 crate::screens::settings::keyboard_shortcuts::active_shortcuts(cx)
             } else {
@@ -990,6 +1001,233 @@ impl Dialog {
             }),
             ..Self::new(Kind::ChatMemories, cx)
         }
+    }
+
+    pub fn hook_stats(
+        stats: crate::screens::thread::view::HookStats,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            hook_stats: Some(HookStatsForm {
+                open: vec![false; stats.runs.len()],
+                rows: stats.runs.iter().map(|_| cx.focus_handle()).collect(),
+                stats,
+            }),
+            ..Self::new(Kind::HookStats, cx)
+        }
+    }
+
+    fn toggle_hook_run(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(open) = self.hook_stats.as_mut().and_then(|f| f.open.get_mut(index)) {
+            *open = !*open;
+            cx.notify();
+        }
+    }
+
+    /// Which `Hook stats` runs are open, in list order.
+    pub fn hook_runs_open(&self) -> Option<Vec<bool>> {
+        self.hook_stats.as_ref().map(|f| f.open.clone())
+    }
+
+    /// `Tab` walks the list, each run's summary, then `Close dialog`, like the original's
+    /// `<ul tabIndex=0>`, `<summary>` rows and close button; `Enter` and `Space` open a focused
+    /// run or close, arrows scroll the list.
+    fn hook_stats_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let form = self.hook_stats.as_ref().expect("hook stats");
+        let handles: Vec<FocusHandle> = std::iter::once(self.controls[0].clone())
+            .chain(form.rows.iter().cloned())
+            .chain(std::iter::once(self.controls[1].clone()))
+            .collect();
+        let n = handles.len();
+        let focused = handles.iter().position(|h| h.is_focused(window));
+        match e.keystroke.key.as_str() {
+            "escape" => self.dismiss(cx),
+            "tab" => {
+                let next = match focused {
+                    Some(i) if e.keystroke.modifiers.shift => (i + n - 1) % n,
+                    Some(i) => (i + 1) % n,
+                    None => 0,
+                };
+                handles[next].focus(window, cx);
+            }
+            "enter" | "space" => match focused {
+                Some(i) if i == n - 1 => self.dismiss(cx),
+                Some(i) if i > 0 => self.toggle_hook_run(i - 1, cx),
+                _ => {}
+            },
+            key @ ("up" | "down") if focused == Some(0) => {
+                let offset = self.scroll.offset();
+                let step = if key == "up" { 40. } else { -40. };
+                self.scroll.set_offset(point(offset.x, offset.y + px(step)));
+                cx.notify();
+            }
+            _ => return,
+        }
+        cx.stop_propagation();
+    }
+
+    /// `HookStatsDialogContent`: the counts, then the `Run history` list of `<details>` rows.
+    fn hook_stats_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        use crate::screens::settings::integrations::hook_event;
+        use crate::screens::thread::view::hook_stats::{
+            kind_label, no_output, source_label, status_label,
+        };
+        let form = self.hook_stats.as_ref().expect("hook stats");
+        let stats = &form.stats;
+        // Every line but the title is the dialog's `text-sm`: 13 px on an 18.57 px line, weight 430.
+        let line = |s: SharedString, color: gpui::Hsla| text(s, 13., 18.5714, 430., color);
+        let body = |s: String, color: gpui::Hsla| line(s.into(), color).whitespace_normal();
+        let count = |label: &'static str, value: usize| {
+            div()
+                .flex()
+                .justify_between()
+                .gap(px(12.))
+                .child(line(label.into(), t.text_secondary))
+                .child(line(value.to_string().into(), t.text))
+        };
+        let rows = stats.runs.iter().enumerate().map(|(index, run)| {
+            let open = form.open[index];
+            let warn = matches!(run.status.as_str(), "blocked" | "failed");
+            let status_color = if warn {
+                t.text_warning
+            } else {
+                t.text_secondary
+            };
+            let summary = div()
+                .id(("hook-run", index))
+                .track_focus(&form.rows[index])
+                .role(gpui::Role::Button)
+                .aria_label(format!(
+                    "{} {}",
+                    status_label(&run.status),
+                    hook_event(&run.event_name).0
+                ))
+                .aria_expanded(open)
+                .cursor_pointer()
+                .flex()
+                .gap(px(12.))
+                .rounded(px(4.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(icon(
+                            if open {
+                                "navigation-chevron-down"
+                            } else {
+                                "navigation-chevron-right"
+                            },
+                            12.,
+                            status_color,
+                        ))
+                        .child(line(status_label(&run.status).into(), status_color)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_wrap()
+                        .gap_x(px(12.))
+                        .gap_y(px(4.))
+                        .child(body(hook_event(&run.event_name).0.to_owned(), t.text))
+                        .child(line(
+                            source_label(run.source.as_deref()).into(),
+                            t.text_secondary,
+                        )),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| this.toggle_hook_run(index, cx)));
+            div().flex().flex_col().child(summary).when(open, |d| {
+                d.child(
+                    div()
+                        .mt(px(8.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .children(
+                            run.status_message
+                                .clone()
+                                .map(|m| body(m, t.text_secondary)),
+                        )
+                        .children(run.entries.iter().map(|entry| {
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(4.))
+                                .child(line(kind_label(entry).into(), t.text_secondary))
+                                .child(body(
+                                    entry.text.clone(),
+                                    if entry.kind == "error" {
+                                        t.text_warning
+                                    } else {
+                                        t.text
+                                    },
+                                ))
+                        }))
+                        .children(no_output(run).map(|m| body(m.into(), t.text_secondary))),
+                )
+            })
+        });
+        div()
+            .relative()
+            .size_full()
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(text("Hook stats", 20., 28., 600., t.text))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(count("Runs", stats.runs.len()))
+                    .child(count("Blocked", stats.blocked))
+                    .child(count("Failed", stats.failed)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(line("Run history".into(), t.text_secondary))
+                    .child(
+                        div()
+                            .id("hook-runs")
+                            .role(gpui::Role::List)
+                            .aria_label("Run history")
+                            .track_focus(&self.controls[0])
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.scroll)
+                            .flex()
+                            .flex_col()
+                            .gap(px(12.))
+                            .children(rows),
+                    ),
+            )
+            .child(
+                div()
+                    .id("hook-stats-close")
+                    .role(gpui::Role::Button)
+                    .aria_label("Close dialog")
+                    .track_focus(&self.controls[1])
+                    .absolute()
+                    .right(px(16.))
+                    .top(px(16.))
+                    .size(px(24.))
+                    .rounded(px(4.))
+                    .hover(|s| s.bg(t.ghost_hover))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("close", 16., t.text.opacity(0.8)))
+                    .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
+            )
     }
 
     /// The `Chat memories` switches `(use_memories, generate)`.
@@ -1709,6 +1947,7 @@ impl Dialog {
             (Kind::ChatMemories, 1) => "Generate memories",
             (Kind::ChatMemories, _) => "Done",
             (Kind::WritingStyle, _) => "Writing style",
+            (Kind::HookStats, _) => "Hook stats",
             (Kind::ModelAnnouncement, 0) => "Close",
             (Kind::ModelAnnouncement, 1) => "Continue with current model",
             (Kind::ModelAnnouncement, _) => {
@@ -2012,6 +2251,10 @@ impl Dialog {
             cx.stop_propagation();
             return;
         }
+        if self.kind == Kind::HookStats {
+            self.hook_stats_key(e, window, cx);
+            return;
+        }
         if self.kind == Kind::WritingStyle {
             match k.key.as_str() {
                 "tab" => crate::focus::tab(e, window, cx),
@@ -2132,6 +2375,7 @@ impl Dialog {
                         }
                     }
                     Kind::DeleteTask => vec![0, 1],
+                    Kind::HookStats => unreachable!("hook stats keys"),
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
                     Kind::Branches => vec![0, 1],
                     Kind::BranchConflict => vec![1, 2],
@@ -4250,6 +4494,8 @@ impl Render for Dialog {
                 },
             ),
             Kind::WritingStyle => (480., 600.),
+            // `xwideTall`: 680 px wide, min(92vh, 800px) tall.
+            Kind::HookStats => (680., 800.),
             Kind::ModelAnnouncement => (480., 432.),
             Kind::Commit => (420., self.commit_height()),
             Kind::Branches => (
@@ -4279,6 +4525,7 @@ impl Render for Dialog {
             Kind::DeleteMemories => self.memory_delete_content(t, cx),
             Kind::ChatMemories => self.chat_memories_content(t, cx),
             Kind::WritingStyle => self.writing_content(t, cx),
+            Kind::HookStats => self.hook_stats_content(t, cx),
             Kind::ModelAnnouncement => self.announcement_content(t, cx),
             Kind::Commit => self.commit_content(t, cx),
             Kind::Branches | Kind::CreateBranch | Kind::BranchConflict => {
@@ -4337,6 +4584,7 @@ impl Render for Dialog {
                         Kind::DeleteMemories => "Delete all Codex memories?".into(),
                         Kind::ChatMemories => "Chat memories".into(),
                         Kind::WritingStyle => "Writing style".into(),
+                        Kind::HookStats => "Hook stats".into(),
                         Kind::Commit => "Commit or push".into(),
                         Kind::Branches => "Switch branch".into(),
                         Kind::CreateBranch => "Create and checkout branch".into(),
@@ -4409,7 +4657,10 @@ impl Render for Dialog {
                         20.
                     } else if schedule {
                         30.
-                    } else if matches!(self.kind, Kind::LogOut | Kind::DeleteMemories) {
+                    } else if matches!(
+                        self.kind,
+                        Kind::LogOut | Kind::DeleteMemories | Kind::HookStats
+                    ) {
                         25.
                     } else {
                         24.
@@ -4483,8 +4734,10 @@ impl Render for Dialog {
                                 false,
                                 shapes::Decoration {
                                     radius: Corners::all(px(
-                                        if matches!(self.kind, Kind::LogOut | Kind::DeleteMemories)
-                                        {
+                                        if matches!(
+                                            self.kind,
+                                            Kind::LogOut | Kind::DeleteMemories | Kind::HookStats
+                                        ) {
                                             25.
                                         } else {
                                             24.
@@ -4492,7 +4745,7 @@ impl Render for Dialog {
                                     )),
                                     corner: if matches!(
                                         self.kind,
-                                        Kind::LogOut | Kind::DeleteMemories
+                                        Kind::LogOut | Kind::DeleteMemories | Kind::HookStats
                                     ) {
                                         shapes::Corner::Squircle
                                     } else {
