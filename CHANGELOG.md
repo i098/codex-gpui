@@ -14,6 +14,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add `Disable Git-based diffs` to Settings ▸ Git: with it on, the Changes panel shows only `Last Turn`, hides `View branch diff`, and runs no git repository discovery (`git-review-mode` = `last-turn-only`).
 - Search settings rows: the Settings search lists matching row titles and descriptions under `Matching settings` and opens their page, and a `Clear settings search` button clears the query.
 - Show `Hook stats` in a finished turn's actions when hooks ran (`hook/started`, `hook/completed`): the dialog counts runs, blocked and failed runs, and lists each run's status, event and source, opening to its status message and output.
+- Show each turn's hook runs inside its turn (`hook/started`, `hook/completed`): a `Running <event> hook` row becomes `Ran <event> hook` when the run completes, with its status message and output under it; another thread's hook runs stay out.
 - Sign in through an enterprise gateway with its native OAuth handoff, completion status, and cancellation flow.
 - Open any settings page from `codex://settings/<slug>` links (`git-settings`, `mcp-settings`, `hooks-settings`, `agent`, `local-environments` and the rest of the original slugs, plus the `work-settings` and usage-tab aliases); unknown slugs open General.
 - Show external agent import progress as imported and failed item counts in the import view.
