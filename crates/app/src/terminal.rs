@@ -7,7 +7,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 use portable_pty::{CommandBuilder, MasterPty, PtySize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     io::{Read, Write},
@@ -25,6 +25,20 @@ use ui::{
 
 static NEXT_PROCESS: AtomicU64 = AtomicU64::new(1);
 const HOME_TERMINAL: &str = "home";
+const READ_THREAD_TERMINAL: &str = "read_thread_terminal";
+
+/// The `dynamicTools` entry a new chat starts with, as the original declares it.
+pub(crate) fn read_thread_terminal_tool() -> Value {
+    json!({
+        "name": READ_THREAD_TERMINAL,
+        "description": "Read the current app terminal output for this desktop thread. Use it when you need shell output or the current prompt before deciding the next step. This tool takes no arguments.",
+        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+    })
+}
+
+fn tool_failure(text: &str) -> Value {
+    json!({ "success": false, "contentItems": [{ "type": "inputText", "text": text }] })
+}
 
 /// The `desktop.integratedTerminalShell` setting, kept in step with the config by `Root`.
 pub(crate) struct TerminalShell(pub Option<String>);
@@ -63,6 +77,86 @@ impl Root {
         });
         crate::log_err(task, cx);
     }
+
+    /// `environmentAction1`…`environmentAction9` (`⌘⇧D` runs the first): types the command of
+    /// the selected local environment's action in that slot into a new terminal tab.
+    pub(crate) fn run_environment_action(
+        &mut self,
+        slot: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((_, cwd)) = self.terminal_target(cx) else {
+            return;
+        };
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move { environment_actions(&*host, &cwd) });
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let command = read
+                .await?
+                .get(slot)
+                .and_then(|action| action["command"].as_str().map(str::to_owned));
+            if let Some(command) = command {
+                this.update_in(cx, |this, window, cx| {
+                    this.run_in_terminal(&command, window, cx)
+                })?;
+            }
+            Ok(())
+        });
+        crate::log_err(task, cx);
+    }
+
+    /// Gives the open thread's header the names of its workspace's environment actions.
+    pub(crate) fn load_environment_actions(&mut self, cx: &mut Context<Self>) {
+        let Some(view) = self.thread.clone() else {
+            return;
+        };
+        let cwd = view.read(cx).cwd().to_owned();
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move { environment_actions(&*host, &cwd) });
+        let task = cx.spawn(async move |_, cx| -> Result<()> {
+            let names = read
+                .await?
+                .iter()
+                .filter_map(|action| action["name"].as_str())
+                .map(|name| gpui::SharedString::from(name.to_owned()))
+                .collect();
+            view.update(cx, |view, cx| view.set_environment_actions(names, cx));
+            Ok(())
+        });
+        crate::log_err(task, cx);
+    }
+
+    /// Runs `command` in a new tab of the route's terminal, shown where terminals open.
+    fn run_in_terminal(&mut self, command: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let before = self
+            .terminal_panel()
+            .map_or(0, |panel| panel.read(cx).sessions.len());
+        self.show_terminal(false, window, cx);
+        let Some(panel) = self.terminal_panel().cloned() else {
+            return;
+        };
+        panel.update(cx, |panel, cx| {
+            // `show_terminal` opened a first shell only for a panel that had none.
+            if panel.sessions.len() == before {
+                panel.open(cx);
+            }
+            panel.write(panel.active, format!("{command}\n").into_bytes());
+        });
+    }
+}
+
+/// The run actions of `cwd`'s selected local environment (`local-environment-actions`).
+fn environment_actions(host: &dyn crate::host::Host, cwd: &str) -> Result<Vec<Value>> {
+    let request = crate::host::Request::post(
+        "local-environment-actions",
+        Some(serde_json::json!({ "workspaceRoot": cwd })),
+    );
+    let mut response = crate::host::json_body(&host.fetch(&request)?)?;
+    Ok(match response["actions"].take() {
+        Value::Array(actions) => actions,
+        _ => Vec::new(),
+    })
 }
 
 async fn shell_command(
@@ -304,7 +398,8 @@ impl Root {
         }
     }
 
-    pub(crate) fn run_environment_action(
+    /// Runs an `environmentAction1`…`9` shortcut from the environment selected in settings.
+    pub(crate) fn run_selected_environment_action(
         &mut self,
         number: usize,
         window: &mut Window,
@@ -368,6 +463,65 @@ impl Root {
     pub fn terminal_visible(&self) -> bool {
         self.terminal_panel().is_some()
             && (self.terminal.visible || self.side == Some(SidePanel::Console))
+    }
+
+    /// The answer to an `item/tool/call` of `read_thread_terminal`, or `None` for another tool:
+    /// the active tab of the calling thread's terminal, as the original words it.
+    pub(crate) fn read_thread_terminal(&self, params: &Value, cx: &App) -> Option<Value> {
+        if params["tool"] != READ_THREAD_TERMINAL {
+            return None;
+        }
+        if !params["arguments"].is_null()
+            && params["arguments"]
+                .as_object()
+                .is_none_or(|a| !a.is_empty())
+        {
+            return Some(tool_failure(&format!(
+                "{READ_THREAD_TERMINAL} takes no arguments."
+            )));
+        }
+        let session = params["threadId"]
+            .as_str()
+            .and_then(|id| self.terminal.panels.get(id))
+            .map(|panel| panel.read(cx))
+            .and_then(|panel| panel.sessions.get(panel.active));
+        let Some(session) = session else {
+            return Some(tool_failure(
+                "No app terminal session is attached to this thread yet.",
+            ));
+        };
+        let buffer = &session.surface.read(cx).buffer;
+        let output = buffer
+            .selected(
+                (0, 0),
+                (
+                    buffer.rows.len().saturating_sub(1),
+                    usize::from(buffer.size.1),
+                ),
+            )
+            .trim_end()
+            .to_owned();
+        let mut lines = vec![
+            "App terminal snapshot for this thread:".to_owned(),
+            format!("cwd: {}", session.cwd),
+            format!("shell: {}", configured_shell(cx)),
+        ];
+        if buffer.truncated() {
+            lines.push(
+                "note: output is truncated to the latest terminal buffer kept by the app.".into(),
+            );
+        }
+        lines.push("```text".into());
+        lines.push(if output.is_empty() {
+            "[terminal has no output yet]".into()
+        } else {
+            output
+        });
+        lines.push("```".into());
+        Some(json!({
+            "success": true,
+            "contentItems": [{ "type": "inputText", "text": lines.join("\n") }],
+        }))
     }
 
     /// The active tab's screen text.
@@ -502,6 +656,14 @@ struct Session {
     pending_size: Option<(u16, u16)>,
 }
 
+/// The Settings shell when it still exists, else the platform default.
+fn configured_shell(cx: &App) -> String {
+    cx.try_global::<TerminalShell>()
+        .and_then(|shell| shell.0.clone())
+        .filter(|shell| std::path::Path::new(shell).is_file())
+        .unwrap_or_else(ui::screens::settings::default_shell)
+}
+
 pub struct PanelChanged;
 impl EventEmitter<PanelChanged> for TerminalPanel {}
 
@@ -605,12 +767,7 @@ impl TerminalPanel {
         })
         .detach();
         // Read per tab so a changed setting applies to the next new terminal.
-        let shell = cx
-            .try_global::<TerminalShell>()
-            .and_then(|shell| shell.0.clone())
-            .filter(|shell| std::path::Path::new(shell).is_file())
-            .unwrap_or_else(ui::screens::settings::default_shell);
-        let mut command = CommandBuilder::new(shell);
+        let mut command = CommandBuilder::new(configured_shell(cx));
         command.arg("-l");
         command.cwd(&self.cwd);
         command.env("TERM", "xterm-256color");

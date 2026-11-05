@@ -93,6 +93,13 @@ impl Worktrees {
             cx.notify();
         })
         .detach();
+        cx.observe_global::<super::environments::State>(|this, cx| {
+            if cx.global::<super::environments::State>().create.is_some() && !this.environments {
+                this.environments = true;
+                cx.notify();
+            }
+        })
+        .detach();
         cx.on_blur(&root.focus_handle(cx), window, |this, _, cx| {
             this.save_root(cx)
         })
@@ -113,7 +120,9 @@ impl Worktrees {
             limit,
             layer: Layer::default(),
             confirmation: None,
-            environments: false,
+            environments: cx
+                .try_global::<super::environments::State>()
+                .is_some_and(|state| state.create.is_some()),
             scroll: gpui::ScrollHandle::new(),
             composited: false,
             heading_height: Rc::new(Cell::new(px(0.))),
@@ -331,11 +340,17 @@ impl Worktrees {
             Load::Loading => unreachable!(),
             Load::Failed(error) => self.group(
                 "Unable to load worktrees".into(),
-                vec![
-                    div()
-                        .p(px(16.))
-                        .child(text(error, 13., 18.571_428, 430., t.text_secondary)),
-                ],
+                vec![div().p(px(16.)).child(text(
+                    if error.is_empty() {
+                        "Something went wrong while loading worktrees.".into()
+                    } else {
+                        error
+                    },
+                    13.,
+                    18.571_428,
+                    430.,
+                    t.text_secondary,
+                ))],
                 refresh,
                 t,
             ),

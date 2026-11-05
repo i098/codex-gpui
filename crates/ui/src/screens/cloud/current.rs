@@ -119,7 +119,10 @@ impl CloudPage {
                 .strip_prefix("/settings/cloud-environments")
                 .unwrap_or("");
             let parts: Vec<_> = path.split('/').filter(|p| !p.is_empty()).collect();
-            if self.access.legacy {
+            if self.access.legacy && path == "?tab=preferences" {
+                self.view = View::List;
+                self.open_preferences(cx);
+            } else if self.access.legacy {
                 match parts.as_slice() {
                     ["new"] => self.edit(None, cx),
                     [id] => self.load(Operation::Detail((*id).into()), cx),
