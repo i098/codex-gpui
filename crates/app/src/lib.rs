@@ -43,6 +43,7 @@ pub mod oauth;
 pub mod onboarding;
 mod permissions;
 mod personalization;
+mod pets;
 mod profile_menu;
 mod pull_requests;
 pub mod qa;
@@ -737,6 +738,7 @@ impl Root {
         account_backend::install(this.clone(), cx);
         chronicle::install(this.clone(), cx);
         notifications::install(this.clone(), cx);
+        pets::install(this.clone(), cx);
         settings_git::init(this.clone(), cx);
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {
@@ -1626,6 +1628,7 @@ impl Root {
             thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         }
         self.host = host;
+        pets::reload(self.host.clone(), cx);
         hotkey::refresh_home(self, cx);
         self.refresh_activity_access(cx);
         hotkey::policy::refresh(self, cx);
@@ -8964,6 +8967,14 @@ impl Render for Root {
                     this.open_plugin_creator(window, cx);
                 },
             ))
+            .on_action(
+                cx.listener(|this, _: &settings::pets::CreatePet, window, cx| {
+                    this.create_pet(window, cx);
+                }),
+            )
+            .on_action(cx.listener(|this, _: &settings::pets::RefreshPets, _, cx| {
+                pets::reload(this.host.clone(), cx);
+            }))
             .on_action(cx.listener(|this, _: &LogOut, window, cx| {
                 if !this.logout_pending {
                     let email = this.account_email.clone();
