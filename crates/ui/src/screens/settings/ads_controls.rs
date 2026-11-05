@@ -255,18 +255,19 @@ impl AdsControls {
             return div().child(card(vec![body], Some(&self.layer), t));
         }
         let link = |id: &'static str, title: &'static str, view: View, cx: &mut Context<Self>| {
-            div()
-                .id(id)
-                .debug_selector(move || id.into())
-                .cursor_pointer()
-                .child(settings_row_content(
-                    title,
-                    None,
-                    icon("chevron-right", 16., t.text_secondary).into_any_element(),
-                    t,
-                ))
-                .on_click(cx.listener(move |this, _, _, cx| this.open(view, cx)))
-                .into_any_element()
+            div().child(
+                div()
+                    .id(id)
+                    .debug_selector(move || id.into())
+                    .cursor_pointer()
+                    .child(settings_row_content(
+                        title,
+                        None,
+                        icon("chevron-right", 16., t.text_secondary).into_any_element(),
+                        t,
+                    ))
+                    .on_click(cx.listener(move |this, _, _, cx| this.open(view, cx))),
+            )
         };
         let mut rows = vec![link("ads-history-link", "History", View::History, cx)];
         if !settings.unavailable {
@@ -290,8 +291,7 @@ impl AdsControls {
                     }))
                     .into_any_element(),
                 t,
-            )
-            .into_any_element(),
+            ),
         );
         let on = settings.personalized && !unavailable;
         let toggle = switch("ads-personalize", on, self.busy || unavailable, t)
@@ -326,11 +326,7 @@ impl AdsControls {
                     .flex_col()
                     .gap(px(8.))
                     .child(text("Ads personalization", 16., 22., 500., t.text))
-                    .child(card(
-                        vec![personalize.into_any_element()],
-                        Some(&self.layer),
-                        t,
-                    )),
+                    .child(card(vec![personalize], Some(&self.layer), t)),
             )
     }
 
@@ -347,7 +343,7 @@ impl AdsControls {
                 "ChatGPT may use these topics to choose ads that are more relevant to you.",
             )
         };
-        let rows: Vec<AnyElement> = self
+        let rows: Vec<gpui::Div> = self
             .pages
             .items
             .iter()
@@ -360,11 +356,9 @@ impl AdsControls {
                         div().into_any_element(),
                         t,
                     )
-                    .into_any_element()
                 } else {
                     let topic = item["content"].as_str().unwrap_or_default().to_owned();
                     settings_row_content(topic, None, div().into_any_element(), t)
-                        .into_any_element()
                 }
             })
             .collect();
