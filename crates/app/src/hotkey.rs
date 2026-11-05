@@ -16,7 +16,7 @@ use ui::screens::settings::voice::Policy as VoicePolicy;
 #[cfg(target_os = "macos")]
 mod audio;
 #[cfg(target_os = "macos")]
-mod desktop;
+pub(crate) mod desktop;
 #[cfg(target_os = "macos")]
 mod dictation;
 mod mini;
@@ -89,6 +89,7 @@ pub(crate) struct Popout {
 }
 
 pub(crate) fn thread_shown(root: &Root, window: &mut Window, cx: &mut Context<Root>) {
+    sync_recents(root, cx);
     if root
         .popout
         .as_ref()
@@ -112,6 +113,47 @@ pub(crate) fn thread_shown(root: &Root, window: &mut Window, cx: &mut Context<Ro
             cx,
         );
     }
+}
+
+/// `/resume` rows in a hotkey window: the 20 newest chats except the one it shows.
+pub(crate) fn sync_recents(root: &Root, cx: &mut Context<Root>) {
+    if !root
+        .popout
+        .as_ref()
+        .is_some_and(|popout| hotkey_window(&popout.target))
+    {
+        return;
+    }
+    let current = match &root.state.route {
+        Route::Thread(id) => Some(id.as_str()),
+        _ => None,
+    };
+    let recents: Vec<_> = root
+        .threads
+        .iter()
+        .filter(|thread| Some(thread.id.as_str()) != current)
+        .take(20)
+        .map(|thread| {
+            let project = Path::new(&thread.cwd)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let title = ui::screens::sidebar::title(thread).to_string();
+            (thread.id.clone(), title, project)
+        })
+        .collect();
+    for composer in [
+        root.home.read(cx).composer.clone(),
+        root.thread_composer.clone(),
+    ] {
+        let recents = recents.clone();
+        composer.update(cx, |composer, _| composer.set_slash_recents(recents));
+    }
+}
+
+/// The Popout Window family; Spotlight and Mini are separate surfaces.
+fn hotkey_window(target: &Target) -> bool {
+    !matches!(target, Target::Spotlight | Target::Mini)
 }
 
 actions!(
@@ -147,6 +189,15 @@ struct Runtime {
     dictation: Option<Entity<dictation::Controller>>,
 }
 impl gpui::Global for Runtime {}
+
+/// The Mini window when it is open and on screen.
+#[cfg(target_os = "macos")]
+pub(crate) fn visible_mini(cx: &mut App) -> Option<WindowHandle<Root>> {
+    let mini = cx.try_global::<Runtime>()?.mini?;
+    windows::is_visible(mini.into(), cx)
+        .unwrap_or(false)
+        .then_some(mini)
+}
 
 pub(crate) fn init(cx: &mut App) {
     cx.set_global(Runtime::default());
@@ -499,6 +550,11 @@ fn attach(
     cx: &mut Context<Root>,
 ) {
     let composer = root.home.read(cx).composer.clone();
+    if hotkey_window(&target) {
+        for composer in [&composer, &root.thread_composer] {
+            composer.update(cx, |composer, _| composer.set_hotkey_window());
+        }
+    }
     let projectless = target == Target::Mini
         || cx
             .try_global::<crate::host_settings::Settings>()
@@ -530,6 +586,7 @@ fn attach(
     });
     root.load_projects(cx);
     refresh(root, cx);
+    sync_recents(root, cx);
     composer.focus_handle(cx).focus(window, cx);
     if root
         .popout
@@ -1106,6 +1163,7 @@ pub(crate) fn actions(view: Div, active: bool, cx: &mut Context<Root>) -> Div {
             }
             root.new_chat(window, cx);
             configure_composer(root, cx);
+            sync_recents(root, cx);
             windows::set_kind(window, windows::Kind::HotkeyHome, cx);
             let bounds = window.bounds();
             let _ = windows::set_bounds(
@@ -1296,8 +1354,17 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn popout_keeps_the_primary_draft_and_route_separate() -> Result<()> {
+    struct Popup {
+        app: gpui::HeadlessAppContext,
+        owner: WindowHandle<Root>,
+        owner_root: Entity<Root>,
+        popup: WindowHandle<Root>,
+        popup_root: Entity<Root>,
+        _home: tempfile::TempDir,
+    }
+
+    /// A primary window and its Home popout on the recorded readback session, past startup.
+    fn open_popout() -> Result<Popup> {
         #[cfg(target_os = "macos")]
         std::panic::set_hook(Box::new(|info| {
             eprintln!("{info}");
@@ -1420,6 +1487,162 @@ mod tests {
             app.run_until_parked();
             assert!(popup_root.read_with(&app, |root, _| root.dialog.is_none()));
         }
+        Ok(Popup {
+            app,
+            owner,
+            owner_root,
+            popup,
+            popup_root,
+            _home: home,
+        })
+    }
+
+    /// Text goes in through the composer's input handler, as the platform's text input does;
+    /// named keys (`enter`, `backspace`) are keystrokes.
+    fn type_keys(popup: &mut Popup, keys: &[&str]) -> Result<()> {
+        for key in keys {
+            let composer = popup
+                .popup_root
+                .read_with(&popup.app, |root, cx| root.composer(cx));
+            let text = (key.chars().count() == 1).then_some(*key);
+            let keystroke = gpui::Keystroke::parse(key)?;
+            if text.is_none() {
+                popup
+                    .app
+                    .update_window(popup.popup.into(), |_, window, _| window.refresh())?;
+                popup.app.run_until_parked();
+                let focused = popup
+                    .app
+                    .update_window(popup.popup.into(), |_, window, cx| {
+                        composer.read(cx).focus_handle(cx).is_focused(window)
+                    })?;
+                anyhow::ensure!(focused, "`{key}` would miss the unfocused composer");
+            }
+            popup
+                .app
+                .update_window(popup.popup.into(), |_, window, cx| match text {
+                    Some(text) => composer.update(cx, |composer, cx| {
+                        use gpui::EntityInputHandler as _;
+                        composer.replace_text_in_range(None, text, window, cx)
+                    }),
+                    None => _ = window.dispatch_keystroke(keystroke, cx),
+                })?;
+            popup.app.run_until_parked();
+        }
+        Ok(())
+    }
+
+    fn slash_rows(popup: &Popup) -> Vec<String> {
+        popup.popup_root.read_with(&popup.app, |root, cx| {
+            root.composer(cx)
+                .read(cx)
+                .slash_state()
+                .map(|(rows, _)| rows)
+                .unwrap_or_default()
+        })
+    }
+
+    #[test]
+    fn hotkey_window_resume_opens_a_recent_chat_and_new_returns_home() -> Result<()> {
+        let mut popup = open_popout()?;
+        let recent = popup
+            .popup_root
+            .read_with(&popup.app, |root, _| root.threads.first().cloned())
+            .context("The recorded session lists no chats")?;
+        type_keys(&mut popup, &["/"])?;
+        if let Some(directory) = std::env::var_os("CGX_HOTKEY_EVIDENCE") {
+            std::fs::create_dir_all(&directory)?;
+            popup
+                .app
+                .capture_screenshot(popup.popup.into())?
+                .save(Path::new(&directory).join("native-hotkey-slash.png"))?;
+        }
+        let rows = slash_rows(&popup);
+        anyhow::ensure!(
+            rows.contains(&"Resume\nResume a recent chat".to_owned()),
+            "{rows:?}"
+        );
+        // Home is the Popout Window home: no `/new`, and no main-window `New chat`.
+        anyhow::ensure!(!rows.iter().any(|row| row.starts_with("New")), "{rows:?}");
+        type_keys(&mut popup, &["r", "e", "s", "u", "m", "e", "enter"])?;
+        let rows = slash_rows(&popup);
+        let title = ui::screens::sidebar::title(&recent).to_string();
+        anyhow::ensure!(
+            rows.first().is_some_and(|row| row.starts_with(&title)),
+            "{rows:?}"
+        );
+        if let Some(directory) = std::env::var_os("CGX_HOTKEY_EVIDENCE") {
+            std::fs::create_dir_all(&directory)?;
+            popup
+                .app
+                .capture_screenshot(popup.popup.into())?
+                .save(Path::new(&directory).join("native-hotkey-resume.png"))?;
+        }
+        type_keys(&mut popup, &["enter"])?;
+        let route = popup
+            .popup_root
+            .read_with(&popup.app, |root, _| root.state.route.clone());
+        anyhow::ensure!(route == Route::Thread(recent.id.clone()), "{route:?}");
+        // The recording has no `thread/read` for this chat, so its composer is not drawn and
+        // takes no keystrokes: text goes in through the input handler, and the picked `/new`
+        // row is emitted as Enter on it would.
+        type_keys(&mut popup, &["/"])?;
+        let rows = slash_rows(&popup);
+        anyhow::ensure!(
+            rows.contains(&"New\nReturn to the Popout Window home".to_owned()),
+            "{rows:?}"
+        );
+        anyhow::ensure!(
+            !rows.iter().any(|row| row.starts_with("New chat")),
+            "{rows:?}"
+        );
+        type_keys(&mut popup, &["r", "e", "s", "u", "m", "e"])?;
+        // The chat on screen is not offered again.
+        let rows = slash_rows(&popup);
+        anyhow::ensure!(!rows.iter().any(|row| row.starts_with(&title)), "{rows:?}");
+        popup
+            .app
+            .update_window(popup.popup.into(), |_, window, cx| {
+                popup.popup_root.update(cx, |root, cx| {
+                    root.composer(cx)
+                        .update(cx, |composer, cx| composer.set_text("", cx));
+                });
+                window.refresh();
+            })?;
+        popup.app.run_until_parked();
+        type_keys(&mut popup, &["/", "n", "e", "w"])?;
+        let rows = slash_rows(&popup);
+        anyhow::ensure!(
+            rows.first().is_some_and(|row| row.starts_with("New\n")),
+            "{rows:?}"
+        );
+        popup.popup_root.update(&mut popup.app, |root, cx| {
+            root.composer(cx)
+                .update(cx, |_, cx| cx.emit(ui::composer::SlashCommand::HotkeyNew))
+        });
+        popup.app.run_until_parked();
+        let route = popup
+            .popup_root
+            .read_with(&popup.app, |root, _| root.state.route.clone());
+        anyhow::ensure!(route == Route::Home, "{route:?}");
+        anyhow::ensure!(
+            popup
+                .owner_root
+                .read_with(&popup.app, |root, _| root.state.route == Route::Home)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn popout_keeps_the_primary_draft_and_route_separate() -> Result<()> {
+        let Popup {
+            mut app,
+            owner,
+            owner_root,
+            popup,
+            popup_root,
+            _home,
+        } = open_popout()?;
         if let Some(directory) = std::env::var_os("CGX_HOTKEY_EVIDENCE") {
             std::fs::create_dir_all(&directory)?;
             app.update_window(popup.into(), |_, window, cx| {

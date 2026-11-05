@@ -57,6 +57,14 @@ const STATES = {
     await d.click(row("Add a subtract"));
     await d.waitFor(`document.body.innerText.includes("Worked for") && document.body.innerText.includes("View changes")`, "subtract thread");
   },
+  // The subtract thread with s015's first command approval request pending in the composer.
+  "thread-approval": async (d) => {
+    await STATES.thread(d);
+    await d.click(`document.querySelector(".ProseMirror")`, "composer");
+    const data = JSON.parse(read("../../refs/interactions/s015.json")).steps[8].message;
+    await d.evaluate(`window.dispatchEvent(new MessageEvent("message", { data: ${JSON.stringify(data)} }))`);
+    await d.waitFor(`document.body.innerText.includes("Allow once")`, "approval card");
+  },
   // The subtract thread with its `Worked for` activity expanded, then its tool summary row too.
   "thread-worked": async (d) => {
     await STATES.thread(d);
@@ -75,6 +83,14 @@ const STATES = {
     // The rows grow open; shoot after the motion ends, as the port's 400 ms advance does.
     await d.sleep(800);
   },
+  // The greeting chat after s008's bridge step: its final answer becomes a Python code block.
+  "thread-code": async (d) => {
+    await d.click(row("Change the greeting"));
+    await d.waitFor(`document.body.innerText.includes("Edited hello.py")`, "greeting thread");
+    const data = JSON.parse(read("../../refs/interactions/s008.json")).steps[1].message;
+    await d.evaluate(`window.dispatchEvent(new MessageEvent("message", { data: ${JSON.stringify(data)} }))`);
+    await d.waitFor(`!!document.querySelector('[data-markdown-copy="code-block"]')`, "code block");
+  },
   // The Home composer with its focus, empty and with a typed draft.
   "composer-rest": async (d) => {
     await d.click(`document.querySelector(".ProseMirror")`, "composer");
@@ -89,16 +105,31 @@ const STATES = {
     await d.click(`[...document.querySelectorAll("button")].find((b) => b.offsetParent !== null && b.innerText.trim().startsWith("GPT-6 Astra"))`, "model picker");
     await d.waitFor(`document.querySelector("[role=menu]")`, "model menu");
   },
+  // The sidebar's `Switch mode` dropdown (ChatGPT / Codex).
+  "mode-menu": async (d) => {
+    await d.click(`[...document.querySelectorAll("button")].find((b) => b.offsetParent !== null && (b.getAttribute("aria-label") || "").startsWith("Switch mode"))`, "mode switch");
+    await d.waitFor(`document.querySelector("[role=menu]")`, "mode menu");
+  },
   diff: async (d) => {
     await STATES.thread(d);
     await d.click(byText("View changes"));
     // The hunk body does not render here (header row only); README explains why.
     await d.waitFor(`/Last [Tt]urn/.test(document.body.innerText)`, "diff panel");
   },
+  // The Changes header's `Changes options` menu.
+  "diff-menu": async (d) => {
+    await STATES.diff(d);
+    await d.click(byText("Changes options"));
+    await d.waitFor(`document.body.innerText.includes("Copy git apply command")`, "Changes options menu");
+  },
   settings: async (d) => {
     await d.click(byText("Open profile menu"));
     await d.click(byText("Settings"));
     await d.waitFor(`document.body.innerText.includes("Default permissions")`, "settings general");
+  },
+  "profile-menu": async (d) => {
+    await d.click(byText("Open profile menu"));
+    await d.waitFor(`document.querySelector("[role=menu]")?.innerText.includes("Log out")`, "profile menu");
   },
   automations: async (d) => {
     await d.click(byText("Scheduled"));

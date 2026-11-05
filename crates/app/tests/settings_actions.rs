@@ -2,6 +2,7 @@ mod common;
 
 use anyhow::{Context as _, Result, ensure};
 use common::*;
+use gpui::BorrowAppContext as _;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use theme::ActiveTheme as _;
@@ -154,7 +155,7 @@ fn foreign_and_cancelled_browser_logins_cannot_authenticate() -> Result<()> {
     });
     ensure!(fx.read(|root, _| root.signed_out()));
     evidence(&mut fx, "pending-login")?;
-    fx.click((640., 454.))?;
+    fx.click((640., 432.))?;
     drain(&mut fx)?;
     fx.root.update(&mut fx.cx, |root, cx| {
         root.on_event(completed("owned-login"), cx)
@@ -206,6 +207,28 @@ fn host_value(fx: &Fx, key: &str) -> Value {
             .cloned()
             .unwrap_or(Value::Null)
     })
+}
+
+/// The theme picker holds `ChatGPT` and a `Codex themes` flyout: Down stops at the flyout row,
+/// Right opens it on its first theme (`Absolutely`), and Enter picks that theme.
+#[test]
+fn appearance_codex_themes_flyout() -> Result<()> {
+    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
+    fx.cx
+        .update_window(fx.window, |_, window, _| window.activate_window())?;
+    fx.keys("cmd-,")?;
+    fx.click((200., 118.))?;
+    fx.type_text("Appearance")?;
+    press(&mut fx, "tab enter")?;
+    // Mode's three segments, Import and Copy precede the picker.
+    press(
+        &mut fx,
+        "tab tab tab tab tab tab tab enter down down right enter",
+    )?;
+    fx.wait("picked theme", |fx| {
+        host_value(fx, "appearanceDarkCodeThemeId") == "absolutely"
+    })?;
+    Ok(())
 }
 
 /// Copy theme, Import theme (a Dracula share string saves its theme and code theme together),
@@ -447,6 +470,13 @@ fn configuration_efforts_and_open_config_follow_the_host() -> Result<()> {
         layered_reads(&mut fx)? == opened + 1,
         "Open config.toml reads once"
     );
+    // Profile menu ▸ `Open config.toml` takes the same path from any route.
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        window.dispatch_action(Box::new(ui::OpenUserConfig), cx)
+    })?;
+    fx.wait("profile menu config read", |fx| {
+        layered_reads(fx).is_ok_and(|n| n == opened + 2)
+    })?;
 
     page.update(&mut fx.cx, |page, cx| {
         page.set("host.enabled-reasoning-efforts", json!(["max"]), cx)
@@ -462,6 +492,112 @@ fn configuration_efforts_and_open_config_follow_the_host() -> Result<()> {
             "{rows:?}"
         );
     }
+    Ok(())
+}
+
+/// `Filter settings by host` lists a connected remote; picking it reads that host's
+/// `config.toml` layers into the page, and a config row then writes on that host only.
+#[test]
+fn the_host_filter_reads_and_writes_the_chosen_hosts_config() -> Result<()> {
+    let mut lines = script(None, |_| {})?;
+    for _ in 0..4 {
+        lines.extend(exchange(
+            "config/read",
+            json!({"config": {}, "origins": {}, "layers": []}),
+        ));
+    }
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    drain(&mut fx)?;
+    let remote_read = exchange(
+        "config/read",
+        json!({
+            "config": {"sandbox_mode": "danger-full-access"},
+            "origins": {},
+            "layers": [{"name": {"type": "user", "file": "/home/dev/.codex/config.toml"}}],
+        }),
+    );
+    let mut remote = Vec::new();
+    for _ in 0..3 {
+        remote.extend(remote_read.clone());
+    }
+    remote.extend(exchange(
+        "config/value/write",
+        json!({"status": "ok", "version": "v2", "filePath": "/home/dev/.codex/config.toml"}),
+    ));
+    let (bridge, log) = proxy_bridge(&remote)?;
+    fx.cx.update(|cx| {
+        app::connections::connect_for_test("ssh:dev", bridge.clone(), cx);
+        cx.update_global::<ui::screens::connections::ConnectionsState, _>(|state, _| {
+            state.connections = Some(vec![ui::screens::connections::Connection {
+                host_id: "ssh:dev".into(),
+                display_name: "dev box".into(),
+                ..Default::default()
+            }]);
+        });
+    });
+
+    fx.keys("cmd-,")?;
+    drain(&mut fx)?;
+    let page = fx
+        .read(|root, _| root.settings_page())
+        .context("settings page")?;
+    let hosts = page.read_with(&fx.cx, |page, _| page.hosts().to_vec());
+    ensure!(
+        hosts
+            == [
+                ("local".into(), "All settings".into()),
+                ("ssh:dev".into(), "dev box".into())
+            ],
+        "{hosts:?}"
+    );
+    ensure!(
+        proxy_sent(&bridge, &log)?.is_empty(),
+        "no remote read before a pick"
+    );
+    page.update(&mut fx.cx, |page, cx| {
+        page.select_section("Configuration", cx)
+    });
+    fx.cx.run_until_parked();
+    evidence(&mut fx, "host-filter-local-configuration")?;
+
+    page.update(&mut fx.cx, |page, cx| {
+        page.select_config_host("ssh:dev".into(), cx)
+    });
+    fx.wait("remote config", |fx| {
+        page.read_with(&fx.cx, |page, _| {
+            page.get("sandbox_mode") == "danger-full-access"
+        })
+    })?;
+    let read = &proxy_sent(&bridge, &log)?[0];
+    ensure!(
+        read["method"] == "config/read" && read["params"]["includeLayers"] == true,
+        "{read}"
+    );
+    fx.cx.run_until_parked();
+    evidence(&mut fx, "host-filter-remote-configuration")?;
+
+    page.update(&mut fx.cx, |page, cx| {
+        page.set("sandbox_mode", json!("read-only"), cx)
+    });
+    fx.wait("remote write", |_| {
+        proxy_sent(&bridge, &log)
+            .is_ok_and(|sent| sent.iter().any(|m| m["method"] == "config/value/write"))
+    })?;
+    let write = proxy_sent(&bridge, &log)?
+        .into_iter()
+        .find(|m| m["method"] == "config/value/write")
+        .context("remote write")?;
+    ensure!(
+        write["params"]["keyPath"] == "sandbox_mode" && write["params"]["value"] == "read-only",
+        "{write}"
+    );
+    drain(&mut fx)?;
+    ensure!(
+        !fx.sent()?
+            .iter()
+            .any(|m| m["method"] == "config/value/write"),
+        "the window's own host gets no write"
+    );
     Ok(())
 }
 

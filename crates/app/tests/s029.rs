@@ -45,8 +45,12 @@ fn port_tabs(fx: &Fx) -> Vec<(String, bool)> {
                     }
                     SidePanel::Console => "Terminal",
                     SidePanel::File(_) => "math.py",
+                    SidePanel::Image => "Image view",
                     SidePanel::SideChat(_) => "Side chat",
+                    SidePanel::Sources => "Sources",
                     SidePanel::Plan => "Plan",
+                    SidePanel::Subagents => "Subagents",
+                    SidePanel::Browser(_) | SidePanel::NewTab => "New tab",
                 };
                 (label.to_owned(), root.side_panel() == Some(*side))
             })

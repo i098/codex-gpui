@@ -14,11 +14,11 @@ use bridge::{
 };
 use gpui::{
     Action, AnimationExt as _, AnyView, App, AppContext as _, ClickEvent, ClipboardItem, Context,
-    Corners, CursorStyle, Div, Entity, FocusHandle, Font, FontFeatures, FontWeight, Global,
-    HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Render, ScrollHandle, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black, combine_highlights,
-    deferred, div, font, prelude::FluentBuilder as _, px, rgb,
+    Corners, CursorStyle, Div, Entity, ExternalDragPayload, FileDragPaths, FocusHandle, Font,
+    FontFeatures, FontWeight, Global, HighlightStyle, Hsla, InteractiveElement, IntoElement,
+    KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Render, ScrollHandle,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black,
+    combine_highlights, deferred, div, font, prelude::FluentBuilder as _, px, rgb,
 };
 use shapes::Decoration;
 use std::{
@@ -59,6 +59,8 @@ pub use preview::{PreviewContent, PreviewRequest, PreviewSource};
 #[path = "diff/pdf.rs"]
 mod pdf;
 
+#[path = "diff/artifact_annotations.rs"]
+mod artifact_annotations;
 #[path = "diff/comment_view.rs"]
 mod comment_view;
 #[path = "diff/comments.rs"]
@@ -119,6 +121,17 @@ const MAX_DIFF_LINE_UNITS: usize = 1_048_576;
 struct PanelWidth(Pixels);
 
 impl Global for PanelWidth {}
+
+/// The tab menu's `Move to left pane` (`true`) / `Move to right pane`: the side panel's
+/// side of the chat (the original's `contentSide`).
+// shortcut: kept for the session only, not per workspace; persist it when a restart must keep it.
+pub struct ContentLeft(pub bool);
+
+impl Global for ContentLeft {}
+
+pub fn content_left(cx: &App) -> bool {
+    cx.try_global::<ContentLeft>().is_some_and(|side| side.0)
+}
 
 /// Panel width for the current window, as the original clamps its stored width: at least
 /// `MIN_CHAT`, and the chat keeps `MIN_CHAT` beside it.
@@ -279,6 +292,9 @@ pub enum DiffRequest {
     },
     CommentsChanged(Vec<comments::Comment>),
     DismissModelComment(String),
+    /// `artifact.sendAnnotations`: send this batch of artifact annotations as its own turn
+    /// (the bundle's `artifact-direct-comment`); answer with `artifact_annotations_sent`.
+    SendAnnotations(Vec<comments::Comment>),
     /// Open this absolute path in the configured editor.
     Open(String),
 }
@@ -318,6 +334,8 @@ pub struct RepositoryChanges {
     pub hide_whitespace: bool,
     #[serde(default)]
     pub not_repository: bool,
+    #[serde(default)]
+    pub generated_paths: Vec<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -362,6 +380,7 @@ pub struct DiffPanel {
     active_file: usize,
     filter: controls::TextField,
     filter_focus: Option<FocusHandle>,
+    generated: controls::GeneratedFiles,
     scroll: ScrollHandle,
     standalone: bool,
     container_width: Option<Pixels>,
@@ -379,9 +398,12 @@ pub struct DiffPanel {
     content_generation: u64,
     rich_preview: bool,
     annotations: comment_view::Annotations,
+    artifacts: artifact_annotations::ArtifactAnnotations,
     context: context::State,
     full_view: Option<gpui::WeakEntity<Shell>>,
     viewed_files: serde_json::Map<String, serde_json::Value>,
+    /// `git-review-mode` is `last-turn-only`: the panel never asks git for changes.
+    last_turn_only: bool,
 }
 
 impl DiffPanel {
@@ -525,6 +547,7 @@ impl DiffPanel {
             active_file: 0,
             filter: Default::default(),
             filter_focus: None,
+            generated: Default::default(),
             scroll: ScrollHandle::new(),
             standalone: false,
             container_width: None,
@@ -539,9 +562,11 @@ impl DiffPanel {
             content_generation: 0,
             rich_preview: false,
             annotations: comment_view::Annotations::default(),
+            artifacts: Default::default(),
             context: context::State::default(),
             full_view: None,
             viewed_files: Default::default(),
+            last_turn_only: false,
         };
         panel
             .annotations
@@ -720,6 +745,7 @@ impl DiffPanel {
                 self.error = Some(error);
             }
         }
+        self.update_generated_paths();
         if self.source != DiffSource::LastTurn {
             self.show_repository();
         }
@@ -758,9 +784,12 @@ impl DiffPanel {
     }
 
     fn select_source(&mut self, source: DiffSource, cx: &mut Context<Self>) {
+        if self.last_turn_only && !matches!(source, DiffSource::LastTurn | DiffSource::Cloud) {
+            return;
+        }
         let previous = self.source;
         if previous == DiffSource::LastTurn && source != previous {
-            self.turn_files = std::mem::take(&mut self.files);
+            self.turn_files = self.unfiltered_files();
         }
         self.source = source;
         if source == DiffSource::LastTurn && source != previous {
@@ -928,6 +957,7 @@ impl DiffPanel {
                 .unwrap_or(self.files_expanded);
         }
         self.files = files;
+        self.hide_generated_files();
         self.refresh_jump();
         self.selection = None;
         self.selecting = false;
@@ -1044,6 +1074,17 @@ impl DiffPanel {
             }
             cx.stop_propagation();
             cx.notify();
+            return;
+        }
+        // A line comment card keeps its own Cmd+Enter.
+        if key.modifiers.platform
+            && key.key == "enter"
+            && !self.comment_draft().is_some_and(|editor| {
+                gpui::Focusable::focus_handle(editor.read(cx), cx).is_focused(window)
+            })
+            && self.artifact_modified_enter(window, cx)
+        {
+            cx.stop_propagation();
             return;
         }
         if key.modifiers.platform && key.key == "f" {
@@ -1879,6 +1920,16 @@ pub struct ActivateSideTab(pub usize);
 #[action(namespace = ui, no_json)]
 pub struct CloseSideTab(pub usize);
 
+/// The strip's and the titlebar's `New tab` button: opens the side panel's `New tab` page.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = ui, no_json)]
+pub struct OpenNewSideTab;
+
+/// A tab menu's `Move to bottom pane` (the interactive terminal's tab): index into the strip.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = ui, no_json)]
+pub struct MoveSideTabToBottom(pub usize);
+
 fn side_tab_icon(name: &'static str, index: usize, color: Hsla) -> gpui::AnyElement {
     let icon = icon(name, 16., color);
     if name != "sidebar-cmd-spinner" {
@@ -1908,6 +1959,67 @@ impl SplitScreen {
                 tab.icon = icon;
                 cx.notify();
             }
+        }
+    }
+
+    /// A browser tab's page title changed: its strip label follows.
+    pub fn set_tab_label(&mut self, index: usize, label: SharedString, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get_mut(index)
+            && tab.label != label
+        {
+            tab.label = label;
+            cx.notify();
+        }
+    }
+
+    /// Right-click on tab `ix` (`tab-context-menu`): `Move to left pane` / `Move to right pane`
+    /// in split view (the pane the panel is in disabled), and `Move to bottom pane` for the
+    /// interactive terminal.
+    fn open_tab_menu(
+        &mut self,
+        ix: usize,
+        position: gpui::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::screens::thread::view::menu::{ContextMenu, Item};
+        let split = self.layout == WorkspaceLayout::Split;
+        let left = content_left(cx);
+        let mut items = vec![
+            Item::new("move-left", "Move to left pane", split && !left),
+            Item::new("move-right", "Move to right pane", split && left),
+        ];
+        if self.tabs[ix].icon == "terminal-interactive" {
+            items.push(Item::new("move-bottom", "Move to bottom pane", true));
+        }
+        self.menu = Some(ContextMenu::open(
+            items,
+            ix.to_string(),
+            position,
+            window,
+            cx,
+        ));
+        cx.notify();
+    }
+
+    fn activate_tab_menu(
+        &mut self,
+        id: &'static str,
+        tab: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match id {
+            "move-left" | "move-right" => {
+                cx.set_global(ContentLeft(id == "move-left"));
+                window.refresh();
+            }
+            "move-bottom" => {
+                if let Ok(ix) = tab.parse() {
+                    window.dispatch_action(Box::new(MoveSideTabToBottom(ix)), cx);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1978,6 +2090,13 @@ impl SplitScreen {
                 .pr(px(7.))
                 // `no-drag`: the titlebar behind must not start a window move.
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        this.open_tab_menu(ix, event.position, window, cx);
+                        cx.stop_propagation();
+                    }),
+                )
                 .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                     this.hovered = hovered.then_some(ix);
                     cx.notify();
@@ -2110,9 +2229,13 @@ impl SplitScreen {
                     .child(tab(ix, t, cx))
             }))
             .child(
-                div()
-                    .pl(px(6.))
-                    .child(strip_button("diff-new-tab", t.text_tertiary, None)),
+                div().pl(px(6.)).child(
+                    strip_button("diff-new-tab", t.text_tertiary, None)
+                        .id("strip-new-tab")
+                        .role(gpui::Role::Button)
+                        .aria_label("New tab")
+                        .on_click(dispatch_action(OpenNewSideTab)),
+                ),
             )
             .child(self.layout_controls(t))
     }
@@ -2291,22 +2414,26 @@ impl Render for SplitMain {
             .clone()
             .tab_stop(false);
         let t = cx.theme();
+        let left = content_left(cx);
+        let thread = div().flex_1().min_w_0().child(self.thread.clone());
+        let panel = div()
+            .w(width)
+            .flex_none()
+            .track_focus(&self.focus)
+            .map(|d| if left { d.border_r_1() } else { d.border_l_1() })
+            // The panel content's `[contain:layout_paint]`.
+            .snap_origin()
+            .border_color(over(t.border, t.surface))
+            .child(self.panel.clone());
         div()
             .size_full()
             .relative()
             .flex()
-            .child(div().flex_1().min_w_0().child(self.thread.clone()))
-            .child(
-                div()
-                    .w(width)
-                    .flex_none()
-                    .track_focus(&self.focus)
-                    .border_l_1()
-                    // The panel content's `[contain:layout_paint]`.
-                    .snap_origin()
-                    .border_color(over(t.border, t.surface))
-                    .child(self.panel.clone()),
-            )
+            .children(if left {
+                [panel, thread]
+            } else {
+                [thread, panel]
+            })
             .child(
                 div()
                     .id("panel-resize")
@@ -2315,14 +2442,24 @@ impl Render for SplitMain {
                     .absolute()
                     .top_0()
                     .bottom_0()
-                    .right(width - px(if summary_open { 8. } else { 16. }))
+                    .map(|d| {
+                        if left {
+                            d.left(width - px(8.))
+                        } else {
+                            d.right(width - px(if summary_open { 8. } else { 16. }))
+                        }
+                    })
                     .w(px(16.))
                     .cursor(CursorStyle::ResizeLeftRight)
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, e: &MouseDownEvent, window, cx| {
                             window.focus(&resizer_focus, cx);
-                            this.drag_anchor = Some(width + e.position.x);
+                            this.drag_anchor = Some(if left {
+                                e.position.x - width
+                            } else {
+                                width + e.position.x
+                            });
                             cx.stop_propagation();
                             cx.notify();
                         }),
@@ -2332,9 +2469,8 @@ impl Render for SplitMain {
                 let released = cx.entity().downgrade();
                 d.child(drag_layer(
                     move |x, window, cx| {
-                        cx.set_global(PanelWidth(
-                            (anchor - x).clamp(px(MIN_CHAT), panel_max(window)),
-                        ));
+                        let width = if left { x - anchor } else { anchor - x };
+                        cx.set_global(PanelWidth(width.clamp(px(MIN_CHAT), panel_max(window))));
                     },
                     move |cx| {
                         released
@@ -2361,6 +2497,8 @@ pub struct SplitScreen {
     hovered: Option<usize>,
     layout: WorkspaceLayout,
     panel_focus: FocusHandle,
+    /// The open tab menu: its subject is the tab's strip index.
+    menu: Option<crate::screens::thread::view::menu::ContextMenu>,
 }
 
 impl gpui::Focusable for SplitScreen {
@@ -2372,17 +2510,20 @@ impl gpui::Focusable for SplitScreen {
 impl Render for SplitScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The panel ends at the main panel's right edge, 4 px
-        // (`--app-shell-page-inline-end-inset`) from the window's.
+        // (`--app-shell-page-inline-end-inset`) from the window's; moved to the left pane, it
+        // starts at the main panel's left edge and the thread header follows it.
+        let main_left = if self.shell.read(cx).sidebar_open {
+            self.shell.read(cx).sidebar_width
+        } else {
+            crate::RAIL_WIDTH
+        };
+        let content_left = self.layout == WorkspaceLayout::Split && content_left(cx);
         let left = match self.layout {
             WorkspaceLayout::Chat => None,
-            WorkspaceLayout::Split => {
+            WorkspaceLayout::Split if !content_left => {
                 Some(window.viewport_size().width - px(4.) - panel_width(window, cx))
             }
-            WorkspaceLayout::Full => Some(if self.shell.read(cx).sidebar_open {
-                self.shell.read(cx).sidebar_width
-            } else {
-                crate::RAIL_WIDTH
-            }),
+            WorkspaceLayout::Split | WorkspaceLayout::Full => Some(main_left),
         };
         let open = self.shell.read(cx).sidebar_open;
         let chat = self.layout == WorkspaceLayout::Chat;
@@ -2406,6 +2547,34 @@ impl Render for SplitScreen {
         } else {
             TITLEBAR_LAYER_X
         };
+        let panel_end = main_left + panel_width(window, cx);
+        let (header_x, header_width) = if content_left {
+            (
+                panel_end,
+                Some(window.viewport_size().width - px(4.) - panel_end),
+            )
+        } else {
+            (header_left, left.map(|left| left - header_left))
+        };
+        // Over the leading titlebar controls the strip starts where the header would.
+        let left = left.map(|left| {
+            if content_left {
+                left.max(header_left)
+            } else {
+                left
+            }
+        });
+        let menu = self.menu.as_ref().map(|menu| {
+            menu.overlay(
+                "side-tab-menu",
+                "Tab actions",
+                |this: &mut Self| &mut this.menu,
+                Self::activate_tab_menu,
+                window,
+                cx,
+            )
+            .into_any_element()
+        });
         div()
             .size_full()
             .relative()
@@ -2417,11 +2586,11 @@ impl Render for SplitScreen {
                     open.then_some(sidebar_width),
                     self.thread
                         .update(cx, |view, cx| view.titlebar_header(left.is_some(), cx))
-                        .when_some(left, |h, left| h.w(left - header_left))
+                        .when_some(header_width, |h, width| h.w(width))
                         .when(compact, |h| {
                             h.w(window.viewport_size().width - header_left - COMPACT_CONTROLS_WIDTH)
                         }),
-                    header_left,
+                    header_x,
                 ))
             })
             // Without a panel the shell's `New tab` group follows the header behind a divider.
@@ -2477,7 +2646,13 @@ impl Render for SplitScreen {
                                 .absolute()
                                 .top_0()
                                 .left(left - TITLEBAR_LAYER_X)
-                                .right_0(),
+                                .map(|strip| {
+                                    if content_left {
+                                        strip.w(panel_end - left)
+                                    } else {
+                                        strip.right_0()
+                                    }
+                                }),
                         ),
                 )
             })
@@ -2510,6 +2685,7 @@ impl Render for SplitScreen {
                     )
                 },
             )
+            .children(menu)
     }
 }
 
@@ -2630,6 +2806,7 @@ pub fn with_side_tabs(
             hovered: None,
             layout,
             panel_focus,
+            menu: None,
         }
     })
 }
@@ -2695,6 +2872,9 @@ pub struct FileView {
     open_menu: Option<OpenMenu>,
     open_targets: Vec<context::OpenTarget>,
     open_at: gpui::Point<Pixels>,
+    local_controls: bool,
+    /// An image or PDF ([`Self::previews`]) shown instead of text lines.
+    media: Option<preview::FileMedia>,
 }
 
 impl FileView {
@@ -2726,6 +2906,8 @@ impl FileView {
             open_menu: None,
             open_targets: Vec::new(),
             open_at: gpui::Point::default(),
+            local_controls: true,
+            media: None,
         }
     }
 
@@ -2742,6 +2924,11 @@ impl FileView {
 
     pub fn name(&self) -> SharedString {
         self.crumbs.last().cloned().unwrap_or_default()
+    }
+
+    /// Hide controls that use the local workspace.
+    pub fn set_local_controls(&mut self, visible: bool) {
+        self.local_controls = visible;
     }
 
     pub fn is_preview(&self) -> bool {
@@ -2913,136 +3100,139 @@ impl FileView {
                         .children(crumbs),
                 ),
             )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(6.))
-                    .when(self.is_markdown(), |d| {
-                        d.child(
-                            capsule(t, clamped)
-                                .id("file-markdown-mode")
-                                .role(gpui::Role::Button)
-                                .aria_label(if self.show_source {
-                                    "View preview"
-                                } else {
-                                    "View source"
-                                })
-                                .focusable()
-                                .tab_index(0)
-                                .focus_visible(crate::composer::menu::trigger_focus)
-                                .px(px(10.))
-                                .cursor_pointer()
-                                .child(text(
-                                    if self.show_source {
+            .when(self.local_controls, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .gap(px(6.))
+                        .when(self.is_markdown(), |d| {
+                            d.child(
+                                capsule(t, clamped)
+                                    .id("file-markdown-mode")
+                                    .role(gpui::Role::Button)
+                                    .aria_label(if self.show_source {
                                         "View preview"
                                     } else {
                                         "View source"
-                                    },
-                                    13.,
-                                    18.,
-                                    430.,
-                                    t.text,
-                                ))
-                                .on_click(cx.listener(|view, _, _, cx| {
-                                    view.toggle_markdown_source(cx);
-                                    cx.stop_propagation();
-                                })),
-                        )
+                                    })
+                                    .focusable()
+                                    .tab_index(0)
+                                    .focus_visible(crate::composer::menu::trigger_focus)
+                                    .px(px(10.))
+                                    .cursor_pointer()
+                                    .child(text(
+                                        if self.show_source {
+                                            "View preview"
+                                        } else {
+                                            "View source"
+                                        },
+                                        13.,
+                                        18.,
+                                        430.,
+                                        t.text,
+                                    ))
+                                    .on_click(cx.listener(|view, _, _, cx| {
+                                        view.toggle_markdown_source(cx);
+                                        cx.stop_propagation();
+                                    })),
+                            )
+                            .child(
+                                capsule(t, clamped)
+                                    .w(px(32.))
+                                    .id("file-copy-markdown")
+                                    .role(gpui::Role::Button)
+                                    .aria_label("Copy Markdown")
+                                    .focusable()
+                                    .tab_index(0)
+                                    .rounded_full()
+                                    .focus_visible(crate::composer::menu::trigger_focus)
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .child(icon("thread-copy", 16., t.text))
+                                    .on_click(cx.listener(|view, _, _, cx| {
+                                        if let Some(Ok(source)) = &view.contents {
+                                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                                source.clone(),
+                                            ));
+                                        }
+                                        cx.stop_propagation();
+                                    })),
+                            )
+                        })
                         .child(
                             capsule(t, clamped)
                                 .w(px(32.))
-                                .id("file-copy-markdown")
+                                .id("file-search")
                                 .role(gpui::Role::Button)
-                                .aria_label("Copy Markdown")
+                                .aria_label("Search in files")
                                 .focusable()
                                 .tab_index(0)
                                 .rounded_full()
                                 .focus_visible(crate::composer::menu::trigger_focus)
                                 .justify_center()
-                                .cursor_pointer()
-                                .child(icon("thread-copy", 16., t.text))
-                                .on_click(cx.listener(|view, _, _, cx| {
-                                    if let Some(Ok(source)) = &view.contents {
-                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                            source.clone(),
-                                        ));
-                                    }
-                                    cx.stop_propagation();
-                                })),
-                        )
-                    })
-                    .child(
-                        capsule(t, clamped)
-                            .w(px(32.))
-                            .id("file-search")
-                            .role(gpui::Role::Button)
-                            .aria_label("Search in files")
-                            .focusable()
-                            .tab_index(0)
-                            .rounded_full()
-                            .focus_visible(crate::composer::menu::trigger_focus)
-                            .justify_center()
-                            .on_click(
-                                cx.listener(|view, _, window, cx| {
+                                .on_click(cx.listener(|view, _, window, cx| {
                                     view.focus_file_search(window, cx)
-                                }),
-                            )
-                            .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
-                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                    view.focus_file_search(window, cx);
+                                }))
+                                .on_key_down(cx.listener(
+                                    |view, event: &KeyDownEvent, window, cx| {
+                                        if matches!(event.keystroke.key.as_str(), "enter" | "space")
+                                        {
+                                            view.focus_file_search(window, cx);
+                                            cx.stop_propagation();
+                                        }
+                                    },
+                                ))
+                                .child(icon("diff-jump-to-file", 16., t.text).runtime())
+                                // The `backdrop-filter` button is its own cc layer: its icon
+                                // rasterizes on that layer's tiles.
+                                .layer(),
+                        )
+                        .child(self.file_tree_button(t, clamped, cx))
+                        .child(
+                            capsule(t, clamped)
+                                .p_0()
+                                .id("file-open-in")
+                                .role(gpui::Role::Button)
+                                .aria_label("Open in")
+                                .focusable()
+                                .tab_index(0)
+                                .focus_visible(crate::composer::menu::trigger_focus)
+                                .cursor_pointer()
+                                .on_click(cx.listener(|view, event: &gpui::ClickEvent, _, cx| {
+                                    view.request_open_targets(event.position(), cx);
                                     cx.stop_propagation();
-                                }
-                            }))
-                            .child(icon("diff-jump-to-file", 16., t.text).runtime())
-                            // The `backdrop-filter` button is its own cc layer: its icon
-                            // rasterizes on that layer's tiles.
-                            .layer(),
-                    )
-                    .child(self.file_tree_button(t, clamped, cx))
-                    .child(
-                        capsule(t, clamped)
-                            .p_0()
-                            .id("file-open-in")
-                            .role(gpui::Role::Button)
-                            .aria_label("Open in")
-                            .focusable()
-                            .tab_index(0)
-                            .focus_visible(crate::composer::menu::trigger_focus)
-                            .cursor_pointer()
-                            .on_click(cx.listener(|view, event: &gpui::ClickEvent, _, cx| {
-                                view.request_open_targets(event.position(), cx);
-                                cx.stop_propagation();
-                            }))
-                            .child(
-                                div()
-                                    .h(px(32.))
-                                    .pl(px(9.))
-                                    .flex()
-                                    .items_center()
-                                    .child(text("Open", 13., 18., 430., t.text))
-                                    .child(
-                                        div()
-                                            .ml(px(4.))
-                                            .w(px(23.))
-                                            .h_full()
-                                            .flex()
-                                            .items_center()
-                                            .pl(px(2.))
-                                            .child(
-                                                menu::backdrop_glyph(
-                                                    include_bytes!(
-                                                        "../../../assets/icons/chevron-down.svg"
-                                                    ),
-                                                    "navigation-open-chevron",
-                                                    t.text,
-                                                    128,
-                                                )
-                                                .size(px(14.)),
-                                            ),
-                                    ),
-                            ),
-                    ),
-            )
+                                }))
+                                .child(
+                                    div()
+                                        .h(px(32.))
+                                        .pl(px(9.))
+                                        .flex()
+                                        .items_center()
+                                        .child(text("Open", 13., 18., 430., t.text))
+                                        .child(
+                                            div()
+                                                .ml(px(4.))
+                                                .w(px(23.))
+                                                .h_full()
+                                                .flex()
+                                                .items_center()
+                                                .pl(px(2.))
+                                                .child(
+                                                    menu::backdrop_glyph(
+                                                        include_bytes!(
+                                                            "../../../assets/icons/chevron-down.svg"
+                                                        ),
+                                                        "navigation-open-chevron",
+                                                        t.text,
+                                                        128,
+                                                    )
+                                                    .size(px(14.)),
+                                                ),
+                                        ),
+                                ),
+                        ),
+                )
+            })
     }
 
     fn file_content(
@@ -3164,7 +3354,11 @@ impl Render for FileView {
         let t = cx.theme().clone();
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let blame = self.active_blame(cx);
-        let body = self.file_content(&t, blame, window, cx);
+        self.request_media(window, cx);
+        let body = match self.media_view(window, cx) {
+            Some(media) => media,
+            None => self.file_content(&t, blame, window, cx),
+        };
         div()
             .id("file-view")
             .relative()
@@ -3329,6 +3523,17 @@ pub fn stats(added: usize, removed: usize, size: f32, t: &Theme) -> Div {
         .child(tracked(removed, '-', t.git_deleted))
 }
 
+pub(super) fn file_drag_payload(path: &str) -> Option<ExternalDragPayload> {
+    let path = std::path::PathBuf::from(path);
+    path.is_file()
+        .then(|| ExternalDragPayload::Files(FileDragPaths::new([(path, false)])))
+}
+
+pub(super) fn draggable_file_row(row: Stateful<Div>, path: String) -> Stateful<Div> {
+    row.on_drag(path, |_, _, _, cx| cx.new(|_| crate::EmptyMain))
+        .external_drag_payload(|path: &String, _, _| file_drag_payload(path))
+}
+
 fn file_header(
     i: usize,
     file: &FileDiff,
@@ -3337,10 +3542,13 @@ fn file_header(
     cx: &Context<DiffPanel>,
 ) -> Stateful<Div> {
     if panel.standalone {
-        return panel.standalone_file_header(i, file, t, cx);
+        return draggable_file_row(
+            panel.standalone_file_header(i, file, t, cx),
+            file.path_key.clone(),
+        );
     }
     let small = |name| round_icon(name, 20., t);
-    div()
+    let header = div()
         .id(("diff-file", i))
         .flex_none()
         .h(px(38.))
@@ -3450,7 +3658,8 @@ fn file_header(
                             },
                         )),
                 ),
-        )
+        );
+    draggable_file_row(header, file.path_key.clone())
 }
 
 fn line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
@@ -4154,6 +4363,29 @@ fn relative(base: &str, path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_drag_payload_offers_only_existing_files() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let file = directory.path().join("dragged.txt");
+        std::fs::write(&file, "drag me").expect("create drag file");
+
+        assert_eq!(
+            file_drag_payload(file.to_str().expect("UTF-8 path")),
+            Some(ExternalDragPayload::Files(FileDragPaths::new([(
+                file.clone(),
+                false,
+            )])))
+        );
+        assert_eq!(
+            file_drag_payload(directory.path().to_str().expect("UTF-8 path")),
+            None
+        );
+        assert_eq!(
+            file_drag_payload(directory.path().join("missing").to_str().unwrap()),
+            None
+        );
+    }
 
     #[test]
     fn aggregate_changes_do_not_allow_staging() {
