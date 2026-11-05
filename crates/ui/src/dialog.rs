@@ -299,10 +299,7 @@ struct GitForm {
     draft: bool,
     commit_changes: bool,
     open_browser: bool,
-<<<<<<< HEAD
     workspaces: Vec<String>,
-=======
->>>>>>> origin/fm/cgx-b-panel-git-11
 }
 
 /// The `Chat memories` switches. `Use memories` is fixed once the chat has started.
@@ -310,8 +307,6 @@ struct ChatMemories {
     started: bool,
     use_memories: bool,
     generate: bool,
-<<<<<<< HEAD
-=======
 }
 
 /// The `Hook stats` runs of one turn; each `<details>` row opens on its own.
@@ -319,7 +314,6 @@ struct HookStatsForm {
     stats: crate::screens::thread::view::HookStats,
     open: Vec<bool>,
     rows: Vec<FocusHandle>,
->>>>>>> origin/fm/cgx-b-panel-git-11
 }
 
 pub struct Dialog {
@@ -2370,7 +2364,6 @@ impl Dialog {
             cx.stop_propagation();
             return;
         }
-<<<<<<< HEAD
         if self.kind == Kind::Handoff
             && self.selected == 1
             && matches!(k.key.as_str(), "up" | "down")
@@ -2390,10 +2383,10 @@ impl Dialog {
                 cx.notify();
             }
             cx.stop_propagation();
-=======
+            return;
+        }
         if self.kind == Kind::HookStats {
             self.hook_stats_key(e, window, cx);
->>>>>>> origin/fm/cgx-b-panel-git-11
             return;
         }
         if self.kind == Kind::WritingStyle {
