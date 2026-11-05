@@ -424,6 +424,8 @@ const DIALOG_HIDDEN: &[&str] = &[
     "navigateBrowserBack",
     "navigateBrowserForward",
     "focusBrowserAddressBar",
+    "openSideChat",
+    "copyPageLink",
     "temporaryChat",
     "copyLastCodeBlock",
     "openReviewTab",
@@ -433,6 +435,9 @@ const DIALOG_HIDDEN: &[&str] = &[
     "switchToMode1",
     "switchToMode2",
     "switchToMode3",
+    "navigateBrowserBack",
+    "navigateBrowserForward",
+    "focusBrowserAddressBar",
 ];
 
 pub type Shortcut = (&'static str, &'static Command, Vec<String>);

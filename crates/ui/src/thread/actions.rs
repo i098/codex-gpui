@@ -404,6 +404,12 @@ fn response_html_tag(tag: pulldown_cmark::TagEnd) -> Option<&'static str> {
     })
 }
 
+/// `environmentAction1..9` and the header's run menu: run the selected local environment's
+/// Nth action (0-based) in a terminal.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = thread, no_json)]
+pub struct RunEnvironmentAction(pub usize);
+
 /// `Fork chat from here` under a turn: a new chat with the thread up to that turn (its id).
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = thread, no_json)]
@@ -526,6 +532,7 @@ impl TurnFocus {
 /// `sent_at` is the turn's `Wednesday 9:54 PM`, shown beside the actions on hover or focus.
 /// `rate` opens the `Rate response` menu. `menu` is the open More actions menu; `toggle_menu`
 /// opens or closes it and `hover_menu` reports the pointer over its trigger.
+/// `hooks` adds `Hook stats` for a turn that ran hooks.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn action_row(
     last: bool,
@@ -536,12 +543,12 @@ pub(super) fn action_row(
     rate: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     toggle_menu: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     hover_menu: impl Fn(&bool, &mut Window, &mut App) + 'static,
+    hooks: Option<super::HookStats>,
     focus: &TurnFocus,
     t: &Theme,
 ) -> Div {
     let engaged = focus.engaged || menu.is_some();
-    let action = |name: &'static str| {
-        let color = t.text_tertiary;
+    let action = |name: &'static str, color: gpui::Hsla| {
         // `Icon` folds its own opacity into the color, so the hover sets the color.
         let icon = if last || engaged {
             icon(name, 16., color)
@@ -567,7 +574,7 @@ pub(super) fn action_row(
         .items_center()
         .gap(px(2.))
         .child(tooltip(
-            action("thread-copy")
+            action("thread-copy", t.text_tertiary)
                 .id("copy-response")
                 .aria_label("Copy")
                 .role(gpui::Role::Button)
@@ -587,7 +594,7 @@ pub(super) fn action_row(
             Side::Top,
         ))
         .child(tooltip(
-            action("thread-rate")
+            action("thread-rate", t.text_tertiary)
                 .id("rate-response")
                 .aria_label("Rate response")
                 .role(gpui::Role::Button)
@@ -597,7 +604,7 @@ pub(super) fn action_row(
             Side::Top,
         ))
         .child(tooltip(
-            action("thread-read-aloud")
+            action("thread-read-aloud", t.text_tertiary)
                 .id("read-response")
                 .aria_label("Read aloud")
                 .role(gpui::Role::Button)
@@ -621,7 +628,7 @@ pub(super) fn action_row(
                 .on_hover(hover_menu)
                 .children(menu)
                 .child(tooltip(
-                    action("diff-more")
+                    action("diff-more", t.text_tertiary)
                         .id("more-actions")
                         .aria_label("More actions")
                         .role(gpui::Role::Button)
@@ -632,6 +639,27 @@ pub(super) fn action_row(
                     Side::Top,
                 )),
         )
+        .children(hooks.map(|stats| {
+            let color = if stats.warns() {
+                t.text_warning
+            } else {
+                t.text_tertiary
+            };
+            tooltip(
+                action("settings-hooks", color)
+                    .id("hook-stats")
+                    .debug_selector(|| "hook-stats".into())
+                    .aria_label("Hook stats")
+                    .role(gpui::Role::Button)
+                    .cursor_pointer()
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(Box::new(super::OpenHookStats(stats.clone())), cx)
+                    }),
+                "Hook stats",
+                None,
+                Side::Top,
+            )
+        }))
         .children(sent_at.map(|time| {
             let mut stamp = div()
                 .ml(px(6.))

@@ -4378,8 +4378,12 @@ impl Window {
         let outer = layer
             .is_some_and(|(_, s)| s.top_layer)
             .then(|| std::mem::take(&mut self.element_layers));
-        // Skia's `SkPaint::setAlphaf`: rounded to a byte.
-        let alpha = (opacity.clamp(0., 1.) * 255.).round() as u8;
+        // Skia's `SkPaint::setAlphaf`: rounded to a byte. An ancestor's opacity (a cc effect
+        // node) still applies to a top layer's content.
+        let alpha = outer.iter().flatten().fold(
+            (opacity.clamp(0., 1.) * 255.).round() as u8,
+            |alpha, &(_, outer)| ((u32::from(alpha) * u32::from(outer) + 127) / 255) as u8,
+        );
         let result = self.push_layer(alpha, |window| {
             if layer.is_some_and(|(_, style)| !style.saved_layer) {
                 window.composited_layer_id = window.element_layers.last().map(|&(id, _)| id);

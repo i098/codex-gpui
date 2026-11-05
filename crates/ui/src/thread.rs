@@ -24,9 +24,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bridge::Event;
 use bridge::types::{
-    AgentMessageDeltaNotification, CommandAction, FileUpdateChange, ItemNotification,
-    MemoryCitation, Thread, ThreadItem, Turn, TurnNotification, TurnStatus, UserInput,
-    WebSearchAction,
+    AgentMessageDeltaNotification, CommandAction, FileUpdateChange, HookNotification, HookRun,
+    ItemNotification, MemoryCitation, Thread, ThreadItem, Turn, TurnNotification, TurnStatus,
+    UserInput, WebSearchAction,
 };
 use gpui::{
     Action, AnyView, App, Bounds, ClipboardItem, Context, Corners, Div, FontWeight, Hsla,
@@ -50,6 +50,8 @@ mod actions;
 mod context;
 #[path = "thread/header.rs"]
 mod header;
+#[path = "thread/hook_stats.rs"]
+pub(crate) mod hook_stats;
 #[path = "thread/items.rs"]
 mod items;
 #[path = "thread/markdown.rs"]
@@ -65,8 +67,13 @@ pub use items::{ImageView, OpenImage};
 
 pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
-pub use actions::{EditMessage, ForkThread, PatchTurn, RevertTurn, SubmitRating, ThreadPressed};
+pub use actions::{
+    EditMessage, ForkThread, PatchTurn, RevertTurn, RunEnvironmentAction, SubmitRating,
+    ThreadPressed,
+};
+
 use actions::{TurnFocus, action_row};
+pub use hook_stats::{HookStats, OpenHookStats};
 pub enum GitAction {
     Refresh,
     OpenForm,
@@ -182,6 +189,10 @@ pub struct ThreadView {
     branch: Option<SharedString>,
     /// Remote environment link (`thread/environment/connected` / `disconnected`).
     environment_connected: Option<bool>,
+    /// Names of the selected local environment's run actions (`Run` in the header).
+    environment_actions: Vec<SharedString>,
+    /// The header's run-actions menu is open.
+    run_menu: bool,
     /// Workspace folder; its name heads the summary panel.
     cwd: String,
     /// The `Toggle summary` panel is open.
@@ -245,6 +256,8 @@ pub struct ThreadView {
     manual_compacted: HashSet<String>,
     /// The latest `turn/plan/updated` steps of each turn: `(step, status)`.
     todo_plans: HashMap<String, Vec<(String, String)>>,
+    /// Each turn's `hook/started` and `hook/completed` runs.
+    hook_runs: HashMap<String, Vec<HookRun>>,
     patch_output: HashMap<String, String>,
     /// A turn's `Undo`, `View changes`, copy and fork focus handles. They belong to the view,
     /// not to its place in the element tree: the view moves when a side panel opens, and a
@@ -729,6 +742,8 @@ impl ThreadView {
             thread_id: thread.id,
             branch: None,
             environment_connected: None,
+            environment_actions: Vec::new(),
+            run_menu: false,
             cwd: thread.cwd,
             summary_open: false,
             projectless: false,
@@ -758,6 +773,7 @@ impl ThreadView {
             manual_compactions: 0,
             manual_compacted: HashSet::new(),
             todo_plans: HashMap::new(),
+            hook_runs: HashMap::new(),
             patch_output: HashMap::new(),
             turn_focus: RefCell::default(),
             mcp_images: RefCell::default(),
@@ -1951,10 +1967,21 @@ impl ThreadView {
                     aggregated_output.get_or_insert_default().push_str(stdin);
                 }
             }
+            "hook/started" | "hook/completed" => {
+                let Ok(n) = serde_json::from_value::<HookNotification>(params.clone()) else {
+                    return;
+                };
+                hook_stats::upsert(self.hook_runs.entry(n.turn_id).or_default(), n.run);
+            }
             "turn/started" | "turn/completed" => {
                 let Ok(mut n) = serde_json::from_value::<TurnNotification>(params.clone()) else {
                     return;
                 };
+                if let Some(root) = params["turn"]["rootTurnId"].as_str()
+                    && root != n.turn.id
+                {
+                    n.turn.interrupt_id = Some(std::mem::replace(&mut n.turn.id, root.into()));
+                }
                 if n.turn.status == TurnStatus::InProgress {
                     self.running_since
                         .entry(n.turn.id.clone())
@@ -1970,6 +1997,7 @@ impl ThreadView {
                         turn.completed_at = n.turn.completed_at;
                         turn.duration_ms = n.turn.duration_ms;
                         turn.error = n.turn.error;
+                        turn.interrupt_id = n.turn.interrupt_id.or(turn.interrupt_id.take());
                         if turn.items.is_empty() {
                             turn.items = n.turn.items;
                             turn.items.iter_mut().for_each(cache_automation_result);
@@ -2022,6 +2050,10 @@ impl ThreadView {
                 let Some(turn) = self.turns.iter_mut().find(|t| t.id == n.turn_id) else {
                     return;
                 };
+                // A review's sub-turn forwards its internal prompt; the CLI hides it too.
+                if turn.interrupt_id.is_some() && matches!(n.item, ThreadItem::UserMessage { .. }) {
+                    return;
+                }
                 cache_automation_result(&mut n.item);
                 let id = item_id(&n.item).map(str::to_owned);
                 if let (ThreadItem::Reasoning { id, .. }, now) =
@@ -2235,12 +2267,16 @@ impl ThreadView {
         &self,
         turn: &Turn,
         last: bool,
+        separator: Option<i64>,
         window: &mut Window,
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> Div {
         let group = SharedString::from(format!("turn-{}", turn.id));
         let mut col = div().group(group.clone()).flex().flex_col();
+        if let Some(at) = separator {
+            col = col.child(self.timestamp(at, window, t));
+        }
         let sent_at = turn.started_at.and_then(|at| {
             chrono::DateTime::from_timestamp(at + self.clock.utc_offset, 0)
                 .map(|at| at.format("%A %-I:%M %p").to_string())
@@ -2267,9 +2303,6 @@ impl ThreadView {
             _ => None,
         });
         if let Some((item, user, content)) = user {
-            if let Some(started) = turn.started_at {
-                col = col.child(self.timestamp(started, window, t));
-            }
             col = col.child(actions::UserMessage {
                 id: format!("user-message-{}", turn.id).into(),
                 message: user.into(),
@@ -2466,9 +2499,13 @@ impl ThreadView {
             let hover = cx.listener(|view, hovered: &bool, _, _| {
                 view.turn_menu_trigger_hovered = *hovered;
             });
+            let hooks = self
+                .hook_runs
+                .get(&turn.id)
+                .and_then(|runs| HookStats::new(runs));
             return col.when(!self.embedded, |col| {
                 col.child(action_row(
-                    last, &group, answer, sent_at, menu, rate, toggle, hover, &focus, t,
+                    last, &group, answer, sent_at, menu, rate, toggle, hover, hooks, &focus, t,
                 ))
             });
         }
@@ -2692,11 +2729,10 @@ impl ThreadView {
             ))
     }
 
-    /// `Yesterday 9:54 PM` above a turn's user message.
+    /// `Yesterday 9:54 PM` above a turn the original marks with a timestamp separator.
     fn timestamp(&self, at: i64, window: &Window, t: &Theme) -> Div {
+        // The joining text is the `<time>` text's (400), not the bold day span's.
         let (day, time) = day_and_time(at, self.clock.now(), self.clock.utc_offset);
-        // The space is the `<time>` text's (400), not the bold day span's.
-        let time = format!(" {time}");
         div()
             .flex()
             .justify_center()
@@ -2779,6 +2815,7 @@ impl Render for ThreadView {
         let following_bottom = offset <= -self.scroll.max_offset().y + px(1.);
         let laid_out = self.laid_out.borrow();
         markdown::set_line_width(laid_out.width);
+        let separators = separators(&self.turns, self.clock.now());
         let turns: Vec<Div> = self
             .turns
             .iter()
@@ -2804,7 +2841,7 @@ impl Render for ThreadView {
                         } else {
                             drop(errors);
                             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                self.turn(turn, i + 1 == n, window, &t, cx)
+                                self.turn(turn, i + 1 == n, separators[i], window, &t, cx)
                             })) {
                                 Ok(body) => body
                                     .children(self.turn_errors(turn, window, cx))
@@ -3354,16 +3391,57 @@ fn duration(secs: i64) -> String {
     }
 }
 
-/// (`Today` | `Yesterday` | `Oct 14`, `9:54 PM`) of a unix time in local time.
+/// Per turn, the time of the original's timestamp separator (`timestamps.js`): the first send
+/// (`started_at`) or final answer (`completed_at`) that is the thread's first send and over an
+/// hour old, or comes over an hour (send) or ten minutes (answer) after the previous answer.
+fn separators(turns: &[Turn], now: i64) -> Vec<Option<i64>> {
+    let (mut sent, mut answered_at) = (false, None);
+    turns
+        .iter()
+        .map(|turn| {
+            let has = |answer: bool| {
+                turn.items.iter().any(|item| match item {
+                    ThreadItem::UserMessage { .. } => !answer,
+                    ThreadItem::AgentMessage { .. } => answer,
+                    _ => false,
+                })
+            };
+            let mut separator = None;
+            for (user, at) in [(true, turn.started_at), (false, turn.completed_at)] {
+                if !has(!user) {
+                    continue;
+                }
+                let gap = if user { 3_600 } else { 600 };
+                if separator.is_none()
+                    && let Some(at) = at
+                    && ((user && !sent && now.saturating_sub(at) > 3_600)
+                        || answered_at.is_some_and(|answered| at.saturating_sub(answered) > gap))
+                {
+                    separator = Some(at);
+                }
+                sent |= user;
+                answered_at = if user { None } else { at };
+            }
+            separator
+        })
+        .collect()
+}
+
+/// (`Today` | `Yesterday` | `Wednesday` | `Wed, Oct 14` | `Oct 14, 2025`, ` 9:54 PM`) of a
+/// unix time in local time; past a week the time reads ` at 9:54 PM`.
 fn day_and_time(at: i64, now: i64, utc_offset: i64) -> (String, String) {
     let (local, today) = (at + utc_offset, now + utc_offset);
     let t = chrono::DateTime::from_timestamp(local, 0).unwrap_or_default();
-    let day = match today.div_euclid(86_400) - local.div_euclid(86_400) {
+    let days = (today.div_euclid(86_400) - local.div_euclid(86_400)).max(0);
+    let day = match days {
         0 => "Today".to_owned(),
         1 => "Yesterday".to_owned(),
-        _ => t.format("%b %-d").to_string(),
+        2..=7 => t.format("%A").to_string(),
+        8..=365 => t.format("%a, %b %-d").to_string(),
+        _ => t.format("%b %-d, %Y").to_string(),
     };
-    (day, t.format("%-I:%M %p").to_string())
+    let join = if days > 7 { " at " } else { " " };
+    (day, format!("{join}{}", t.format("%-I:%M %p")))
 }
 
 /// Exact layout width of a single-line run. GPUI rounds measured text boxes up to whole px;
@@ -4238,10 +4316,44 @@ mod tests {
         let at = 1_792_040_071;
         assert_eq!(
             day_and_time(at, at + 36_000, -25_200),
-            ("Yesterday".into(), "9:54 PM".into())
+            ("Yesterday".into(), " 9:54 PM".into())
         );
-        assert_eq!(day_and_time(at, at + 3 * 86_400, -25_200).0, "Oct 14");
+        assert_eq!(day_and_time(at, at + 3 * 86_400, -25_200).0, "Wednesday");
+        assert_eq!(
+            day_and_time(at, at + 8 * 86_400, -25_200),
+            ("Wed, Oct 14".into(), " at 9:54 PM".into())
+        );
+        assert_eq!(
+            day_and_time(at, at + 400 * 86_400, -25_200).0,
+            "Oct 14, 2026"
+        );
         assert_eq!(duration(17), "17s");
+    }
+
+    #[test]
+    fn separators_follow_original_gaps() {
+        let turn = |started: i64, completed: i64| -> Turn {
+            serde_json::from_value(serde_json::json!({
+                "id": started.to_string(), "status": "completed",
+                "startedAt": started, "completedAt": completed, "items": [
+                    {"type": "userMessage", "id": "u", "content": []},
+                    {"type": "agentMessage", "id": "a", "text": "ok"}
+                ]
+            }))
+            .unwrap()
+        };
+        let now = 100_000;
+        // A fresh thread: no separator at all (issue #1108).
+        let fresh = [turn(now - 120, now - 100), turn(now - 60, now - 30)];
+        assert_eq!(separators(&fresh, now), [None, None]);
+        // First send over an hour old; a send an hour after the answer; an answer
+        // over ten minutes after the previous answer is not a gap (a send sits between).
+        let old = [
+            turn(10_000, 10_030),
+            turn(10_030 + 3_601, 10_030 + 3_700),
+            turn(13_731, 13_731 + 700),
+        ];
+        assert_eq!(separators(&old, now), [Some(10_000), Some(13_631), None]);
     }
 
     #[test]

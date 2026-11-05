@@ -61,6 +61,11 @@ pub mod git_pr;
 mod native_apps;
 mod open_in;
 mod projectless;
+
+/// The installed macOS apps (`native-desktop-apps`), for Settings ▸ Computer history.
+pub(crate) fn native_desktop_apps(params: &Value) -> Result<Vec<native_apps::NativeApp>> {
+    native_apps::list(params)
+}
 pub use projectless::Workspace;
 mod github_pull_requests;
 pub(crate) mod run_now;
@@ -117,6 +122,17 @@ pub trait Host: Send + Sync {
     }
     fn computer_use_native(&self) -> Option<Arc<computer_use_native::NativeComputerUse>> {
         None
+    }
+    /// Sends a Computer History (`skysight`) Apple-Event request to the signed native service.
+    fn skysight(&self, request_type: &str, payload: &Value, timeout_seconds: u32) -> Result<Value> {
+        self.computer_use_native()
+            .context("Chronicle is unavailable")?
+            .service_request(request_type, payload, timeout_seconds)
+    }
+    /// Whether the Computer History service exists: macOS with the signed service installed.
+    fn skysight_available(&self) -> bool {
+        self.computer_use_native()
+            .is_some_and(|native| native.service_installed())
     }
 
     fn supports_cloud_search(&self) -> bool {
@@ -393,6 +409,42 @@ pub fn mfa_info() -> Request {
         },
         "returnErrorResponse": true,
     }))
+}
+
+/// An account settings call to the ChatGPT backend (`path` under `/backend-api`), with the
+/// original's default headers; the cloud host attaches the sign-in and the account header.
+pub fn backend(method: &str, path: &str, body: Option<&Value>) -> Request {
+    let mut request = json!({
+        "url": path,
+        "method": method,
+        "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "originator": "Codex Desktop",
+        },
+        "returnErrorResponse": true,
+    });
+    if let Some(body) = body {
+        request["body"] = body.to_string().into();
+    }
+    Request::Http(request)
+}
+
+/// The HTTP status and JSON body of a [`backend`] response; an empty or non-JSON body is
+/// `Null`. Only a transport failure is an error, so callers can read the backend's error codes.
+pub fn backend_response(response: &Value) -> Result<(u16, Value)> {
+    let response = response_wire(response);
+    if response["responseType"] == "error" {
+        bail!("host error {}: {}", response["status"], response["error"]);
+    }
+    let status = response["status"].as_u64().context("missing host status")?;
+    let body = response
+        .get("bodyJsonString")
+        .or_else(|| response.get("body"))
+        .and_then(Value::as_str)
+        .and_then(|body| serde_json::from_str(body).ok())
+        .unwrap_or(Value::Null);
+    Ok((u16::try_from(status)?, body))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2096,6 +2148,14 @@ impl Host for LocalHost {
                     .as_str()
                     .context("missing environment path")?,
             ))?,
+            "local-environment-actions" => environments::actions(
+                self,
+                Path::new(
+                    params["workspaceRoot"]
+                        .as_str()
+                        .context("missing workspace root")?,
+                ),
+            )?,
             "local-environment-config-save" => environments::save(&params)?,
             "local-environment-select" => self.select_environment(
                 params["workspaceRoot"]
@@ -2113,7 +2173,9 @@ impl Host for LocalHost {
             "git-root" | "git-changes" | "git-stage" | "git-unstage" | "git-revert"
             | "git-init-repo" | "git-commit-status" | "git-commit-diff" | "git-commit"
             | "git-push" | "git-checkout" | "git-cat-file" | "git-review-patch"
-            | "git-file-url" | "git-blame-file" => git::fetch(endpoint, &params)?,
+            | "git-file-url" | "git-blame-file" | "git-review-commits" => {
+                git::fetch(endpoint, &params)?
+            }
             "gh-cli-status"
             | "gh-current-user"
             | "gh-pr-search"

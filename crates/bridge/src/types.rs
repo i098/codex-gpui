@@ -80,6 +80,10 @@ pub struct Turn {
     pub started_at: Option<i64>,
     pub completed_at: Option<i64>,
     pub duration_ms: Option<i64>,
+    /// A review's running sub-turn (`turn/started` with another `rootTurnId`): the id that
+    /// `turn/interrupt` expects while `id` stays the review turn its items and completion name.
+    #[serde(skip)]
+    pub interrupt_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -207,6 +211,9 @@ pub enum ThreadItem {
         /// Last known state of each receiver, by thread id.
         #[serde(default)]
         agents_states: std::collections::BTreeMap<String, CollabAgentState>,
+        /// The model of a `spawnAgent` call.
+        #[serde(default)]
+        model: Option<String>,
     },
     ImageView {
         id: String,
@@ -414,6 +421,39 @@ pub struct ThreadStartedNotification {
 pub struct TurnNotification {
     pub thread_id: String,
     pub turn: Turn,
+}
+
+/// `hook/started`, `hook/completed`: one hook run of a turn.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookNotification {
+    pub turn_id: String,
+    pub run: HookRun,
+}
+
+/// The app-server's `HookRunSummary`, the fields the turn's `Hook stats` reads.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookRun {
+    pub id: String,
+    pub event_name: String,
+    #[serde(default)]
+    pub source: Option<String>,
+    /// `running`, `completed`, `blocked`, `failed` or `stopped`.
+    pub status: String,
+    #[serde(default)]
+    pub status_message: Option<String>,
+    #[serde(default)]
+    pub entries: Vec<HookOutputEntry>,
+    #[serde(default)]
+    pub completed_at: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HookOutputEntry {
+    /// `warning`, `stop`, `feedback`, `context` or `error`.
+    pub kind: String,
+    pub text: String,
 }
 
 /// `item/started`, `item/completed`

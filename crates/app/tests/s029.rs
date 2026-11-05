@@ -49,7 +49,8 @@ fn port_tabs(fx: &Fx) -> Vec<(String, bool)> {
                     SidePanel::SideChat(_) => "Side chat",
                     SidePanel::Sources => "Sources",
                     SidePanel::Plan => "Plan",
-                    SidePanel::Browser(_) => "New tab",
+                    SidePanel::Subagents => "Subagents",
+                    SidePanel::Browser(_) | SidePanel::NewTab => "New tab",
                 };
                 (label.to_owned(), root.side_panel() == Some(*side))
             })

@@ -252,7 +252,17 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "renameThread" => Box::new(shortcuts::RenameOpenChat),
         "findInThread" => Box::new(FindInThread),
         "copyDeeplink" => Box::new(shortcuts::CopyDeeplink),
+        "openSideChat" => Box::new(shortcuts::OpenCurrentSideChat),
         "copyLastCodeBlock" => Box::new(shortcuts::CopyLastCodeBlock),
+        "copyPageLink" => Box::new(shortcuts::CopyPageLink),
+        "forkThread" => Box::new(shortcuts::ForkCurrentThread),
+        "deleteChat" => Box::new(shortcuts::DeleteCurrentChat),
+        "copyConversationMarkdown" => Box::new(shortcuts::CopyConversationMarkdown),
+        "searchChats" => Box::new(OpenCommandMenu),
+        "focusMainChat" => Box::new(shortcuts::FocusMainChat),
+        "focusSideChat" => Box::new(shortcuts::FocusSideChat),
+        "toggleMaximizeSidePanel" => Box::new(ui::ShowWorkspaceTabView),
+        "toggleReviewTab" => Box::new(ToggleChangesPanel),
         "copyWorkingDirectory" => Box::new(super::copy_directory::CopyWorkingDirectory),
         "copyConversationPath" => Box::new(super::copy_directory::CopyConversationPath),
         "composer.submit" => Box::new(ui::composer::Submit),
@@ -270,6 +280,12 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
                 .filter(|n| (1..=9).contains(n))
             {
                 Box::new(GoToChat(number - 1))
+            } else if let Some(number) = id
+                .strip_prefix("environmentAction")
+                .and_then(|n| n.parse::<usize>().ok())
+                .filter(|n| (1..=9).contains(n))
+            {
+                Box::new(ui::screens::thread::view::RunEnvironmentAction(number - 1))
             } else {
                 let number = id
                     .strip_prefix("focusTab")

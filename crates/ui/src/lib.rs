@@ -103,6 +103,8 @@ actions!(
         OpenSourcesPanel,
         /// Thread summary ▸ `Plan`: the latest plan in its editable side panel tab.
         OpenPlanPanel,
+        /// Thread summary ▸ `Subagents` row: the `Subagents` side panel tab.
+        OpenSubagentsPanel,
         ShowWorkspaceTabView,
         StepWorkspaceLayout,
         /// `⌘K`, `⌘⇧P`, sidebar `Search`: the command menu.
@@ -2212,6 +2214,12 @@ impl Shell {
                             new_tab_focus.read(cx).handle.clone().focus(window, cx);
                             cx.stop_propagation();
                         })
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(crate::screens::diff::panel::OpenNewSideTab),
+                                cx,
+                            )
+                        })
                         // Chromium squashes it into the titlebar's overlap layer, at whole
                         // device px (layer 44 at (380, 0) at 2x, layer 97 at (0, 0) at 110%).
                         .child(
@@ -2586,7 +2594,13 @@ impl Render for Shell {
                 .left_0()
                 .top(Theme::TITLEBAR_HEIGHT)
                 .bottom(PAGE_INSET)
-                .w(self.sidebar_width)
+                // Docked, the main surface covers the panel past its left edge while it moves.
+                .w(if self.overlay {
+                    self.sidebar_width
+                } else {
+                    main_left
+                })
+                .overflow_hidden()
                 .snap_origin()
                 .child(self.sidebar_panel(&t, progress));
             // An overlay floats over the main surface, so it casts a shadow.
