@@ -52,8 +52,8 @@ fn focus_on_pointer(
 
 mod account_page;
 pub mod backend;
-pub mod computer_history;
 mod code_review;
+pub mod computer_history;
 mod languages;
 pub mod personalization;
 pub mod trusted_contact;
