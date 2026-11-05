@@ -262,11 +262,15 @@ impl Root {
         };
         let host = self.host.clone();
         let read = cx.background_spawn(async move {
-            git_call(&*host, "git-commit-status", json!({"cwd": cwd}))
+            let params = json!({"cwd": cwd});
+            (
+                git_call(&*host, "git-commit-status", params.clone()),
+                git_call(&*host, "git-review-commits", params),
+            )
         });
         cx.spawn(async move |_, cx| {
-            let branches: Vec<String> = read
-                .await
+            let (status, commits) = read.await;
+            let branches: Vec<String> = status
                 .ok()
                 .and_then(|status| {
                     status["branches"].as_array().map(|names| {
@@ -278,17 +282,29 @@ impl Root {
                     })
                 })
                 .unwrap_or_default();
+            let commits: Vec<(String, String)> = commits
+                .ok()
+                .and_then(|reply| {
+                    reply["commits"].as_array().map(|rows| {
+                        rows.iter()
+                            .filter_map(|row| {
+                                Some((row["sha"].as_str()?.into(), row["subject"].as_str()?.into()))
+                            })
+                            .collect()
+                    })
+                })
+                .unwrap_or_default();
             composer.update(cx, |composer, cx| {
-                composer.set_review_branches(branches, cx)
+                composer.set_review_branches(branches, commits, cx)
             });
         })
         .detach();
     }
 
-    /// `review/start` on the open chat for the working tree (`None`) or against `branch`.
+    /// `review/start` on the open chat with this `target`.
     pub(crate) fn start_review(
         &mut self,
-        branch: Option<String>,
+        target: Value,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -304,10 +320,6 @@ impl Root {
         }
         let id = view.read(cx).id().to_owned();
         let resume = !self.loaded.contains(&id);
-        let target = match branch {
-            None => json!({"type": "uncommittedChanges"}),
-            Some(branch) => json!({"type": "baseBranch", "branch": branch}),
-        };
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let started = async {
@@ -318,15 +330,21 @@ impl Root {
                         json!({"threadId": id, "target": target, "delivery": "inline"}),
                     )
                     .await
-                    .map(drop)
             }
             .await;
-            if started.is_err() {
-                this.update(cx, |this, cx| {
-                    this.toast(Toast::danger("Failed to start review"), cx)
-                })?;
-            }
-            started
+            // The reply's turn carries the review hint as its user message and a `rootTurnId`
+            // that interrupts the review; the notifications that follow carry the internal prompt.
+            this.update(cx, |this, cx| match &started {
+                Ok(reply) => this.on_event(
+                    Event::Notification {
+                        method: "turn/started".into(),
+                        params: json!({"threadId": id, "turn": reply["turn"]}),
+                    },
+                    cx,
+                ),
+                Err(_) => this.toast(Toast::danger("Failed to start code review"), cx),
+            })?;
+            started.map(drop)
         });
         log_err(task, cx);
     }

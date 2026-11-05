@@ -839,7 +839,18 @@ impl Root {
                     ui::composer::SlashCommand::Init => this.init_agents(window, cx),
                     ui::composer::SlashCommand::Side => this.start_side_chat(window, cx),
                     ui::composer::SlashCommand::ReviewBranches => this.load_review_branches(composer.clone(), cx),
-                    ui::composer::SlashCommand::Review(branch) => this.start_review(branch.clone(), window, cx),
+                    ui::composer::SlashCommand::Review(branch) => {
+                        let target = match branch {
+                            None => json!({"type": "uncommittedChanges"}),
+                            Some(branch) => json!({"type": "baseBranch", "branch": branch}),
+                        };
+                        this.start_review(target, window, cx)
+                    }
+                    ui::composer::SlashCommand::ReviewCommit(sha, title) => this.start_review(
+                        json!({"type": "commit", "sha": sha, "title": title}),
+                        window,
+                        cx,
+                    ),
                     ui::composer::SlashCommand::Personality(name) => this.set_personality(name, cx),
                     ui::composer::SlashCommand::Chat => this.new_special_chat(features::shortcuts::NewChatMode::Standalone, window, cx),
                     ui::composer::SlashCommand::Worktree => this.toggle_worktree_run(cx),
@@ -5685,7 +5696,7 @@ impl Root {
             .iter()
             .rev()
             .find(|turn| turn.status == TurnStatus::InProgress)
-            .map(|turn| turn.id.clone());
+            .map(|turn| turn.interrupt_id.as_ref().unwrap_or(&turn.id).clone());
         self.loaded.remove(&id);
         self.failed_queued.retain(|row| row.thread_id != id);
         let bridge = self.bridge.clone();
@@ -5795,6 +5806,7 @@ impl Root {
             return;
         };
         let (thread_id, turn_id) = (view.id().to_owned(), turn.id.clone());
+        let interrupt_id = turn.interrupt_id.clone().unwrap_or_else(|| turn_id.clone());
         if !self
             .interrupting
             .insert((thread_id.clone(), turn_id.clone()))
@@ -5803,7 +5815,7 @@ impl Root {
         }
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
-            let result = bridge.turn_interrupt(&thread_id, &turn_id).await;
+            let result = bridge.turn_interrupt(&thread_id, &interrupt_id).await;
             if result.is_err() {
                 this.update(cx, |this, cx| {
                     this.interrupting.remove(&(thread_id, turn_id));
