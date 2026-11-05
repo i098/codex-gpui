@@ -58,6 +58,8 @@ pub enum Action {
         enabled: bool,
     },
     TrustHooks(Vec<(String, String)>),
+    /// `Open config file`: the hook's `sourcePath`.
+    OpenHookConfig(String),
     SetPluginEnabled {
         plugin: Value,
         enabled: bool,
@@ -1692,6 +1694,39 @@ impl Manager {
                             cx.notify();
                         }),
                 )
+                .children(
+                    hook["sourcePath"]
+                        .as_str()
+                        .filter(|_| hook["isManaged"] != true)
+                        .map(|path| {
+                            let id = format!("hook-open-config-{key}");
+                            controls.push(id.clone());
+                            let path = path.to_owned();
+                            crate::tooltip::tooltip(
+                                div()
+                                    .id(SharedString::from(id))
+                                    .role(gpui::Role::Button)
+                                    .aria_label("Open config file")
+                                    .size(px(20.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px(6.))
+                                    .cursor_pointer()
+                                    .child(icon("diff-open-in", 14., t.text_tertiary))
+                                    .on_activate(window, cx, move |this, _, cx| {
+                                        dispatch(
+                                            &this.state,
+                                            Action::OpenHookConfig(path.clone()),
+                                            cx,
+                                        )
+                                    }),
+                                "Open config file",
+                                None,
+                                crate::tooltip::Side::Top,
+                            )
+                        }),
+                )
                 .child(controls_row),
         );
         if expanded {
@@ -1743,20 +1778,44 @@ impl Manager {
             controls.push(id.clone());
             let hash = hook["currentHash"].as_str().unwrap_or("").to_owned();
             let trust_key = key.to_owned();
-            controls_row = controls_row.child(
-                action_button(id, "Trust", t)
-                    .aria_disabled(state.pending)
-                    .on_activate(window, cx, move |this, _, cx| {
-                        dispatch(
-                            &this.state,
-                            Action::TrustHooks(vec![(trust_key.clone(), hash.clone())]),
-                            cx,
-                        )
-                    }),
-            );
+            let reason = if hook["trustStatus"] == "modified" {
+                "Hook changed since last trusted"
+            } else {
+                "New hook"
+            };
+            let trust = action_button(id, "Trust", t)
+                .aria_disabled(state.pending)
+                .aria_description(reason)
+                .on_activate(window, cx, move |this, _, cx| {
+                    dispatch(
+                        &this.state,
+                        Action::TrustHooks(vec![(trust_key.clone(), hash.clone())]),
+                        cx,
+                    )
+                });
+            controls_row = controls_row.child(crate::tooltip::tooltip(
+                trust,
+                reason,
+                None,
+                crate::tooltip::Side::Top,
+            ));
         }
-        controls_row = controls_row.child(toggle);
-        controls_row
+        let state_label = if managed {
+            Some("Managed hooks are always on")
+        } else if review {
+            Some("Disabled until hook is trusted")
+        } else {
+            None
+        };
+        match state_label {
+            Some(label) => controls_row.child(crate::tooltip::tooltip(
+                toggle.aria_description(label),
+                label,
+                None,
+                crate::tooltip::Side::Top,
+            )),
+            None => controls_row.child(toggle),
+        }
     }
 
     fn hook_body(hook: &Value, t: &Theme) -> Div {
@@ -2182,7 +2241,7 @@ fn hook_source_title(source: &str, state: &State) -> String {
     }
 }
 
-fn hook_event(event: &str) -> (&str, &'static str) {
+pub(crate) fn hook_event(event: &str) -> (&str, &'static str) {
     match event {
         "preToolUse" => ("PreToolUse", "Before a tool executes"),
         "permissionRequest" => ("PermissionRequest", "When permission is requested"),

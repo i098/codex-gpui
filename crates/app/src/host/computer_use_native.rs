@@ -382,6 +382,61 @@ impl NativeComputerUse {
             bail!("Computer Use native IPC requires macOS")
         }
     }
+
+    /// Sends a Computer History (`skysight`) request to the signed service, starting it when it
+    /// is not running. Unlike [`Self::request`] it does not need Computer Use to be on: the
+    /// original's Chronicle drives the same service on its own.
+    pub fn service_request(
+        &self,
+        request_type: &str,
+        payload: &Value,
+        timeout_seconds: u32,
+    ) -> Result<Value> {
+        require_macos()?;
+        let mut managed = self
+            .managed
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native helper lock poisoned"))?;
+        let running = match managed.child.as_mut() {
+            Some(child) => child.try_wait()?.is_none(),
+            None => false,
+        };
+        if !running {
+            verify_helper(&self.helper)?;
+            managed.child = Some(
+                std::process::Command::new(self.helper.join(EXECUTABLE))
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .context("start managed Computer Use helper")?,
+            );
+        }
+        let pid = managed
+            .child
+            .as_ref()
+            .map(|child| child.id())
+            .unwrap_or_default();
+        drop(managed);
+        #[cfg(target_os = "macos")]
+        {
+            ensure!(
+                native::matches_executable(pid, &self.helper.join(EXECUTABLE))?,
+                "managed helper executable changed"
+            );
+            native::request(pid, request_type, payload, timeout_seconds)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (pid, request_type, payload, timeout_seconds);
+            bail!("Computer Use native IPC requires macOS")
+        }
+    }
+
+    /// Whether the signed service is installed where the app starts it.
+    pub fn service_installed(&self) -> bool {
+        self.helper.join(EXECUTABLE).is_file()
+    }
 }
 
 fn require_macos() -> Result<()> {

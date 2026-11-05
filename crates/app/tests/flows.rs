@@ -39,6 +39,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("new_chat_row", new_chat_row),
     ("new_chat_same_route_history", new_chat_same_route_history),
     ("your_dot_row", your_dot_row),
+    ("sidebar_follows_panel", sidebar_follows_panel),
     ("sidebar_empty_lists", sidebar_empty_lists),
     ("cmd_n_new_chat", cmd_n_new_chat),
     ("editor_click_focuses", editor_click_focuses),
@@ -111,6 +112,8 @@ const FLOWS: &[(&str, Flow)] = &[
     ("rail_focus_ring", rail_focus_ring),
     ("profile_menu_settings", profile_menu_settings),
     ("profile_menu_dismiss", profile_menu_dismiss),
+    ("profile_menu_rows", profile_menu_rows),
+    ("profile_menu_usage", profile_menu_usage),
     ("profile_menu_mobile", profile_menu_mobile),
     ("mobile_button_hover", mobile_button_hover),
     ("mobile_focus_ring", mobile_focus_ring),
@@ -461,6 +464,50 @@ fn your_dot_row() -> Result<String> {
         "Your dot did not open the dot home page"
     );
     ensure!(fx.route() == Route::Home, "route {:?}", fx.route());
+    Ok(String::new())
+}
+
+/// The whole sidebar fades with the panel, and Recents titles fill a widened panel.
+fn sidebar_follows_panel() -> Result<String> {
+    let mut fx = Fx::new()?;
+    let new_chat = fx.at("home", "New chat")?;
+    let subtract = fx.at("home", "Add a subtract")?;
+    // The brightest red in a logical box of the dark theme: light text on a dark panel.
+    let brightest = |shot: &RgbaImage, x: (f32, f32), y: (f32, f32)| {
+        let s = shot.width() as f32 / 1280.;
+        let (x, y) = (
+            (x.0 * s) as u32..(x.1 * s) as u32,
+            (y.0 * s) as u32..(y.1 * s) as u32,
+        );
+        y.flat_map(|y| x.clone().map(move |x| (x, y)))
+            .map(|(x, y)| shot.get_pixel(x, y)[0])
+            .max()
+            .unwrap_or(0)
+    };
+    let label = (new_chat.0 - 20., new_chat.0 + 20.);
+    let label_y = (new_chat.1 - 6., new_chat.1 + 6.);
+    let rest = brightest(&fx.shot()?, label, label_y);
+    fx.keys("cmd-b")?;
+    fx.advance(std::time::Duration::from_millis(80))?;
+    let closing = brightest(&fx.shot()?, label, label_y);
+    ensure!(
+        u16::from(closing) * 5 < u16::from(rest) * 4,
+        "New chat stayed at {closing} of {rest} while closing"
+    );
+    fx.keys("cmd-b")?;
+    fx.advance(std::time::Duration::from_millis(800))?;
+    fx.drag((340., 400.), (517., 400.), 8)?;
+    fx.hover((900., 6.))?;
+    let row = (subtract.1 - 6., subtract.1 + 6.);
+    let shot = fx.shot()?;
+    let (title, empty) = (
+        brightest(&shot, (360., 480.), row),
+        brightest(&shot, (500., 505.), row),
+    );
+    ensure!(
+        title > empty,
+        "the title stops before 360 px in a 517 px sidebar"
+    );
     Ok(String::new())
 }
 
@@ -928,11 +975,6 @@ fn avatar(fx: &Fx) -> (f32, f32) {
     (26., fx.size.1 - 26.)
 }
 
-/// Profile menu rows `Settings` and `Set up mobile`, above the `Keyboard Shortcuts` row.
-fn profile_item(fx: &Fx, n: usize) -> (f32, f32) {
-    (118., fx.size.1 - [192., 100.][n])
-}
-
 fn profile_menu_settings() -> Result<String> {
     let mut fx = Fx::new()?;
     fx.click(avatar(&fx))?;
@@ -940,7 +982,8 @@ fn profile_menu_settings() -> Result<String> {
         fx.shell(|s| s.profile_menu),
         "the avatar did not open the menu"
     );
-    fx.click(profile_item(&fx, 0))?;
+    let settings = profile_row(&mut fx, "profile-settings")?;
+    fx.click(settings)?;
     ensure!(fx.route() == Route::Settings, "route {:?}", fx.route());
     // The Settings shell has the avatar too; a second click closes its menu.
     fx.click(avatar(&fx))?;
@@ -953,6 +996,18 @@ fn profile_menu_settings() -> Result<String> {
         fx.shell(|s| !s.profile_menu),
         "a second avatar click left it open"
     );
+    Ok(String::new())
+}
+
+/// `Usage` opens Settings ▸ `Usage & billing`.
+fn profile_menu_usage() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.click(avatar(&fx))?;
+    fx.capture_evidence("CGX_PROFILE_SHOTS", "profile-menu")?;
+    let usage = profile_row(&mut fx, "profile-usage")?;
+    fx.click(usage)?;
+    ensure!(fx.route() == Route::Settings, "route {:?}", fx.route());
+    fx.capture_evidence("CGX_PROFILE_SHOTS", "profile-usage")?;
     Ok(String::new())
 }
 
@@ -969,15 +1024,111 @@ fn profile_menu_dismiss() -> Result<String> {
     Ok(String::new())
 }
 
-/// Profile menu ▸ Help ▸ `Set up mobile`.
-fn open_mobile(fx: &mut Fx) -> Result<()> {
-    fx.click(avatar(fx))?;
-    fx.click(profile_item(fx, 1))
+/// The menu loads the account on open and `Help` opens its flyout.
+fn profile_menu_rows() -> Result<String> {
+    let mut lines = script(None, |_| {})?;
+    // Each recorded exchange answers one request; startup reads the account too.
+    for _ in 0..4 {
+        lines.extend(exchange(
+            "account/read",
+            json!({
+                "account": {"type": "chatgpt", "email": "user@example.com", "planType": "pro"},
+                "requiresOpenaiAuth": true,
+            }),
+        ));
+        lines.extend(exchange(
+            "account/rateLimits/read",
+            json!({"rateLimits": {"primary": {"usedPercent": 1}, "planType": "pro"}}),
+        ));
+    }
+    let mut fx = Fx::scripted(lines)?;
+    fx.click(avatar(&fx))?;
+    fx.wait("the profile", |fx| fx.shell(|s| s.profile.plan.is_some()))?;
+    let (name, plan, left) = fx.shell(|s| {
+        let p = &s.profile;
+        (p.name.clone(), p.plan.clone(), p.usage_left)
+    });
+    ensure!(name.as_deref() == Some("user@example.com"), "name {name:?}");
+    ensure!(plan.as_deref() == Some("Pro"), "plan {plan:?}");
+    ensure!(left == Some(99.), "usage left {left:?}");
+    // The recorded feed's newest three posts, as the original capture shows them.
+    let posts = fx.shell(|s| {
+        s.profile
+            .changelog
+            .iter()
+            .map(|p| (p.title.to_string(), p.date.to_string(), p.url.to_string()))
+            .collect::<Vec<_>>()
+    });
+    let post = |title: &str, date: &str, anchor: &str| {
+        let url = format!("https://developers.openai.com/codex/changelog#codex-{anchor}");
+        (title.to_owned(), date.to_owned(), url)
+    };
+    ensure!(
+        posts
+            == [
+                post(
+                    "Composer predictions in Codex",
+                    "9 Oct",
+                    "2026-10-09-composer-predictions"
+                ),
+                post("Codex app", "8 Oct", "2026-10-08-app"),
+                post("Codex app", "7 Oct", "2026-10-07-app"),
+            ],
+        "changelog {posts:?}"
+    );
+    // The replay host records no `/me` or Statsig gates: show the original capture's.
+    let shell = fx.read(|root, _| root.shell().clone());
+    fx.cx.update(|cx| {
+        shell.update(cx, |shell, cx| {
+            shell.profile.name = Some("Demo User".into());
+            shell.profile.chrome_extension_setup = true;
+            shell.profile.privacy_center = true;
+            cx.notify();
+        });
+    });
+    fx.cx.run_until_parked();
+    fx.capture_evidence("CGX_PROFILE_MENU_EVIDENCE", "profile-menu")?;
+    let help = profile_row(&mut fx, "profile-help")?;
+    fx.hover(help)?;
+    profile_row(&mut fx, "profile-keyboard-shortcuts")?;
+    fx.capture_evidence("CGX_PROFILE_MENU_EVIDENCE", "profile-help")?;
+    let shortcuts = profile_row(&mut fx, "profile-keyboard-shortcuts")?;
+    fx.click(shortcuts)?;
+    ensure!(
+        fx.shell(|s| !s.profile_menu),
+        "Keyboard shortcuts left the menu open"
+    );
+    Ok(String::new())
 }
 
+/// What Profile menu ▸ Help ▸ `Set up mobile` dispatches.
+fn open_mobile(fx: &mut Fx) -> Result<()> {
+    fx.action(Box::new(ui::OpenMobileSetup))
+}
+
+/// Help shows `Set up mobile` only for a ChatGPT account with remote control, as the original.
 fn profile_menu_mobile() -> Result<String> {
     let mut fx = Fx::new()?;
-    open_mobile(&mut fx)?;
+    fx.click(avatar(&fx))?;
+    let help = profile_row(&mut fx, "profile-help")?;
+    fx.hover(help)?;
+    ensure!(
+        profile_row(&mut fx, "profile-set-up-mobile").is_err(),
+        "Set up mobile without a ChatGPT account"
+    );
+    let shell = fx.read(|root, _| root.shell().clone());
+    fx.cx.update(|cx| {
+        let state = cx.default_global::<ui::screens::connections::ConnectionsState>();
+        state.gates.slingshot = true;
+        state.connections = Some(Vec::new());
+        shell.update(cx, |shell, cx| {
+            shell.profile.plan = Some("Pro".into());
+            cx.notify();
+        });
+    });
+    fx.cx.run_until_parked();
+    let mobile = profile_row(&mut fx, "profile-set-up-mobile")?;
+    fx.click(mobile)?;
     ensure!(fx.route() == Route::Mobile, "route {:?}", fx.route());
     ensure!(fx.shell(|s| s.selected_rail.is_none() && !s.sidebar_open && s.can_go_back));
     fx.click(BACK)?;
