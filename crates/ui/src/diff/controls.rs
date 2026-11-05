@@ -125,6 +125,17 @@ impl TextField {
     }
 }
 
+/// Changed files whose `linguist-generated` attribute is set; hidden from the file tree and the
+/// diff list while `filter` is on.
+#[derive(Default)]
+pub(super) struct GeneratedFiles {
+    pub(super) filter: bool,
+    /// Absolute path keys the host's `git check-attr` reported for the repository's changes.
+    paths: std::collections::HashSet<String>,
+    /// The hidden files, each with its index in the unfiltered list.
+    hidden: Vec<(usize, FileDiff)>,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum DiffLayout {
     #[default]
@@ -278,6 +289,92 @@ pub(super) fn files(diff: &str) -> Vec<FileDiff> {
 }
 
 impl DiffPanel {
+    /// Moves the generated files of a fresh `files` list aside while the filter is on.
+    pub(super) fn hide_generated_files(&mut self) {
+        self.generated.hidden.clear();
+        if !self.generated.filter || self.generated.paths.is_empty() {
+            return;
+        }
+        let active = self
+            .files
+            .get(self.active_file)
+            .map(|file| file.path_key.clone());
+        for (index, file) in std::mem::take(&mut self.files).into_iter().enumerate() {
+            if self.generated.paths.contains(&file.path_key) {
+                self.generated.hidden.push((index, file));
+            } else {
+                self.files.push(file);
+            }
+        }
+        self.active_file = active
+            .and_then(|key| self.files.iter().position(|file| file.path_key == key))
+            .unwrap_or(0);
+    }
+
+    /// Every file, the hidden generated ones back in their places.
+    pub(super) fn unfiltered_files(&mut self) -> Vec<FileDiff> {
+        let mut files = std::mem::take(&mut self.files);
+        for (index, file) in std::mem::take(&mut self.generated.hidden) {
+            files.insert(index.min(files.len()), file);
+        }
+        files
+    }
+
+    fn refilter_generated_files(&mut self) {
+        let active = self
+            .files
+            .get(self.active_file)
+            .map(|file| file.path_key.clone());
+        let mut files = self.unfiltered_files();
+        for file in &mut files {
+            // The new content generation ignores a load still in flight, as in `replace_files`.
+            if file
+                .preview
+                .as_ref()
+                .is_some_and(|preview| !preview.loaded())
+            {
+                file.preview = None;
+            }
+        }
+        self.replace_files(files);
+        if let Some(index) =
+            active.and_then(|key| self.files.iter().position(|file| file.path_key == key))
+        {
+            self.active_file = index;
+        }
+    }
+
+    fn toggle_generated_filter(&mut self, cx: &mut Context<Self>) {
+        self.generated.filter = !self.generated.filter;
+        self.refilter_generated_files();
+        cx.emit(DiffRequest::Preference(
+            "host.review-filter-generated-files",
+            self.generated.filter.into(),
+        ));
+        cx.notify();
+    }
+
+    /// Takes the generated paths of the latest repository changes; repository sources rebuild
+    /// their list afterwards, the last turn's list is filtered again here.
+    pub(super) fn update_generated_paths(&mut self) {
+        let paths: std::collections::HashSet<String> = self
+            .repository
+            .iter()
+            .flat_map(|repository| {
+                repository
+                    .generated_paths
+                    .iter()
+                    .map(|path| menu::absolute_path(&repository.root, path))
+            })
+            .collect();
+        if paths != self.generated.paths {
+            self.generated.paths = paths;
+            if self.source == DiffSource::LastTurn && self.generated.filter {
+                self.refilter_generated_files();
+            }
+        }
+    }
+
     pub(super) fn file_placeholder(
         &self,
         index: usize,
@@ -427,63 +524,107 @@ impl DiffPanel {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(2.))
-                    .mr(px(30.))
-                    .children(
-                        [
-                            (DiffLayout::Unified, "Switch to unified diff"),
-                            (DiffLayout::Split, "Switch to split diff"),
-                            (DiffLayout::Auto, "Auto"),
-                        ]
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, (layout, label))| {
-                            div()
-                                .id(("diff-layout-choice", i))
-                                .role(gpui::Role::Button)
-                                .aria_label(label)
-                                .aria_selected(self.layout == layout)
-                                .focusable()
-                                .tab_index(0)
-                                .cursor_pointer()
-                                .relative()
-                                .w(px(34.))
-                                .h(px(28.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .when(self.layout == layout, |d| {
-                                    d.layer().child(shapes::decoration(shapes::Decoration {
-                                        radius: gpui::Corners::all(px(12.5)),
-                                        corner: shapes::Corner::Squircle,
-                                        fill: Some(t.text_alpha_5),
-                                        ..Default::default()
-                                    }))
-                                })
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.set_layout(layout, cx);
-                                }))
-                                .on_key_down(cx.listener(
-                                    move |this, event: &KeyDownEvent, _, cx| {
-                                        if matches!(event.keystroke.key.as_str(), "enter" | "space")
-                                        {
-                                            this.set_layout(layout, cx);
-                                            cx.stop_propagation();
-                                        }
-                                    },
-                                ))
-                                .child(icon(
-                                    layout.icon(),
-                                    16.,
-                                    if self.layout == layout {
-                                        t.text
-                                    } else {
-                                        t.text_tertiary
-                                    },
-                                ))
-                        }),
-                    ),
+                    .gap(px(4.))
+                    .child(self.layout_choices(t, cx))
+                    .child(self.rich_preview_toggle(t, cx)),
             )
+    }
+
+    /// The original's `Toggle rich preview` ghost button: active fill while previews show.
+    fn rich_preview_toggle(&self, t: &Theme, cx: &Context<Self>) -> Stateful<Div> {
+        let on = self.rich_preview;
+        div()
+            .id("diff-rich-preview-toggle")
+            .role(gpui::Role::Button)
+            .aria_label("Toggle rich preview")
+            .aria_toggled(if on {
+                gpui::Toggled::True
+            } else {
+                gpui::Toggled::False
+            })
+            .focusable()
+            .tab_index(0)
+            .cursor_pointer()
+            .relative()
+            .size(px(26.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .when(on, |d| {
+                d.layer().child(shapes::decoration(shapes::Decoration {
+                    radius: gpui::Corners::all(px(12.5)),
+                    corner: shapes::Corner::Squircle,
+                    fill: Some(t.text_alpha_5),
+                    ..Default::default()
+                }))
+            })
+            .on_click(cx.listener(|this, _, _, cx| this.toggle_rich_preview(cx)))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.toggle_rich_preview(cx);
+                    cx.stop_propagation();
+                }
+            }))
+            // The original swaps icons: an image while previews show, braces (source) otherwise.
+            .child(if on {
+                icon("diff-rich-preview", 16., t.text)
+            } else {
+                icon("import-category-braces", 16., t.text_tertiary)
+            })
+    }
+
+    fn layout_choices(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        div().flex().items_center().gap(px(2.)).children(
+            [
+                (DiffLayout::Unified, "Switch to unified diff"),
+                (DiffLayout::Split, "Switch to split diff"),
+                (DiffLayout::Auto, "Auto"),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(i, (layout, label))| {
+                div()
+                    .id(("diff-layout-choice", i))
+                    .role(gpui::Role::Button)
+                    .aria_label(label)
+                    .aria_selected(self.layout == layout)
+                    .focusable()
+                    .tab_index(0)
+                    .cursor_pointer()
+                    .relative()
+                    .w(px(34.))
+                    .h(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(self.layout == layout, |d| {
+                        d.layer().child(shapes::decoration(shapes::Decoration {
+                            radius: gpui::Corners::all(px(12.5)),
+                            corner: shapes::Corner::Squircle,
+                            fill: Some(t.text_alpha_5),
+                            ..Default::default()
+                        }))
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_layout(layout, cx);
+                    }))
+                    .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            this.set_layout(layout, cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .child(icon(
+                        layout.icon(),
+                        16.,
+                        if self.layout == layout {
+                            t.text
+                        } else {
+                            t.text_tertiary
+                        },
+                    ))
+            }),
+        )
     }
 
     pub(super) fn standalone_file_header(
@@ -680,51 +821,100 @@ impl DiffPanel {
             .px(px(8.))
             .child(
                 div()
-                    .id("diff-file-filter")
-                    .track_focus(&focus)
-                    .role(gpui::Role::TextInput)
-                    .aria_label("Filter changed files")
-                    .aria_placeholder("Filter files…")
-                    .aria_value(self.filter.text.clone())
                     .mt(px(4.))
-                    .h(px(28.))
                     .flex_none()
                     .flex()
                     .items_center()
-                    .gap(px(6.))
-                    .px(px(8.))
-                    .rounded(px(12.5))
-                    .border_1()
-                    .border_color(if focus.is_focused(window) {
-                        t.info_solid
-                    } else {
-                        t.border
-                    })
-                    .bg(t.text.opacity(0.03))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |_, _, window, cx| {
-                            window.focus(&focus, cx);
-                            cx.stop_propagation();
-                        }),
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .id("diff-file-filter")
+                            .track_focus(&focus)
+                            .role(gpui::Role::TextInput)
+                            .aria_label("Filter changed files")
+                            .aria_placeholder("Filter files…")
+                            .aria_value(self.filter.text.clone())
+                            .flex_1()
+                            .min_w_0()
+                            .h(px(28.))
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .px(px(8.))
+                            .rounded(px(12.5))
+                            .border_1()
+                            .border_color(if focus.is_focused(window) {
+                                t.info_solid
+                            } else {
+                                t.border
+                            })
+                            .bg(t.text.opacity(0.03))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |_, _, window, cx| {
+                                    window.focus(&focus, cx);
+                                    cx.stop_propagation();
+                                }),
+                            )
+                            .child(icon("search", 14., t.text_tertiary))
+                            .child(text(
+                                if self.filter.text.is_empty() {
+                                    "Filter files…"
+                                } else {
+                                    &self.filter.text
+                                }
+                                .to_owned(),
+                                14.,
+                                18.,
+                                430.,
+                                if self.filter.text.is_empty() {
+                                    t.text_tertiary
+                                } else {
+                                    t.text
+                                },
+                            )),
                     )
-                    .child(icon("search", 14., t.text_tertiary))
-                    .child(text(
-                        if self.filter.text.is_empty() {
-                            "Filter files…"
-                        } else {
-                            &self.filter.text
-                        }
-                        .to_owned(),
-                        14.,
-                        18.,
-                        430.,
-                        if self.filter.text.is_empty() {
-                            t.text_tertiary
-                        } else {
-                            t.text
-                        },
-                    )),
+                    // shortcut: shown when any changed file is generated, not when only
+                    // `.gitattributes` declares the attribute; check the attributes file if needed.
+                    .when(!self.generated.paths.is_empty(), |d| {
+                        let on = self.generated.filter;
+                        d.child(
+                            div()
+                                .id("diff-filter-generated")
+                                .role(gpui::Role::CheckBox)
+                                .aria_label("Filter generated files")
+                                .aria_toggled(if on {
+                                    gpui::Toggled::True
+                                } else {
+                                    gpui::Toggled::False
+                                })
+                                .size(px(28.))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(14.))
+                                .focusable()
+                                .tab_index(0)
+                                .cursor_pointer()
+                                .hover(|d| d.bg(t.list_hover))
+                                .when(on, |d| d.bg(t.accent.opacity(0.1)))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.toggle_generated_filter(cx);
+                                }))
+                                .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                        this.toggle_generated_filter(cx);
+                                        cx.stop_propagation();
+                                    }
+                                }))
+                                .child(icon(
+                                    "security-filter",
+                                    16.,
+                                    if on { t.text_accent } else { t.text_tertiary },
+                                )),
+                        )
+                    }),
             )
             .child(
                 div()
@@ -795,7 +985,9 @@ impl DiffPanel {
                 .child(text(title, 16., 24., 500., t.text))
                 .child(text(description, 13., 20., 400., t.text_tertiary))
                 .when(
-                    self.source == DiffSource::LastTurn && self.last_turn_state.is_some(),
+                    self.source == DiffSource::LastTurn
+                        && self.last_turn_state.is_some()
+                        && !self.last_turn_only,
                     |d| {
                         d.child(
                             div()
@@ -1233,5 +1425,29 @@ mod tests {
         assert_eq!(panel.files[panel.active_file].name.as_ref(), "b.rs");
         panel.replace_files(vec![FileDiff::patch("c.rs", patch)]);
         assert_eq!(panel.files[panel.active_file].name.as_ref(), "c.rs");
+    }
+
+    #[test]
+    fn generated_filter_hides_files_and_restores_their_order() {
+        let patch = "@@ -0,0 +1 @@\n+line\n";
+        let mut panel = DiffPanel::from_patch("/repo", "");
+        panel.generated.paths = ["/repo/gen/a.rs".to_owned()].into();
+        panel.generated.filter = true;
+        panel.replace_files(vec![
+            FileDiff::patch("b.rs", patch),
+            FileDiff::patch("gen/a.rs", patch),
+            FileDiff::patch("c.rs", patch),
+        ]);
+        let names = |panel: &DiffPanel| {
+            panel
+                .files
+                .iter()
+                .map(|file| file.name.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&panel), ["b.rs", "c.rs"]);
+        panel.generated.filter = false;
+        panel.refilter_generated_files();
+        assert_eq!(names(&panel), ["b.rs", "a.rs", "c.rs"]);
     }
 }

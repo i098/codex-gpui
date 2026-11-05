@@ -10,10 +10,82 @@ pub(super) struct Form {
     unsupported: bool,
 }
 
+/// The request the original raises after a completed plan (`item/plan/requestImplementation`).
+pub const IMPLEMENT_PLAN_METHOD: &str = "item/plan/requestImplementation";
+const IMPLEMENT_PLAN_OPTION: &str = "Yes, implement this plan";
+const IMPLEMENT_PLAN_PROMPT: &str = "PLEASE IMPLEMENT THIS PLAN:";
+
+impl Composer {
+    /// Answers of the `Implement this plan?` card: the option leaves Plan mode and sends the plan
+    /// for implementation; typed text goes as feedback and stays in Plan mode; dismissing only
+    /// leaves Plan mode. Other requests are left alone.
+    pub(super) fn follow_plan(
+        &mut self,
+        approval: &Approval,
+        response: &Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(form) = approval
+            .form
+            .as_ref()
+            .filter(|f| f.method == IMPLEMENT_PLAN_METHOD)
+        else {
+            return;
+        };
+        let answer = response["answers"]["implement"]["answers"][0].as_str();
+        let text = match answer {
+            Some(IMPLEMENT_PLAN_OPTION) => {
+                self.plan = false;
+                format!(
+                    "{IMPLEMENT_PLAN_PROMPT}\n{}",
+                    form.params["planContent"].as_str().unwrap_or_default()
+                )
+            }
+            Some(feedback) => {
+                self.plan = true;
+                feedback.to_owned()
+            }
+            None => {
+                self.plan = false;
+                return;
+            }
+        };
+        let submission = Submission {
+            text,
+            shell_command: false,
+            attachments: Vec::new(),
+            context_files: Vec::new(),
+            model: self
+                .current_model()
+                .map(|m| m.id.clone())
+                .unwrap_or_default(),
+            effort: self.effort.clone(),
+            permission: self.permission.clone(),
+            service_tier: SERVICE_TIERS[self.speed],
+            plan: self.plan,
+            background: false,
+        };
+        if let Some(send) = self.on_submit.clone() {
+            send(&submission, window, cx);
+        }
+    }
+}
+
 impl Approval {
     pub fn form(id: Value, method: &str, params: &Value) -> Option<Self> {
         params.as_object()?;
         let (title, fields, unsupported) = match method {
+            IMPLEMENT_PLAN_METHOD => {
+                params["turnId"].as_str()?;
+                params["planContent"].as_str()?;
+                let field = json!({
+                    "id": "implement", "question": "Implement this plan?",
+                    "options": [{ "label": IMPLEMENT_PLAN_OPTION, "description": "" }],
+                    "isOther": true, "isSecret": false,
+                });
+                ("Implement this plan?".to_owned(), vec![field], false)
+            }
             "item/tool/requestUserInput" => {
                 params["turnId"].as_str()?;
                 params["itemId"].as_str()?;
@@ -68,6 +140,7 @@ impl Approval {
                             thread: params["threadId"].as_str()?.to_owned(),
                         }),
                         computer_use: None,
+                        command: false,
                         form: Some(Form {
                             method: method.to_owned(),
                             params: params.clone(),
@@ -155,6 +228,7 @@ impl Approval {
                 thread: params["threadId"].as_str()?.to_owned(),
             }),
             computer_use: None,
+            command: false,
             form: Some(Form {
                 method: method.to_owned(),
                 params: params.clone(),
@@ -1261,6 +1335,10 @@ impl Composer {
             .approval
             .as_ref()
             .is_some_and(|approval| approval.permissions.is_some());
+        let command = self
+            .approval
+            .as_ref()
+            .is_some_and(|approval| approval.command);
         let user_input = self
             .approval
             .as_ref()
@@ -1289,7 +1367,7 @@ impl Composer {
             } else {
                 t.text_inverse
             }
-        } else if permission || user_input {
+        } else if permission || command || user_input {
             t.text
         } else {
             t.text_tertiary
@@ -1324,7 +1402,7 @@ impl Composer {
                     Some(t.button_primary_solid)
                 } else if native {
                     Some(t.text.opacity(0.03))
-                } else if permission || user_input {
+                } else if permission || command || user_input {
                     Some(if t.appearance == Appearance::Dark {
                         t.text.opacity(0.03)
                     } else {
@@ -1333,7 +1411,7 @@ impl Composer {
                 } else {
                     None
                 },
-                border: (primary || permission || user_input || native)
+                border: (primary || permission || command || user_input || native)
                     .then_some((px(1.), t.border)),
                 ..Default::default()
             }))
@@ -1346,6 +1424,7 @@ impl Composer {
             ))
             .when(
                 permission
+                    || (command && decision != ApprovalDecision::AcceptForSession)
                     || form_submit
                     || (picker && primary)
                     || (native
@@ -1355,7 +1434,7 @@ impl Composer {
                     d.child(
                         div()
                             .relative()
-                            .when(permission || native, |d| d.top(px(0.5)))
+                            .when(permission || command || native, |d| d.top(px(0.5)))
                             .h(px(16.))
                             .min_w(px(16.))
                             .px(px(6.))
@@ -1375,7 +1454,10 @@ impl Composer {
                                     } else {
                                         "Ctrl+⏎"
                                     }
-                                } else if decision == ApprovalDecision::Decline {
+                                } else if matches!(
+                                    decision,
+                                    ApprovalDecision::Decline | ApprovalDecision::Cancel
+                                ) {
                                     "Esc"
                                 } else {
                                     "⏎"
@@ -1407,6 +1489,102 @@ impl Composer {
                         this.request_action(decision, window, cx)
                     }))
             })
+    }
+
+    /// The original's command approval card (`data-codex-approval-surface`): a `Terminal`
+    /// header, the reason as title, the command in a code box, then the offered decisions.
+    pub(super) fn command_request_card(
+        &self,
+        approval: &Approval,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        div()
+            .relative()
+            .p(px(1.))
+            .flex()
+            .flex_col()
+            .child(shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(25.)),
+                corner: shapes::Corner::Squircle,
+                fill: Some(t.surface_elevated_secondary),
+                border: Some((px(1.), t.border)),
+                ..Default::default()
+            }))
+            .child(
+                div()
+                    .px(px(16.))
+                    .pt(px(16.))
+                    .pb(px(12.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(icon("thread-summary-terminal", 18., t.text_secondary))
+                            .child(text("Terminal", 13., 20., 400., t.text_secondary)),
+                    )
+                    .child(text(approval.title.clone(), 14., 20., 500., t.text))
+                    .when_some(approval.reason.clone(), |d, reason| {
+                        d.child(text(reason, 13., 19.5, 430., t.text_secondary))
+                    }),
+            )
+            .when_some(approval.detail.clone(), |d, detail| {
+                d.child(
+                    div().px(px(12.)).child(
+                        div()
+                            .p(px(8.))
+                            .rounded(px(10.))
+                            .bg(t.surface_tertiary)
+                            .font_family(MONO)
+                            .text_size(px(12.))
+                            .line_height(px(18.))
+                            .font_weight(gpui::FontWeight(500.))
+                            .text_color(t.text_tertiary)
+                            .child(detail),
+                    ),
+                )
+            })
+            .child(
+                div()
+                    .px(px(16.))
+                    .pt(px(8.))
+                    .pb(px(16.))
+                    .flex()
+                    .justify_end()
+                    .gap(px(8.))
+                    .children(
+                        [
+                            ApprovalDecision::Cancel,
+                            ApprovalDecision::Decline,
+                            ApprovalDecision::AcceptForSession,
+                            ApprovalDecision::Accept,
+                        ]
+                        .into_iter()
+                        .filter(|&decision| approval.choices().any(|choice| choice == decision))
+                        .map(|decision| {
+                            let (id, label) = match decision {
+                                ApprovalDecision::Cancel => ("request-cancel", "Cancel".into()),
+                                ApprovalDecision::Decline => ("request-deny", "Deny".into()),
+                                ApprovalDecision::AcceptForSession => {
+                                    ("request-allow-session", approval.scoped_label.clone())
+                                }
+                                ApprovalDecision::Accept => ("request-allow", "Allow once".into()),
+                            };
+                            self.request_button(
+                                id,
+                                label,
+                                decision,
+                                decision == ApprovalDecision::Accept,
+                                t,
+                                cx,
+                            )
+                        }),
+                    ),
+            )
     }
 
     pub(super) fn permission_request_card(
