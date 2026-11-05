@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Add the Settings ▸ Mini & Pets page (also `codex://pets/install`): Show or Hide mini, a preview of the chosen pet over the Mini bar, a Customize dialog with the pet size slider (80–224, Reset to 112), and a My pets grid with None, the bundled pets and custom pets from `$CODEX_HOME/pets`, plus Refresh and Create pet (installs and enables the Hatch Pet skill and starts a chat with it).
 - Add the Settings ▸ Code Review page (also `codex://settings/code-review`) on the ChatGPT backend's `/wham/settings` review service: personal automatic review, trigger, exhaustive review and credits, Security review preferences, the repository list with search and paging, and each repository's review, security review, threat model, path rules and AGENTS.md link.
 - Browse a connected SSH host's folders when adding a folder to a remote project in `File > New Project...`: `Add` with an empty path lists the host's folders (`fs/readDirectory`), and `Choose` adds the folder.
 - Open the local environment editor from `codex://settings/local-environments/create?workspaceRoot=…&configPath=…`, as the original `local-environments/create` route does: Settings ▸ Worktrees ▸ Environments opens with the new environment editor for that project.
@@ -25,6 +26,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Run the selected local environment's actions from the thread: `Run: {action}` and an `Actions` menu in the header, `⌘⇧D` for the first and `environmentAction1`–`9` shortcut slots; each command runs in a new terminal tab.
 - Add the Settings ▸ Trusted contact page (also `codex://settings/trusted-contact`): invite a contact with the ChatGPT backend's `/trusted_contact` service, see Pending or Active, resend the invitation, and remove the contact.
 - Add the Settings ▸ Security page at `codex://settings/security`: create or change the account PIN that guards locked chats (`/locked_chats/...`), open the PIN reset in the browser, and turn lockdown mode on or off.
+- Add the Settings ▸ Ads controls page (also `codex://settings/ads-controls`): the paged ads history and topics from the ChatGPT backend, the `Personalize ads` switch, `Turn on ads` when ads are off, and `Delete ads data` with a confirmation.
 - Add the legacy Codex Cloud `Preferences` tab (`/settings/cloud-environments?tab=preferences`): the `Diff view` (Unified or Split) choice and a `Branch format` pattern with the original's placeholder validation, saved to `/wham/settings/user`.
 - List a thread's subagents in Thread summary and open them in a `Subagents` side panel tab: `Active` and `Done` sections, and a detail view with the model, delegated task, status and final response.
 - Migrate a legacy Codex Cloud environment from its detail page with `Migrate`, as in the original: the app converts it through `legacy_environment_id` with `start_onboarding` and opens the setup chat. The list shows the `A new Codex Cloud experience is here` notice.
@@ -167,6 +169,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Fixed
 - Match the original profile menu: the account name and plan header, `Usage` with the percent left, `Show Pet`, `Settings` with their shortcuts, a `Help` flyout with What's new posts, setup, guide and privacy links, and `Log out`.
+- Draw the Help ▸ What's new timeline as the original does: one segment per post, through the dot centers, from 8 px below each dot to 8 px above the next.
 - Hide the whole Home sidebar, including the header, `New chat` and `Your dot` rows, with the panel when it collapses, and fit project and Recents titles to a resized panel instead of a fixed 264 px width.
 - Name this computer "PC" on Windows and Linux in Settings ▸ Connections (`Control this PC`, `Devices that can control this PC`, `Keep this PC awake`, `SSH connections from this PC`), as the original does; macOS keeps "Mac".
 - Show the ChatGPT home's one-row composer pill (`+`, `Ask ChatGPT`, model, microphone, voice) without the permissions chip, and place the headline and pill at the original's `42svh` composer line.

@@ -51,6 +51,7 @@ fn focus_on_pointer(
 }
 
 mod account_page;
+mod ads_controls;
 pub mod backend;
 mod code_review;
 pub mod computer_history;
@@ -58,6 +59,7 @@ mod languages;
 pub mod parental_controls;
 pub mod personalization;
 pub mod security_settings;
+pub mod pets;
 pub mod trusted_contact;
 pub mod workspace {
     use crate::{SANS, composer::popover, focus, icon::icon, text};
@@ -456,6 +458,7 @@ const NAV: &[(&str, &[(&str, &str)])] = &[
             ("Keyboard shortcuts", "settings-keyboard-shortcuts"),
             ("Usage & billing", "settings-usage"),
             ("Data controls", "settings-data-controls"),
+            ("Ads controls", "settings-data-controls"),
             ("Debug", "settings-configuration"),
         ],
     ),
@@ -1144,6 +1147,7 @@ pub struct SettingsPane {
     storage: Entity<storage::StoragePage>,
     git_saved_until: std::collections::HashMap<&'static str, std::time::Instant>,
     appearance: appearance_settings::State,
+    pets: pets::State,
     /// `Available reasoning efforts` on the Configuration page.
     efforts: Option<(Vec<String>, Entity<crate::settings_kit::MultiSelect>)>,
 }
@@ -1213,6 +1217,10 @@ impl SettingsPane {
         .detach();
         cx.observe_global::<notifications::State>(|_, cx| cx.notify())
             .detach();
+        cx.observe_global::<super::mini::CustomPets>(|_, cx| cx.notify())
+            .detach();
+        cx.observe_global::<super::mini::MiniOpen>(|_, cx| cx.notify())
+            .detach();
         Self {
             storage: cx.new(|cx| storage::StoragePage::new(page.clone(), cx)),
             page,
@@ -1223,6 +1231,7 @@ impl SettingsPane {
             git_fields: Vec::new(),
             git_saved_until: Default::default(),
             appearance: Default::default(),
+            pets: Default::default(),
             efforts: None,
         }
     }
@@ -1763,6 +1772,9 @@ impl Render for SettingsPane {
         if section == "Security" {
             return security_settings::render(window, cx);
         }
+        if section == "Ads controls" {
+            return ads_controls::render(window, cx);
+        }
         if section == "Parental controls" {
             return parental_controls::render(window, cx);
         }
@@ -1789,6 +1801,9 @@ impl Render for SettingsPane {
         }
         if section == "Connections" {
             return super::connections::render(window, cx);
+        }
+        if section == "Mini & Pets" {
+            return self.render_pets(&t, window, cx);
         }
         if section == "Computer history" {
             return computer_history::render(self.page.clone(), window, cx);
