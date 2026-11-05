@@ -8,6 +8,15 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Add the Settings ▸ Code Review page (also `codex://settings/code-review`) on the ChatGPT backend's `/wham/settings` review service: personal automatic review, trigger, exhaustive review and credits, Security review preferences, the repository list with search and paging, and each repository's review, security review, threat model, path rules and AGENTS.md link.
+- Open the local environment editor from `codex://settings/local-environments/create?workspaceRoot=…&configPath=…`, as the original `local-environments/create` route does: Settings ▸ Worktrees ▸ Environments opens with the new environment editor for that project.
+- Add `Disable Git-based diffs` to Settings ▸ Git: with it on, the Changes panel shows only `Last Turn`, hides `View branch diff`, and runs no git repository discovery (`git-review-mode` = `last-turn-only`).
+- Search settings rows: the Settings search lists matching row titles and descriptions under `Matching settings` and opens their page, and a `Clear settings search` button clears the query.
+- Show `Hook stats` in a finished turn's actions when hooks ran (`hook/started`, `hook/completed`): the dialog counts runs, blocked and failed runs, and lists each run's status, event and source, opening to its status message and output.
+- Sign in through an enterprise gateway with its native OAuth handoff, completion status, and cancellation flow.
+- Open any settings page from `codex://settings/<slug>` links (`git-settings`, `mcp-settings`, `hooks-settings`, `agent`, `local-environments` and the rest of the original slugs, plus the `work-settings` and usage-tab aliases); unknown slugs open General.
+- Show external agent import progress as imported and failed item counts in the import view.
+- Open a `New tab` page from the side panel's and the titlebar's `New tab` buttons: `Tools` (Changes, Terminal with `Open bottom terminal`, Browser) and `Recents` (recently opened files). A pick replaces the `New tab` tab.
+- Add `Fix checks` under a pull request's failing checks and `Address comments` with optional guidance under its review comments: each starts a new chat that checks out the pull request branch and fixes it.
 - Show the original's `Restart to apply workspace settings` prompt when the polled org policy (`in_app_updates`) flips under a running app; `Restart` re-execs the app in place.
 - Set the in-app browser's default site permissions (Browse, Download, Upload), history access and full CDP access on Settings ▸ Browser; they persist to `browser_use` in `config.toml`, and custom site permissions are listed.
 - Run the selected local environment's actions from the thread: `Run: {action}` and an `Actions` menu in the header, `⌘⇧D` for the first and `environmentAction1`–`9` shortcut slots; each command runs in a new terminal tab.
@@ -123,6 +132,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add optional keyboard-accessible documentation links to confirmation dialogs without accepting or cancelling the pending action.
 - Add saved, revision-scoped Mark as viewed controls for Branch diffs.
 - Keep mode-switch commands out of the keyboard shortcuts dialog while preserving their key bindings.
+- Bind the chat and panel commands: open a side-chat fork, copy the last assistant code block or browser-page URL, fork, delete, copy Markdown, search chats, focus composers and toggle panels.
 - Route native Codex links with thread host and access state, project selection, SSH setup, source-specific task editing, and window-owned OAuth callbacks.
 - Notify completed automation runs and show the Scheduled unread dot from saved run state.
 - Add working Notifications settings: system permission, turn mode, alert switches, sound with import and preview, and ChatGPT channels.
@@ -151,6 +161,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add `Group by` (`Project` or `None`) to the Archived chats filter menu; `None` shows every archived chat in one list without project headers.
 
 ### Fixed
+- Match the original profile menu: the account name and plan header, `Usage` with the percent left, `Show Pet`, `Settings` with their shortcuts, a `Help` flyout with What's new posts, setup, guide and privacy links, and `Log out`.
 - Hide the whole Home sidebar, including the header, `New chat` and `Your dot` rows, with the panel when it collapses, and fit project and Recents titles to a resized panel instead of a fixed 264 px width.
 - Name this computer "PC" on Windows and Linux in Settings ▸ Connections (`Control this PC`, `Devices that can control this PC`, `Keep this PC awake`, `SSH connections from this PC`), as the original does; macOS keeps "Mac".
 - Show the ChatGPT home's one-row composer pill (`+`, `Ask ChatGPT`, model, microphone, voice) without the permissions chip, and place the headline and pill at the original's `42svh` composer line.

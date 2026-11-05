@@ -93,6 +93,13 @@ impl Worktrees {
             cx.notify();
         })
         .detach();
+        cx.observe_global::<super::environments::State>(|this, cx| {
+            if cx.global::<super::environments::State>().create.is_some() && !this.environments {
+                this.environments = true;
+                cx.notify();
+            }
+        })
+        .detach();
         cx.on_blur(&root.focus_handle(cx), window, |this, _, cx| {
             this.save_root(cx)
         })
@@ -113,7 +120,9 @@ impl Worktrees {
             limit,
             layer: Layer::default(),
             confirmation: None,
-            environments: false,
+            environments: cx
+                .try_global::<super::environments::State>()
+                .is_some_and(|state| state.create.is_some()),
             scroll: gpui::ScrollHandle::new(),
             composited: false,
             heading_height: Rc::new(Cell::new(px(0.))),

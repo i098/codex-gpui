@@ -112,6 +112,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("rail_focus_ring", rail_focus_ring),
     ("profile_menu_settings", profile_menu_settings),
     ("profile_menu_dismiss", profile_menu_dismiss),
+    ("profile_menu_rows", profile_menu_rows),
     ("profile_menu_usage", profile_menu_usage),
     ("profile_menu_mobile", profile_menu_mobile),
     ("mobile_button_hover", mobile_button_hover),
@@ -974,12 +975,6 @@ fn avatar(fx: &Fx) -> (f32, f32) {
     (26., fx.size.1 - 26.)
 }
 
-/// Profile menu rows `Settings` and `Set up mobile`, above the `Keyboard Shortcuts` row.
-/// `Usage`, `Personalization` and `Open config.toml` sit between `Settings` and `Show Mini`.
-fn profile_item(fx: &Fx, n: usize) -> (f32, f32) {
-    (118., fx.size.1 - [320., 100.][n])
-}
-
 fn profile_menu_settings() -> Result<String> {
     let mut fx = Fx::new()?;
     fx.click(avatar(&fx))?;
@@ -987,7 +982,8 @@ fn profile_menu_settings() -> Result<String> {
         fx.shell(|s| s.profile_menu),
         "the avatar did not open the menu"
     );
-    fx.click(profile_item(&fx, 0))?;
+    let settings = profile_row(&mut fx, "profile-settings")?;
+    fx.click(settings)?;
     ensure!(fx.route() == Route::Settings, "route {:?}", fx.route());
     // The Settings shell has the avatar too; a second click closes its menu.
     fx.click(avatar(&fx))?;
@@ -1008,7 +1004,8 @@ fn profile_menu_usage() -> Result<String> {
     let mut fx = Fx::new()?;
     fx.click(avatar(&fx))?;
     fx.capture_evidence("CGX_PROFILE_SHOTS", "profile-menu")?;
-    fx.click((118., fx.size.1 - 288.))?;
+    let usage = profile_row(&mut fx, "profile-usage")?;
+    fx.click(usage)?;
     ensure!(fx.route() == Route::Settings, "route {:?}", fx.route());
     fx.capture_evidence("CGX_PROFILE_SHOTS", "profile-usage")?;
     Ok(String::new())
@@ -1027,15 +1024,97 @@ fn profile_menu_dismiss() -> Result<String> {
     Ok(String::new())
 }
 
-/// Profile menu ▸ Help ▸ `Set up mobile`.
-fn open_mobile(fx: &mut Fx) -> Result<()> {
-    fx.click(avatar(fx))?;
-    fx.click(profile_item(fx, 1))
+/// The menu loads the account on open and `Help` opens its flyout.
+fn profile_menu_rows() -> Result<String> {
+    let mut lines = script(None, |_| {})?;
+    // Each recorded exchange answers one request; startup reads the account too.
+    for _ in 0..4 {
+        lines.extend(exchange(
+            "account/read",
+            json!({
+                "account": {"type": "chatgpt", "email": "user@example.com", "planType": "pro"},
+                "requiresOpenaiAuth": true,
+            }),
+        ));
+        lines.extend(exchange(
+            "account/rateLimits/read",
+            json!({"rateLimits": {"primary": {"usedPercent": 1}, "planType": "pro"}}),
+        ));
+    }
+    let mut fx = Fx::scripted(lines)?;
+    fx.click(avatar(&fx))?;
+    fx.wait("the profile", |fx| fx.shell(|s| s.profile.plan.is_some()))?;
+    let (name, plan, left) = fx.shell(|s| {
+        let p = &s.profile;
+        (p.name.clone(), p.plan.clone(), p.usage_left)
+    });
+    ensure!(name.as_deref() == Some("user@example.com"), "name {name:?}");
+    ensure!(plan.as_deref() == Some("Pro"), "plan {plan:?}");
+    ensure!(left == Some(99.), "usage left {left:?}");
+    // The replay host records no `/me` or changelog feed: show the original capture's.
+    let shell = fx.read(|root, _| root.shell().clone());
+    fx.cx.update(|cx| {
+        shell.update(cx, |shell, cx| {
+            shell.profile.name = Some("Demo User".into());
+            shell.profile.changelog = [
+                ("Composer predictions in Codex", "9 Oct"),
+                ("Codex app", "8 Oct"),
+                ("Codex app", "7 Oct"),
+            ]
+            .map(|(title, date)| ui::ChangelogPost {
+                title: title.into(),
+                date: date.into(),
+                url: "https://developers.openai.com/codex/changelog".into(),
+            })
+            .into();
+            shell.profile.chrome_extension_setup = true;
+            shell.profile.privacy_center = true;
+            cx.notify();
+        });
+    });
+    fx.cx.run_until_parked();
+    fx.capture_evidence("CGX_PROFILE_MENU_EVIDENCE", "profile-menu")?;
+    let help = profile_row(&mut fx, "profile-help")?;
+    fx.hover(help)?;
+    profile_row(&mut fx, "profile-keyboard-shortcuts")?;
+    fx.capture_evidence("CGX_PROFILE_MENU_EVIDENCE", "profile-help")?;
+    let shortcuts = profile_row(&mut fx, "profile-keyboard-shortcuts")?;
+    fx.click(shortcuts)?;
+    ensure!(
+        fx.shell(|s| !s.profile_menu),
+        "Keyboard shortcuts left the menu open"
+    );
+    Ok(String::new())
 }
 
+/// What Profile menu ▸ Help ▸ `Set up mobile` dispatches.
+fn open_mobile(fx: &mut Fx) -> Result<()> {
+    fx.action(Box::new(ui::OpenMobileSetup))
+}
+
+/// Help shows `Set up mobile` only for a ChatGPT account with remote control, as the original.
 fn profile_menu_mobile() -> Result<String> {
     let mut fx = Fx::new()?;
-    open_mobile(&mut fx)?;
+    fx.click(avatar(&fx))?;
+    let help = profile_row(&mut fx, "profile-help")?;
+    fx.hover(help)?;
+    ensure!(
+        profile_row(&mut fx, "profile-set-up-mobile").is_err(),
+        "Set up mobile without a ChatGPT account"
+    );
+    let shell = fx.read(|root, _| root.shell().clone());
+    fx.cx.update(|cx| {
+        let state = cx.default_global::<ui::screens::connections::ConnectionsState>();
+        state.gates.slingshot = true;
+        state.connections = Some(Vec::new());
+        shell.update(cx, |shell, cx| {
+            shell.profile.plan = Some("Pro".into());
+            cx.notify();
+        });
+    });
+    fx.cx.run_until_parked();
+    let mobile = profile_row(&mut fx, "profile-set-up-mobile")?;
+    fx.click(mobile)?;
     ensure!(fx.route() == Route::Mobile, "route {:?}", fx.route());
     ensure!(fx.shell(|s| s.selected_rail.is_none() && !s.sidebar_open && s.can_go_back));
     fx.click(BACK)?;
