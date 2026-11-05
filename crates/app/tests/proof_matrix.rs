@@ -48,6 +48,20 @@ fn capture_cell() -> Result<()> {
             lines.extend(common::exchange(method, result));
         }
     }
+    if (surface.as_str(), state.as_str()) == ("thread", "approval") {
+        // s015's first approval request, right after the subtract thread's read.
+        let rec: Value =
+            serde_json::from_str(include_str!("../../../refs/interactions/s015.json"))?;
+        let read = lines
+            .iter()
+            .position(|v| v["dir"] == "recv" && v["msg"]["result"]["thread"]["id"] == SUBTRACT)
+            .context("no thread/read reply")?;
+        let request = rec["steps"][8]["message"]["request"].clone();
+        lines.insert(
+            read + 1,
+            serde_json::json!({ "dir": "recv", "msg": request }),
+        );
+    }
     let mut fx = Fx::open(theme, (width as f32, height as f32), lines)?;
     // A host fixture's storage must outlive the capture.
     let home = tempfile::tempdir()?;
@@ -65,6 +79,16 @@ fn capture_cell() -> Result<()> {
             fx.click(fx.at("home", "Add a subtract")?)?;
             fx.wait_thread(SUBTRACT)?;
             "thread"
+        }
+        ("thread", "approval") => {
+            fx.click(fx.at("home", "Add a subtract")?)?;
+            fx.wait_thread(SUBTRACT)?;
+            let composer = fx.composer();
+            fx.wait("the approval card", |fx| {
+                fx.read(|_, cx| composer.read(cx).approval().is_some())
+            })?;
+            fx.hover((width as f32 * 0.6, 6.))?;
+            "thread-approval"
         }
         ("thread", "worked" | "tools") => {
             fx.click(fx.at("home", "Add a subtract")?)?;
@@ -127,7 +151,7 @@ fn capture_cell() -> Result<()> {
             ensure!(mobile_step(&fx) == SetupStep::AllowHost);
             "mobile-continuation"
         }
-        ("diff", "rest") => {
+        ("diff", "rest" | "menu") => {
             fx.click(fx.at("home", "Add a subtract")?)?;
             fx.wait_thread(SUBTRACT)?;
             fx.keys("alt-cmd-b")?;
@@ -136,7 +160,13 @@ fn capture_cell() -> Result<()> {
             let panel_left =
                 width as f32 - 4. - 664.17f32.min((width as f32 - 344.5 - 320.).max(320.));
             fx.click((panel_left + 100., 111.))?;
-            "diff"
+            if state == "menu" {
+                // `Changes options`, the header's first button (28 px, 88 px from the right).
+                fx.click((width as f32 - 88., 68.))?;
+                "diff-menu"
+            } else {
+                "diff"
+            }
         }
         ("automations", "empty") => {
             let host = RecordedScheduled {
@@ -207,10 +237,9 @@ fn capture_cell() -> Result<()> {
     Ok(())
 }
 
-/// Profile menu ▸ Help ▸ `Set up mobile`, as `flows::open_mobile` clicks it.
+/// What Profile menu ▸ Help ▸ `Set up mobile` dispatches, as `flows::open_mobile` does.
 fn open_mobile(fx: &mut Fx) -> Result<()> {
-    fx.click((26., fx.size.1 - 26.))?;
-    fx.click((118., fx.size.1 - 100.))?;
+    fx.action(Box::new(ui::OpenMobileSetup))?;
     ensure!(fx.route() == Route::Mobile, "route {:?}", fx.route());
     Ok(())
 }

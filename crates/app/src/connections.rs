@@ -44,6 +44,23 @@ pub fn bridge(host_id: &str, cx: &App) -> Option<Arc<Bridge>> {
         .map(|peer| peer.bridge.clone())
 }
 
+/// Registers `bridge` as connected remote `host_id`, as a successful `connect` does; for
+/// flows that drive a remote host without SSH.
+#[doc(hidden)]
+pub fn connect_for_test(host_id: &str, bridge: Arc<Bridge>, cx: &App) {
+    let registry = cx.global::<Registry>();
+    let peer = Peer {
+        bridge,
+        version: String::new(),
+    };
+    registry
+        .0
+        .peers
+        .lock()
+        .unwrap()
+        .insert(host_id.into(), peer);
+}
+
 impl Drop for Runtime {
     fn drop(&mut self) {
         if let Ok(awake) = self.awake.get_mut()

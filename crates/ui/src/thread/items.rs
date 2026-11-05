@@ -1,4 +1,5 @@
 use super::*;
+use crate::icon::Icon;
 use base64::Engine as _;
 use gpui::{Image, ImageFormat};
 
@@ -9,12 +10,59 @@ pub(super) use automation::cache_automation_result;
 
 pub(super) type McpImages = RefCell<HashMap<String, Vec<(usize, Arc<Image>)>>>;
 
+/// Click on a generated image: show it in the side panel's image tab.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = shell, no_json)]
+pub struct OpenImage {
+    pub image: Arc<Image>,
+}
+
+/// The side panel's image tab: one generated image, fit to the panel.
+pub struct ImageView {
+    pub image: Arc<Image>,
+}
+
+impl Render for ImageView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .p(px(16.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(cx.theme().surface)
+            .child(
+                gpui::img(self.image.clone())
+                    .size_full()
+                    .object_fit(gpui::ObjectFit::Contain),
+            )
+    }
+}
+
+/// The image of an `imageGeneration` item: its `savedPath` file, else its base64 `result`.
+fn generated_image(saved_path: Option<&str>, result: Option<&str>) -> Option<Arc<Image>> {
+    // shortcut: reads the saved PNG on the UI thread once (then cached), async load if it lags.
+    let data = match saved_path.and_then(|path| std::fs::read(path).ok()) {
+        Some(data) => data,
+        None => base64::engine::general_purpose::STANDARD
+            .decode(result?)
+            .ok()?,
+    };
+    let format = saved_path
+        .and_then(|path| {
+            ImageFormat::from_mime_type(&format!("image/{}", path.rsplit('.').next()?))
+        })
+        .unwrap_or(ImageFormat::Png);
+    Some(Arc::new(Image::from_bytes(format, data)))
+}
+
 /// Right-aligned user message: `bg-user-message`, 22 px squircle, at most 70% wide. A message
 /// that wraps to more than 20 lines collapses to 19 with `Show more`
 /// (`collapsible-user-message-content`, `collapsedLineCount` 20, ellipsis indicator).
 pub(super) fn user_bubble(
     id: &SharedString,
     message: &str,
+    attachments: &[UserInput],
     find: Option<&FindPaint>,
     window: &mut Window,
     cx: &mut App,
@@ -114,7 +162,18 @@ pub(super) fn user_bubble(
                 d.child(icon("chevron-down-small", 14., t.text_tertiary))
             })
     });
-    div().flex().flex_col().items_end().pb(px(reserve)).child(
+    let attachments = (!attachments.is_empty()).then(|| sent_attachments(attachments, &t));
+    let column = div()
+        .flex()
+        .flex_col()
+        .items_end()
+        .gap(px(4.))
+        .pb(px(reserve))
+        .children(attachments);
+    if message.trim().is_empty() {
+        return column;
+    }
+    column.child(
         div()
             .relative()
             .max_w(relative(0.7))
@@ -140,6 +199,54 @@ pub(super) fn user_bubble(
                     .children(toggle),
             ),
     )
+}
+
+/// A sent message's non-text inputs above its bubble: images as 96 px thumbnails, file
+/// mentions and skills as chips. Right-aligned like the bubble.
+fn sent_attachments(attachments: &[UserInput], t: &Theme) -> Div {
+    let chip = |icon_name: &str, label: String| {
+        div()
+            .h(px(28.))
+            .px(px(10.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .rounded(px(14.))
+            .bg(t.user_message_background)
+            .child(icon(icon_name, 14., t.text_secondary))
+            .child(text(label, 13., 18., 430., t.text_secondary))
+            .into_any_element()
+    };
+    let thumb = |source: gpui::ImageSource| {
+        gpui::img(source)
+            .size(px(96.))
+            .rounded(px(12.))
+            .object_fit(gpui::ObjectFit::Cover)
+            .into_any_element()
+    };
+    let name = |path: &str| {
+        std::path::Path::new(path)
+            .file_name()
+            .map_or_else(|| path.to_owned(), |n| n.to_string_lossy().into_owned())
+    };
+    div()
+        .max_w(relative(0.7))
+        .flex()
+        .flex_wrap()
+        .justify_end()
+        .gap(px(4.))
+        .children(attachments.iter().filter_map(|input| {
+            Some(match input {
+                UserInput::LocalImage { path } => thumb(std::path::PathBuf::from(path).into()),
+                UserInput::Image { url: Some(url), .. } if url.starts_with("http") => {
+                    thumb(SharedString::from(url.clone()).into())
+                }
+                UserInput::Image { .. } => chip("diff-file-image", "Image".into()),
+                UserInput::Mention { path, .. } => chip("context-file-document", name(path)),
+                UserInput::Skill { name, .. } => chip("skill", name.clone()),
+                UserInput::Text { .. } | UserInput::Other => return None,
+            })
+        }))
 }
 
 /// A row that wraps its word boxes like an inline formatting context. Chromium lets a line's
@@ -479,6 +586,8 @@ pub(super) enum Activity<'a> {
     /// A command still running, by its command line.
     Running(&'a str),
     Mcp(&'a ThreadItem),
+    /// An `imageGeneration` item: `Generating image...` while it runs, then the image.
+    Image(&'a ThreadItem),
     PatchOutput(&'a str, &'a str),
     /// A reasoning item seen live: `Thought for 3s` once completed, its summary under it while
     /// open (keyed `reasoning-<id>`); `Thinking` while it streams, with the streamed text
@@ -491,6 +600,10 @@ pub(super) enum Activity<'a> {
     },
     /// A `contextCompaction` item: `Compacting context`, `Context compacted`, …
     Compaction(&'static str),
+    /// A `dynamicToolCall` item: `Reading chat terminal`, `Read chat terminal`, or the tool name.
+    Tool(&'static str, String),
+    /// An `enteredReviewMode` item: `Reviewing <what>`.
+    Review(String),
     /// Consecutive finished commands and file changes behind one summary
     /// (`agent-activity-group`, keyed by its first item): `Edited a file, read files, ran
     /// commands`.
@@ -500,6 +613,21 @@ pub(super) enum Activity<'a> {
         icon: &'static str,
         rows: Vec<GroupRow>,
     },
+    /// A single-item row: web search, subagent call, image generation or view. Its `detail`
+    /// lines show under it while open (keyed `key`); its
+    /// `image` always shows under it.
+    Row(Row),
+}
+
+pub(super) struct Row {
+    key: String,
+    icon: &'static str,
+    label: String,
+    detail: Vec<String>,
+    image: Option<String>,
+    failed: bool,
+    /// Subagent threads the row opens, by thread id and label.
+    links: Vec<(String, String)>,
 }
 
 /// A row of an open group: `Ran <command>`, `Read <file>`, `Edited <file> +4 -0`.
@@ -543,6 +671,7 @@ impl Activity<'_> {
             Activity::Markdown(_, text) => vec![(*text).to_owned()],
             Activity::Running(command) => vec![(*command).to_owned()],
             Activity::Mcp(item) => vec![mcp_label(item)],
+            Activity::Image(item) => vec![image_label(item).to_owned()],
             Activity::PatchOutput(_, output) => vec![(*output).to_owned()],
             Activity::Reasoning {
                 key,
@@ -554,6 +683,17 @@ impl Activity<'_> {
                 .filter(|s| !s.is_empty())
                 .collect(),
             Activity::Compaction(label) => vec![(*label).to_owned()],
+            Activity::Row(row) => std::iter::once(row.label.clone())
+                .chain(
+                    open.contains(&row.key)
+                        .then(|| row.detail.iter().chain(row.links.iter().map(|l| &l.1)))
+                        .into_iter()
+                        .flatten()
+                        .cloned(),
+                )
+                .collect(),
+            Activity::Tool(_, label) => vec![label.clone()],
+            Activity::Review(label) => vec![label.clone()],
             Activity::Group {
                 key, summary, rows, ..
             } => std::iter::once(summary.clone())
@@ -580,7 +720,10 @@ pub(super) fn activities<'a>(
     let flush = |out: &mut Vec<Activity<'a>>, group: &mut Vec<&'a ThreadItem>| {
         out.extend(group_entry(&std::mem::take(group)));
     };
-    for item in items {
+    for (index, item) in items.iter().enumerate() {
+        // The original marks an item live until its `item/completed`; ours: the running
+        // turn's last item.
+        let live = running && index + 1 == items.len();
         match item {
             ThreadItem::CommandExecution {
                 command, status, ..
@@ -628,20 +771,200 @@ pub(super) fn activities<'a>(
                 flush(&mut out, &mut group);
                 out.push(Activity::Mcp(item));
             }
+            ThreadItem::ImageGeneration { .. } => {
+                flush(&mut out, &mut group);
+                out.push(Activity::Image(item));
+            }
+            ThreadItem::DynamicToolCall { tool, status, .. } => {
+                flush(&mut out, &mut group);
+                out.push(match (tool.as_str(), status.as_str()) {
+                    ("read_thread_terminal", "inProgress") => {
+                        Activity::Tool("thread-terminal", "Reading chat terminal".into())
+                    }
+                    ("read_thread_terminal", _) => {
+                        Activity::Tool("thread-terminal", "Read chat terminal".into())
+                    }
+                    _ => Activity::Tool("thread-mcp", tool.clone()),
+                });
+            }
             ThreadItem::CommandExecution { .. } | ThreadItem::FileChange { .. } => {
                 group.push(item);
             }
-            ThreadItem::AgentMessage { id, text, .. } | ThreadItem::Plan { id, text, .. }
+            ThreadItem::EnteredReviewMode { review, .. } => {
+                flush(&mut out, &mut group);
+                out.push(Activity::Review(format!("Reviewing {review}")));
+            }
+            ThreadItem::AgentMessage { id, text, .. }
+            | ThreadItem::Plan { id, text, .. }
+            | ThreadItem::ExitedReviewMode { id, review: text }
                 if !text.is_empty() =>
             {
                 flush(&mut out, &mut group);
                 out.push(Activity::Markdown(id, text));
             }
-            _ => {}
+            _ => {
+                if let Some(row) = item_row(item, live) {
+                    flush(&mut out, &mut group);
+                    out.push(Activity::Row(row));
+                }
+            }
         }
     }
     flush(&mut out, &mut group);
     out
+}
+
+/// The row of an item the activity column draws on one line.
+fn item_row(item: &ThreadItem, live: bool) -> Option<Row> {
+    let row = |key: &str, icon, label: String| Row {
+        key: format!("row-{key}"),
+        icon,
+        label,
+        detail: Vec::new(),
+        image: None,
+        failed: false,
+        links: Vec::new(),
+    };
+    Some(match item {
+        ThreadItem::WebSearch { id, query, action } => {
+            let detail = web_search_detail(query, action.as_ref());
+            // `codex.webSearch.summary.withoutDetail` and its `for {detail}` form.
+            let verb = if live {
+                "Searching the web"
+            } else {
+                "Searched the web"
+            };
+            let label = match detail {
+                Some(detail) => format!("{verb} for {detail}"),
+                None => verb.to_owned(),
+            };
+            row(id, "project-marker-globe", label)
+        }
+        ThreadItem::CollabAgentToolCall {
+            id,
+            tool,
+            status,
+            receiver_thread_ids,
+            prompt,
+            agents_states,
+            ..
+        } => {
+            let mut r = row(
+                id,
+                "import-category-person",
+                collab_label(tool, status, receiver_thread_ids.len()),
+            );
+            r.failed = status == "failed";
+            r.detail.extend(
+                prompt
+                    .as_deref()
+                    .filter(|p| !p.trim().is_empty())
+                    .map(|p| format!("Input: {}", p.trim())),
+            );
+            r.links = receiver_thread_ids
+                .iter()
+                .enumerate()
+                .map(|(n, thread)| {
+                    let mut label = format!("Agent {}", n + 1);
+                    if let Some(state) = agents_states.get(thread) {
+                        label.push_str(&format!(" ({})", agent_state(&state.status)));
+                        if let Some(message) =
+                            state.message.as_deref().filter(|m| !m.trim().is_empty())
+                        {
+                            label.push_str(&format!(": {}", message.trim()));
+                        }
+                    }
+                    (thread.clone(), label)
+                })
+                .collect();
+            r
+        }
+        ThreadItem::ImageGeneration {
+            id,
+            status,
+            saved_path,
+            revised_prompt,
+            failure,
+            ..
+        } => {
+            let label = match status.as_str() {
+                "inProgress" | "generating" => "Generating image...",
+                "failed" => "Image generation failed",
+                _ if failure.is_some() => "Image generation failed",
+                _ => "Generated image",
+            };
+            let mut r = row(id, "diff-file-image", label.to_owned());
+            r.failed = label == "Image generation failed";
+            r.image = saved_path.clone();
+            r.detail
+                .extend(revised_prompt.clone().filter(|p| !p.trim().is_empty()));
+            r
+        }
+        ThreadItem::ImageView { id, path } => {
+            // `localConversation.imageView.summary`.
+            let mut r = row(id, "diff-file-image", "Viewed an image".to_owned());
+            r.image = Some(path.clone());
+            r
+        }
+        _ => return None,
+    })
+}
+
+/// The original's `detail` of a web search: the query, else the action's queries, page or
+/// `'pattern' in url`.
+fn web_search_detail(query: &str, action: Option<&WebSearchAction>) -> Option<String> {
+    let detail = match action {
+        _ if !query.trim().is_empty() => query.trim().to_owned(),
+        Some(WebSearchAction::Search { query, queries }) => query
+            .clone()
+            .filter(|q| !q.trim().is_empty())
+            .or_else(|| queries.as_ref().map(|q| q.join(" · ")))?,
+        Some(WebSearchAction::OpenPage { url }) => url.clone()?,
+        Some(WebSearchAction::FindInPage { url, pattern }) => match (pattern, url) {
+            (Some(p), Some(u)) => format!("'{p}' in {u}"),
+            (Some(p), None) => format!("'{p}'"),
+            (None, u) => u.clone()?,
+        },
+        _ => return None,
+    };
+    (!detail.is_empty()).then_some(detail)
+}
+
+/// `localConversation.multiAgentAction.header`: `{action}{countLabel}`, as `Created an agent`.
+fn collab_label(tool: &str, status: &str, agents: usize) -> String {
+    let verbs = match tool {
+        "spawnAgent" => ["Creating", "Created", "Failed to create"],
+        "sendInput" | "sendMessage" | "followupTask" => {
+            ["Messaging", "Messaged", "Failed to message"]
+        }
+        "wait" | "waitAgent" => ["Waiting for", "Waited for", "Failed to wait for"],
+        "resumeAgent" => ["Resuming", "Resumed", "Failed to resume"],
+        "closeAgent" => ["Closing", "Closed", "Failed to close"],
+        "interruptAgent" => ["Interrupting", "Interrupted", "Failed to interrupt"],
+        "listAgents" => ["Listing", "Listed", "Failed to list"],
+        _ => ["Running", "Ran", "Failed"],
+    };
+    let verb = match status {
+        "inProgress" => verbs[0],
+        "failed" => verbs[2],
+        "interrupted" => "Interrupted",
+        _ => verbs[1],
+    };
+    match agents {
+        0 if tool == "listAgents" => format!("{verb} agents"),
+        0 => verb.to_owned(),
+        1 => format!("{verb} an agent"),
+        n => format!("{verb} {n} agents"),
+    }
+}
+
+/// `localConversation.multiAgentAction.agentState.*`.
+fn agent_state(status: &str) -> &str {
+    match status {
+        "pendingInit" => "pending init",
+        "notFound" => "not found",
+        other => other,
+    }
 }
 
 /// The summary and rows of one group. Summary parts come in the original's order (loaded
@@ -932,19 +1255,20 @@ pub(super) fn activity(
     };
     let plain = |(label, w): (Div, Pixels)| boxed(label.into_any_element(), w);
     // A 21 px line: a 16 px icon, then its words.
-    let row = |icon_name: &'static str, words: Div| {
+    let glyph = |name: &'static str| icon(name, 16., text60);
+    let row = |glyph: Icon, words: Div| {
         div()
             .h(px(21.))
             .min_w_0()
             .flex()
             .items_center()
             .gap(px(6.))
-            .child(icon(icon_name, 16., text60))
+            .child(glyph)
             .child(words)
     };
     // A row that opens `key`: its label whitens on hover, its 14 px chevron shows on hover and
     // points down while open.
-    let disclosure = |key: String, icon_name: &'static str, (label, w): (Div, Pixels), is_open| {
+    let disclosure = |key: String, glyph: Icon, (label, w): (Div, Pixels), is_open| {
         let group = SharedString::from(format!("activity-group-{key}"));
         // Group hover recolours text only on a stateful element: the run colour is fixed at
         // layout, before this frame's group hitbox exists.
@@ -965,7 +1289,7 @@ pub(super) fn activity(
             .flex()
             .items_center()
             .gap(px(4.))
-            .child(row(icon_name, boxed(label.into_any_element(), w)))
+            .child(row(glyph, boxed(label.into_any_element(), w)))
             .child(
                 // `Icon` folds its opacity into the color, so the hover sets the color.
                 icon(chevron, 14., text60.opacity(if is_open { 1. } else { 0. }))
@@ -1001,7 +1325,7 @@ pub(super) fn activity(
                 markdown(text, window, t, segments)
             }
             Activity::Running(command) => {
-                row("thread-terminal", plain(label(command.to_owned(), text60)))
+                row(glyph("thread-terminal"), plain(label(command.to_owned(), text60)))
             }
             Activity::PatchOutput(id, output) => mcp_output(
                 format!("patch-output-{id}"), "text", output, t,
@@ -1017,7 +1341,7 @@ pub(super) fn activity(
                 .flex_col()
                 .items_start()
                 .gap(px(4.))
-                .child(row("thread-summary", plain(label(words, text60))))
+                .child(row(glyph("thread-summary"), plain(label(words, text60))))
                 .when(!text.is_empty(), |d| d.child(text60_block(text, t))),
             Activity::Reasoning {
                 key,
@@ -1035,16 +1359,72 @@ pub(super) fn activity(
                     .items_start()
                     .child(disclosure(
                         key,
-                        "thread-summary",
+                        glyph("thread-summary"),
                         label(words, text60),
                         is_open,
                     ))
                     .children(content)
             }
+            Activity::Review(words) => row(glyph("code-review"), plain(label(words.clone(), text60))),
             Activity::Compaction(words) => row(
-                "thread-compaction",
+                glyph("thread-compaction"),
                 plain(label(words.to_owned(), text60)),
             ),
+            Activity::Row(item) => {
+                let color = if item.failed { t.text } else { text60 };
+                let opens = !item.detail.is_empty() || !item.links.is_empty();
+                let is_open = opens && open.contains(&item.key);
+                // gpui's ellipsis sums each char's unkerned advance
+                // (`LineWrapper::should_truncate_line`), so the box must hold that sum too, or
+                // kerned text truncates in a column wide enough for it.
+                let unkerned = item
+                    .label
+                    .chars()
+                    .map(|c| width(window, c.encode_utf8(&mut [0; 4]), 14., 430., None))
+                    .fold(px(0.), |a, w| a + w);
+                let (words, w) = label(item.label, color);
+                let words = (words, w.max(unkerned));
+                let head = if opens {
+                    disclosure(item.key.clone(), glyph(item.icon), words, is_open).into_any_element()
+                } else {
+                    row(glyph(item.icon), plain(words)).into_any_element()
+                };
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(head)
+                    .when(is_open, |d| {
+                        d.children(item.detail.into_iter().map(|line| text60_block(line, t)))
+                            .children(item.links.into_iter().map(|(thread, words)| {
+                                div()
+                                    .id(SharedString::from(format!("{}-{thread}", item.key)))
+                                    .cursor_pointer()
+                                    .hover(|s| s.text_color(t.text))
+                                    .on_click(move |_, window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(crate::screens::settings::usage::analytics::OpenChat(
+                                                thread.clone(),
+                                            )),
+                                            cx,
+                                        )
+                                    })
+                                    .child(text(words, 14., 21., 430., text60))
+                            }))
+                    })
+                    .when_some(item.image, |d, path| {
+                        d.child(
+                            gpui::img(std::path::PathBuf::from(path))
+                                .self_start()
+                                .max_w(px(320.))
+                                .max_h(px(320.))
+                                .rounded(px(12.))
+                                .object_fit(gpui::ObjectFit::Contain),
+                        )
+                    })
+            }
+            Activity::Tool(icon, words) => row(glyph(icon), plain(label(words.clone(), text60))),
             Activity::Mcp(item) => {
                 let ThreadItem::McpToolCall {
                     id,
@@ -1064,7 +1444,7 @@ pub(super) fn activity(
                 } else {
                     text60
                 };
-                let header = disclosure(key.clone(), "thread-mcp", label(mcp_label(item), color), is_open);
+                let header = disclosure(key.clone(), glyph("thread-mcp"), label(mcp_label(item), color), is_open);
                 let body = || {
                     let mut content = div().w_full().pt(px(4.)).flex().flex_col().gap(px(4.));
                     for update in progress {
@@ -1160,6 +1540,76 @@ pub(super) fn activity(
                     .child(header)
                     .children(view.expansion(&key, is_open, body, window, cx))
             }
+            Activity::Image(item) => {
+                let ThreadItem::ImageGeneration {
+                    id,
+                    status,
+                    result,
+                    saved_path,
+                    ..
+                } = item
+                else {
+                    unreachable!();
+                };
+                let decoded = (status == "completed")
+                    .then(|| {
+                        images
+                            .borrow_mut()
+                            .entry(id.clone())
+                            .or_insert_with(|| {
+                                generated_image(saved_path.as_deref(), result.as_deref())
+                                    .map(|image| (0, image))
+                                    .into_iter()
+                                    .collect()
+                            })
+                            .first()
+                            .map(|(_, image)| image.clone())
+                    })
+                    .flatten();
+                match decoded {
+                    Some(image) => {
+                        let context = crate::image_context::ImageContext {
+                            image: image.clone(),
+                            path: saved_path.as_ref().map(Into::into),
+                        };
+                        let open = OpenImage {
+                            image: image.clone(),
+                        };
+                        div().child(
+                            div()
+                                .id(SharedString::from(format!("generated-image-{id}")))
+                                .role(gpui::Role::Button)
+                                .aria_label("Generated image")
+                                .cursor_pointer()
+                                .rounded(px(12.))
+                                .overflow_hidden()
+                                .w(px(320.))
+                                .max_w_full()
+                                .child(gpui::img(image).w_full())
+                                .on_click(move |_, window, cx| {
+                                    window.dispatch_action(Box::new(open.clone()), cx)
+                                })
+                                .on_mouse_down(
+                                    gpui::MouseButton::Right,
+                                    cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                        this.menu = Some(context.menu(event.position, window, cx));
+                                        this.context_image = Some(context.clone());
+                                        cx.stop_propagation();
+                                        cx.notify();
+                                    }),
+                                ),
+                        )
+                    }
+                    None => {
+                        let words = if status == "completed" {
+                            "Image unavailable"
+                        } else {
+                            image_label(item)
+                        };
+                        row(glyph("diff-file-image"), plain(label(words.to_owned(), text60)))
+                    }
+                }
+            }
             Activity::Group {
                 key,
                 summary,
@@ -1167,9 +1617,14 @@ pub(super) fn activity(
                 rows,
             } => {
                 let is_open = open.contains(key);
-                let header = disclosure(key.to_owned(), icon_name, label(summary, text60), is_open);
+                let header = disclosure(key.to_owned(), glyph(icon_name), label(summary, text60), is_open);
+                // Fitted icon images paint outside layers, so the fade would skip them.
+                let faded = |name| glyph(name).runtime();
                 let content = || {
-                    body().children(rows.into_iter().map(|r| {
+                    // `vertical-scroll-fade-mask` with `--edge-fade-distance: 1.5rem`: rows that
+                    // fit show a 24 px top fade from the header's foot.
+                    // shortcut: no `max-h-56` scroll, so a list past 224 px grows unclipped.
+                    let list = body().children(rows.into_iter().map(|r| {
                         if let Some(shell) = r.shell {
                             let is_open = open.contains(&shell.key);
                             let key = shell.key.clone();
@@ -1179,7 +1634,7 @@ pub(super) fn activity(
                                 .flex()
                                 .flex_col()
                                 .items_start()
-                                .child(disclosure(key, r.icon, label(r.verb, text60), is_open))
+                                .child(disclosure(key, faded(r.icon), label(r.verb, text60), is_open))
                                 .children(view.expansion(&shell.key, is_open, shell_body, window, cx));
                         }
                         let mut words = div()
@@ -1201,8 +1656,9 @@ pub(super) fn activity(
                         if let Some((added, removed)) = r.stats {
                             words = words.children(stats(added, removed, text60));
                         }
-                        row(r.icon, words)
-                    }))
+                        row(faded(r.icon), words)
+                    }));
+                    list.layer().child(shapes::top_fade(px(24.)))
                 };
                 div()
                     .flex()
@@ -1214,6 +1670,77 @@ pub(super) fn activity(
         });
     }
     col
+}
+
+/// `assistantMessage.memoryCitations.summary` under an answer: `{n} memory citations`, which
+/// opens the cited memory files (`path:start-end`) and their notes.
+pub(super) fn memory_citations(
+    id: &str,
+    citation: &MemoryCitation,
+    expanded: &HashSet<String>,
+    t: &Theme,
+    cx: &Context<ThreadView>,
+) -> Option<Div> {
+    let count = citation.entries.len();
+    if count == 0 {
+        return None;
+    }
+    let key = format!("memory-{id}");
+    let is_open = expanded.contains(&key);
+    let summary = if count == 1 {
+        "1 memory citation".to_owned()
+    } else {
+        format!("{count} memory citations")
+    };
+    let text60 = t.text_alpha_60;
+    let toggle = key.clone();
+    Some(
+        div()
+            .mt(px(8.))
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .child(tooltip(
+                div()
+                    .id(SharedString::from(key))
+                    .self_start()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .cursor_pointer()
+                    .child(text(summary, 13., 18., 430., text60))
+                    .child(icon(
+                        if is_open {
+                            "chevron-down"
+                        } else {
+                            "thread-chevron-right"
+                        },
+                        14.,
+                        text60,
+                    ))
+                    .on_click(cx.listener(move |view, _, _, cx| {
+                        if !view.expanded.remove(&toggle) {
+                            view.expanded.insert(toggle.clone());
+                        }
+                        cx.notify();
+                    })),
+                "Memories cited",
+                None,
+                Side::Top,
+            ))
+            .when(is_open, |d| {
+                d.children(citation.entries.iter().map(|entry| {
+                    let place = format!("{}:{}-{}", entry.path, entry.line_start, entry.line_end);
+                    div()
+                        .flex()
+                        .flex_col()
+                        .child(text(place, 13., 18., 430., t.text))
+                        .when(!entry.note.trim().is_empty(), |d| {
+                            d.child(text(entry.note.trim().to_owned(), 13., 18., 430., text60))
+                        })
+                }))
+            }),
+    )
 }
 
 fn text60_block(body: String, t: &Theme) -> Div {
@@ -1255,6 +1782,17 @@ fn mcp_output(id: String, language: &'static str, value: &str, t: &Theme) -> Div
                         .whitespace_normal(),
                 ),
         )
+}
+
+/// The words of an `imageGeneration` row, as the original's generated-image placeholder says.
+fn image_label(item: &ThreadItem) -> &'static str {
+    match item {
+        ThreadItem::ImageGeneration { status, .. } if status == "inProgress" => {
+            "Generating image..."
+        }
+        ThreadItem::ImageGeneration { status, .. } if status == "completed" => "Generated image",
+        _ => "Image unavailable",
+    }
 }
 
 fn mcp_label(item: &ThreadItem) -> String {
@@ -1407,6 +1945,60 @@ fn stats(added: usize, removed: usize, color: Hsla) -> [Div; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    fn row_label(item: serde_json::Value, live: bool) -> String {
+        item_row(&serde_json::from_value(item).unwrap(), live)
+            .unwrap()
+            .label
+    }
+
+    #[test]
+    fn web_search_names_query_page_or_pattern() {
+        let search =
+            |action| json!({"type": "webSearch", "id": "w", "query": "", "action": action});
+        assert_eq!(
+            row_label(
+                json!({"type": "webSearch", "id": "w", "query": "rust gpui"}),
+                true
+            ),
+            "Searching the web for rust gpui"
+        );
+        assert_eq!(
+            row_label(
+                search(json!({"type": "search", "queries": ["a", "b"]})),
+                false
+            ),
+            "Searched the web for a · b"
+        );
+        assert_eq!(
+            row_label(
+                search(json!({"type": "findInPage", "url": "u", "pattern": "p"})),
+                false
+            ),
+            "Searched the web for 'p' in u"
+        );
+        assert_eq!(
+            row_label(search(json!({"type": "other"})), false),
+            "Searched the web"
+        );
+    }
+
+    #[test]
+    fn collab_label_follows_status_and_count() {
+        assert_eq!(
+            collab_label("spawnAgent", "inProgress", 1),
+            "Creating an agent"
+        );
+        assert_eq!(
+            collab_label("sendInput", "completed", 2),
+            "Messaged 2 agents"
+        );
+        assert_eq!(
+            collab_label("closeAgent", "failed", 1),
+            "Failed to close an agent"
+        );
+    }
 
     #[test]
     fn skill_name_follows_the_original_parse() {

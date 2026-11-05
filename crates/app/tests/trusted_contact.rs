@@ -106,6 +106,14 @@ fn calls(backend: &Backend, method: &str) -> Vec<(String, Value)> {
         .collect()
 }
 
+/// The backend calls this page makes; other settings pages also POST.
+fn contact_calls(backend: &Backend, method: &str) -> Vec<(String, Value)> {
+    calls(backend, method)
+        .into_iter()
+        .filter(|(url, _)| url.starts_with("/trusted_contact"))
+        .collect()
+}
+
 fn shot(fx: &mut Fx, name: &str) -> Result<()> {
     fx.capture_evidence("CGX_TRUSTED_CONTACT_EVIDENCE", name)
 }
@@ -131,11 +139,14 @@ fn invite_resend_and_remove() -> Result<()> {
     type_into(&mut fx, "Email", "blocked@example.com")?;
     // Send stays inert until the consent box is checked.
     click(&mut fx, "trusted-contact-send")?;
-    ensure!(calls(&backend, "POST").is_empty(), "sent without consent");
+    ensure!(
+        contact_calls(&backend, "POST").is_empty(),
+        "sent without consent"
+    );
     click(&mut fx, "trusted-contact-consent")?;
     click(&mut fx, "trusted-contact-send")?;
     fx.wait("blocked answer", |fx| {
-        calls(&backend, "POST").len() == 1 && visible(fx, "trusted-contact-send")
+        contact_calls(&backend, "POST").len() == 1 && visible(fx, "trusted-contact-send")
     })?;
     shot(&mut fx, "blocked")?;
     type_into(&mut fx, "Email", "")?;
@@ -146,7 +157,7 @@ fn invite_resend_and_remove() -> Result<()> {
     fx.wait("pending contact", |fx| {
         visible(fx, "trusted-contact-resend")
     })?;
-    let (url, body) = calls(&backend, "POST").pop().context("POST")?;
+    let (url, body) = contact_calls(&backend, "POST").pop().context("POST")?;
     ensure!(url == "/trusted_contact", "{url}");
     ensure!(
         body == json!({"name": "Ada Lovelace", "email": "ada@example.com", "phone_number": null, "relationship": null}),
@@ -155,8 +166,8 @@ fn invite_resend_and_remove() -> Result<()> {
     shot(&mut fx, "pending")?;
 
     click(&mut fx, "trusted-contact-resend")?;
-    fx.wait("resend", |_| !calls(&backend, "PUT").is_empty())?;
-    let (url, body) = calls(&backend, "PUT").pop().context("PUT")?;
+    fx.wait("resend", |_| !contact_calls(&backend, "PUT").is_empty())?;
+    let (url, body) = contact_calls(&backend, "PUT").pop().context("PUT")?;
     ensure!(
         url == "/trusted_contact/tc-1" && body["email"] == "ada@example.com",
         "{url} {body}"
@@ -165,7 +176,7 @@ fn invite_resend_and_remove() -> Result<()> {
     click(&mut fx, "trusted-contact-remove")?;
     fx.keys("tab enter")?;
     fx.wait("removed", |fx| visible(fx, "add-trusted-contact-button"))?;
-    ensure!(calls(&backend, "DELETE") == [("/trusted_contact/tc-1".into(), Value::Null)]);
+    ensure!(contact_calls(&backend, "DELETE") == [("/trusted_contact/tc-1".into(), Value::Null)]);
     shot(&mut fx, "removed")?;
     Ok(())
 }

@@ -7,7 +7,7 @@ use serde_json::json;
 use std::path::PathBuf;
 use ui::screens::{
     connections::{ConnectionsState, Tab},
-    new_project::{Dialog, Outcome},
+    new_project::{Browser, Dialog, Outcome},
 };
 use ui::toast::Toast;
 
@@ -44,6 +44,14 @@ impl Root {
                     this.open_connections(Tab::Ssh, window, cx);
                 }
                 Outcome::PickFolders => this.pick_project_sources(dialog.clone(), window, cx),
+                Outcome::Browse { host_id, path } => {
+                    let bridge = if *host_id == this.host_id {
+                        Some(this.bridge.clone())
+                    } else {
+                        crate::connections::bridge(host_id, cx)
+                    };
+                    browse_remote(dialog.clone(), bridge, path.clone(), window, cx)
+                }
                 Outcome::Create {
                     host_id,
                     project_id,
@@ -283,4 +291,88 @@ async fn update_project(
         )
         .await?;
     Ok(())
+}
+
+/// Lists the subfolders of `path` on `bridge`'s host, or of the folder that holds its Codex home
+/// when `path` is `None` (`getDefaultWorkspaceDirectoryPath`).
+fn browse_remote(
+    dialog: Entity<Dialog>,
+    bridge: Option<std::sync::Arc<bridge::Bridge>>,
+    path: Option<String>,
+    window: &mut Window,
+    cx: &mut Context<Root>,
+) {
+    cx.spawn_in(window, async move |_, cx| {
+        let listing = async {
+            let bridge = bridge.ok_or_else(|| anyhow::anyhow!("Remote host is not connected"))?;
+            let path = match path {
+                Some(path) => path,
+                None => {
+                    let home = bridge
+                        .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
+                        .await?
+                        .codex_home;
+                    parent(&home).unwrap_or(home)
+                }
+            };
+            let response: serde_json::Value = bridge
+                .request("fs/readDirectory", json!({"path": path}))
+                .await?;
+            Ok::<_, anyhow::Error>(listing(path, &response))
+        }
+        .await;
+        dialog.update(cx, |dialog, cx| {
+            dialog.set_listing(listing.map_err(|error| format!("{error:#}")), cx)
+        });
+    })
+    .detach();
+}
+
+// shortcut: POSIX remote paths only (SSH hosts); upgrade when Windows remotes connect.
+fn parent(path: &str) -> Option<String> {
+    let trimmed = path.trim_end_matches('/');
+    match trimmed.rfind('/')? {
+        0 => Some("/".to_owned()),
+        index => Some(trimmed[..index].to_owned()),
+    }
+}
+
+/// `fs/readDirectory` `entries` as the picker's folders: directories only, dot folders last,
+/// each group by name (`remoteWorkspaceDirectoryEntries`).
+fn listing(path: String, response: &serde_json::Value) -> Browser {
+    let mut folders: Vec<String> = response["entries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry["isDirectory"] == true)
+        .filter_map(|entry| entry["fileName"].as_str().map(str::to_owned))
+        .collect();
+    folders.sort_by(|a, b| (a.starts_with('.'), a.as_str()).cmp(&(b.starts_with('.'), b.as_str())));
+    Browser {
+        parent: parent(&path),
+        path,
+        folders,
+        error: None,
+        loading: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_listing_keeps_folders_with_dot_folders_last() {
+        let response = json!({"entries": [
+            {"fileName": "src", "isDirectory": true, "isFile": false},
+            {"fileName": "README.md", "isDirectory": false, "isFile": true},
+            {"fileName": ".git", "isDirectory": true, "isFile": false},
+            {"fileName": "app", "isDirectory": true, "isFile": false},
+        ]});
+        let browser = listing("/home/me/repo/".into(), &response);
+        assert_eq!(browser.folders, ["app", "src", ".git"]);
+        assert_eq!(browser.parent.as_deref(), Some("/home/me"));
+        assert_eq!(parent("/home"), Some("/".into()));
+        assert_eq!(parent("/"), None);
+    }
 }

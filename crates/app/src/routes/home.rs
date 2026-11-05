@@ -7,6 +7,7 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
         .on_action(cx.listener(|this, a: &SelectProject, window, cx| {
             this.select_project(a.0.clone(), window, cx)
         }))
+        .on_action(cx.listener(|this, _: &ClearProject, window, cx| this.clear_project(window, cx)))
 }
 
 impl Root {

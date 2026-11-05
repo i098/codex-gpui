@@ -158,6 +158,40 @@ pub(crate) fn http(
     host::json_body(&response)
 }
 
+/// Like [`http`], but hands back the HTTP status and parsed body for callers that map
+/// error codes; only a transport failure is an `Err`.
+pub(crate) fn send(
+    host: &dyn Host,
+    identity: &Identity,
+    method: &str,
+    url: &str,
+    body: Option<Value>,
+) -> Result<(u64, Value)> {
+    let response = fetch(host, identity, method, url, body)?;
+    let wire = host::response_wire(&response);
+    let status = wire["status"]
+        .as_u64()
+        .or(wire["responseStatus"].as_u64())
+        .context("missing host status")?;
+    let body = wire
+        .get("bodyJsonString")
+        .or_else(|| wire.get("body"))
+        .and_then(Value::as_str)
+        .and_then(|body| serde_json::from_str(body).ok())
+        .or_else(|| {
+            wire["error"]
+                .as_str()
+                .and_then(|body| serde_json::from_str(body).ok())
+        })
+        .unwrap_or(Value::Null);
+    Ok((status, body))
+}
+
+/// The backend error code: `detail.code`, else a top-level `code`.
+pub(crate) fn error_code(body: &Value) -> Option<&str> {
+    body["detail"]["code"].as_str().or(body["code"].as_str())
+}
+
 /// The account's Statsig gates (`/wham/statsig/bootstrap`); `Null` when unavailable.
 pub(crate) fn statsig(host: &dyn Host, identity: &Identity) -> Value {
     http(host, identity, "POST", "/wham/statsig/bootstrap", Some(json!({
