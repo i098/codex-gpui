@@ -993,7 +993,8 @@ impl SettingsPane {
             .id(id)
             .role(gpui::Role::Button)
             .aria_label(label.clone())
-            .size(px(28.))
+            // `size: iconCircle`: `size-8`.
+            .size(px(32.))
             .flex()
             .items_center()
             .justify_center()

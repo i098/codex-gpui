@@ -131,6 +131,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add optional keyboard-accessible documentation links to confirmation dialogs without accepting or cancelling the pending action.
 - Add saved, revision-scoped Mark as viewed controls for Branch diffs.
 - Keep mode-switch commands out of the keyboard shortcuts dialog while preserving their key bindings.
+- Register global shortcuts on Linux and Windows, including hold and release events.
 - Bind the chat and panel commands: open a side-chat fork, copy the last assistant code block or browser-page URL, fork, delete, copy Markdown, search chats, focus composers and toggle panels.
 - Route native Codex links with thread host and access state, project selection, SSH setup, source-specific task editing, and window-owned OAuth callbacks.
 - Notify completed automation runs and show the Scheduled unread dot from saved run state.
@@ -172,6 +173,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Show the Appearance `Mode` choice as the original's System, Light and Dark preview tiles instead of a text segmented control.
 - Match the original fill, text size and padding of the Appearance theme, accent and font pickers.
 - Use the original's compact 44 px rows in the Appearance theme cards.
+- Draw the Appearance theme Import and Copy buttons at the original's 32 px, so the Theme row is 48 px tall.
 - Show the text overflow icon on a code block's `Enable word wrap` button, and the wrap icon only while wrap is on, as the original does.
 - Show the Appearance theme picker's Codex themes in a `Codex themes` flyout submenu beside `ChatGPT`, with 24 px theme icons, as the original does.
 - Fold a running turn's interim messages under `Working for` once its final answer starts, as the original does.
