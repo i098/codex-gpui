@@ -88,9 +88,8 @@ struct FileHit {
     path: String,
 }
 
-/// An installed, enabled plugin of `plugin/list`: the chip shows `title`, the prompt sends
-/// `[@title](plugin://id)` and the turn a `mention` input, like the original.
-struct PluginHit {
+/// An enabled plugin or callable connector offered by the mention menu.
+struct MentionHit {
     title: String,
     description: String,
     id: String,
@@ -164,10 +163,13 @@ pub(super) struct Search {
     query: String,
     files: Vec<FileHit>,
     searching: bool,
-    plugins: Vec<PluginHit>,
+    plugins: Vec<MentionHit>,
     plugins_loading: bool,
-    /// The `@` token (its start) whose list fetched the plugins.
+    /// The `@` token (its start) whose list fetched plugins and apps.
     plugins_token: Option<usize>,
+    apps: Vec<MentionHit>,
+    apps_generation: u64,
+    apps_loading: bool,
     chats: Vec<ChatHit>,
     chat_query: String,
 }
@@ -213,12 +215,12 @@ fn request(
 }
 
 /// The mentionable plugins of a `plugin/list` result.
-fn plugin_hits(value: &Value) -> Vec<PluginHit> {
+fn plugin_hits(value: &Value) -> Vec<MentionHit> {
     crate::screens::plugins::marketplaces(value)
         .into_iter()
         .flat_map(|marketplace| marketplace.plugins)
         .filter(|plugin| plugin.visible() && plugin.installed() && plugin.enabled())
-        .map(|plugin| PluginHit {
+        .map(|plugin| MentionHit {
             title: plugin.title().to_owned(),
             description: plugin.description().to_owned(),
             id: plugin.id().to_owned(),
@@ -234,6 +236,7 @@ impl Composer {
         } else {
             self.end_search(cx);
             self.slash.reset();
+            self.slash.search.plugins_token = None;
             self.slash.add = Some(self.cursor());
             self.slash.open = true;
             self.refresh_slash(cx);
@@ -266,9 +269,10 @@ impl Composer {
         let actions = ACTIONS.iter().enumerate().filter(move |(_, a)| {
             !(a.home_only && docked) && a.id != "appshot" && (plan || a.id != "plan-mode")
         });
-        if self.slash.search.plugins_token != Some(self.slash.range.start) {
+        if !self.slash.open || self.slash.search.plugins_token != Some(self.slash.range.start) {
             self.slash.search.plugins_token = Some(self.slash.range.start);
             self.load_plugins(cx);
+            self.load_apps(cx);
         }
         if query.is_empty() {
             let plugins = self.plugins_start()..self.files_start();
@@ -295,6 +299,14 @@ impl Composer {
                 p.title.as_str(),
             )
         });
+        let apps = self.slash.search.apps.iter().enumerate().map(|(i, app)| {
+            (
+                self.apps_start() + i,
+                2,
+                degree(&app.title, &lower),
+                app.title.as_str(),
+            )
+        });
         let files = self.slash.search.files.iter().enumerate().map(|(i, f)| {
             (
                 self.files_start() + i,
@@ -307,6 +319,7 @@ impl Composer {
             .map(|(i, a)| (i, 2, degree(a.title, &lower), a.title))
             .chain(skills)
             .chain(plugins)
+            .chain(apps)
             .chain(files)
             .filter(|&(_, _, degree, _)| degree > 0)
             .collect();
@@ -383,13 +396,17 @@ impl Composer {
         .detach();
     }
 
-    /// Row indices: [`ACTIONS`], then skills, then plugins, then files.
+    /// Row indices: [`ACTIONS`], then skills, plugins, apps, and files.
     fn plugins_start(&self) -> usize {
         ACTIONS.len() + self.slash.skills.len()
     }
 
-    fn files_start(&self) -> usize {
+    fn apps_start(&self) -> usize {
         self.plugins_start() + self.slash.search.plugins.len()
+    }
+
+    fn files_start(&self) -> usize {
+        self.apps_start() + self.slash.search.apps.len()
     }
 
     /// `plugin/list` once per `@` token, so installs since the last list show; the listed
@@ -409,6 +426,103 @@ impl Composer {
                 match result {
                     Ok(value) => this.slash.search.plugins = plugin_hits(&value),
                     Err(error) => eprintln!("plugin/list: {error:#}"),
+                }
+                if this.slash.open && this.slash.mention {
+                    let selected = this.slash.selected;
+                    this.refresh_slash(cx);
+                    this.slash.selected = selected.min(this.slash.matches.len().saturating_sub(1));
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub(super) fn reset_apps(&mut self) {
+        self.slash.search.apps.clear();
+        self.slash.search.apps_generation += 1;
+        self.slash.search.apps_loading = false;
+        self.slash.matches.clear();
+        self.slash.search.plugins_token = None;
+    }
+
+    fn load_apps(&mut self, cx: &mut Context<Self>) {
+        self.slash.search.apps_generation += 1;
+        let generation = self.slash.search.apps_generation;
+        let Some(bridge) = self.bridge.clone() else {
+            return;
+        };
+        self.slash.search.apps_loading = true;
+        let mut params = json!({ "forceRefresh": true });
+        if !self.thread_id.is_empty() {
+            params["threadId"] = json!(self.thread_id);
+        }
+        cx.spawn(async move |this, cx| {
+            let result = async {
+                let installed = bridge.request::<_, Value>("app/installed", params).await?;
+                let apps: Vec<_> = installed["apps"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|app| app["callable"] == true && app["enabled"] == true)
+                    .collect();
+                if apps.is_empty() {
+                    return Ok::<_, anyhow::Error>(Vec::new());
+                }
+                let ids: Vec<_> = apps.iter().filter_map(|app| app["id"].as_str()).collect();
+                let mut details = Vec::new();
+                for ids in ids.chunks(100) {
+                    let mut response = match bridge
+                        .request::<_, Value>("app/read", json!({ "appIds": ids }))
+                        .await
+                    {
+                        Ok(response) => response,
+                        Err(error) => {
+                            eprintln!("app/read: {error:#}");
+                            continue;
+                        }
+                    };
+                    if let Some(apps) = response["apps"].as_array_mut() {
+                        details.append(apps);
+                    }
+                }
+                let details: std::collections::HashMap<_, _> = details
+                    .iter()
+                    .filter_map(|app| Some((app["id"].as_str()?, app)))
+                    .collect();
+                Ok(apps
+                    .into_iter()
+                    .filter_map(|app| {
+                        let id = app["id"].as_str()?;
+                        let detail = details.get(id);
+                        Some(MentionHit {
+                            id: id.to_owned(),
+                            title: detail
+                                .and_then(|detail| detail["name"].as_str())
+                                .or_else(|| app["runtimeName"].as_str())
+                                .unwrap_or(id)
+                                .to_owned(),
+                            description: detail
+                                .and_then(|detail| detail["description"].as_str())
+                                .unwrap_or_default()
+                                .to_owned(),
+                        })
+                    })
+                    .collect())
+            }
+            .await;
+            this.update(cx, |this, cx| {
+                if this.slash.search.apps_generation != generation {
+                    return;
+                }
+                this.slash.search.apps_loading = false;
+                match result {
+                    Ok(apps) => this.slash.search.apps = apps,
+                    Err(error) => {
+                        this.slash.search.apps.clear();
+                        eprintln!("composer apps: {error:#}");
+                    }
                 }
                 if this.slash.open && this.slash.mention {
                     let selected = this.slash.selected;
@@ -510,9 +624,12 @@ impl Composer {
             (action.title, description, action.icon)
         } else if let Some(skill) = self.slash.skills.get(index - ACTIONS.len()) {
             (&skill.title, &skill.description, "sidebar-cmd-create-page")
-        } else if index < self.files_start() {
+        } else if index < self.apps_start() {
             let plugin = &self.slash.search.plugins[index - self.plugins_start()];
             (&plugin.title, &plugin.description, "plugins")
+        } else if index < self.files_start() {
+            let app = &self.slash.search.apps[index - self.apps_start()];
+            (&app.title, &app.description, "plugins")
         } else {
             let index = index - self.files_start();
             let Some(file) = self.slash.search.files.get(index) else {
@@ -534,6 +651,7 @@ impl Composer {
     /// plan mode; `Sketch` opens the canvas. ponytail: goal and project belong to their own rows.
     pub(super) fn activate_mention(&mut self, index: usize, cx: &mut Context<Self>) {
         let plugins = self.plugins_start();
+        let apps = self.apps_start();
         let files = self.files_start();
         let (label, link, icon) = match ACTIONS.get(index) {
             Some(action) if action.id == "files-and-folders" => {
@@ -567,10 +685,15 @@ impl Composer {
                 let link = format!("[${}]({})", skill.name, skill.path);
                 (skill.title.clone(), link, "sidebar-cmd-create-page")
             }
-            None if index < files => {
+            None if index < apps => {
                 let plugin = &self.slash.search.plugins[index - plugins];
                 let link = format!("[@{}](plugin://{})", plugin.title, plugin.id);
                 (plugin.title.clone(), link, "plugins")
+            }
+            None if index < files => {
+                let app = &self.slash.search.apps[index - apps];
+                let link = format!("[${}](app://{})", app.title, app.id);
+                (app.title.clone(), link, "plugins")
             }
             None if index < files + self.slash.search.files.len() => {
                 let file = &self.slash.search.files[index - files];
@@ -738,7 +861,7 @@ impl Composer {
             .collect()
     }
 
-    /// The list's sections: `Add`, `Plugins` and `Files` for an empty query, else the ranked
+    /// The list's sections: `Add`, `Plugins`, `Apps`, and `Files` for an empty query, else ranked
     /// rows or one note (`Searching…`, `No results`).
     fn sections(&self) -> Vec<(Option<&'static str>, Vec<Row>)> {
         let start = self.slash.range.start + usize::from(self.slash.add.is_none());
@@ -755,7 +878,7 @@ impl Composer {
                 )
                 .collect();
             let mut sections = vec![(Some("Add"), add)];
-            let plugins = self.plugins_start()..self.files_start();
+            let plugins = self.plugins_start()..self.apps_start();
             if !plugins.is_empty() {
                 let rows = plugins
                     .filter_map(|i| {
@@ -766,6 +889,18 @@ impl Composer {
                 sections.push((Some("Plugins"), rows));
             } else if self.slash.search.plugins_loading {
                 sections.push((Some("Plugins"), vec![Row::Note("Loading plugins...")]));
+            }
+            let apps = self.apps_start()..self.files_start();
+            if !apps.is_empty() {
+                let rows = apps
+                    .filter_map(|i| {
+                        let selected = self.slash.matches.iter().position(|&m| m == i)?;
+                        Some(Row::Item(selected, i))
+                    })
+                    .collect();
+                sections.push((Some("Apps"), rows));
+            } else if self.slash.search.apps_loading {
+                sections.push((Some("Apps"), vec![Row::Note("Loading apps...")]));
             }
             if !self.slash.search.roots.is_empty() {
                 sections.push((Some("Files"), vec![Row::Note("Type to search for files")]));

@@ -492,6 +492,7 @@ impl Composer {
             && self.content[range.end..].trim().is_empty()
             && self.attachments.is_empty();
         self.slash.matches.clear();
+        self.slash.range = range.clone();
         if mention {
             let start = range.start + usize::from(self.slash.add.is_none());
             let query = self.content[start..range.end].to_owned();
@@ -524,7 +525,6 @@ impl Composer {
                 }
             }
         }
-        self.slash.range = range;
         self.slash.open = true;
         self.slash.selected = 0;
         self.slash.scroll.set_offset(point(px(0.), px(0.)));
