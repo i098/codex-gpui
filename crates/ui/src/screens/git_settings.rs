@@ -92,6 +92,14 @@ impl SettingsPane {
             "",
             vec![
                 settings_row(
+                    "Disable Git-based diffs",
+                    Some(
+                        "Only show \"Last Turn\" in the Changes panel and disable Unstaged/Staged/Branch to avoid git operations",
+                    ),
+                    self.toggle("host.git-review-mode", false, t, window, cx),
+                    t,
+                ),
+                settings_row(
                     "Branch prefix",
                     Some("Prefix used when ChatGPT creates new branches"),
                     div().w(px(224.)).child(branch).into_any_element(),

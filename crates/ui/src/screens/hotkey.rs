@@ -290,6 +290,12 @@ impl Controls {
                     ("Custom (config.toml)", Permission::Custom),
                 ]
                 .into_iter()
+                .filter(|(_, permission)| {
+                    *permission != Permission::FullAccess
+                        || !cx
+                            .try_global::<crate::composer::FullAccessHidden>()
+                            .is_some_and(|hidden| hidden.0)
+                })
                 .map(|(label, permission)| {
                     (
                         label.into(),
