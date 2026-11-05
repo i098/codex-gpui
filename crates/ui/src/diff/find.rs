@@ -514,60 +514,64 @@ impl FileView {
         };
         let panel = div()
             .relative()
-            .w(px(318.))
-            .h(px(37.))
-            .pl(px(5.))
+            .w(px(320.))
+            .h(px(38.))
+            .pl(px(3.))
             .pr(px(8.))
             .flex()
             .items_center()
             .gap(px(6.))
             .rounded(px(12.))
             .border_1()
-            .border_color(t.border)
+            .border_color(rgb(0x444444))
             .bg(rgb(0x111111))
             .child(
-                div()
-                    .id("file-find-input")
-                    .role(gpui::Role::TextInput)
-                    .aria_label("Find in file")
-                    .aria_value(query.clone())
-                    .w(px(200.))
-                    .h(px(28.))
-                    .pl(px(7.))
-                    .pr(px(4.))
-                    .flex()
-                    .items_center()
-                    .rounded(px(9.))
-                    .border_1()
-                    .border_color(t.accent)
-                    .cursor_text()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(text(query, 13., 18., 430., t.text)),
-                    )
-                    .child(toggle(
-                        "file-find-case",
-                        "Match case",
-                        "Aa",
-                        options.case,
-                        |o| &mut o.case,
-                    ))
-                    .child(toggle(
-                        "file-find-word",
-                        "Match whole word",
-                        "ab",
-                        options.word,
-                        |o| &mut o.word,
-                    ))
-                    .child(toggle(
-                        "file-find-regex",
-                        "Use regular expression",
-                        ".*",
-                        options.regex,
-                        |o| &mut o.regex,
-                    )),
+                // The original's 1 px focus outline sits outside the field's own border.
+                div().p(px(1.)).rounded(px(10.)).bg(rgb(0x69b1ff)).child(
+                    div()
+                        .id("file-find-input")
+                        .role(gpui::Role::TextInput)
+                        .aria_label("Find in file")
+                        .aria_value(query.clone())
+                        .w(px(200.))
+                        .h(px(28.))
+                        .pl(px(7.))
+                        .pr(px(4.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(9.))
+                        .border_1()
+                        .border_color(rgb(0x282828))
+                        .bg(rgb(0x111111))
+                        .cursor_text()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(text(query, 13., 18., 430., t.text)),
+                        )
+                        .child(toggle(
+                            "file-find-case",
+                            "Match case",
+                            "Aa",
+                            options.case,
+                            |o| &mut o.case,
+                        ))
+                        .child(toggle(
+                            "file-find-word",
+                            "Match whole word",
+                            "ab",
+                            options.word,
+                            |o| &mut o.word,
+                        ))
+                        .child(toggle(
+                            "file-find-regex",
+                            "Use regular expression",
+                            ".*",
+                            options.regex,
+                            |o| &mut o.regex,
+                        )),
+                ),
             )
             .child(
                 div()
@@ -582,19 +586,19 @@ impl FileView {
                     .role(gpui::Role::Button)
                     .aria_label("Close search")
                     .absolute()
-                    .top(px(-10.5))
-                    .right(px(-10.5))
+                    .top(px(-10.))
+                    .right(px(-9.5))
                     .size(px(20.))
                     .rounded_full()
                     .flex()
                     .items_center()
                     .justify_center()
-                    .bg(t.text_tertiary)
+                    .bg(rgb(0x7c7c7c))
                     .cursor_pointer()
-                    .child(icon("diff-find-close", 12., rgb(0x111111).into()))
+                    .child(icon("diff-find-close", 12., rgb(0x191919).into()))
                     .on_click(cx.listener(|this, _, _, cx| this.close_find(cx))),
             );
-        deferred(div().absolute().top(px(64.5)).right(px(34.)).child(panel)).with_priority(3)
+        deferred(div().absolute().top(px(64.)).right(px(32.)).child(panel)).with_priority(3)
     }
 }
 
