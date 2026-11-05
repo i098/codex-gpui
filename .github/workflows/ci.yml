@@ -49,6 +49,9 @@ jobs:
         run: cargo fmt --check
       - if: hashFiles('Cargo.toml') != ''
         run: cargo check --workspace --all-targets
+      - name: Remove Cargo target files
+        if: always()
+        run: rm -rf -- "$CARGO_TARGET_DIR"
   rust:
     if: ${{ github.event_name == 'workflow_dispatch' || !github.event.pull_request.draft }}
     runs-on: [self-hosted, codex-gpui]
@@ -96,3 +99,6 @@ jobs:
           chmod +x "$stub/codex"
           HOME=$(mktemp -d) PATH="$stub:$PATH" timeout 20 xvfb-run -a "$CARGO_TARGET_DIR/debug/codex-gpui" || rc=$?
           [[ $rc -eq 124 ]] || { echo "window did not stay open (exit $rc)" >&2; exit 1; }
+      - name: Remove Cargo target files
+        if: always()
+        run: rm -rf -- "$CARGO_TARGET_DIR"

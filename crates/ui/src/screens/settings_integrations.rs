@@ -2241,7 +2241,7 @@ fn hook_source_title(source: &str, state: &State) -> String {
     }
 }
 
-fn hook_event(event: &str) -> (&str, &'static str) {
+pub(crate) fn hook_event(event: &str) -> (&str, &'static str) {
     match event {
         "preToolUse" => ("PreToolUse", "Before a tool executes"),
         "permissionRequest" => ("PermissionRequest", "When permission is requested"),

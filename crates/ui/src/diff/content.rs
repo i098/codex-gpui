@@ -368,6 +368,10 @@ impl DiffPanel {
         self.full_files
     }
 
+    pub fn last_turn_only(&self) -> bool {
+        self.last_turn_only
+    }
+
     pub fn full_file_error(&self, index: usize) -> Option<FullError> {
         self.files.get(index).and_then(|file| file.full_error)
     }
@@ -402,6 +406,10 @@ impl DiffPanel {
             .get("hideDiffImports")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
+        self.last_turn_only = values
+            .get("git-review-mode")
+            .and_then(serde_json::Value::as_str)
+            == Some("last-turn-only");
         self.generated.filter = values
             .get("review-filter-generated-files")
             .and_then(serde_json::Value::as_bool)
@@ -981,6 +989,22 @@ mod context_tests {
                 params:serde_json::json!({"turnId":"second","item":{"type":"fileChange"}}),
             }, "/repo", &[second], cx);
             assert_eq!(panel.file_path(0).as_deref(), Some("/repo/worktrees/task/file.rs"));
+        });
+    }
+
+    #[gpui::test]
+    fn last_turn_only_review_mode_keeps_git_sources_closed(cx: &mut gpui::TestAppContext) {
+        let panel = cx.new(|_| DiffPanel::last_turn("/repo", "/repo", &[]));
+        panel.update(cx, |panel, cx| {
+            let values = serde_json::json!({"git-review-mode": "last-turn-only"});
+            panel.set_preferences(values.as_object().unwrap());
+            assert_eq!(panel.menu_items_for(Some(menu::Kind::Source)).len(), 1);
+            panel.select_source(DiffSource::Branch, cx);
+            assert_eq!(panel.source, DiffSource::LastTurn);
+            let values = serde_json::json!({"git-review-mode": "full"});
+            panel.set_preferences(values.as_object().unwrap());
+            panel.select_source(DiffSource::Branch, cx);
+            assert_eq!(panel.source, DiffSource::Branch);
         });
     }
 
