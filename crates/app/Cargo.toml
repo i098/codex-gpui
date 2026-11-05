@@ -29,6 +29,7 @@ glob = "0.3.4"
 gpui_platform.workspace = true
 http_client = { git = "https://github.com/zed-industries/zed", rev = "3e145061d861ed32bb6a08dad7b03f2b5e455ad8" }
 iana-time-zone = "0.1"
+image.workspace = true
 notify = "8"
 pollster = "0.4"
 portable-pty = "0.9"
@@ -71,6 +72,5 @@ raw-window-handle = "0.6"
 gpui = { workspace = true, features = ["test-support"] }
 gpui_platform = { workspace = true, features = ["test-support"] }
 parking_lot = "0.12"
-image.workspace = true
 parity = { path = "../parity" }
 textsys = { path = "../textsys" }

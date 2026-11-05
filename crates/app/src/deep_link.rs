@@ -328,6 +328,7 @@ fn settings(sub: &[&str], params: &Params<'_>) -> Link {
         }
         ["connections", "ssh"] => Link::Connections(Tab::Ssh),
         ["browser-use"] => Link::Settings(Some("Browser")),
+        ["parental-controls"] => Link::Settings(Some("Parental controls")),
         ["local-environments", "create"] => match params.value("workspaceRoot") {
             Some(workspace_root) if workspace_root.starts_with('/') => Link::CreateEnvironment {
                 workspace_root,
@@ -336,6 +337,11 @@ fn settings(sub: &[&str], params: &Params<'_>) -> Link {
             _ => Link::Settings(Some("Worktrees")),
         },
         ["trusted-contact"] => Link::Settings(Some("Trusted contact")),
+        ["security"] => Link::Settings(Some("Security")),
+        ["ads-controls"] => Link::Settings(Some("Ads controls")),
+        ["passwords"] => Link::Settings(Some("Passwords")),
+        ["chronicle"] => Link::Settings(Some("Computer history")),
+        ["code-review"] => Link::Settings(Some("Code Review")),
         [] => Link::Settings(None),
         [slug, ..] => Link::Settings(Some(ui::screens::settings::slug_section(slug))),
     }

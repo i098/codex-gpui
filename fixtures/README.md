@@ -115,3 +115,8 @@ The contract comes from Codex 26.1007.30912 (`app-initial` callers and event dec
 It is constructed offline from the 26.1007.30912 webview paths and the native parsers, not recorded from an account; `provenance` names what is attested.
 The clock is frozen at 2026-10-15T17:00:00-07:00 (epoch 1792108800).
 Requests outside the file, including unlisted mutations, fail in the replay host; `crates/app/tests/orbit_tasks_fixture.rs` proves both.
+
+## Changelog feed
+
+`codex-app-changelog.json` records the original's What's new request: `GET https://learn.chatgpt.com/docs/changelog/codex-app.json` (`credentials: omit`).
+It was fetched on 2026-11-03 and keeps the feed's first four items; the Help flyout shows the first three.
