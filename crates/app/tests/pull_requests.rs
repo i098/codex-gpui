@@ -149,6 +149,192 @@ fn missing_host_response_keeps_retry_and_chat_available() -> Result<()> {
     Ok(())
 }
 
+/// A local host whose GitHub reads replay `fixtures/pull-requests.json`.
+struct ChatHost(app::host::LocalHost, ReplayHost);
+
+impl Host for ChatHost {
+    fn fetch(&self, request: &Request) -> Result<serde_json::Value> {
+        if let Request::Fetch { url, .. } = request
+            && url == "vscode://codex/gh-pr-detail"
+        {
+            return self.1.fetch(request);
+        }
+        self.0.fetch(request)
+    }
+
+    fn prepare_projectless(&self, prompt: &str) -> Result<app::host::Workspace> {
+        self.0.prepare_projectless(prompt)
+    }
+
+    fn record_projectless(&self, thread: &str, workspace: &app::host::Workspace) -> Result<()> {
+        self.0.record_projectless(thread, workspace)
+    }
+}
+
+/// `Chat` starts one projectless chat named after the pull request with no first turn, opens
+/// it with the original's prompt prefilled, and links it; reselecting the pull request reads the
+/// link back, and `Open chat` then reopens that chat without starting another.
+#[test]
+fn chat_starts_a_linked_pull_request_chat_and_reopens_it() -> Result<()> {
+    use ui::screens::pull_requests::model::{Account, Identity};
+    const CHAT: &str = "pull-request-chat-thread";
+    const TITLE: &str = "feat(menus): add native menu and text actions";
+    /// The detail toolbar's `Chat` (`Open chat` once linked), as in refs/pull-requests/merged-detail.
+    const CHAT_BUTTON: (f32, f32) = (1202., 67.);
+    let directory = tempfile::tempdir()?;
+    let home = directory.path().join("codex");
+    let workspaces = directory.path().join("standalone");
+    std::fs::create_dir(&home)?;
+    let mut thread = common::recorded_thread(common::GREETING)?;
+    thread["id"] = CHAT.into();
+    thread["turns"] = serde_json::json!([]);
+    let mut recording = common::script(None, |_| {})?;
+    recording.extend(common::exchange(
+        "config/read",
+        serde_json::json!({"config": {"desktop": {"projectlessWorkspaceRoot": workspaces}}}),
+    ));
+    recording.extend(common::exchange(
+        "thread/start",
+        serde_json::json!({"thread": thread, "model": "gpt-6-astra", "cwd": common::CWD, "reasoningEffort": "low"}),
+    ));
+    recording.extend(common::exchange("thread/name/set", serde_json::json!({})));
+    let mut fx = Fx::captured("dark", (1280., 832.), recording)?;
+    let bridge = fx
+        .cx
+        .update(|cx| cx.global::<ui::screens::settings::AppServer>().0.clone());
+    let recording =
+        std::fs::read_to_string(format!("{}/fixtures/pull-requests.json", common::ROOT))?;
+    let host = ChatHost(
+        app::host::LocalHost::new(&home).with_bridge(bridge),
+        ReplayHost::from_recording(&recording)?,
+    );
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(Arc::new(host), cx));
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        window.dispatch_action(Box::new(ui::OpenPullRequests), cx);
+    })?;
+    let page = fx.read(|root, _| root.pull_requests_page().unwrap().clone());
+    fx.wait("GitHub access check", |fx| {
+        fx.read(|_, cx| !matches!(page.read(cx).availability, Availability::Checking))
+    })?;
+    page.update(&mut fx.cx, |page, cx| {
+        page.set_availability(
+            Availability::Ready(Account {
+                host_id: "local".into(),
+                hostname: "github.com".into(),
+                login: "i098".into(),
+            }),
+            cx,
+        )
+    });
+    let identity = Identity {
+        hostname: "github.com".into(),
+        owner: "i098".into(),
+        repository: "codex-gpui".into(),
+        number: 380,
+    };
+    let select = |fx: &mut Fx, identity: Option<Identity>| -> Result<()> {
+        page.update(&mut fx.cx, |_, cx| cx.emit(Event::Select(identity)));
+        fx.cx.run_until_parked();
+        Ok(())
+    };
+    select(&mut fx, Some(identity.clone()))?;
+    fx.wait("pull request detail", |fx| {
+        fx.read(|_, cx| matches!(page.read(cx).detail, Some(Ok(_))))
+    })?;
+    assert_eq!(fx.read(|_, cx| page.read(cx).chat.clone()), None);
+    capture(&mut fx, "chat-before")?;
+    let prompt = format!(
+        "Help me understand pull request #380: {TITLE}\nhttps://github.com/i098/codex-gpui/pull/380"
+    );
+    fx.click(CHAT_BUTTON)?;
+    fx.wait("linked chat", |fx| fx.route() == Route::Thread(CHAT.into()))?;
+    assert_eq!(fx.composer_text()?, prompt);
+    capture(&mut fx, "chat-after")?;
+    let sent = fx.sent()?;
+    let start = sent
+        .iter()
+        .find(|message| message["method"] == "thread/start")
+        .context("thread/start")?;
+    assert!(
+        std::path::Path::new(start["params"]["cwd"].as_str().context("cwd")?)
+            .starts_with(&workspaces)
+    );
+    assert!(!sent.iter().any(|message| message["method"] == "turn/start"));
+    let name = sent
+        .iter()
+        .find(|message| message["method"] == "thread/name/set")
+        .context("thread/name/set")?;
+    assert_eq!(
+        name["params"],
+        serde_json::json!({"threadId": CHAT, "name": TITLE})
+    );
+    let state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(home.join(".codex-global-state.json"))?)?;
+    let key = r#"[null,null,"github.com","i098","[\"github.com\",\"i098\",\"codex-gpui\",380]"]"#;
+    assert_eq!(
+        state["electron-persisted-atom-state"]["pull-request-chat-associations-v2"][key],
+        serde_json::json!({"hostId": "local", "threadId": CHAT})
+    );
+    assert!(
+        state["projectless-thread-ids"]
+            .as_array()
+            .is_some_and(|ids| ids.contains(&serde_json::json!(CHAT)))
+    );
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        window.dispatch_action(Box::new(ui::OpenPullRequests), cx);
+    })?;
+    select(&mut fx, None)?;
+    select(&mut fx, Some(identity))?;
+    fx.wait("link read back", |fx| {
+        fx.read(|_, cx| page.read(cx).chat.as_deref() == Some(CHAT))
+    })?;
+    fx.click(CHAT_BUTTON)?;
+    fx.wait("reopened chat", |fx| {
+        fx.route() == Route::Thread(CHAT.into())
+    })?;
+    assert_eq!(
+        fx.sent()?
+            .iter()
+            .filter(|message| message["method"] == "thread/start")
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn proxy() {
+    common::proxy_child()
+}
+
+/// `Fix checks` and `Address comments` emit `StartChat`: the app starts a new chat with that
+/// prompt (`thread/start`, then `turn/start`) and opens it.
+#[test]
+fn start_chat_opens_a_new_chat_with_the_prompt() -> Result<()> {
+    const PROMPT: &str = "Fix the failing checks on pull request #7";
+    let mut script = common::script(None, |_| {})?;
+    let mut thread = common::recorded_thread(common::GREETING)?;
+    thread["turns"] = serde_json::json!([]);
+    thread["id"] = "pull-request-fix".into();
+    script.extend(common::exchange(
+        "thread/start",
+        serde_json::json!({"thread": thread, "model": "gpt-6-astra", "cwd": common::CWD}),
+    ));
+    script.extend(common::exchange("turn/start", serde_json::json!({})));
+    let mut fx = Fx::scripted(script)?;
+    let host = Arc::new(ReplayHost::from_recording(r#"{"exchanges":[]}"#)?);
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        window.dispatch_action(Box::new(ui::OpenPullRequests), cx);
+    })?;
+    let page = fx.read(|root, _| root.pull_requests_page().unwrap().clone());
+    page.update(&mut fx.cx, |_, cx| cx.emit(Event::StartChat(PROMPT.into())));
+    fx.wait_thread("pull-request-fix")?;
+    Ok(())
+}
+
 #[test]
 fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
     replay_pane_states(None)

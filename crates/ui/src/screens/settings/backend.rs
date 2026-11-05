@@ -1,7 +1,7 @@
 //! ChatGPT backend calls for the account settings pages. The app installs [`Backend`]; its host
 //! attaches the ChatGPT sign-in, like the original's `safeGet`/`safePost` client.
 
-use gpui::{App, AppContext as _, Context, Global};
+use gpui::{App, Context, Global};
 use serde_json::Value;
 use std::sync::Arc;
 

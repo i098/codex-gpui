@@ -259,8 +259,23 @@ pub enum Event {
     More,
     Select(Option<Identity>),
     AskCodex(String),
+    /// `Fix checks` / `Address comments`: starts a chat with this prompt.
+    StartChat(String),
+    /// `Chat` (no linked chat yet: start one titled `title` and prefill `prompt`) or `Open chat`.
+    Chat {
+        title: String,
+        prompt: String,
+    },
     Code,
-    Media { generation: u64, url: String },
+    Media {
+        generation: u64,
+        url: String,
+    },
+    Link {
+        thread: String,
+        remove: bool,
+    },
+    Links,
 }
 
 pub struct Page {
@@ -272,6 +287,10 @@ pub struct Page {
     pub selected: Option<Identity>,
     pub detail: Option<Result<Value, String>>,
     pub detail_tab: DetailTab,
+    /// The chat `Chat` started for the selected pull request (`Open chat` then opens it).
+    pub chat: Option<String>,
+    /// `Chat` is creating the linked chat.
+    pub chat_pending: bool,
     pub code: Option<Result<Entity<DiffPanel>, String>>,
     code_loading: bool,
     detail_fullscreen: bool,
@@ -285,6 +304,8 @@ pub struct Page {
     pub detail_generation: u64,
     pub query: String,
     search: Entity<Composer>,
+    /// `Add optional guidance…` for `Address comments`.
+    guidance: Entity<Composer>,
     filter_open: bool,
     filter_submenu: Option<&'static str>,
     collapsed_detail: [bool; 3],
@@ -293,6 +314,10 @@ pub struct Page {
     last_filters: Option<Filters>,
     controls: RefCell<HashMap<gpui::ElementId, FocusHandle>>,
     clock: Clock,
+    pub link_threads: Vec<(String, String)>,
+    pub linked_threads: Option<Result<std::collections::HashSet<String>, String>>,
+    pub link_generation: u64,
+    links_open: bool,
 }
 
 impl EventEmitter<Event> for Page {}
@@ -350,6 +375,8 @@ impl Page {
     pub fn new(clock: Clock, cx: &mut Context<Self>) -> Self {
         let search =
             cx.new(|cx| Composer::embedded_field("Search pull requests", "", px(14.), px(20.), cx));
+        let guidance = cx
+            .new(|cx| Composer::embedded_field("Add optional guidance…", "", px(14.), px(20.), cx));
         cx.observe(&search, |this, editor, cx| {
             let query = model::limit_query(editor.read(cx).field_text()).to_owned();
             if editor.read(cx).field_text() != query {
@@ -370,6 +397,8 @@ impl Page {
             selected: None,
             detail: None,
             detail_tab: DetailTab::Summary,
+            chat: None,
+            chat_pending: false,
             code: None,
             code_loading: false,
             detail_fullscreen: false,
@@ -383,6 +412,7 @@ impl Page {
             detail_generation: 0,
             query: String::new(),
             search,
+            guidance,
             filter_open: false,
             filter_submenu: None,
             collapsed_detail: [false; 3],
@@ -391,6 +421,10 @@ impl Page {
             last_filters: None,
             controls: RefCell::new(HashMap::new()),
             clock,
+            link_threads: Vec::new(),
+            links_open: false,
+            linked_threads: None,
+            link_generation: 0,
         }
     }
 
@@ -593,6 +627,8 @@ impl Page {
             return false;
         }
         self.selected = identity;
+        self.links_open = false;
+        self.linked_threads = None;
         self.pane_width = None;
         self.pane_drag_offset = None;
         self.detail = None;
@@ -606,6 +642,8 @@ impl Page {
         self.media_queue.clear();
         self.detail_generation += 1;
         self.collapsed_detail = [false; 3];
+        self.guidance
+            .update(cx, |guidance, cx| guidance.set_text("", cx));
         self.detail_scroll.set_offset(point(px(0.), px(0.)));
         cx.notify();
         true
@@ -1612,14 +1650,76 @@ impl Page {
     }
 
     fn discuss_selected(&self, cx: &mut Context<Self>) {
-        if let (Some(identity), Some(Ok(detail))) = (&self.selected, &self.detail) {
-            cx.emit(Event::AskCodex(format!(
-                "Help me understand pull request #{}: {}\n{}",
-                identity.number,
-                detail["title"].as_str().unwrap_or(""),
-                identity.url(),
-            )));
+        if self.chat_pending {
+            return;
         }
+        if let (Some(identity), Some(Ok(detail))) = (&self.selected, &self.detail) {
+            let title = detail["title"].as_str().unwrap_or("").trim();
+            cx.emit(Event::Chat {
+                title: if title.is_empty() {
+                    format!(
+                        "{}/{}#{}",
+                        identity.owner, identity.repository, identity.number
+                    )
+                } else {
+                    title.to_owned()
+                },
+                prompt: format!(
+                    "Help me understand pull request #{}: {}\n{}",
+                    identity.number,
+                    detail["title"].as_str().unwrap_or(""),
+                    identity.url(),
+                ),
+            });
+        }
+    }
+
+    /// `Fix checks`: a chat that checks out the PR branch and fixes its failing checks.
+    fn fix_checks(&self, cx: &mut Context<Self>) {
+        let (Some(identity), Some(Ok(detail))) = (&self.selected, &self.detail) else {
+            return;
+        };
+        let failing = fixable_checks(detail);
+        if failing.is_empty() {
+            return;
+        }
+        cx.emit(Event::StartChat(format!(
+            "Fix the failing checks on pull request #{}: {}\n{}\n\nCheck out its branch `{}`, \
+             find why these checks fail ({}), fix the cause, and push the fix to that branch.",
+            identity.number,
+            detail["title"].as_str().unwrap_or(""),
+            identity.url(),
+            detail["headRefName"].as_str().unwrap_or(""),
+            failing.join(", "),
+        )));
+    }
+
+    /// `Address comments`: a chat that checks out the PR branch and resolves its review
+    /// comments, with the optional guidance appended.
+    fn address_comments(&mut self, cx: &mut Context<Self>) {
+        let (Some(identity), Some(Ok(detail))) = (&self.selected, &self.detail) else {
+            return;
+        };
+        if !model::review_summary(detail).is_some_and(|reviews| reviews.comments > 0) {
+            return;
+        }
+        let mut prompt = format!(
+            "Address the review comments on pull request #{}: {}\n{}\n\nCheck out its branch \
+             `{}`, read the unresolved review comments, make the requested changes, and push \
+             them to that branch.",
+            identity.number,
+            detail["title"].as_str().unwrap_or(""),
+            identity.url(),
+            detail["headRefName"].as_str().unwrap_or(""),
+        );
+        let guidance = self.guidance.read(cx).field_text().trim().to_owned();
+        if !guidance.is_empty() {
+            prompt.push_str("\n\nGuidance: ");
+            prompt.push_str(&guidance);
+        }
+        self.guidance
+            .update(cx, |guidance, cx| guidance.set_text("", cx));
+        cx.emit(Event::StartChat(prompt));
     }
 
     fn open_selected(&self, cx: &mut Context<Self>) {
@@ -1682,6 +1782,11 @@ impl Page {
 
     fn detail_actions(&self, available: bool, cx: &Context<Self>) -> Div {
         let t = cx.theme();
+        let chat_label = if self.chat.is_some() {
+            "Open chat"
+        } else {
+            "Chat"
+        };
         div()
             .flex()
             .items_center()
@@ -1700,9 +1805,9 @@ impl Page {
                     })),
             )
             .child(
-                self.detail_control("ask-pull-request", "Chat", true, cx)
-                    .aria_disabled(!available)
-                    .child(text("Chat", 13., 18., 430., t.text))
+                self.detail_control("ask-pull-request", chat_label, true, cx)
+                    .aria_disabled(!available || self.chat_pending)
+                    .child(text(chat_label, 13., 18., 430., t.text))
                     .on_click(cx.listener(|this, _, _, cx| this.discuss_selected(cx)))
                     .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
                         if matches!(event.keystroke.key.as_str(), "enter" | "space") {
@@ -1858,7 +1963,10 @@ impl Page {
     fn detail_sections(&self, detail: &Value, window: &Window, cx: &Context<Self>) -> Div {
         let t = cx.theme();
         let mut sections = div().flex().flex_col().gap(px(24.));
-        for (index, title) in ["Description", "Checks"].into_iter().enumerate() {
+        for (index, title) in ["Description", "Checks", "Comments"]
+            .into_iter()
+            .enumerate()
+        {
             let collapsed = self.collapsed_detail[index];
             let header = div()
                 .id(("detail-section", index))
@@ -1903,16 +2011,62 @@ impl Page {
                 }));
             let mut section = div().flex().flex_col().gap(px(16.)).child(header);
             if !collapsed {
-                let body = if index == 0 {
-                    self.description(detail["body"].as_str().unwrap_or(""), window, cx)
-                } else {
-                    check_details(detail, t)
+                let body = match index {
+                    0 => self.description(detail["body"].as_str().unwrap_or(""), window, cx),
+                    1 if !fixable_checks(detail).is_empty() => check_details(detail, t).child(
+                        self.button("fix-checks", "Fix checks", cx)
+                            .self_start()
+                            .on_click(cx.listener(|this, _, _, cx| this.fix_checks(cx))),
+                    ),
+                    1 => check_details(detail, t),
+                    _ => self.comment_details(detail, cx),
                 };
                 section = section.child(body.px(px(8.)));
             }
             sections = sections.child(section);
         }
         sections
+    }
+
+    /// The review comment count, and when there are comments the optional guidance field and
+    /// `Address comments`.
+    fn comment_details(&self, detail: &Value, cx: &Context<Self>) -> Div {
+        let t = cx.theme();
+        let reviews = model::review_summary(detail);
+        let label = reviews.as_ref().map_or_else(
+            || "Couldn’t load comments".to_owned(),
+            model::ReviewSummary::comments_label,
+        );
+        let has_comments = reviews.is_some_and(|reviews| reviews.comments > 0);
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(text(label, 14., 21., 430., t.text_tertiary))
+            .when(has_comments, |d| {
+                d.child(
+                    div()
+                        .id("pull-request-guidance")
+                        .aria_label("Optional guidance")
+                        .relative()
+                        .h(px(32.))
+                        .px(px(11.))
+                        .flex()
+                        .items_center()
+                        .child(shapes::decoration(shapes::Decoration {
+                            radius: gpui::Corners::all(px(10.)),
+                            fill: Some(t.control_background),
+                            border: Some((px(1.), t.border_strong)),
+                            ..Default::default()
+                        }))
+                        .child(div().flex_1().min_w_0().child(self.guidance.clone())),
+                )
+                .child(
+                    self.button("address-comments", "Address comments", cx)
+                        .self_start()
+                        .on_click(cx.listener(|this, _, _, cx| this.address_comments(cx))),
+                )
+            })
     }
 
     fn detail_summary(&self, detail: &Value, window: &Window, cx: &Context<Self>) -> Stateful<Div> {
@@ -2003,7 +2157,69 @@ impl Page {
             .size_full()
             .flex()
             .flex_col()
-            .child(self.detail_toolbar(value, cx));
+            .child(self.detail_toolbar(value, cx))
+            .child(
+                self.button("link-chat", "Link a chat", cx)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.links_open = !this.links_open;
+                        if this.links_open {
+                            cx.emit(Event::Links);
+                        }
+                        cx.notify();
+                    })),
+            )
+            .when(self.links_open, |pane| {
+                pane.child(
+                    div()
+                        .id("pr-chat-links")
+                        .max_h(px(220.))
+                        .overflow_y_scroll()
+                        .children(match &self.linked_threads {
+                            None => vec![div().child(text(
+                                "Loading chat links...",
+                                13.,
+                                20.,
+                                400.,
+                                cx.theme().text,
+                            ))],
+                            Some(Err(error)) => vec![div().child(text(
+                                error.clone(),
+                                13.,
+                                20.,
+                                400.,
+                                cx.theme().text,
+                            ))],
+                            Some(Ok(linked)) => self
+                                .link_threads
+                                .iter()
+                                .map(|(id, title)| {
+                                    let thread = id.clone();
+                                    let remove = linked.contains(id);
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.))
+                                        .child(text(title.clone(), 13., 20., 400., cx.theme().text))
+                                        .child(
+                                            self.button(
+                                                SharedString::from(format!("link-{id}")),
+                                                if remove { "Unlink" } else { "Link" },
+                                                cx,
+                                            )
+                                            .on_click(
+                                                cx.listener(move |_, _, _, cx| {
+                                                    cx.emit(Event::Link {
+                                                        thread: thread.clone(),
+                                                        remove,
+                                                    });
+                                                }),
+                                            ),
+                                        )
+                                })
+                                .collect(),
+                        }),
+                )
+            });
         if self.detail_tab == DetailTab::Code {
             return match &self.code {
                 Some(Ok(panel)) => pane.child(div().flex_1().min_h_0().child(panel.clone())),
@@ -2109,6 +2325,35 @@ fn check_details(detail: &Value, t: &theme::Theme) -> Div {
         ));
     }
     content
+}
+
+/// Names of the checks whose conclusion (or status context state) the host's `ciStatus`
+/// counts as failing; none for a pull request that is not open, as in the original
+/// (`Fix is only available for open pull requests`).
+fn fixable_checks(detail: &Value) -> Vec<&str> {
+    const FAILING: [&str; 6] = [
+        "FAILURE",
+        "ERROR",
+        "TIMED_OUT",
+        "CANCELLED",
+        "ACTION_REQUIRED",
+        "STARTUP_FAILURE",
+    ];
+    if detail["state"] != "OPEN" {
+        return Vec::new();
+    }
+    detail["statusCheckRollup"]["contexts"]["nodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|check| {
+            let conclusion = check["conclusion"]
+                .as_str()
+                .or_else(|| check["state"].as_str());
+            conclusion.is_some_and(|conclusion| FAILING.contains(&conclusion))
+        })
+        .filter_map(|check| check["name"].as_str().or_else(|| check["context"].as_str()))
+        .collect()
 }
 
 fn request_status(state: &str, draft: bool, t: &theme::Theme) -> (&'static str, gpui::Hsla) {
@@ -2542,6 +2787,22 @@ fn loading_rows(label: &'static str, cx: &Context<Page>) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixable_checks_name_failed_runs_and_contexts_of_an_open_pull_request() {
+        let mut detail = serde_json::json!({"state":"OPEN","statusCheckRollup":{"contexts":{"nodes":[
+            {"name":"build","conclusion":"FAILURE","status":"COMPLETED"},
+            {"name":"lint","conclusion":"SUCCESS","status":"COMPLETED"},
+            {"name":"test","conclusion":null,"status":"IN_PROGRESS"},
+            {"context":"ci/deploy","state":"ERROR"},
+            {"context":"ci/docs","state":"PENDING"},
+            {"name":"e2e","conclusion":"TIMED_OUT","status":"COMPLETED"}
+        ]}}});
+        assert_eq!(fixable_checks(&detail), ["build", "ci/deploy", "e2e"]);
+        detail["state"] = "MERGED".into();
+        assert!(fixable_checks(&detail).is_empty());
+        assert!(fixable_checks(&serde_json::json!({"state":"OPEN"})).is_empty());
+    }
 
     #[test]
     fn stale_preview_completion_releases_the_next_request_without_retaining_old_data() {

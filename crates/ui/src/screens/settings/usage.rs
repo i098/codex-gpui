@@ -47,6 +47,10 @@ pub struct State {
     pub reload: Load<Arc<Reload>>,
     pub reload_pricing: Load<Arc<Value>>,
     pub has_saved_payment_method: bool,
+    /// The last auto-reload save hit a card decline; the dialog offers payment recovery.
+    pub reload_declined: bool,
+    /// The account may buy credits for someone else (`Gift credits`).
+    pub gift_credits: bool,
     pub reset_history: Load<Arc<Value>>,
     pub history: Load<Option<Arc<BalanceHistory>>>,
     pub analytics: analytics::Snapshot,
@@ -886,7 +890,7 @@ impl Usage {
         } else {
             div().into_any_element()
         };
-        let content = div().flex().flex_col().child(
+        let mut content = div().flex().flex_col().child(
             div()
                 .p(px(16.))
                 .flex()
@@ -910,6 +914,17 @@ impl Usage {
                 )
                 .child(control),
         );
+        if state.access.manage_credits && state.gift_credits {
+            let gift = self.action(
+                "usage-gift-credits",
+                "Gift credits",
+                Control::Action(Action::OpenUrl("https://chatgpt.com/gifts/credits".into())),
+                false,
+                window,
+                cx,
+            );
+            content = content.child(row("Buy credits for someone else", None, gift, cx.theme()));
+        }
         Some(self.credit_content(content, state, window, cx))
     }
 
@@ -1570,6 +1585,33 @@ impl Usage {
         if let Some(error) = self.field_error.as_ref().or(state.error.as_ref()) {
             body =
                 body.child(text(error.clone(), 13., 19., 430., t.text_error).whitespace_normal());
+        }
+        if state.reload_declined && self.field_error.is_none() {
+            body = body.child(
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .child(self.action(
+                        "usage-reload-payment",
+                        "Update your payment method",
+                        Control::Action(Action::OpenUrl(
+                            "https://chatgpt.com/#settings/Billing".into(),
+                        )),
+                        state.busy,
+                        window,
+                        cx,
+                    ))
+                    .child(self.action(
+                        "usage-reload-purchase",
+                        "Purchase credit directly",
+                        Control::Action(Action::OpenUrl(
+                            "https://chatgpt.com/codex/settings/usage?credit_modal=true".into(),
+                        )),
+                        state.busy,
+                        window,
+                        cx,
+                    )),
+            );
         }
         self.reload_overlay(body, enabled, state, window, cx)
     }
