@@ -233,6 +233,7 @@ dependencies = [
  "textsys",
  "theme",
  "toml 0.8.23",
+ "uds_windows",
  "ui",
  "ureq",
  "url",

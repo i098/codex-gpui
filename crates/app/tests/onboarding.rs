@@ -232,6 +232,68 @@ fn account_completion_is_checked_after_a_previous_local_completion() -> Result<(
 }
 
 #[test]
+fn device_code_sign_in_replaces_a_browser_attempt_that_cannot_reach_the_callback() -> Result<()> {
+    use common::{exchange, script};
+    use ui::screens::signin::policy::Policy;
+
+    common::install_panic_hook();
+    let mut lines = script(None, |_| {})?;
+    for line in &mut lines {
+        if line["dir"] == "recv" && line["msg"]["result"].get("requiresOpenaiAuth").is_some() {
+            line["msg"]["result"] = json!({"account":null,"requiresOpenaiAuth":true});
+        }
+    }
+    lines.extend(exchange(
+        "configRequirements/read",
+        json!({"requirements":{"allowedLoginMethods":["api","chatgpt"]}}),
+    ));
+    lines.extend(exchange(
+        "account/login/start",
+        json!({"type":"chatgpt","loginId":"browser","authUrl":"https://example.invalid/browser"}),
+    ));
+    lines.extend(exchange(
+        "account/login/cancel",
+        json!({"status":"canceled"}),
+    ));
+    lines.extend(exchange(
+        "account/login/start",
+        json!({"type":"chatgptDeviceCode","loginId":"device","verificationUrl":"https://example.invalid/device","userCode":"ABCD-1234"}),
+    ));
+    let mut settings = common::recorded_host_settings()?;
+    settings.write("electron:onboarding-projectless-completed", json!(true))?;
+    let mut fx = Fx::captured_with_host_settings("dark", (1280., 832.), lines, settings)?;
+    fx.wait("sign-in requirements", |fx| {
+        fx.read(|root, cx| {
+            root.login().is_some_and(|login| {
+                matches!(login.read(cx).policy(), Policy::Ready { chatgpt: true, .. })
+            })
+        })
+    })?;
+    fx.keys("tab tab enter")?;
+    fx.wait("browser handoff", |fx| fx.cx.take_opened_url().is_some())?;
+    let login = fx.read(|root, _| root.login().cloned()).context("Login")?;
+    fx.root.update(&mut fx.cx, |_, cx| {
+        login.update(cx, |login, cx| login.start_device_code(cx))
+    });
+    fx.wait("device code handoff", |fx| {
+        fx.cx.take_opened_url().as_deref() == Some("https://example.invalid/device")
+    })?;
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.on_event(
+            bridge::Event::Notification {
+                method: "account/login/completed".into(),
+                params: json!({"loginId":"device","success":true}),
+            },
+            cx,
+        )
+    });
+    fx.wait("sign-in completed", |fx| {
+        fx.read(|root, cx| root.login().is_none_or(|login| !login.read(cx).pending()))
+    })?;
+    Ok(())
+}
+
+#[test]
 fn first_run_keeps_back_in_bounds_and_saves_after_the_last_page() -> Result<()> {
     use ui::screens::onboarding::Page;
 

@@ -14,6 +14,9 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     ))
     .on_action(cx.listener(Root::open_settings_subtree))
     .on_action(cx.listener(Root::open_settings_parent))
+    .on_action(cx.listener(|this, _: &ui::OpenUserConfig, _, cx| {
+        crate::settings_configuration::read_layers(this, true, cx)
+    }))
     .on_action(
         cx.listener(|this, _: &settings::storage::ManageWorktrees, window, cx| {
             this.open_settings_section("Worktrees", window, cx)
@@ -85,6 +88,14 @@ pub(super) fn page(root: &mut Root, window: &mut Window, cx: &mut Context<Root>)
     {
         page.update(cx, |page, cx| page.show_subtree(view, cx));
     }
+    cx.subscribe_in(
+        &page,
+        window,
+        |this, _, _: &settings::RequestFullAccessAvailable, window, cx| {
+            this.open_dialog(DialogKind::FullAccessAvailable, window, cx)
+        },
+    )
+    .detach();
     cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
         this.write_setting(e, cx);
         if e.path.starts_with("host.") && e.path != settings::THEME {
