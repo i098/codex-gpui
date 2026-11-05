@@ -344,6 +344,9 @@ pub struct Identity {
     pub device_id: String,
 }
 
+/// The Codex app changelog feed (`codex-app-changelog`): public, read without credentials.
+pub const CHANGELOG_FEED: &str = "https://learn.chatgpt.com/docs/changelog/codex-app.json";
+
 /// The Scheduled page's read-only suggestion request.
 pub fn suggested_automations() -> Request {
     Request::Http(json!({
@@ -2700,6 +2703,24 @@ impl Host for CloudHost {
                     "status": 200,
                     "headers": {"content-type": "application/json"},
                     "bodyJsonString": body.to_string()
+                }))
+            }
+            Request::Fetch { method, url, .. } if url == CHANGELOG_FEED => {
+                ensure!(method == "GET", "unsupported changelog method: {method}");
+                // `credentials: omit`, and no redirect: the original rejects another origin.
+                let mut response = self
+                    .agent
+                    .get(CHANGELOG_FEED)
+                    .config()
+                    .max_redirects(0)
+                    .build()
+                    .call()?;
+                Ok(json!({
+                    "type": "fetch-response",
+                    "responseType": "success",
+                    "status": response.status().as_u16(),
+                    "headers": {"content-type": "application/json"},
+                    "bodyJsonString": response.body_mut().read_to_string()?
                 }))
             }
             Request::Fetch { .. } => self.local.fetch(request),

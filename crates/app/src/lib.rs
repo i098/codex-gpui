@@ -41,6 +41,7 @@ pub mod onboarding;
 mod permissions;
 mod personalization;
 mod pets;
+mod profile_menu;
 mod pull_requests;
 pub mod qa;
 mod routes;
@@ -251,6 +252,8 @@ pub enum SidePanel {
     Sources,
     /// Thread summary ▸ `Plan`: the latest plan, editable.
     Plan,
+    /// The strip's `New tab` button: the page of tools and recent files ([`Root::new_tab`]).
+    NewTab,
     /// Thread summary ▸ `Subagents`: the thread's subagents ([`Root::subagents`]).
     Subagents,
     /// `⌘T` and a link's `Open in` ▸ `New tab`: the browser tab with this key
@@ -493,6 +496,8 @@ pub struct Root {
     file: Option<Entity<FileView>>,
     /// The plan of [`SidePanel::Plan`]; cleared with the thread.
     plan: Option<Entity<ui::screens::plan::PlanView>>,
+    /// The page of [`SidePanel::NewTab`]; cleared with the thread.
+    new_tab: Option<Entity<ui::screens::new_tab::NewTabPage>>,
     /// The view of [`SidePanel::Subagents`]; cleared with the thread.
     subagents: Option<Entity<ui::screens::subagents::SubagentsView>>,
     /// The image view of [`SidePanel::Image`]; cleared with the thread.
@@ -1016,6 +1021,7 @@ impl Root {
             diff_watch: None,
             file: None,
             plan: None,
+            new_tab: None,
             subagents: None,
             image: None,
             split: None,
@@ -3243,6 +3249,7 @@ impl Root {
         side_chats: &[SideChat],
         browsers: &[(usize, Entity<BrowserTab>)],
         console: bool,
+        new_tab: bool,
         subagents: bool,
         cx: &App,
     ) -> Option<Tab> {
@@ -3301,6 +3308,11 @@ impl Root {
                 label: plan?.read(cx).title(),
                 preview: false,
             }),
+            SidePanel::NewTab => new_tab.then(|| Tab {
+                icon: "diff-new-tab",
+                label: "New tab".into(),
+                preview: false,
+            }),
             SidePanel::Subagents => subagents.then(|| Tab {
                 icon: "side-chat",
                 label: "Subagents".into(),
@@ -3330,6 +3342,7 @@ impl Root {
         let chats = &self.side_chats;
         let browsers = &self.browser_tabs;
         let console = self.terminal_panel().is_some();
+        let new_tab = self.new_tab.is_some();
         let subagents = self.subagents.is_some();
         let tab = |side: &SidePanel| {
             Self::side_tab(
@@ -3341,6 +3354,7 @@ impl Root {
                 chats,
                 browsers,
                 console,
+                new_tab,
                 subagents,
                 cx,
             )
@@ -3364,6 +3378,7 @@ impl Root {
                 .new(|cx| ui::screens::sources::SourcesView::new(view.clone(), cx))
                 .into(),
             SidePanel::Plan => self.plan.as_ref()?.clone().into(),
+            SidePanel::NewTab => self.new_tab.as_ref()?.clone().into(),
             SidePanel::Subagents => self.subagents.as_ref()?.clone().into(),
             SidePanel::Browser(key) => self.browser_tab(key)?.clone().into(),
         };
@@ -4784,6 +4799,7 @@ impl Root {
         self.diff = Some(diff);
         self.file = None;
         self.plan = None;
+        self.new_tab = None;
         self.subagents = None;
         self.image = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
@@ -6795,6 +6811,8 @@ impl Root {
             settings::personalization::Event::Writing(enabled) => {
                 self.change_writing(*enabled, window, cx)
             }
+            settings::personalization::Event::LoadLayout => self.refresh_layout(cx),
+            settings::personalization::Event::Layout(mode) => self.change_layout(mode, cx),
         }
     }
 
@@ -9088,6 +9106,7 @@ impl Render for Root {
                 }),
             );
         let root = routes::actions(archived_chats::actions(root, cx), cx);
+        let root = profile_menu::actions(root, cx);
         let root = hotkey::actions(root, self.popout.is_some(), cx);
         let root = features::actions(root, self, cx)
             .on_action(cx.listener(|this, _: &ForceReloadSkills, _, cx| this.refresh_skills(cx)))

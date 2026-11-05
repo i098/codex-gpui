@@ -84,6 +84,15 @@ impl Root {
                 self.navigate(Route::PullRequests(selected.clone()), window, cx)
             }
             Event::AskCodex(prompt) => self.prefill_pull_request_chat(prompt, window, cx),
+            Event::StartChat(prompt) => {
+                self.new_chat(window, cx);
+                let composer = self.home.read(cx).composer.clone();
+                composer.update(cx, |composer, cx| composer.set_text(prompt, cx));
+                // The composer's submit handler updates `Root`, so send after this update ends.
+                window.defer(cx, move |window, cx| {
+                    composer.update(cx, |composer, cx| composer.send_draft(false, window, cx));
+                });
+            }
             Event::Chat { title, prompt } => {
                 self.open_pull_request_chat(page, title.clone(), prompt.clone(), window, cx)
             }

@@ -35,6 +35,13 @@ actions!(
         CopyLastCodeBlock,
         CloseWholeWindow,
         CloseOtherSideTabs,
+        OpenCurrentSideChat,
+        CopyPageLink,
+        ForkCurrentThread,
+        DeleteCurrentChat,
+        CopyConversationMarkdown,
+        FocusMainChat,
+        FocusSideChat,
         ReopenClosedTab
     ]
 );
@@ -225,6 +232,52 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
     .on_action(cx.listener(|this, _: &ZoomIn, window, cx| this.change_zoom(Some(1), window, cx)))
     .on_action(cx.listener(|this, _: &ZoomOut, window, cx| this.change_zoom(Some(-1), window, cx)))
     .on_action(cx.listener(|this, _: &ActualSize, window, cx| this.change_zoom(None, window, cx)))
+    .on_action(cx.listener(|this, _: &OpenCurrentSideChat, window, cx| {
+        this.open_current_side_chat(window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &CopyPageLink, _, cx| {
+        if let Some(url) = this
+            .active_browser_tab()
+            .and_then(|tab| tab.read(cx).url().cloned())
+        {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(url.to_string()));
+        }
+    }))
+    .on_action(cx.listener(|this, _: &ForkCurrentThread, window, cx| {
+        if let Route::Thread(id) = this.state.route.clone() {
+            this.fork_thread(id, None, None, window, cx);
+        }
+    }))
+    .on_action(cx.listener(|this, _: &DeleteCurrentChat, window, cx| {
+        if let Route::Thread(id) = this.state.route.clone() {
+            window.dispatch_action(
+                Box::new(ui::screens::sidebar::ThreadMenuAction {
+                    thread: id,
+                    command: ui::screens::sidebar::ThreadCommand::Delete,
+                }),
+                cx,
+            );
+        }
+    }))
+    .on_action(
+        cx.listener(|this, _: &CopyConversationMarkdown, window, cx| {
+            if let Route::Thread(id) = this.state.route.clone() {
+                window.dispatch_action(
+                    Box::new(ui::screens::sidebar::ThreadMenuAction {
+                        thread: id,
+                        command: ui::screens::sidebar::ThreadCommand::CopyMarkdown,
+                    }),
+                    cx,
+                );
+            }
+        }),
+    )
+    .on_action(cx.listener(|this, _: &FocusMainChat, window, cx| {
+        window.focus(&this.route_focus(cx), cx);
+    }))
+    .on_action(cx.listener(|this, _: &FocusSideChat, window, cx| {
+        this.focus_side_chat(window, cx);
+    }))
     .on_mouse_up(
         MouseButton::Navigate(NavigationDirection::Back),
         cx.listener(|_, _, window, cx| super::keymap::dispatch_mouse("MouseBack", window, cx)),
@@ -776,5 +829,58 @@ impl Root {
             result
         });
         log_err(task, cx);
+    }
+
+    fn open_current_side_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Route::Thread(id) = self.state.route.clone() else {
+            return;
+        };
+        if self.fork_pending {
+            return;
+        }
+        let title: SharedString = if self.side_chats.is_empty() {
+            "Side chat".into()
+        } else {
+            format!("Side chat {}", self.side_chats.len() + 1).into()
+        };
+        let bridge = self.bridge.clone();
+        self.fork_pending = true;
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let result = bridge
+                .request::<_, Value>("thread/fork", json!({"threadId": id}))
+                .await
+                .and_then(routes::forked_thread);
+            match result {
+                Ok((thread, settings)) => {
+                    this.update_in(cx, |this, window, cx| {
+                        this.fork_pending = false;
+                        this.add_side_chat(thread, settings, title, window, cx);
+                    })?;
+                    Ok(())
+                }
+                Err(error) => {
+                    this.update(cx, |this, cx| {
+                        this.fork_pending = false;
+                        this.toast(Toast::danger("Failed to open side chat"), cx);
+                    })?;
+                    Err(error)
+                }
+            }
+        });
+        log_err(task, cx);
+    }
+
+    fn focus_side_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let key = match self.side {
+            Some(SidePanel::SideChat(key)) if self.chat(key).is_some() => Some(key),
+            _ => self.side_chats.last().map(|chat| chat.key),
+        };
+        let Some(key) = key else {
+            return;
+        };
+        self.set_side(SidePanel::SideChat(key), window, cx);
+        if let Some(chat) = self.chat(key) {
+            window.focus(&chat.composer.focus_handle(cx), cx);
+        }
     }
 }
