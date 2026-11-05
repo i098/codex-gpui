@@ -6,10 +6,11 @@ use crate::composer::{Composer, label, pill};
 use crate::{Shell, focus, icon::icon, rounded_clip, text};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, Corners, Div, Entity, Global,
-    Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels,
-    Render, ScrollHandle, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Window,
-    actions, anchored, canvas, deferred, div, point, px, relative,
+    AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, Corners, Div, Entity,
+    Focusable as _, Global, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton,
+    ParentElement, Pixels, Render, ScrollHandle, SharedString, Stateful,
+    StatefulInteractiveElement as _, Styled, Window, actions, anchored, canvas, deferred, div,
+    point, px, relative,
 };
 use theme::{ActiveTheme as _, Theme};
 
@@ -24,7 +25,36 @@ pub struct FinishedScrollAnimation(pub AnyWindowHandle);
 
 impl Global for FinishedScrollAnimation {}
 
-actions!(home, [OpenFolder]);
+actions!(
+    home,
+    [
+        OpenFolder,
+        ClearProject,
+        SetupWindowsSandboxElevated,
+        SetupWindowsSandboxUnelevated
+    ]
+);
+
+/// `Choose project` menu: whether it is open, where its chip was last laid out, and its
+/// `Search projects` field.
+pub struct ProjectMenu {
+    pub open: bool,
+    bounds: Bounds<Pixels>,
+    search: Entity<Composer>,
+}
+
+impl ProjectMenu {
+    pub fn new(cx: &mut Context<HomeMain>) -> Self {
+        let search = cx
+            .new(|cx| Composer::embedded_field("Search projects", "", px(13.), px(18.571_428), cx));
+        cx.observe(&search, |_, _, cx| cx.notify()).detach();
+        Self {
+            open: false,
+            bounds: Bounds::default(),
+            search,
+        }
+    }
+}
 
 /// `Work in` menu state: whether it is open, and where its chip was last laid out.
 #[derive(Default)]
@@ -51,10 +81,14 @@ pub struct HomeMain {
     pub composer: Entity<Composer>,
     pub project: Option<SharedString>,
     pub location: LocationMenu,
+    pub projects: ProjectMenu,
     /// The announcement slot's `Try ChatGPT Voice` beacon is shown. BOUNDARY: the original
     /// shows it when `/beacons/home` offers it; the port has no such feed yet, so it starts
     /// hidden (flows.md Home rows 5 and 6) and dismissal lasts for the session only.
     pub beacon: bool,
+    /// Windows sandbox setup is needed and in progress.
+    pub windows_sandbox_setup_needed: bool,
+    pub windows_sandbox_setup_pending: bool,
     /// The ChatGPT or Work headline; `None` shows the Codex hero.
     pub headline: Option<&'static str>,
 }
@@ -65,7 +99,10 @@ impl HomeMain {
             composer: fixture_composer(window, cx, Composer::home),
             project: None,
             location: LocationMenu::default(),
+            projects: ProjectMenu::new(cx),
             beacon: false,
+            windows_sandbox_setup_needed: false,
+            windows_sandbox_setup_pending: false,
             headline: None,
         }
     }
@@ -79,7 +116,7 @@ impl HomeMain {
 
     /// Follows the sidebar's mode (a [`crate::screens::sidebar::MODES`] index).
     pub fn set_mode(&mut self, mode: usize, cx: &mut Context<Self>) {
-        let (headline, placeholder) = match crate::screens::sidebar::MODES[mode].0 {
+        let (headline, placeholder) = match crate::screens::sidebar::MODES[mode] {
             "ChatGPT" => {
                 // `Math.random()` in the original; the clock is random enough for a greeting.
                 let nanos = std::time::SystemTime::now()
@@ -94,8 +131,11 @@ impl HomeMain {
             _ => (None, "Do anything"),
         };
         self.headline = headline;
-        self.composer
-            .update(cx, |composer, cx| composer.set_placeholder(placeholder, cx));
+        let chat = placeholder == "Ask ChatGPT";
+        self.composer.update(cx, |composer, cx| {
+            composer.set_placeholder(placeholder, cx);
+            composer.set_chat(chat, cx);
+        });
         cx.notify();
     }
 
@@ -212,6 +252,89 @@ impl HomeMain {
                 .on_click(cx.listener(|this, _, _, cx| this.set_beacon(false, cx))),
             )
     }
+    fn windows_sandbox_banner(
+        &self,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let elevated_focus = focus::handle("home-windows-sandbox-elevated", 0, window, cx);
+        let unelevated_focus = focus::handle("home-windows-sandbox-unelevated", 0, window, cx);
+        let actions = if self.windows_sandbox_setup_pending {
+            div().child(text("Setting up…", 13., 18., 400., t.text_tertiary))
+        } else {
+            div().flex().gap(px(8.)).children([
+                focus::ring(
+                    div().id("home-windows-sandbox-elevated"),
+                    &elevated_focus,
+                    Theme::RADIUS_FULL,
+                    px(2.),
+                    cx,
+                )
+                .role(gpui::Role::Button)
+                .aria_label("Set up Windows sandbox as administrator")
+                .h(px(32.))
+                .px(px(12.))
+                .flex()
+                .items_center()
+                .rounded_full()
+                .bg(t.composer_primary)
+                .child(text(
+                    "Run as administrator",
+                    13.,
+                    18.,
+                    400.,
+                    t.text_composer_primary,
+                ))
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(SetupWindowsSandboxElevated), cx)
+                }),
+                focus::ring(
+                    div().id("home-windows-sandbox-unelevated"),
+                    &unelevated_focus,
+                    Theme::RADIUS_FULL,
+                    px(2.),
+                    cx,
+                )
+                .role(gpui::Role::Button)
+                .aria_label("Set up Windows sandbox without administrator access")
+                .h(px(32.))
+                .px(px(12.))
+                .flex()
+                .items_center()
+                .rounded_full()
+                .bg(t.text_alpha_5)
+                .child(text("Without administrator", 13., 18., 400., t.text))
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(SetupWindowsSandboxUnelevated), cx)
+                }),
+            ])
+        };
+        div()
+            .h(px(74.))
+            .mb(px(8.))
+            .px(px(16.))
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .rounded(px(16.))
+            .border_1()
+            .border_color(t.border)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(text("Set up Windows sandbox", 14., 20., 500., t.text))
+                    .child(text(
+                        "Choose how to configure the protected environment",
+                        13.,
+                        18.,
+                        400.,
+                        t.text_tertiary,
+                    )),
+            )
+            .child(actions)
+    }
 }
 
 /// The Home main panel (no shell).
@@ -262,8 +385,6 @@ fn chip(
         chip.role(gpui::Role::Button)
             .font_features(PROJECT_TOOLTIP_FEATURES.clone())
             .aria_label("Choose project")
-            .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenFolder), cx))
-            .on_key_down(open_folder_key)
     })
     .child(
         pill(id, t)
@@ -280,6 +401,221 @@ fn chip(
                     .child(icon(glyph, 16., fg).runtime())
                     .when(!compact, |d| d.child(label(s, fg))),
             )),
+    )
+}
+
+/// Opens or closes the `Choose project` menu (`None` toggles); opening clears and focuses
+/// its search field.
+fn set_project_menu(
+    owner: &Entity<HomeMain>,
+    open: Option<bool>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    owner.update(cx, |main, cx| {
+        main.projects.open = open.unwrap_or(!main.projects.open);
+        if main.projects.open {
+            let search = main.projects.search.clone();
+            search.update(cx, |search, cx| search.set_text("", cx));
+            window.focus(&search.focus_handle(cx), cx);
+        }
+        cx.notify();
+    });
+}
+
+/// The original's composer project picker: `Search projects`, the matching projects (the
+/// selected one checked), then `New project` and, with a project selected, `Don't work in a
+/// project`.
+fn project_menu(
+    owner: &Entity<HomeMain>,
+    menu: &ProjectMenu,
+    composer: &Composer,
+    t: &Theme,
+    window: &Window,
+    cx: &App,
+) -> Option<gpui::AnyElement> {
+    if !menu.open {
+        return None;
+    }
+    let query = menu.search.read(cx).field_text().trim().to_lowercase();
+    let selected = composer.search_roots().first().cloned();
+    let matches: Vec<(SharedString, String)> = composer
+        .slash_projects()
+        .iter()
+        .filter(|(label, _)| label.to_lowercase().contains(&query))
+        .cloned()
+        .collect();
+    let hover = t.menu_item_hover;
+    // cmdk highlights the first item, so it shows the hover fill and Enter activates it.
+    let row = |id: &'static str,
+               index: usize,
+               glyph: &'static str,
+               label: SharedString,
+               highlighted: bool| {
+        div()
+            .id((id, index))
+            .role(gpui::Role::MenuItem)
+            .aria_label(label.clone())
+            .px(px(8.))
+            .py(px(5.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .rounded(px(15.))
+            .when(highlighted, |d| d.bg(hover))
+            .hover(move |s| s.bg(hover))
+            .child(icon(glyph, 16., t.text).opacity(0.75))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .child(text(label, 13., 18.571_428, 430., t.text)),
+            )
+    };
+    // `py-(--spacing)` around a 1 px `bg-border` line, inset by the row padding.
+    let separator = || {
+        div()
+            .px(px(8.))
+            .py(px(4.))
+            .child(div().h(px(1.)).bg(t.border))
+    };
+    let close = |owner: &Entity<HomeMain>| {
+        let owner = owner.clone();
+        move |window: &mut Window, cx: &mut App| set_project_menu(&owner, Some(false), window, cx)
+    };
+    let mut actions: Vec<(
+        &'static str,
+        &'static str,
+        &'static str,
+        Box<dyn gpui::Action>,
+    )> = Vec::new();
+    if query.is_empty() {
+        actions.push((
+            "project-menu-new",
+            "settings-mcp-plus",
+            "New project",
+            Box::new(super::new_project::NewProject),
+        ));
+    }
+    if selected.is_some() {
+        // [INFERENCE] the clear row's `LeftIcon` comes from the caller; `close` stands in.
+        actions.push((
+            "project-menu-clear",
+            "close",
+            "Don't work in a project",
+            Box::new(ClearProject),
+        ));
+    }
+    let enter = matches
+        .first()
+        .map(|(_, root)| Box::new(super::sidebar::SelectProject(root.clone())) as Box<_>)
+        .or_else(|| actions.first().map(|action| action.3.boxed_clone()));
+    let footer_first = matches.is_empty();
+    let footer: Vec<_> = actions
+        .into_iter()
+        .enumerate()
+        .map(|(i, (id, glyph, label, action))| {
+            let close = close(owner);
+            row(id, 0, glyph, label.into(), footer_first && i == 0).on_click(
+                move |_, window, cx| {
+                    window.dispatch_action(action.boxed_clone(), cx);
+                    close(window, cx);
+                },
+            )
+        })
+        .collect();
+    let list = if matches.is_empty() {
+        // `No projects` with no query, `No projects found` for a search without matches.
+        div().p(px(8.)).child(text(
+            if query.is_empty() {
+                "No projects"
+            } else {
+                "No projects found"
+            },
+            13.,
+            18.571_428,
+            430.,
+            t.text_tertiary,
+        ))
+    } else {
+        div().children(matches.into_iter().enumerate().map(|(i, (label, root))| {
+            let checked = selected.as_ref() == Some(&root);
+            let close = close(owner);
+            row("project-option", i, "folder", label, i == 0)
+                .child(
+                    div()
+                        .size(px(16.))
+                        .children(checked.then(|| icon("menu-check", 16., t.text))),
+                )
+                .on_click(move |_, window, cx| {
+                    window
+                        .dispatch_action(Box::new(super::sidebar::SelectProject(root.clone())), cx);
+                    close(window, cx);
+                })
+        }))
+    };
+    let search_row = div()
+        .px(px(8.))
+        .py(px(5.))
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .child(icon("shortcut-search", 14., t.text_tertiary))
+        .child(div().flex_1().min_w_0().child(menu.search.clone()));
+    let keys = close(owner);
+    let popup = crate::composer::popover(t, 260., |d| {
+        d.child(search_row)
+            .child(separator())
+            .child(list)
+            .when(!footer.is_empty(), |d| {
+                d.child(separator()).children(footer)
+            })
+    })
+    .id("project-menu")
+    .role(gpui::Role::Menu)
+    .aria_label("Choose project")
+    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    // Enter is the field's `Submit` binding, which would blur it. Without a highlighted item it
+    // does nothing, as the original's `preventDefault` does.
+    .capture_action({
+        let close = close(owner);
+        move |_: &crate::composer::Submit, window, cx| {
+            cx.stop_propagation();
+            let Some(action) = enter.as_ref() else { return };
+            window.dispatch_action(action.boxed_clone(), cx);
+            close(window, cx);
+        }
+    })
+    .capture_key_down(move |event, window, cx| {
+        if event.keystroke.key == "escape" {
+            cx.stop_propagation();
+            keys(window, cx);
+        }
+    });
+    let trigger = menu.bounds;
+    let dismiss = close(owner);
+    Some(
+        deferred(
+            anchored().position(point(px(0.), px(0.))).child(
+                div()
+                    .w(window.viewport_size().width)
+                    .h(window.viewport_size().height)
+                    .occlude()
+                    .on_mouse_down(MouseButton::Left, move |_, window, cx| dismiss(window, cx))
+                    .child(
+                        anchored()
+                            // `sideOffset` 0 plus the content's `m-px`, less the popover's
+                            // shadow-layer inset (measured against the original).
+                            .position(point(trigger.left() + px(1.25), trigger.top() - px(18.1)))
+                            .anchor(gpui::Anchor::BottomLeft)
+                            .snap_to_window_with_margin(px(8.))
+                            .child(popup),
+                    ),
+            ),
+        )
+        .with_priority(4)
+        .into_any_element(),
     )
 }
 
@@ -316,15 +652,19 @@ fn location_menu(
         return None;
     }
     let trigger = location.bounds;
+    let worktree = location.mode == super::hotkey::Mode::Worktree;
+    // The original's rows: `Work in` label, This computer, Cloud, Remote. The port keeps
+    // its managed-worktree start under This computer while a project is selected.
+    // (index into `pick_location`, label, icon, enabled, checked)
     let rows = [
-        ("This computer", true),
-        ("New worktree", has_project),
-        ("Remote", false),
-        ("Cloud", false),
+        Some((0, "This computer", "laptop", true, !worktree)),
+        has_project.then_some((1, "New worktree", "thread-fork", true, worktree)),
+        Some((2, "Cloud", "settings-codex-cloud", false, false)),
+        Some((3, "Remote", "project-marker-globe", false, false)),
     ]
     .into_iter()
-    .enumerate()
-    .map(|(i, (label, enabled))| {
+    .flatten()
+    .map(|(i, label, glyph, enabled, checked)| {
         let owner = owner.clone();
         div()
             .id(("work-in-option", i))
@@ -332,34 +672,44 @@ fn location_menu(
             .aria_label(label)
             .aria_disabled(!enabled)
             .px(px(8.))
-            .py(px(6.))
+            .py(px(5.))
             .flex()
             .items_center()
-            .gap(px(8.))
-            .rounded(px(12.))
-            .opacity(if enabled { 1. } else { 0.5 })
+            .gap(px(6.))
+            .rounded(px(15.))
             .when(i == location.selected, |d| d.bg(t.menu_item_hover))
             .when(enabled, |d| {
                 let hover = t.menu_item_hover;
                 d.hover(move |s| s.bg(hover))
             })
-            .child(div().flex_1().child(text(label, 14., 20., 430., t.text)))
+            .child(icon(glyph, 16., t.text).opacity(0.75))
             .child(
-                div().size(px(16.)).children(
-                    (i == usize::from(location.mode == super::hotkey::Mode::Worktree))
-                        .then(|| icon("menu-check", 16., t.text)),
-                ),
+                div()
+                    .flex_1()
+                    .child(text(label, 13., 18.5714, 430., t.text)),
             )
+            .when(checked, |d| {
+                d.child(icon("archive-check", 16., t.text).opacity(0.75))
+            })
             .when(enabled, |d| {
                 d.on_click(move |_, _, cx| pick_location(&owner, i, cx))
             })
     });
     let dismiss = owner.clone();
-    let popup = crate::composer::popover(t, 260., |d| d.children(rows))
-        .id("work-in-menu")
-        .role(gpui::Role::Menu)
-        .aria_label("Work in")
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+    let popup = crate::composer::popover(t, 280., |d| {
+        d.child(div().px(px(8.)).py(px(4.)).child(text(
+            "Work in",
+            13.,
+            18.5714,
+            430.,
+            t.text_tertiary,
+        )))
+        .children(rows)
+    })
+    .id("work-in-menu")
+    .role(gpui::Role::Menu)
+    .aria_label("Work in")
+    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
     // Opens upward from the chip: the bar sits at the bottom of the window. A full-window
     // backdrop under the popup closes it on a click anywhere else, the chip included.
     Some(
@@ -374,7 +724,9 @@ fn location_menu(
                     })
                     .child(
                         anchored()
-                            .position(point(trigger.left(), trigger.top() - px(4.)))
+                            // `sideOffset` 0 plus the content's `m-px`; the popover's 16.5 px
+                            // shadow-layer inset comes off too (measured against the original).
+                            .position(point(trigger.left() + px(1.), trigger.top() - px(18.5)))
                             .anchor(gpui::Anchor::BottomLeft)
                             .snap_to_window_with_margin(px(8.))
                             .child(popup),
@@ -400,10 +752,12 @@ fn scroll_fades(offset: Pixels, maximum: Pixels) -> (Pixels, Pixels) {
 
 /// `Composer utility bar` (`_rail_1hrlq` attached above the composer): project and
 /// environment.
+#[allow(clippy::too_many_arguments)]
 fn utility_bar(
     owner: &Entity<HomeMain>,
     location: &LocationMenu,
     project: Option<SharedString>,
+    project_menu: Option<gpui::AnyElement>,
     compact: bool,
     t: &Theme,
     window: &mut Window,
@@ -466,16 +820,56 @@ fn utility_bar(
                                 .track_scroll(&scroll)
                                 .child(
                                     crate::tooltip::tooltip(
-                                        chip(
-                                            "choose-project",
-                                            "folder",
-                                            project.unwrap_or_else(|| "Choose project".into()),
-                                            t.text_tertiary,
-                                            compact,
-                                            t,
-                                            &project_focus,
-                                            cx,
-                                        ),
+                                        {
+                                            let toggle = {
+                                                let owner = owner.clone();
+                                                move |window: &mut Window, cx: &mut App| {
+                                                    set_project_menu(&owner, None, window, cx)
+                                                }
+                                            };
+                                            let key_toggle = toggle.clone();
+                                            let bounds_owner = owner.clone();
+                                            chip(
+                                                "choose-project",
+                                                "folder",
+                                                project.unwrap_or_else(|| "Choose project".into()),
+                                                t.text_tertiary,
+                                                compact,
+                                                t,
+                                                &project_focus,
+                                                cx,
+                                            )
+                                            // Ghost `[data-state=open]` fill.
+                                            .when(project_menu.is_some(), |d| {
+                                                d.bg(t.ghost_hover).rounded_full()
+                                            })
+                                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                                cx.stop_propagation()
+                                            })
+                                            .on_click(move |_, window, cx| toggle(window, cx))
+                                            .on_key_down(move |event, window, cx| {
+                                                if matches!(
+                                                    event.keystroke.key.as_str(),
+                                                    "enter" | "space"
+                                                ) {
+                                                    key_toggle(window, cx);
+                                                    cx.stop_propagation();
+                                                }
+                                            })
+                                            .child(
+                                                canvas(
+                                                    move |b, _, cx| {
+                                                        bounds_owner.update(cx, |main, _| {
+                                                            main.projects.bounds = b
+                                                        })
+                                                    },
+                                                    |_, (), _, _| {},
+                                                )
+                                                .absolute()
+                                                .size_full(),
+                                            )
+                                            .children(project_menu)
+                                        },
                                         "Select a project to run your chat in",
                                         Some("⌥⇧⌘O"),
                                         crate::tooltip::Side::Top,
@@ -509,15 +903,23 @@ fn utility_bar(
                                     )
                                     .role(gpui::Role::Button)
                                     .aria_label("Work in")
+                                    // Ghost `[data-state=open]` fill, as on the composer's menus.
+                                    .when(location.open, |d| d.bg(t.ghost_hover).rounded_full())
                                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                                         cx.stop_propagation()
                                     })
                                     .on_click({
                                         let toggle = toggle.clone();
                                         let focus = work_focus.read(cx).handle.clone();
+                                        let key_owner_click = owner.clone();
                                         move |_, window, cx| {
                                             window.focus(&focus, cx);
-                                            toggle(cx)
+                                            toggle(cx);
+                                            // Radix focuses the content: a pointer open
+                                            // highlights no row.
+                                            key_owner_click.update(cx, |main, _| {
+                                                main.location.selected = usize::MAX
+                                            });
                                         }
                                     })
                                     .on_key_down(move |event, _, cx| {
@@ -525,14 +927,17 @@ fn utility_bar(
                                         let menu = &key_owner.read(cx).location;
                                         match key {
                                             "enter" | "space" if menu.open => {
-                                                pick_location(&key_owner, menu.selected, cx);
+                                                if menu.selected != usize::MAX {
+                                                    pick_location(&key_owner, menu.selected, cx);
+                                                }
                                             }
                                             "enter" | "space" => toggle(cx),
                                             "escape" => set_location(&key_owner, Some(false), cx),
-                                            "up" | "down" if menu.open && has_project => {
+                                            "up" | "down" if menu.open => {
                                                 key_owner.update(cx, |main, cx| {
-                                                    main.location.selected =
-                                                        1 - main.location.selected;
+                                                    main.location.selected = usize::from(
+                                                        has_project && main.location.selected == 0,
+                                                    );
                                                     cx.notify();
                                                 });
                                             }
@@ -614,17 +1019,27 @@ impl Render for HomeMain {
                 )
         };
         let chat = self.headline.is_some();
+        let project_menu = project_menu(
+            &cx.entity(),
+            &self.projects,
+            self.composer.read(cx),
+            &t,
+            window,
+            cx,
+        );
         let column = div()
             .w_full()
             // The ChatGPT composer is 640 px wide.
             .max_w(px(if chat { 672. } else { 768. }))
             .px(px(16.))
-            .pt(px(8.))
             .flex()
             .flex_col()
-            .child(div().h(px(8.)))
+            .when(!chat, |column| column.pt(px(8.)).child(div().h(px(8.))))
             .when(self.beacon, |column| {
                 column.child(self.beacon(&t, window, cx))
+            })
+            .when(self.windows_sandbox_setup_needed, |column| {
+                column.child(self.windows_sandbox_banner(&t, window, cx))
             })
             // The Chat and Work homes have no `Work in` row above the composer.
             .when(!chat, |column| {
@@ -632,6 +1047,7 @@ impl Render for HomeMain {
                     &cx.entity(),
                     &self.location,
                     self.project.clone(),
+                    project_menu,
                     self.composer.read(cx).utility_compact(),
                     &t,
                     window,
@@ -641,20 +1057,29 @@ impl Render for HomeMain {
             .child(self.composer.clone());
         let toolbar = div().flex_none().h(px(46.));
         if chat {
-            // The headline sits right above the composer, the pair a little above the middle
-            // (headline top at 296 px of the main panel's 788 at 1280×832).
+            // `_Hero`: `min-block-size: var(--home-composer-top)`, `max(0px, 42svh - 44px)`
+            // (the toolbar inset), `items-end`, 24 px above and 22 px below the headline; the
+            // composer starts at its bottom edge.
+            let top = (window.viewport_size().height * 0.42 - px(44.)).max(px(0.));
             let page = div()
                 .flex_1()
                 .min_h_0()
                 .flex()
                 .flex_col()
                 .items_center()
-                .pt(px(24.))
-                .child(div().flex_grow(2.))
-                .child(hero.w_full().px(px(20.)))
-                .child(div().h(px(14.)))
-                .child(column)
-                .child(div().flex_grow(3.));
+                .child(
+                    div()
+                        .w_full()
+                        .flex_none()
+                        .min_h(top)
+                        .pt(px(24.))
+                        .pb(px(22.))
+                        .flex()
+                        .items_end()
+                        .justify_center()
+                        .child(hero.w_full().max_w(px(672.)).px(px(20.))),
+                )
+                .child(column);
             return div()
                 .size_full()
                 .flex()

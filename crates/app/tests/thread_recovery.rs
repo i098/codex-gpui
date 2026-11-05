@@ -292,6 +292,7 @@ fn a_failed_turn_render_keeps_other_turns_and_retries_with_the_latest_data() -> 
     expected_turns.push("bad-render".to_owned());
     let mut broken = recorded_thread(SUBTRACT)?["turns"][0].clone();
     broken["id"] = "bad-render".into();
+    broken["rootTurnId"] = "bad-render".into();
     broken["startedAt"] = i64::MIN.into();
     event(
         &mut fx,

@@ -16,7 +16,7 @@ pub(super) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
     }))
 }
 
-fn recent_files(root: &str, cx: &App) -> Vec<String> {
+pub(super) fn recent_files(root: &str, cx: &App) -> Vec<String> {
     let Some(settings) = cx.try_global::<host_settings::Settings>() else {
         return Vec::new();
     };

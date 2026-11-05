@@ -492,7 +492,7 @@ fn blocked(response: &Response) -> bool {
 
 /// The original's `et` email pattern: a dot-atom-like local part, `@`, then two or more
 /// hostname labels of 1–63 letters, digits or inner hyphens.
-fn valid_email(email: &str) -> bool {
+pub(super) fn valid_email(email: &str) -> bool {
     const LOCAL: &str = ".!#$%&'*+/=?^_`{|}~-";
     let Some((local, domain)) = email.split_once('@') else {
         return false;

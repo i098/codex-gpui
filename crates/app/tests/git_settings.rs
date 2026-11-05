@@ -203,6 +203,10 @@ fn worktree_preferences_require_confirmation_and_preserve_the_saved_limit() -> a
             .with_context(|| format!("read saved worktree limit at {}", path.display()))?,
     )?;
     assert_eq!(saved["worktree-keep-count"], 7);
+    assert!(
+        fx.read(|root, cx| root.toasts(cx))
+            .contains(&"Saved auto-delete limit".into())
+    );
     fx.click((1140., 434.))?;
     fx.advance(Duration::ZERO)?;
     fx.keys("tab enter")?;
@@ -213,6 +217,10 @@ fn worktree_preferences_require_confirmation_and_preserve_the_saved_limit() -> a
     )?;
     assert_eq!(saved["worktree-auto-cleanup-enabled"], false);
     assert_eq!(saved["worktree-keep-count"], 7);
+    assert!(
+        fx.read(|root, cx| root.toasts(cx))
+            .contains(&"Automatic deletion disabled".into())
+    );
     capture(&mut fx, &out, "cleanup-disabled", None)?;
     std::fs::remove_file(path)?;
     Ok(())

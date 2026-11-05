@@ -68,11 +68,28 @@ pub enum Outcome {
     Dismiss,
     PickFolders,
     AddRemote,
+    /// List `path` (`None`: the host's default folder) on the connected remote `host_id`.
+    Browse {
+        host_id: String,
+        path: Option<String>,
+    },
     Create {
+        host_id: String,
+        project_id: Option<String>,
         name: String,
         sources: Vec<String>,
         appearance: Option<Value>,
     },
+}
+
+/// The remote folder picker (`composer.remoteFilePicker`): one remote folder and its subfolders.
+#[derive(Default)]
+pub struct Browser {
+    pub path: String,
+    pub parent: Option<String>,
+    pub folders: Vec<String>,
+    pub error: Option<String>,
+    pub loading: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -86,8 +103,13 @@ pub struct Dialog {
     sources: Vec<String>,
     /// `(color, marker)` indices into [`COLORS`] and [`MARKERS`]; `None` keeps the folder default.
     appearance: Option<(usize, usize)>,
+    appearance_changed: bool,
     popover: Option<Popover>,
-    remotes: Vec<SharedString>,
+    remotes: Vec<(String, SharedString)>,
+    host_id: String,
+    project_id: Option<String>,
+    remote_source: Entity<Composer>,
+    browser: Option<Browser>,
     saving: bool,
     focus: FocusHandle,
 }
@@ -102,18 +124,63 @@ impl Focusable for Dialog {
 
 impl Dialog {
     /// `remotes`: display names of the connected remote hosts the device menu lists.
-    pub fn new(remotes: Vec<SharedString>, cx: &mut Context<Self>) -> Self {
+    pub fn new(remotes: Vec<(String, SharedString)>, cx: &mut Context<Self>) -> Self {
         let name = cx.new(|cx| Composer::dialog_field("Name", "Project name", "", cx));
+        let remote_source =
+            cx.new(|cx| Composer::dialog_field("Remote folder", "/path/to/project", "", cx));
         cx.observe(&name, |_, _, cx| cx.notify()).detach();
         Self {
             name,
             sources: Vec::new(),
             appearance: None,
+            appearance_changed: false,
             popover: None,
             remotes,
+            host_id: "local".into(),
+            project_id: None,
+            remote_source,
+            browser: None,
             saving: false,
             focus: cx.focus_handle(),
         }
+    }
+
+    pub fn on_host(mut self, host_id: String) -> Self {
+        self.host_id = host_id;
+        self
+    }
+
+    pub fn appearance_changed(&self) -> bool {
+        self.appearance_changed
+    }
+
+    pub fn edit(&mut self, project: &Value, host_id: String, cx: &mut Context<Self>) {
+        self.project_id = project["id"].as_str().map(str::to_owned);
+        self.host_id = host_id;
+        self.appearance_changed = false;
+        self.name.update(cx, |name, cx| {
+            name.set_text(project["name"].as_str().unwrap_or_default(), cx)
+        });
+        self.sources = project["roots"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|root| root["path"].as_str().map(str::to_owned))
+            .collect();
+        self.appearance = project["metadata"]["appearance.marker"]
+            .as_str()
+            .and_then(|value| serde_json::from_str::<Value>(value).ok())
+            .and_then(|marker| {
+                Some((
+                    COLORS.iter().position(|color| {
+                        Some(color.0) == project["metadata"]["appearance.color"].as_str()
+                    })?,
+                    MARKERS
+                        .iter()
+                        .position(|icon| Some(*icon) == marker["icon"].as_str())?,
+                ))
+            });
+        cx.notify();
     }
 
     /// Appends picked folders after the existing ones, skipping duplicates (`jZr`).
@@ -141,9 +208,58 @@ impl Dialog {
         cx.notify();
     }
 
+    /// Picks the device the folders belong to; the sources and picker belong to one device.
+    pub fn select_host(&mut self, host_id: &str, cx: &mut Context<Self>) {
+        if self.host_id != host_id {
+            self.sources.clear();
+            self.browser = None;
+            self.host_id = host_id.to_owned();
+        }
+        cx.notify();
+    }
+
     /// Creation failed or was declined: the form stays open with its input.
     pub fn finish(&mut self, cx: &mut Context<Self>) {
         self.saving = false;
+        cx.notify();
+    }
+
+    pub fn browser(&self) -> Option<&Browser> {
+        self.browser.as_ref()
+    }
+
+    /// The app's answer to [`Outcome::Browse`]; a stale or closed picker ignores it.
+    pub fn set_listing(&mut self, listing: Result<Browser, String>, cx: &mut Context<Self>) {
+        let Some(browser) = self.browser.as_mut().filter(|browser| browser.loading) else {
+            return;
+        };
+        match listing {
+            Ok(listing) => *browser = listing,
+            Err(error) => {
+                browser.loading = false;
+                browser.error = Some(error);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Lists `path` (`None`: the host's default folder) on the dialog's remote host.
+    pub fn browse(&mut self, path: Option<String>, cx: &mut Context<Self>) {
+        let browser = self.browser.get_or_insert_default();
+        browser.loading = true;
+        browser.error = None;
+        cx.emit(Outcome::Browse {
+            host_id: self.host_id.clone(),
+            path,
+        });
+        cx.notify();
+    }
+
+    /// `remoteFilePicker.add`: adds the browsed folder to the sources.
+    pub fn choose(&mut self, cx: &mut Context<Self>) {
+        if let Some(browser) = self.browser.take() {
+            self.add_sources([browser.path], cx);
+        }
         cx.notify();
     }
 
@@ -160,6 +276,8 @@ impl Dialog {
         self.saving = true;
         self.popover = None;
         cx.emit(Outcome::Create {
+            host_id: self.host_id.clone(),
+            project_id: self.project_id.clone(),
             name: self.name.read(cx).field_text().trim().to_owned(),
             sources: self.sources.clone(),
             appearance: self.appearance(),
@@ -174,13 +292,27 @@ impl Dialog {
     }
 
     fn toggle(&mut self, popover: Popover, cx: &mut Context<Self>) {
+        if popover == Popover::Device && self.project_id.is_some() {
+            return;
+        }
         self.popover = (self.popover != Some(popover)).then_some(popover);
         cx.notify();
     }
 
     fn pick(&mut self, cx: &mut Context<Self>) {
         self.popover = None;
-        cx.emit(Outcome::PickFolders);
+        if self.host_id == "local" {
+            cx.emit(Outcome::PickFolders);
+        } else {
+            let path = self.remote_source.read(cx).field_text().trim().to_owned();
+            if path.is_empty() {
+                self.browse(None, cx);
+            } else {
+                self.add_sources([path], cx);
+                self.remote_source
+                    .update(cx, |field, cx| field.set_text("", cx));
+            }
+        }
         cx.notify();
     }
 
@@ -189,6 +321,10 @@ impl Dialog {
         match key.key.as_str() {
             "escape" if self.popover.is_some() => {
                 self.popover = None;
+                cx.notify();
+            }
+            "escape" if self.browser.is_some() => {
+                self.browser = None;
                 cx.notify();
             }
             "escape" => self.dismiss(cx),
@@ -294,6 +430,7 @@ impl Dialog {
                 .child(icon(&format!("project-marker-{name}"), 16., color))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.appearance = Some((selected_color, index));
+                    this.appearance_changed = true;
                     this.popover = None;
                     cx.notify();
                 }))
@@ -328,6 +465,7 @@ impl Dialog {
                     .child(div().size(px(16.)).rounded_full().bg(fill))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.appearance = Some((index, selected_marker));
+                        this.appearance_changed = true;
                         cx.notify();
                     }))
             });
@@ -367,6 +505,7 @@ impl Dialog {
                                                 .child(text("Clear", 13., 20., 430., t.text))
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     this.appearance = None;
+                                                    this.appearance_changed = true;
                                                     this.popover = None;
                                                     cx.notify();
                                                 })),
@@ -417,6 +556,7 @@ impl Dialog {
                     .child(icon("menu-check", 16., t.text))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.popover = None;
+                        this.select_host("local", cx);
                         cx.notify();
                     })),
                 )
@@ -435,18 +575,23 @@ impl Dialog {
                     t.text_disabled,
                 ));
             }
-            // shortcut: remote projects have no native store yet, so connected remotes are listed
-            // but not selectable. Upgrade when the Connections owner adds remote projects.
-            for (index, remote) in self.remotes.iter().enumerate() {
+            for (index, (host_id, remote)) in self.remotes.iter().enumerate() {
+                let host_id = host_id.clone();
                 list = list.child(
                     item(
                         "project-device-remote",
                         "settings-connections",
                         remote.clone(),
-                        t.text_disabled,
+                        t.text,
                     )
                     .id(("project-device-remote", index))
-                    .aria_disabled(true),
+                    .role(gpui::Role::MenuItem)
+                    .hover(|s| s.bg(t.menu_item_hover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.select_host(&host_id, cx);
+                        this.popover = None;
+                        cx.notify();
+                    })),
                 );
             }
             list = list.child(
@@ -482,7 +627,17 @@ impl Dialog {
                 .focusable()
                 .tab_index(0)
                 .child(text("Add a folder on", 13., 20., 430., t.text_secondary))
-                .child(text("this computer", 13., 20., 430., t.text))
+                .child(text(
+                    self.remotes
+                        .iter()
+                        .find(|(id, _)| *id == self.host_id)
+                        .map(|(_, name)| name.clone())
+                        .unwrap_or_else(|| "this computer".into()),
+                    13.,
+                    20.,
+                    430.,
+                    t.text,
+                ))
                 .child(icon("chevron-down-small", 16., t.text))
                 .on_click(cx.listener(|this, _, _, cx| this.toggle(Popover::Device, cx)))
                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
@@ -493,6 +648,123 @@ impl Dialog {
                 }))
                 .children(menu),
         )
+    }
+
+    /// `remoteFilePicker`: the current remote folder, its parent and subfolders, then `Choose`.
+    fn remote_browser(&self, browser: &Browser, t: &Theme, cx: &mut Context<Self>) -> Div {
+        let row = |id: gpui::ElementId, label: SharedString, path: String| {
+            div()
+                .id(id)
+                .h(px(32.))
+                .px(px(12.))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .role(gpui::Role::Button)
+                .aria_label(label.clone())
+                .hover(|s| s.bg(t.ghost_hover))
+                .child(icon("folder", 16., t.text_description))
+                .child(text(label, 13., 20., 430., t.text).flex_1().min_w_0())
+                .on_click(cx.listener(move |this, _, _, cx| this.browse(Some(path.clone()), cx)))
+        };
+        let mut list = div()
+            .id("project-remote-folders")
+            .max_h(px(240.))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col();
+        if let Some(parent) = &browser.parent {
+            list = list.child(row(
+                "project-remote-parent".into(),
+                "..".into(),
+                parent.clone(),
+            ));
+        }
+        let path = browser.path.trim_end_matches('/');
+        for (index, folder) in browser.folders.iter().enumerate() {
+            list = list.child(row(
+                ("project-remote-folder", index).into(),
+                folder.clone().into(),
+                format!("{path}/{folder}"),
+            ));
+        }
+        let status = if browser.loading {
+            Some("Loading…".to_owned())
+        } else {
+            browser.error.clone()
+        };
+        let small = |id: &'static str, label: &'static str| {
+            div()
+                .id(id)
+                .h(px(28.))
+                .px(px(10.))
+                .rounded(px(8.))
+                .flex()
+                .items_center()
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .hover(|s| s.bg(t.ghost_hover))
+                .child(text(label, 13., 18., 430., t.text))
+        };
+        let ready = !browser.loading && browser.error.is_none() && !browser.path.is_empty();
+        div()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .px(px(12.))
+                    .pt(px(10.))
+                    .pb(px(6.))
+                    .flex()
+                    .flex_col()
+                    .child(text(
+                        "Choose a remote folder",
+                        12.,
+                        16.,
+                        430.,
+                        t.text_tertiary,
+                    ))
+                    .child(
+                        text(browser.path.clone(), 13., 20., 430., t.text)
+                            .overflow_hidden()
+                            .text_ellipsis(),
+                    ),
+            )
+            .children(status.map(|status| {
+                div()
+                    .px(px(12.))
+                    .py(px(6.))
+                    .child(text(status, 13., 20., 430., t.text_secondary))
+            }))
+            .child(list)
+            .child(
+                div()
+                    .p(px(8.))
+                    .border_t_1()
+                    .border_color(t.border)
+                    .flex()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        small("project-remote-cancel", "Cancel").on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.browser = None;
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        small("project-remote-choose", "Choose")
+                            .bg(t.text_alpha_5)
+                            .aria_disabled(!ready)
+                            .when(!ready, |button| button.opacity(0.4))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if ready {
+                                    this.choose(cx);
+                                }
+                            })),
+                    ),
+            )
     }
 
     fn sources_box(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
@@ -507,6 +779,9 @@ impl Dialog {
                     border: Some((px(1.), t.border)),
                     ..Default::default()
                 }));
+        if let Some(browser) = &self.browser {
+            return frame.child(self.remote_browser(browser, t, cx));
+        }
         if self.sources.is_empty() {
             return frame.child(
                 div()
@@ -516,6 +791,9 @@ impl Dialog {
                     .items_center()
                     .gap(px(12.))
                     .child(self.device_picker(t, cx))
+                    .when(self.host_id != "local", |body| {
+                        body.child(self.remote_source.clone())
+                    })
                     .child(
                         div()
                             .id("project-add-source")
@@ -713,6 +991,11 @@ impl Render for Dialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let viewport = window.viewport_size();
+        let title = if self.project_id.is_some() {
+            "Edit project"
+        } else {
+            "Create project"
+        };
         let label_row = div()
             .flex()
             .items_center()
@@ -725,7 +1008,7 @@ impl Render for Dialog {
             .p(px(20.))
             .flex()
             .flex_col()
-            .child(text("Create project", 20., 28., 600., t.text))
+            .child(text(title, 20., 28., 600., t.text))
             .child(div().pt(px(12.)).child(self.name_input(window, &t, cx)))
             .child(
                 div()
@@ -734,7 +1017,11 @@ impl Render for Dialog {
                     .flex_col()
                     .gap(px(8.))
                     .child(label_row)
-                    .child(self.sources_box(&t, cx)),
+                    .child(self.sources_box(&t, cx))
+                    .when(
+                        self.host_id != "local" && !self.sources.is_empty(),
+                        |body| body.child(self.remote_source.clone()),
+                    ),
             )
             .child(
                 div()
@@ -743,7 +1030,17 @@ impl Render for Dialog {
                     .justify_end()
                     .gap(px(12.))
                     .child(self.button("new-project-cancel", "Cancel", false, &t, cx))
-                    .child(self.button("new-project-create", "Create project", true, &t, cx)),
+                    .child(self.button(
+                        "new-project-create",
+                        if self.project_id.is_some() {
+                            "Save"
+                        } else {
+                            "Create project"
+                        },
+                        true,
+                        &t,
+                        cx,
+                    )),
             );
         let frame = div()
             .id("new-project-dialog")
@@ -751,7 +1048,7 @@ impl Render for Dialog {
             .w(px(520.))
             .max_w(viewport.width * 0.92)
             .role(gpui::Role::Dialog)
-            .aria_label("Create project")
+            .aria_label(title)
             .track_focus(&self.focus)
             .on_mouse_down(
                 MouseButton::Left,

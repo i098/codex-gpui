@@ -4,15 +4,17 @@ use super::{Layer, on_card, probe};
 use crate::{confirmation::Confirmation, icon::icon, text};
 use gpui::{
     AnyElement, Div, Entity, InteractiveElement, IntoElement, ParentElement, SharedString,
-    Stateful, Styled, Window, deferred, div, prelude::FluentBuilder as _, px,
+    Stateful, StatefulInteractiveElement, Styled, Window, deferred, div,
+    prelude::FluentBuilder as _, px,
 };
 use theme::Theme;
 
 /// The page: toolbar gap, `title`, the `intro` paragraphs and `content` in a scrolling column,
 /// and the open `dialog` over the window.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn frame(
     id: &'static str,
-    title: &'static str,
+    title: impl Into<SharedString>,
     intro: Vec<AnyElement>,
     content: impl IntoElement,
     dialog: Option<&Entity<Confirmation>>,

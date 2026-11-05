@@ -446,6 +446,17 @@ impl Root {
                             ),
                         }
                     }
+                    LoginEvent::OpenUrl(url) => match Url::parse(url) {
+                        Ok(url) if url.scheme() == "https" && url.username().is_empty() => {
+                            cx.open_url(url.as_str());
+                        }
+                        _ => this.toast(
+                            ui::toast::Toast::danger(
+                                "Sign-in failed: invalid gateway authorization URL",
+                            ),
+                            cx,
+                        ),
+                    },
                     LoginEvent::RestartBedrock { region } => {
                         this.restart_bedrock(source.clone(), region.clone(), cx)
                     }
@@ -851,5 +862,113 @@ mod tests {
                 assert_eq!(values, [expected], "{key}");
             }
         }
+    }
+    #[test]
+    fn gateway_oauth_stdio_smoke_replays_handoff_and_cancel() {
+        use std::io::{BufRead, BufReader, Write};
+
+        let (client_read, mut server_write) = std::io::pipe().unwrap();
+        let (server_read, client_write) = std::io::pipe().unwrap();
+        let (bridge, _) = bridge::Bridge::from_io(client_read, client_write, None);
+        let bridge = std::sync::Arc::new(bridge);
+        let events = bridge.subscribe_async();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let mut login_id = None;
+            for line in BufReader::new(server_read).lines() {
+                let request: Value = serde_json::from_str(&line.unwrap()).unwrap();
+                match request["method"].as_str().unwrap() {
+                    "account/gatewayOAuth/read" => {
+                        assert!(request.get("params").is_none());
+                        writeln!(
+                            server_write,
+                            "{}",
+                            json!({
+                                "id": request["id"],
+                                "result": {
+                                    "providerId": "corp",
+                                    "providerName": "Company",
+                                    "required": true,
+                                    "status": null,
+                                    "error": null
+                                }
+                            })
+                        )
+                        .unwrap();
+                    }
+                    "account/gatewayOAuth/login" => {
+                        assert!(request.get("params").is_none());
+                        login_id = Some(request["id"].clone());
+                        writeln!(
+                            server_write,
+                            "{}",
+                            json!({
+                                "method": "account/gatewayOAuth/changed",
+                                "params": {
+                                    "authUrl": "https://gateway.example.test/login",
+                                    "providerId": "corp",
+                                    "status": "started",
+                                    "error": null
+                                }
+                            })
+                        )
+                        .unwrap();
+                        started_tx.send(()).unwrap();
+                    }
+                    "account/gatewayOAuth/cancel" => {
+                        assert!(request.get("params").is_none());
+                        writeln!(
+                            server_write,
+                            "{}",
+                            json!({"id": request["id"], "result": {}})
+                        )
+                        .unwrap();
+                        writeln!(
+                            server_write,
+                            "{}",
+                            json!({
+                                "id": login_id.unwrap(),
+                                "error": {"code": -32800, "message": "cancelled"}
+                            })
+                        )
+                        .unwrap();
+                        break;
+                    }
+                    method => panic!("unexpected request: {method}"),
+                }
+            }
+        });
+
+        let provider: Value =
+            pollster::block_on(bridge.request("account/gatewayOAuth/read", Option::<()>::None))
+                .unwrap();
+        assert_eq!(provider["required"], true);
+        assert_eq!(provider["providerId"], "corp");
+
+        let login_bridge = bridge.clone();
+        let login = std::thread::spawn(move || {
+            pollster::block_on(
+                login_bridge.request::<_, Value>("account/gatewayOAuth/login", Option::<()>::None),
+            )
+        });
+        started_rx.recv().unwrap();
+        assert_eq!(
+            events.recv_blocking().unwrap(),
+            bridge::Event::Notification {
+                method: "account/gatewayOAuth/changed".into(),
+                params: json!({
+                    "authUrl": "https://gateway.example.test/login",
+                    "providerId": "corp",
+                    "status": "started",
+                    "error": null
+                }),
+            }
+        );
+        let cancelled: Value =
+            pollster::block_on(bridge.request("account/gatewayOAuth/cancel", Option::<()>::None))
+                .unwrap();
+        assert_eq!(cancelled, json!({}));
+        assert!(login.join().unwrap().is_err());
+        server.join().unwrap();
     }
 }
