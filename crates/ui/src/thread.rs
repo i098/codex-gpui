@@ -73,8 +73,8 @@ pub use actions::{
 };
 
 use actions::{TurnFocus, action_row};
-#[derive(Clone, Copy)]
 pub use hook_stats::{HookStats, OpenHookStats};
+#[derive(Clone, Copy)]
 pub enum GitAction {
     Refresh,
     OpenForm,
