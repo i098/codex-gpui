@@ -84,6 +84,7 @@ impl Host for HomeHost {
                     missing: false,
                     expanded: true,
                     pinned: false,
+                    updated_at: None,
                 }
             })
             .collect())
