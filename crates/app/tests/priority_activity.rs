@@ -113,7 +113,10 @@ impl app::host::Host for PolicyHost {
             {
                 anyhow::bail!("task suggestions are not under test");
             }
-            assert_eq!(http["url"], "/wham/statsig/bootstrap");
+            // The signed-in sidebar also reads its `Cloud` tasks: this account has none.
+            if http["url"] != "/wham/statsig/bootstrap" {
+                return Ok(serde_json::json!({"status": 404, "body": "{}"}));
+            }
             if self
                 .fail_next
                 .swap(false, std::sync::atomic::Ordering::SeqCst)

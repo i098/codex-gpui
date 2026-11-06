@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- List the current thread's enabled, callable connectors in composer mentions and insert their `app://` links.
 - Open the Projects page from the Explore menu (`/projects`): the app-server's projects (`project/list`) with `Search projects`, the `Name` and `Updated` sort, `Create`, `Edit project` (`project/update`), `Start new chat in project`, and the empty, no-match and load-error states.
 - Search the Plugins directory through the server: typing in the search box sends the original's `plugin/search` (`searchTerm`, `scope`, `cwds`, `limit` 50) after its 200 ms debounce, shows the returned catalog cards, and loads the next page from `See more` with the server's `nextCursor`; a server without the method keeps the local filter and reports the error.
 - Add the Settings ▸ Mini & Pets page (also `codex://pets/install`): Show or Hide mini, a preview of the chosen pet over the Mini bar, a Customize dialog with the pet size slider (80–224, Reset to 112), and a My pets grid with None, the bundled pets and custom pets from `$CODEX_HOME/pets`, plus Refresh and Create pet (installs and enables the Hatch Pet skill and starts a chat with it).
@@ -16,6 +17,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add `Disable Git-based diffs` to Settings ▸ Git: with it on, the Changes panel shows only `Last Turn`, hides `View branch diff`, and runs no git repository discovery (`git-review-mode` = `last-turn-only`).
 - Search settings rows: the Settings search lists matching row titles and descriptions under `Matching settings` and opens their page, and a `Clear settings search` button clears the query.
 - Show `Hook stats` in a finished turn's actions when hooks ran (`hook/started`, `hook/completed`): the dialog counts runs, blocked and failed runs, and lists each run's status, event and source, opening to its status message and output.
+- Show each turn's hook runs inside its turn (`hook/started`, `hook/completed`): a `Running <event> hook` row becomes `Ran <event> hook` when the run completes, with its status message and output under it; another thread's hook runs stay out.
 - Sign in through an enterprise gateway with its native OAuth handoff, completion status, and cancellation flow.
 - Open any settings page from `codex://settings/<slug>` links (`git-settings`, `mcp-settings`, `hooks-settings`, `agent`, `local-environments` and the rest of the original slugs, plus the `work-settings` and usage-tab aliases); unknown slugs open General.
 - Show external agent import progress as imported and failed item counts in the import view.
@@ -34,7 +36,6 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - List a thread's subagents in Thread summary and open them in a `Subagents` side panel tab: `Active` and `Done` sections, and a detail view with the model, delegated task, status and final response.
 - Migrate a legacy Codex Cloud environment from its detail page with `Migrate`, as in the original: the app converts it through `legacy_environment_id` with `start_onboarding` and opens the setup chat. The list shows the `A new Codex Cloud experience is here` notice.
 - Bind the Configure and Skills commands in keyboard shortcuts, command search, and the command menu.
-- Show the original's suggested scheduled tasks (`Daily brief`, `Weekly review`, `Follow-up monitor`) under an empty Scheduled list; a row opens the create editor with its name, prompt and schedule filled in.
 - Show the original's Worktrees save toasts: worktree root, upstream refresh, automatic deletion and auto-delete limit saves or failures, `Failed to delete worktree`, and the pinned-chat delete notice.
 - Right-click a side panel tab for `Move to left pane` / `Move to right pane` (and `Move to bottom pane` on the terminal tab), and reopen the last closed tab with `⌘⇧T`.
 - Show `<name> marketplace upgraded` or `Failed to upgrade marketplace` after `Upgrade`, and `Could not save MCP server` or `Could not uninstall MCP server` toasts when an MCP server change fails.
@@ -73,6 +74,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Show Home task suggestions from the ChatGPT backend under the composer; a card fills the composer, and its `×` dismisses it.
 - Show the Home rate limit reset and subagents banners, with `See resets`, `Try now` and dismissal that the app remembers.
 - Show the `We couldn't load your account` page when `account/read` fails, with `Reload` and `Sign out`.
+- Add the Recents header's `Chat sidebar options` menu as the original draws it: `Organize sidebar` (By project, In one list), `Sort chats by` (Last updated, Manual order), `Show` ▸ `Projects` and `New section`. The choices are saved.
+- Add the sidebar `Cloud` group: the account's current cloud tasks from `/wham/tasks/list`, with a spinner while a task runs and the unread dot. A click opens the task.
 - Add the Files tab `Find in file…` bar (⌘F, Enter and ⇧Enter, match count), the Markdown live preview as the original's file editor draws it with `View source` / `View preview` and `Copy Markdown`, several file tabs with one preview tab that the next opened file replaces until pinned, a hover card with the path of a file tab, and the `Open` split button with the preferred app, its menu of open-in apps, `Open in folder` and `Save as…`.
 - Open the Maps page from the Explore menu: the ChatGPT backend `/local/home` prompt suggestions and map, with loading, error with Try again, and empty states.
 - Store app state, host settings, notification sounds and the QA profile in the per-OS user data directory (`%APPDATA%` on Windows, XDG config on Linux).

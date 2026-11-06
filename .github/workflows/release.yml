@@ -125,6 +125,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       CODEX_GPUI_UPDATE_PRIVATE_KEY: ${{ secrets.CODEX_GPUI_UPDATE_PRIVATE_KEY }}
       CODEX_GPUI_UPDATE_PUBLIC_KEY: ${{ secrets.CODEX_GPUI_UPDATE_PUBLIC_KEY }}
+      # The self-hosted runner has no FUSE device, so appimagetool unpacks itself and runs from there.
+      APPIMAGE_EXTRACT_AND_RUN: "1"
     steps:
       - name: Install the GitHub CLI
         run: command -v gh >/dev/null || { sudo apt-get update && sudo apt-get install -y --no-install-recommends gh; }
@@ -138,7 +140,7 @@ jobs:
           build-essential pkg-config clang cmake libssl-dev libzstd-dev
           libfontconfig-dev libfreetype-dev libasound2-dev libxkbcommon-dev
           libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
-          libvulkan-dev libfuse2t64 xxd fakeroot
+          libvulkan-dev libfuse2t64 xxd fakeroot file
       - if: steps.gate.outputs.run
         uses: dtolnay/rust-toolchain@stable
       - if: steps.gate.outputs.run
