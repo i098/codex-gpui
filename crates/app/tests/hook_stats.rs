@@ -4,6 +4,95 @@ use anyhow::{Context as _, Result, ensure};
 use common::{Fx, SUBTRACT};
 use serde_json::{Value, json};
 
+/// `hook/started` and `hook/completed` rows show inside the turn: the start row becomes the
+/// completion row, its output shows under it, and another thread's hooks are ignored.
+#[test]
+fn hook_runs_show_in_turn_activity() -> Result<()> {
+    let mut fx = Fx::new()?;
+    fx.click(fx.at("home", "Add a subtract")?)?;
+    fx.wait_thread(SUBTRACT)?;
+    let turn = fx
+        .read(|r, cx| Some(r.thread()?.read(cx).turns().last()?.id.clone()))
+        .context("subtract turn")?;
+    let notify = |fx: &mut Fx, method: &str, thread: &str, run: &Value| {
+        let params = json!({"threadId": thread, "turnId": turn, "run": run});
+        fx.root.update(&mut fx.cx, |r, cx| {
+            r.on_event(
+                bridge::Event::Notification {
+                    method: method.into(),
+                    params,
+                },
+                cx,
+            )
+        });
+        fx.cx.run_until_parked();
+    };
+    let labels = |fx: &Fx| -> Vec<String> {
+        fx.read(|r, cx| r.thread()?.read(cx).activity_labels(&turn, cx))
+            .unwrap_or_default()
+    };
+    let shots = std::env::var("CGX_HOOK_SHOTS").ok();
+    if let Some(out) = &shots {
+        std::fs::create_dir_all(out)?;
+        fx.click(fx.at("thread", "Worked for")?)?;
+        fx.shot()?.save(format!("{out}/hook-rows-before.png"))?;
+    }
+    let mut started = run(
+        "hook-1",
+        "preToolUse",
+        "project",
+        "running",
+        Some("Checking shell command"),
+        json!([]),
+    );
+    started["completedAt"] = Value::Null;
+    notify(&mut fx, "hook/started", SUBTRACT, &started);
+    ensure!(
+        labels(&fx).contains(&"Running PreToolUse hook".to_owned()),
+        "{:?}",
+        labels(&fx)
+    );
+    if let Some(out) = &shots {
+        fx.shot()?.save(format!("{out}/hook-rows-running.png"))?;
+    }
+    let done = run(
+        "hook-1",
+        "preToolUse",
+        "project",
+        "completed",
+        Some("Checked shell command"),
+        json!([{"kind": "feedback", "text": "Command allowed."}]),
+    );
+    notify(&mut fx, "hook/completed", SUBTRACT, &done);
+    let rows = labels(&fx);
+    ensure!(rows.contains(&"Ran PreToolUse hook".to_owned()), "{rows:?}");
+    ensure!(
+        !rows.iter().any(|row| row.starts_with("Running PreToolUse")),
+        "the start row stayed: {rows:?}"
+    );
+    ensure!(
+        rows.contains(&"Checked shell command".to_owned()),
+        "{rows:?}"
+    );
+    ensure!(rows.contains(&"Command allowed.".to_owned()), "{rows:?}");
+    if let Some(out) = &shots {
+        fx.shot()?.save(format!("{out}/hook-rows-done.png"))?;
+    }
+    // Another thread's hook run is ignored.
+    let other = run(
+        "hook-2",
+        "postToolUse",
+        "user",
+        "completed",
+        None,
+        json!([]),
+    );
+    let before = rows;
+    notify(&mut fx, "hook/completed", "thread-other", &other);
+    ensure!(labels(&fx) == before, "{:?}", labels(&fx));
+    Ok(())
+}
+
 #[test]
 fn proxy() {
     common::proxy_child();

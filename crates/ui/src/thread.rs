@@ -1063,6 +1063,10 @@ impl ThreadView {
         Some(
             items::activities(
                 work,
+                self.hook_runs
+                    .get(turn_id)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default(),
                 turn.status == TurnStatus::InProgress,
                 self,
                 ReasoningVisibility::get(cx),
@@ -2379,7 +2383,7 @@ impl ThreadView {
         if self.pending_question.as_deref() == Some(turn.id.as_str()) {
             col = col
                 .child(div().h(px(16.)))
-                .child(self.activity(work, false, window, t, cx));
+                .child(self.activity(&turn.id, work, false, window, t, cx));
             if let Some((item, answer)) = final_answer {
                 col = col.child(div().h(px(16.))).child(markdown::with_find(
                     answer,
@@ -2506,7 +2510,7 @@ impl ThreadView {
                         .size_full(),
                     )
                     .child(div().h(px(16.)))
-                    .child(self.activity(work, false, window, t, cx));
+                    .child(self.activity(&turn.id, work, false, window, t, cx));
                 col = col.child(if progress < 1. {
                     div()
                         .overflow_hidden()
@@ -2587,7 +2591,7 @@ impl ThreadView {
                 ThreadItem::ContextCompaction { id } => self.compacting.contains_key(id),
                 _ => false,
             });
-        col.child(self.activity(work, running, window, t, cx))
+        col.child(self.activity(&turn.id, work, running, window, t, cx))
             .when(waiting, |col| {
                 col.child(div().mt(px(if has_work { 16. } else { 0. })).child(text(
                     "Thinking",
@@ -2708,26 +2712,39 @@ impl ThreadView {
     /// matches.
     fn activity(
         &self,
+        turn_id: &str,
         items: &[ThreadItem],
         running: bool,
         window: &Window,
         t: &Theme,
         cx: &Context<Self>,
     ) -> Div {
+        let hooks = self
+            .hook_runs
+            .get(turn_id)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
         if self
             .find
             .as_ref()
             .is_none_or(|find| find.matches.is_empty())
         {
-            return activity(items, running, self, window, t, cx);
+            return activity(items, hooks, running, self, window, t, cx);
         }
         let mut column = div().flex().flex_col().gap(px(16.));
         let mut start = 0;
         for (index, item) in items.iter().enumerate() {
             if let ThreadItem::AgentMessage { id, text, .. } = item {
                 if start < index {
-                    column =
-                        column.child(activity(&items[start..index], running, self, window, t, cx));
+                    column = column.child(activity(
+                        &items[start..index],
+                        &[],
+                        running,
+                        self,
+                        window,
+                        t,
+                        cx,
+                    ));
                 }
                 column = column.child(markdown::with_find(
                     text,
@@ -2740,7 +2757,10 @@ impl ThreadView {
             }
         }
         if start < items.len() {
-            column = column.child(activity(&items[start..], running, self, window, t, cx));
+            column = column.child(activity(&items[start..], &[], running, self, window, t, cx));
+        }
+        if !hooks.is_empty() {
+            column = column.child(activity(&[], hooks, running, self, window, t, cx));
         }
         column
     }
