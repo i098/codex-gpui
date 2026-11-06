@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Show the original's `This request requires additional safety checks, which can take extra time.` line under a running turn when the app-server sends `autoApprovalReview/strictReviewRequired`; it goes away when the turn ends.
+- Open a thread's pull request in a `PR #n` side panel tab from the branch actions' `View PR` (`Open in GitHub` still opens the browser). The tab shows the GitHub detail: status, branch, reviewers, comments, checks, description and code changes. It also offers `Ready for review`, `Convert to draft` or `Reopen`, which run `gh pr ready`, `gh pr ready --undo` or `gh pr reopen` through app-server `process/spawn`.
 
 ## [0.1.1] - 2026-11-06
 

@@ -264,6 +264,8 @@ pub enum SidePanel {
     /// `⌘T` and a link's `Open in` ▸ `New tab`: the browser tab with this key
     /// ([`Root::browser_tab`]).
     Browser(usize),
+    /// The branch's `View PR`: the pull request's detail ([`Root::pull_request_tab`]).
+    PullRequest,
 }
 
 /// Settings ▸ Appearance ▸ Theme (the original's `appearanceTheme`): follow the system, or
@@ -510,6 +512,8 @@ pub struct Root {
     new_tab: Option<Entity<ui::screens::new_tab::NewTabPage>>,
     /// The view of [`SidePanel::Subagents`]; cleared with the thread.
     subagents: Option<Entity<ui::screens::subagents::SubagentsView>>,
+    /// The page of [`SidePanel::PullRequest`]; cleared with the thread.
+    pull_request_tab: Option<Entity<ui::screens::pull_requests::Page>>,
     /// The image view of [`SidePanel::Image`]; cleared with the thread.
     image: Option<Entity<ui::screens::thread::view::ImageView>>,
     /// The open thread in the main shell, with its side panel if any.
@@ -1076,6 +1080,7 @@ impl Root {
             plan: None,
             new_tab: None,
             subagents: None,
+            pull_request_tab: None,
             image: None,
             split: None,
             terminal: terminal::Terminals::default(),
@@ -2423,6 +2428,7 @@ impl Root {
                                 composer.update(cx, |composer, cx| composer.restore_text(&message, cx));
                                 window.focus(&composer.focus_handle(cx), cx);
                             }
+                            GitAction::ViewPr => this.open_pull_request_tab(url, window, cx),
                             _ => cx.open_url(url),
                         }
                     }
@@ -3479,6 +3485,7 @@ impl Root {
         console: bool,
         new_tab: bool,
         subagents: bool,
+        pull_request: Option<u64>,
         cx: &App,
     ) -> Option<Tab> {
         match side {
@@ -3554,6 +3561,11 @@ impl Root {
                     detail: None,
                 })
             }
+            SidePanel::PullRequest => pull_request.map(|number| Tab {
+                icon: "pull-request-status",
+                label: format!("PR #{number}").into(),
+                detail: None,
+            }),
         }
     }
 
@@ -3572,6 +3584,10 @@ impl Root {
         let console = self.terminal_panel().is_some();
         let new_tab = self.new_tab.is_some();
         let subagents = self.subagents.is_some();
+        let pull_request = self
+            .pull_request_tab
+            .as_ref()
+            .and_then(|page| Some(page.read(cx).selected.as_ref()?.number));
         let tab = |side: &SidePanel| {
             Self::side_tab(
                 *side,
@@ -3584,6 +3600,7 @@ impl Root {
                 console,
                 new_tab,
                 subagents,
+                pull_request,
                 cx,
             )
         };
@@ -3609,6 +3626,7 @@ impl Root {
             SidePanel::NewTab => self.new_tab.as_ref()?.clone().into(),
             SidePanel::Subagents => self.subagents.as_ref()?.clone().into(),
             SidePanel::Browser(key) => self.browser_tab(key)?.clone().into(),
+            SidePanel::PullRequest => self.pull_request_tab.as_ref()?.clone().into(),
         };
         Some((view, tabs, active))
     }
@@ -5043,6 +5061,7 @@ impl Root {
         self.plan = None;
         self.new_tab = None;
         self.subagents = None;
+        self.pull_request_tab = None;
         self.image = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         view.update(cx, |view, cx| {
@@ -5093,6 +5112,7 @@ impl Root {
                 GitAction::SwitchBranch => this.open_git_form(DialogKind::Branches, window, cx),
                 GitAction::CreatePr => this.open_create_pr(window, cx),
                 GitAction::ViewPr
+                | GitAction::OpenPrInBrowser
                 | GitAction::CopyPr
                 | GitAction::AddPrToChat
                 | GitAction::CompareBranch
