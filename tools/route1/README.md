@@ -94,6 +94,10 @@ TMPDIR="$scratch" node tools/route1/test_resume.mjs
 TMPDIR="$scratch" node tools/route1/test_archive.mjs
 ```
 
+The `files-*` states read workspace files, which the oracle does not hold. Start the server
+with `R1_FIXTURE_FS=<dir>`, a copy of the project whose `cgx-b-panel-files` folder holds the
+`README.md`, `notes.txt` and `other.txt` that `crates/app/tests/files_panel.rs` writes.
+
 For a renderer without the Mac fonts (Linux Chrome), start the server with `R1_SF_FONTS=1`:
 `@font-face` aliases then map `-apple-system`, `BlinkMacSystemFont`, `system-ui`, `SF Pro*`,
 `ui-monospace`, `SF Mono`, `Menlo` to the variable SF fonts in `/tmp/cgx/route1-fonts`

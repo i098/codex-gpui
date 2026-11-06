@@ -7,6 +7,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Open the Projects page from the Explore menu (`/projects`): the app-server's projects (`project/list`) with `Search projects`, the `Name` and `Updated` sort, `Create`, `Edit project` (`project/update`), `Start new chat in project`, and the empty, no-match and load-error states.
+- Search the Plugins directory through the server: typing in the search box sends the original's `plugin/search` (`searchTerm`, `scope`, `cwds`, `limit` 50) after its 200 ms debounce, shows the returned catalog cards, and loads the next page from `See more` with the server's `nextCursor`; a server without the method keeps the local filter and reports the error.
 - Add the Settings ▸ Mini & Pets page (also `codex://pets/install`): Show or Hide mini, a preview of the chosen pet over the Mini bar, a Customize dialog with the pet size slider (80–224, Reset to 112), and a My pets grid with None, the bundled pets and custom pets from `$CODEX_HOME/pets`, plus Refresh and Create pet (installs and enables the Hatch Pet skill and starts a chat with it).
 - Add the Settings ▸ Code Review page (also `codex://settings/code-review`) on the ChatGPT backend's `/wham/settings` review service: personal automatic review, trigger, exhaustive review and credits, Security review preferences, the repository list with search and paging, and each repository's review, security review, threat model, path rules and AGENTS.md link.
 - Browse a connected SSH host's folders when adding a folder to a remote project in `File > New Project...`: `Add` with an empty path lists the host's folders (`fs/readDirectory`), and `Choose` adds the folder.
@@ -67,6 +69,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add Settings ▸ `Appshots` on macOS: press both ⌘, ⌥ or ⇧ keys to capture the frontmost window into the current chat, a new chat or a visible Mini, with destination and sound settings.
 - Show an image or PDF in the Files tab as a preview (PDFs with page arrows), not as text lines that fail with `Could not open file`.
 - Open the latest plan from Thread summary ▸ `Plan` in an editable `Plan` side panel tab that saves to `$CODEX_HOME/plans/<thread>/<plan item>/PLAN.md`.
+- Add the Files tab `Find in file…` bar (⌘F, Enter and ⇧Enter, match count), the Markdown live preview as the original's file editor draws it with `View source` / `View preview` and `Copy Markdown`, several file tabs with one preview tab that the next opened file replaces until pinned, a hover card with the path of a file tab, and the `Open` split button with the preferred app, its menu of open-in apps, `Open in folder` and `Save as…`.
 - Open the Maps page from the Explore menu: the ChatGPT backend `/local/home` prompt suggestions and map, with loading, error with Try again, and empty states.
 - Store app state, host settings, notification sounds and the QA profile in the per-OS user data directory (`%APPDATA%` on Windows, XDG config on Linux).
 - Show generated images in the chat, and open one in an `Image view` side panel tab with a click.
@@ -180,8 +183,10 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Draw the Appearance Background and Foreground hex inputs at 12 px, as the original does.
 - Open and close the thread's activity groups, reasoning, MCP and command rows over the original's 300 ms `ease-enter` height and opacity track, instead of at once.
 - Put the site's favicon before an external markdown link, with the original's globe until the image loads, and fetch remote images such as favicons and avatars over HTTP.
+- Show the Appearance `Mode` choice as the original's System, Light and Dark preview tiles instead of a text segmented control.
 - Match the original fill, text size and padding of the Appearance theme, accent and font pickers.
 - Use the original's compact 44 px rows in the Appearance theme cards.
+- Draw the Appearance theme Import and Copy buttons at the original's 32 px, so the Theme row is 48 px tall.
 - Show the text overflow icon on a code block's `Enable word wrap` button, and the wrap icon only while wrap is on, as the original does.
 - Show the Appearance theme picker's Codex themes in a `Codex themes` flyout submenu beside `ChatGPT`, with 24 px theme icons, as the original does.
 - Fold a running turn's interim messages under `Working for` once its final answer starts, as the original does.
