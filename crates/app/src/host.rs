@@ -2230,6 +2230,7 @@ impl Host for LocalHost {
             "read-file" => diff_files::text(&params)?,
             "read-file-binary" => diff_files::binary(&params)?,
             "read-git-file-binary" => diff_files::git_binary(&params)?,
+            "write-file" => diff_files::write(&params)?,
             "recommended-skills" => skills::recommended(&self.home, &params),
             "install-recommended-skill" => skills::install(&self.home, &params),
             "custom-pets" => json!({ "pets": crate::pets::load(&self.home)? }),
