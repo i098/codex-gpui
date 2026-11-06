@@ -9,7 +9,7 @@ jobs:
   release:
     # Creates the release so each platform job below only uploads to it. GitHub-hosted macOS and
     # Windows runners are not available to this private repository; the Linux job runs on ours.
-    runs-on: codex-gpui-quick
+    runs-on: codex-gpui
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
