@@ -65,6 +65,29 @@ pub fn upsert(runs: &mut Vec<HookRun>, run: HookRun) {
     }
 }
 
+/// The run's row in the turn's activity: `Running PreToolUse hook`, `Ran PreToolUse hook`, …
+pub fn activity_label(run: &HookRun) -> String {
+    let event = crate::screens::settings::integrations::hook_event(&run.event_name).0;
+    match run.status.as_str() {
+        "running" => format!("Running {event} hook"),
+        "completed" => format!("Ran {event} hook"),
+        "blocked" => format!("Blocked {event} hook"),
+        "failed" => format!("Failed {event} hook"),
+        "stopped" => format!("Stopped {event} hook"),
+        _ => format!("{event} hook"),
+    }
+}
+
+/// The run's output under its row: its status message, then each entry's text.
+pub fn output(run: &HookRun) -> Vec<String> {
+    run.status_message
+        .clone()
+        .filter(|m| !m.trim().is_empty())
+        .into_iter()
+        .chain(run.entries.iter().map(|e| e.text.clone()))
+        .collect()
+}
+
 pub fn status_label(status: &str) -> &'static str {
     match status {
         "completed" => "Completed",

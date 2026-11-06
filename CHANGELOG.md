@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Start a cloud task from Home's `Cloud` mode with no saved environment: the project's tracked and untracked files, uncommitted edits included, are packed into a tarball and uploaded through `/wham/worktree_snapshots/upload_url` and `finish_upload`, and `POST /wham/tasks` starts from that `local_worktree` snapshot. Local files and the Git index are only read; a failed step restores the draft.
+- List the current thread's enabled, callable connectors in composer mentions and insert their `app://` links.
 - Open the Projects page from the Explore menu (`/projects`): the app-server's projects (`project/list`) with `Search projects`, the `Name` and `Updated` sort, `Create`, `Edit project` (`project/update`), `Start new chat in project`, and the empty, no-match and load-error states.
 - Search the Plugins directory through the server: typing in the search box sends the original's `plugin/search` (`searchTerm`, `scope`, `cwds`, `limit` 50) after its 200 ms debounce, shows the returned catalog cards, and loads the next page from `See more` with the server's `nextCursor`; a server without the method keeps the local filter and reports the error.
 - Add the Settings ▸ Mini & Pets page (also `codex://pets/install`): Show or Hide mini, a preview of the chosen pet over the Mini bar, a Customize dialog with the pet size slider (80–224, Reset to 112), and a My pets grid with None, the bundled pets and custom pets from `$CODEX_HOME/pets`, plus Refresh and Create pet (installs and enables the Hatch Pet skill and starts a chat with it).
@@ -17,6 +18,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add `Disable Git-based diffs` to Settings ▸ Git: with it on, the Changes panel shows only `Last Turn`, hides `View branch diff`, and runs no git repository discovery (`git-review-mode` = `last-turn-only`).
 - Search settings rows: the Settings search lists matching row titles and descriptions under `Matching settings` and opens their page, and a `Clear settings search` button clears the query.
 - Show `Hook stats` in a finished turn's actions when hooks ran (`hook/started`, `hook/completed`): the dialog counts runs, blocked and failed runs, and lists each run's status, event and source, opening to its status message and output.
+- Show each turn's hook runs inside its turn (`hook/started`, `hook/completed`): a `Running <event> hook` row becomes `Ran <event> hook` when the run completes, with its status message and output under it; another thread's hook runs stay out.
 - Sign in through an enterprise gateway with its native OAuth handoff, completion status, and cancellation flow.
 - Open any settings page from `codex://settings/<slug>` links (`git-settings`, `mcp-settings`, `hooks-settings`, `agent`, `local-environments` and the rest of the original slugs, plus the `work-settings` and usage-tab aliases); unknown slugs open General.
 - Show external agent import progress as imported and failed item counts in the import view.
