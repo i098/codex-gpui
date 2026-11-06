@@ -31,7 +31,7 @@ fn tab_menu_moves_panes_and_reopens_closed_tab() -> Result<()> {
     }))?;
     fx.wait("file tab", |fx| {
         fx.read(|r, cx| {
-            r.side_tabs() == [SidePanel::File]
+            matches!(r.side_tabs(), [SidePanel::File(_)])
                 && r.file_view()
                     .is_some_and(|f| matches!(f.read(cx).contents, Some(Ok(_))))
         })
@@ -40,7 +40,7 @@ fn tab_menu_moves_panes_and_reopens_closed_tab() -> Result<()> {
     ensure!(fx.read(|r, _| r.side_tabs().is_empty()), "tab not closed");
     fx.keys("cmd-shift-t")?;
     ensure!(
-        fx.read(|r, _| r.side_tabs() == [SidePanel::File]),
+        fx.read(|r, _| matches!(r.side_tabs(), [SidePanel::File(_)])),
         "cmd-shift-t did not reopen the file tab"
     );
 

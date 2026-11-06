@@ -231,6 +231,8 @@ pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
         let mut shell = Shell::new(sidebar, thread.clone().into());
         shell.can_go_back = true;
         shell.attention = true;
+        // refs/terminal: Explore's unread dot (an unseen, unpinned MCP destination).
+        shell.unread_destinations = Some(std::sync::Arc::from([SharedString::from("mcp:fixture")]));
         shell
     });
     let panel = (xterm.into(), "thread-terminal", label.into());
@@ -481,8 +483,11 @@ pub fn running_command_replay() -> Vec<Event> {
         .take();
     let mut started = all("turn/started").next().expect("turn/started");
     started["turn"]["id"] = turn_id.into();
+    // A `rootTurnId` other than `id` marks a review sub-turn, folded into the root turn.
+    started["turn"]["rootTurnId"] = turn_id.into();
     let mut completed = all("turn/completed").next().expect("turn/completed");
     completed["turn"]["id"] = turn_id.into();
+    completed["turn"]["rootTurnId"] = turn_id.into();
     completed["turn"]["items"] = json!([command["item"]]);
     let delta = json!({
         "threadId": command["threadId"],

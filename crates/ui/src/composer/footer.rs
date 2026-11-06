@@ -128,26 +128,37 @@ impl Composer {
         let model_label = model.map_or("Loading model…".into(), |m| m.label.clone());
         // The original keeps the open trigger at least as wide as it was at open and as its
         // `Select effort` placeholder (`minimumContentWidth`), so picking an effort or a model
-        // does not move the trigger or the menu centered on it.
+        // does not move the trigger or the menu centered on it. Widths are the labels' text in
+        // LayoutUnits (ceiled, as layout measures text): painted bounds snap to device px.
         let closed_width = window.use_keyed_state("model-trigger-width", cx, |_, _| px(0.));
         let placeholder = "Select effort";
-        let min_width = open.then(|| {
-            let placeholder_width = window
+        let unit = window.scale_factor() * 64.;
+        let measure = |s: &str, features: gpui::FontFeatures| {
+            let font = gpui::Font {
+                features,
+                ..gpui::font(crate::SANS)
+            };
+            let run = TextRun {
+                len: s.len(),
+                font,
+                color: t.text,
+                ..Default::default()
+            };
+            let width = window
                 .text_system()
-                .layout_line(
-                    placeholder,
-                    px(13.),
-                    &[TextRun {
-                        len: placeholder.len(),
-                        font: gpui::font(crate::SANS),
-                        color: t.text_tertiary,
-                        ..Default::default()
-                    }],
-                    None,
-                )
+                .layout_line(s, px(13.), &[run], None)
                 .width;
-            (*closed_width.read(cx)).max(crate::run_width(placeholder_width, window))
-        });
+            px((f32::from(width) * unit).ceil() / unit)
+        };
+        if let Some(model) = model.filter(|_| !open) {
+            let effort = effort_label(self.displayed_effort());
+            let width = measure(&model.label, tabular_features())
+                + px(4.)
+                + measure(effort, Default::default());
+            closed_width.update(cx, |w, _| *w = width);
+        }
+        let min_width =
+            open.then(|| (*closed_width.read(cx)).max(measure(placeholder, Default::default())));
         let labels = div()
             .relative()
             .flex()
@@ -170,16 +181,6 @@ impl Composer {
                         ))
                     })
                 }
-            })
-            .when(!open, |d| {
-                d.child(
-                    gpui::canvas(
-                        move |bounds, _, cx| closed_width.update(cx, |w, _| *w = bounds.size.width),
-                        |_, (), _, _| {},
-                    )
-                    .absolute()
-                    .size_full(),
-                )
             });
         let trigger = if loading {
             let value = "Loading model…";
@@ -382,7 +383,12 @@ impl Composer {
                             } else {
                                 crate::tooltip::tooltip(
                                     trigger,
-                                    "Change permissions",
+                                    // `composer.permissionsDropdown.managed.tooltip`
+                                    if self.permission == Permission::Managed {
+                                        "Managed by enterprise policy"
+                                    } else {
+                                        "Change permissions"
+                                    },
                                     None,
                                     crate::tooltip::Side::Top,
                                 )

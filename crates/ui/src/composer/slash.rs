@@ -109,6 +109,13 @@ const COMMANDS: &[Command] = &[
         requires_empty: false,
     },
     Command {
+        id: "ide-context",
+        title: "IDE context",
+        description: "Include current selection, open files, and other context from your IDE",
+        icon: "sidebar-cmd-create-page",
+        requires_empty: false,
+    },
+    Command {
         id: "feedback",
         title: "Feedback",
         description: "Send feedback about this chat",
@@ -492,6 +499,7 @@ impl Composer {
             && self.content[range.end..].trim().is_empty()
             && self.attachments.is_empty();
         self.slash.matches.clear();
+        self.slash.range = range.clone();
         if mention {
             let start = range.start + usize::from(self.slash.add.is_none());
             let query = self.content[start..range.end].to_owned();
@@ -524,7 +532,6 @@ impl Composer {
                 }
             }
         }
-        self.slash.range = range;
         self.slash.open = true;
         self.slash.selected = 0;
         self.slash.scroll.set_offset(point(px(0.), px(0.)));
@@ -600,6 +607,7 @@ impl Composer {
             let description = match command.id {
                 "reasoning" => effort_label(self.displayed_effort()),
                 "plan-mode" if self.plan => "Turn plan mode off",
+                "ide-context" if self.ide_context => "Turn off IDE context",
                 _ => command.description,
             };
             (command.title, description, command.icon)
@@ -679,6 +687,12 @@ impl Composer {
             "review-mode" => {
                 self.open_sub(command.id, cx);
                 cx.emit(SlashCommand::ReviewBranches);
+                return;
+            }
+            "ide-context" => {
+                self.finish_command(window, cx);
+                self.ide_context = !self.ide_context;
+                cx.notify();
                 return;
             }
             "plan-mode" => {

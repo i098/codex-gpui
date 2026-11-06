@@ -1,9 +1,10 @@
 use crate::*;
-use ui::screens::diff::panel::{FileTreeRequest, GitBlame};
+use ui::screens::diff::panel::{FileTreeRequest, GitBlame, OpenTargets};
 
 /// A Files tab read: text lines, or an image or PDF's bytes and MIME type.
 enum FileRead {
-    Text(String),
+    /// The text and its `mtimeMs`, which a save expects.
+    Text(String, Option<u64>),
     Media(std::sync::Arc<Vec<u8>>, Option<String>),
 }
 
@@ -11,7 +12,7 @@ pub(crate) fn available(root: &Root, cx: &App) -> bool {
     super::active_thread(root, cx).is_some()
         && match root.side {
             Some(SidePanel::Changes) => root.diff.is_some(),
-            Some(SidePanel::File) => root.file.is_some(),
+            Some(SidePanel::File(key)) => root.file(key).is_some(),
             _ => false,
         }
 }
@@ -31,8 +32,8 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
                         panel.update(cx, |panel, cx| panel.toggle_file_tree(cx));
                     }
                 }
-                Some(SidePanel::File) => {
-                    if let Some(file) = &root.file {
+                Some(SidePanel::File(key)) => {
+                    if let Some(file) = root.file(key) {
                         file.update(cx, |file, cx| file.toggle_file_tree(window, cx));
                     }
                 }
@@ -85,22 +86,44 @@ impl Root {
         } else {
             format!("{cwd}/{}", action.path.trim_start_matches("./"))
         };
-        let file = if let Some(file) = self
-            .file
-            .as_ref()
-            .filter(|file| file.read(cx).workspace_root() == cwd)
+        // The tab already showing `path`, else the preview tab, else a new tab.
+        let reuse = self
+            .files
+            .iter()
+            .find(|(_, file)| file.read(cx).path == path)
+            .or_else(|| {
+                self.files.iter().find(|(_, file)| {
+                    let file = file.read(cx);
+                    file.is_preview() && file.workspace_root() == cwd
+                })
+            })
+            .map(|(key, file)| (*key, file.clone()));
+        // Unsaved edits stay on screen: a link to the same file only selects its tab.
+        if let Some((key, file)) = &reuse
+            && file.read(cx).has_unsaved_changes(cx)
         {
+            self.set_side(SidePanel::File(*key), window, cx);
+            return;
+        }
+        let (key, file) = if let Some((key, file)) = reuse {
             file.update(cx, |file, cx| {
                 file.navigate_file(path.clone(), action.line, cx)
             });
-            file.clone()
+            (key, file)
         } else {
-            let file = cx.new(|_| FileView::new(&cwd, path.clone(), action.line));
+            let file = cx.new(|_| {
+                let mut file = FileView::new(&cwd, path.clone(), action.line);
+                file.set_editable(true);
+                file
+            });
             cx.subscribe_in(&file, window, |root, file, request, window, cx| {
                 root.navigate_file_tree(file, request, window, cx);
             })
             .detach();
-            file
+            let key = self.next_file;
+            self.next_file += 1;
+            self.files.push((key, file.clone()));
+            (key, file)
         };
         let revision = file.read(cx).file_revision();
         self.load_blame(&file, cx);
@@ -129,7 +152,7 @@ impl Root {
                     }
                     body["contents"]
                         .as_str()
-                        .map(|text| FileRead::Text(text.to_owned()))
+                        .map(|text| FileRead::Text(text.to_owned(), body["mtimeMs"].as_u64()))
                         .context("file response has no text contents")
                 })
                 .map_err(|error| format!("{error:#}"))
@@ -143,7 +166,13 @@ impl Root {
                     Ok(FileRead::Media(bytes, mime)) => {
                         file.set_file_media(revision, Ok((bytes, mime)), cx)
                     }
-                    Ok(FileRead::Text(text)) => file.set_file_contents(revision, Ok(text), cx),
+                    Ok(FileRead::Text(text, mtime)) => {
+                        let current = file.set_file_contents(revision, Ok(text), cx);
+                        if current {
+                            file.set_disk_mtime(mtime);
+                        }
+                        current
+                    }
                     Err(error) => file.set_file_contents(revision, Err(error), cx),
                 })
                 .ok()
@@ -161,18 +190,23 @@ impl Root {
             .ok();
         })
         .detach();
-        self.file = Some(file);
-        if self.side == Some(SidePanel::File) {
+        let side = SidePanel::File(key);
+        if self.side == Some(side) {
             self.sync(window, cx);
         } else {
-            self.set_side(SidePanel::File, window, cx);
+            self.set_side(side, window, cx);
         }
     }
 
     /// `git.toggleBlame`: flips the active-line blame and loads it for the open file.
     pub(crate) fn toggle_git_blame(&mut self, cx: &mut Context<Self>) {
         cx.set_global(GitBlame(!GitBlame::enabled(cx)));
-        if let Some(file) = self.file.clone() {
+        for file in self
+            .files
+            .iter()
+            .map(|(_, file)| file.clone())
+            .collect::<Vec<_>>()
+        {
             self.load_blame(&file, cx);
             file.update(cx, |_, cx| cx.notify());
         }
@@ -211,7 +245,21 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if super::active_thread(self, cx).is_none() || self.file.as_ref() != Some(file) {
+        // A save or close must not be lost to a thread switch.
+        match request {
+            FileTreeRequest::Save { contents, mtime } => {
+                self.save_file(file, contents, *mtime, window, cx);
+                return;
+            }
+            FileTreeRequest::Close => {
+                if let Some(key) = self.files.iter().find(|(_, f)| f == file).map(|(k, _)| *k) {
+                    self.close_side(SidePanel::File(key), window, cx);
+                }
+                return;
+            }
+            _ => {}
+        }
+        if super::active_thread(self, cx).is_none() || !self.files.iter().any(|(_, f)| f == file) {
             if let FileTreeRequest::Directory(directory) = request {
                 file.update(cx, |file, cx| {
                     file.set_tree_directory(
@@ -301,11 +349,79 @@ impl Root {
                     window,
                     cx,
                 );
-                if let Some(file) = &self.file {
+                if let Some(file) = self.file_view() {
                     file.update(cx, |file, cx| file.focus_file_tree(window, cx));
                 }
             }
+            FileTreeRequest::OpenTargets => {
+                let view = file.read(cx);
+                let params = json!({
+                    "cwd": view.workspace_root(), "path": view.path, "line": view.line,
+                });
+                let host = self.host.clone();
+                let task = cx.background_spawn(async move {
+                    host.fetch(&host::Request::post("open-in-targets", Some(params)))
+                        .and_then(|response| host::json_body(&response))
+                        .map_err(|error| format!("{error:#}"))
+                });
+                let file = file.downgrade();
+                cx.spawn_in(window, async move |_, cx| {
+                    // `OpenTargets` holds app icons, which stay on the main thread.
+                    let catalog = task.await.and_then(|value| {
+                        serde_json::from_value::<OpenTargets>(value).map_err(|e| e.to_string())
+                    });
+                    file.update_in(cx, |file, window, cx| {
+                        file.show_open_targets(catalog, window, cx)
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+            FileTreeRequest::OpenIn(request) => self.launch_diff_target(request, cx),
+            FileTreeRequest::Save { .. } | FileTreeRequest::Close => {}
         }
+    }
+
+    /// The host's `write-file` for an edited Files tab; a conflict or failure keeps the edit
+    /// and shows `Could not save file`.
+    fn save_file(
+        &mut self,
+        file: &Entity<FileView>,
+        contents: &str,
+        mtime: Option<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = file.read(cx);
+        let params = json!({
+            "cwd": view.workspace_root(), "path": view.path,
+            "content": contents, "expectedMtimeMs": mtime,
+        });
+        let host = self.host.clone();
+        let write = cx.background_spawn(async move {
+            let body = host
+                .fetch(&host::Request::post("write-file", Some(params)))
+                .and_then(|response| host::json_body(&response))
+                .map_err(|error| format!("{error:#}"))?;
+            match body["outcome"].as_str() {
+                Some("saved") => Ok(body["mtimeMs"].as_u64()),
+                _ => Err("the file changed on disk".to_owned()),
+            }
+        });
+        let file = file.downgrade();
+        cx.spawn_in(window, async move |root, cx| {
+            let result = write.await;
+            let failed = result.is_err();
+            file.update_in(cx, |file, window, cx| file.saved(result, window, cx))
+                .ok();
+            if failed {
+                root.update(cx, |root, cx| {
+                    root.toast(Toast::danger("Could not save file"), cx)
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 }
 
