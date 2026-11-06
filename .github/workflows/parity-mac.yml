@@ -47,9 +47,12 @@ jobs:
       - name: Run the parity gate
         run: |
           mkdir -p "$SCRATCH/out"
-          rc=0
+          # The default macOS shell has no pipefail, so read the exit code of cargo from PIPESTATUS.
+          set +e
           cargo run --locked -p parity -- --out "$SCRATCH/out" ${INPUT_SCREEN:+--screen "$INPUT_SCREEN"} --gate \
-            2>&1 | tee "$SCRATCH/out/parity.log" || rc=${PIPESTATUS[0]}
+            2>&1 | tee "$SCRATCH/out/parity.log"
+          rc=${PIPESTATUS[0]}
+          set -e
           echo "PARITY_RC=$rc" >>"$GITHUB_ENV"
           [[ -f $SCRATCH/out/report.json ]] || exit 1
           jq -r --arg sha "$HEAD_SHA" '
