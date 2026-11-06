@@ -7727,17 +7727,24 @@ impl Root {
                         storage::thread_deleted(self, id, cx);
                     }
                 }
-                // The row's spinner follows the thread status.
+                // The row's spinner and `Awaiting approval` pill follow the thread status.
                 "thread/status/changed" if side_thread.is_none() => {
                     if let Some(id) = params["threadId"].as_str()
                         && let Ok(status) = ThreadStatus::deserialize(&params["status"])
                     {
                         let active = status == ThreadStatus::Active;
+                        let awaiting =
+                            active
+                                && params["status"]["activeFlags"].as_array().is_some_and(
+                                    |flags| flags.iter().any(|f| f == "waitingOnApproval"),
+                                );
                         if let Some(thread) = self.threads.iter_mut().find(|t| t.id == id) {
                             thread.status = status;
                         }
-                        self.sidebar
-                            .update(cx, |s, cx| s.set_running(id, active, cx));
+                        self.sidebar.update(cx, |s, cx| {
+                            s.set_running(id, active, cx);
+                            s.set_awaiting_approval(id, awaiting, cx);
+                        });
                         self.sync_prevent_sleep(cx);
                     }
                 }

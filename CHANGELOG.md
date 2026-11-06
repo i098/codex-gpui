@@ -6,6 +6,9 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+### Added
+- Show the green `Awaiting approval` pill and the blue dot on a sidebar chat row while its thread waits for an approval (`thread/status/changed` with the `waitingOnApproval` active flag); both go when the flag clears or the thread goes idle.
+
 ## [0.1.1] - 2026-11-06
 
 ### Added
