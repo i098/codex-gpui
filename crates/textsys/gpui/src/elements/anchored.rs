@@ -20,6 +20,7 @@ pub struct Anchored {
     anchor_position: Option<Point<Pixels>>,
     position_mode: AnchoredPositionMode,
     offset: Option<Point<Pixels>>,
+    exact: bool,
 }
 
 /// anchored gives you an element that will avoid overflowing the window bounds.
@@ -32,6 +33,7 @@ pub fn anchored() -> Anchored {
         anchor_position: None,
         position_mode: AnchoredPositionMode::Window,
         offset: None,
+        exact: false,
     }
 }
 
@@ -46,6 +48,14 @@ impl Anchored {
     /// (otherwise the location the anchored element is rendered is used)
     pub fn position(mut self, anchor: Point<Pixels>) -> Self {
         self.anchor_position = Some(anchor);
+        self
+    }
+
+    /// Lands on the requested position as given: no flip or snap at the window's right edge,
+    /// and no rounding of the move from the layout position to whole pixels, which misplaces
+    /// it under a fractional parent.
+    pub fn exact(mut self) -> Self {
+        self.exact = true;
         self
     }
 
@@ -152,7 +162,7 @@ impl Element for Anchored {
             size: window.viewport_size(),
         };
 
-        if self.fit_mode == AnchoredFitMode::SwitchAnchor {
+        if self.fit_mode == AnchoredFitMode::SwitchAnchor && !self.exact {
             let mut anchor = self.anchor;
 
             if desired.left() < limits.left() || desired.right() > limits.right() {
@@ -188,7 +198,7 @@ impl Element for Anchored {
 
         // Snap the horizontal edges of the anchored element to the horizontal edges of the window if
         // its horizontal bounds overflow, aligning to the left if it is wider than the limits.
-        if desired.right() > limits.right() {
+        if desired.right() > limits.right() && !self.exact {
             desired.origin.x -= desired.right() - limits.right() + edges.right;
         }
         if desired.left() < limits.left() {
@@ -205,7 +215,11 @@ impl Element for Anchored {
         }
 
         let offset = desired.origin - bounds.origin;
-        let offset = point(offset.x.round(), offset.y.round());
+        let offset = if self.exact {
+            offset
+        } else {
+            point(offset.x.round(), offset.y.round())
+        };
 
         window.with_element_offset(offset, |window| {
             for child in &mut self.children {

@@ -64,16 +64,13 @@ fn open(fx: &mut Fx) -> Result<(String, String, serde_json::Value)> {
     fx.keys("cmd-2")?;
     fx.wait_thread(SUBTRACT)?;
     let mut command = None;
-    for mut event in ui::screens::terminal::running_command_replay() {
-        if let Event::Notification { method, params } = &mut event {
+    for event in ui::screens::terminal::running_command_replay() {
+        if let Event::Notification { method, params } = &event {
             if method == "item/commandExecution/outputDelta" {
                 continue;
             }
             if method == "item/started" {
                 command = Some(params.clone());
-            }
-            if params["turn"].is_object() {
-                params["turn"]["rootTurnId"] = params["turn"]["id"].clone();
             }
         }
         fx.root

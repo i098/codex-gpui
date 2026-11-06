@@ -647,6 +647,14 @@ fn project_rows(
             pinned: pinned
                 .as_array()
                 .is_some_and(|ids| ids.iter().any(|pin| pin == id)),
+            // The original's `Or`: app-server stores seconds, the desktop store milliseconds.
+            updated_at: stored["updatedAt"].as_i64().map(|at| {
+                if at < 1_000_000_000_000 {
+                    at
+                } else {
+                    at / 1000
+                }
+            }),
         });
     }
     if let Some(order) = state["project-order"].as_array() {
@@ -2193,6 +2201,9 @@ impl Host for LocalHost {
             | "gh-pr-patch"
             | "gh-pr-media"
             | "gh-create-pr"
+            | "gh-thread-pr"
+            | "gh-thread-compare"
+            | "gh-pr-repair"
             | "pull-request-chat"
             | "pull-request-chat-link" => github_pull_requests::fetch(self, endpoint, &params)?,
             "create-worktree" => self.create_worktree(&params)?,

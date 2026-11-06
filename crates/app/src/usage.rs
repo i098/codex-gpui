@@ -130,6 +130,174 @@ pub fn on_event(event: &bridge::Event, cx: &mut App) {
     }
 }
 
+/// Host-settings keys of the original's persisted atoms.
+const RESET_DISMISSALS: &str = "rate-limit-reset-home-announcement-dismissal-by-account-id";
+const SUBAGENTS_SEEN: &str = "has-seen-multi-agent-composer-banner";
+const DAY_MS: i64 = 86_400_000;
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis() as i64)
+}
+
+/// The Home banner the original's arbitration shows, rate limit reset first:
+/// - reset: a reset credit is available, the tightest window is at least 90% used (`Ge`
+///   reports none below that; the default `remainingThresholdPercent` 20 always holds then),
+///   and `account` did not dismiss it in the last 24 hours;
+/// - subagents: `experimentalFeature/list` loaded, `multi_agent` is not enabled, and the
+///   banner was never tried or dismissed.
+fn home_banner(
+    limits: Option<&Limits>,
+    account: Option<&str>,
+    settings: &serde_json::Map<String, Value>,
+    features: &Value,
+    now_ms: i64,
+) -> Option<ui::screens::home::HomeBanner> {
+    let reset = limits.is_some_and(|limits| {
+        let available = limits
+            .rate_limit_reset_credits
+            .as_ref()
+            .is_some_and(|credits| credits.available_count > 0);
+        let used = std::iter::once(&limits.rate_limits)
+            .chain(limits.rate_limits_by_limit_id.values())
+            .flat_map(|limit| [&limit.primary, &limit.secondary])
+            .flatten()
+            .map(|window| window.used_percent)
+            .fold(0., f64::max);
+        let dismissed = account
+            .and_then(|account| settings.get(RESET_DISMISSALS)?[account]["dismissedAtMs"].as_i64());
+        available && used >= 90. && dismissed.is_none_or(|at| now_ms - at >= DAY_MS)
+    });
+    let subagents = settings.get(SUBAGENTS_SEEN) != Some(&json!(true))
+        && features["data"].as_array().is_some_and(|features| {
+            !features
+                .iter()
+                .any(|feature| feature["name"] == "multi_agent" && feature["enabled"] == true)
+        });
+    if reset {
+        Some(ui::screens::home::HomeBanner::RateLimitReset)
+    } else {
+        subagents.then_some(ui::screens::home::HomeBanner::Subagents)
+    }
+}
+
+impl Root {
+    /// Picks Home's banner from `account/rateLimits/read` and `experimentalFeature/list`.
+    /// Like the original's `ze()` surface check, the subagents banner is local-host only.
+    pub(crate) fn refresh_home_banner(&self, cx: &mut Context<Self>) {
+        let (bridge, host) = (self.bridge.clone(), self.host.clone());
+        let local = self.host_id == "local";
+        let settings = settings_snapshot(cx);
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let limits = bridge
+                .request::<_, Limits>("account/rateLimits/read", json!({}))
+                .await
+                .ok();
+            let account = cx
+                .background_executor()
+                .spawn(async move { host.identity().map(|identity| identity.account_id) })
+                .await;
+            let features = if local && settings.get(SUBAGENTS_SEEN) != Some(&json!(true)) {
+                bridge
+                    .request("experimentalFeature/list", json!({"limit": 100}))
+                    .await
+                    .unwrap_or(Value::Null)
+            } else {
+                Value::Null
+            };
+            let banner = home_banner(
+                limits.as_ref(),
+                account.as_deref(),
+                &settings,
+                &features,
+                now_ms(),
+            );
+            this.update(cx, |this, cx| {
+                this.home.update(cx, |home, cx| {
+                    home.banner = banner;
+                    cx.notify();
+                })
+            })?;
+            Ok(())
+        });
+        crate::log_err(task, cx);
+    }
+
+    /// A banner's `×`: the reset banner stays hidden 24 hours for this account; the
+    /// subagents banner for good.
+    pub(crate) fn dismiss_home_banner(
+        &self,
+        banner: ui::screens::home::HomeBanner,
+        cx: &mut Context<Self>,
+    ) {
+        match banner {
+            ui::screens::home::HomeBanner::Subagents => {
+                save_setting(SUBAGENTS_SEEN, json!(true), cx)
+            }
+            ui::screens::home::HomeBanner::RateLimitReset => {
+                let host = self.host.clone();
+                let task = cx.spawn(async move |_, cx| -> Result<()> {
+                    let account = cx
+                        .background_executor()
+                        .spawn(async move { host.identity().map(|identity| identity.account_id) })
+                        .await
+                        .context("No ChatGPT account to dismiss the banner for")?;
+                    cx.update(|cx| {
+                        let mut dismissals = settings_snapshot(cx)
+                            .get(RESET_DISMISSALS)
+                            .cloned()
+                            .unwrap_or_else(|| json!({}));
+                        dismissals[account] = json!({"dismissedAtMs": now_ms()});
+                        save_setting(RESET_DISMISSALS, dismissals, cx);
+                    });
+                    Ok(())
+                });
+                crate::log_err(task, cx);
+            }
+        }
+    }
+
+    /// Subagents banner `Try now`: enable `features.multi_agent`, then put the original's
+    /// starter prompt in the Home composer.
+    pub(crate) fn try_multi_agent(&mut self, cx: &mut Context<Self>) {
+        self.write_config(
+            "config/batchWrite",
+            json!({
+                "edits": [{"keyPath": "features.multi_agent", "value": true, "mergeStrategy": "upsert"}],
+                "filePath": null, "expectedVersion": null,
+            }),
+            cx,
+            |config| config["features"]["multi_agent"] = json!(true),
+        );
+        save_setting(SUBAGENTS_SEEN, json!(true), cx);
+        let composer = self.home.read(cx).composer.clone();
+        composer.update(cx, |composer, cx| {
+            composer.set_text("Spawn a subagent to explore this repo.", cx)
+        });
+        self.home.update(cx, |home, cx| {
+            home.banner = None;
+            cx.notify();
+        });
+    }
+}
+
+fn settings_snapshot(cx: &App) -> serde_json::Map<String, Value> {
+    cx.try_global::<crate::host_settings::Settings>()
+        .map(|settings| settings.read_all().clone())
+        .unwrap_or_default()
+}
+
+fn save_setting(key: &str, value: Value, cx: &mut App) {
+    if cx.has_global::<crate::host_settings::Settings>()
+        && let Err(error) = cx.update_global::<crate::host_settings::Settings, _>(|settings, _| {
+            settings.write(key, value)
+        })
+    {
+        eprintln!("codex-gpui: cannot save {key}: {error:#}");
+    }
+}
+
 fn load<T>(result: Result<T>) -> Load<Arc<T>> {
     match result {
         Ok(value) => Load::Ready(Arc::new(value)),
@@ -1169,6 +1337,74 @@ impl Root {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_banner_picks_reset_then_subagents_and_honors_dismissals() {
+        use ui::screens::home::HomeBanner;
+        let limits = |used: f64, available: usize| -> Limits {
+            serde_json::from_value(json!({
+                "rateLimits": {"primary": {"usedPercent": used}},
+                "rateLimitResetCredits": {"availableCount": available},
+            }))
+            .unwrap()
+        };
+        let off = json!({"data": [{"name": "multi_agent", "enabled": false}]});
+        let on = json!({"data": [{"name": "multi_agent", "enabled": true}]});
+        let none = serde_json::Map::new();
+        let now = 10 * DAY_MS;
+        let banner =
+            |limits: &Limits, settings: &serde_json::Map<String, Value>, features: &Value| {
+                home_banner(Some(limits), Some("acct"), settings, features, now)
+            };
+        assert_eq!(
+            banner(&limits(90., 1), &none, &on),
+            Some(HomeBanner::RateLimitReset)
+        );
+        // Below 90% used, or no reset left: no reset banner.
+        assert_eq!(banner(&limits(89.9, 1), &none, &on), None);
+        assert_eq!(banner(&limits(99., 0), &none, &on), None);
+        // The reset banner outranks the subagents banner.
+        assert_eq!(
+            banner(&limits(95., 1), &none, &off),
+            Some(HomeBanner::RateLimitReset)
+        );
+        assert_eq!(
+            banner(&limits(10., 1), &none, &off),
+            Some(HomeBanner::Subagents)
+        );
+        // A dismissal hides the reset banner for 24 hours, for that account only.
+        let dismissed = |at: i64| {
+            let mut settings = serde_json::Map::new();
+            settings.insert(
+                RESET_DISMISSALS.into(),
+                json!({"acct": {"dismissedAtMs": at}}),
+            );
+            settings
+        };
+        assert_eq!(
+            banner(&limits(95., 1), &dismissed(now - DAY_MS + 1), &on),
+            None
+        );
+        assert_eq!(
+            banner(&limits(95., 1), &dismissed(now - DAY_MS), &on),
+            Some(HomeBanner::RateLimitReset)
+        );
+        assert_eq!(
+            home_banner(
+                Some(&limits(95., 1)),
+                Some("other"),
+                &dismissed(now),
+                &on,
+                now
+            ),
+            Some(HomeBanner::RateLimitReset)
+        );
+        // Subagents: hidden once seen, and while the feature list did not load.
+        let mut seen = serde_json::Map::new();
+        seen.insert(SUBAGENTS_SEEN.into(), json!(true));
+        assert_eq!(banner(&limits(10., 1), &seen, &off), None);
+        assert_eq!(banner(&limits(10., 1), &none, &Value::Null), None);
+    }
 
     #[test]
     fn enterprise_and_history_require_the_original_gates() {

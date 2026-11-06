@@ -159,6 +159,7 @@ impl Host for FixtureHost {
             expanded: true,
             roots: Vec::new(),
             pinned: false,
+            updated_at: None,
         }])
     }
 

@@ -47,12 +47,7 @@ fn next_tab_takes_its_keys_only_with_focus_in_a_side_tab() -> Result<()> {
     fx.keys("cmd-2")?;
     fx.wait_thread(common::SUBTRACT)?;
     fx.keys("alt-cmd-b")?;
-    for mut event in ui::screens::terminal::running_command_replay() {
-        if let bridge::Event::Notification { params, .. } = &mut event
-            && params["turn"].is_object()
-        {
-            params["turn"]["rootTurnId"] = params["turn"]["id"].clone();
-        }
+    for event in ui::screens::terminal::running_command_replay() {
         fx.root
             .update(&mut fx.cx, |root, cx| root.on_event(event, cx));
         fx.cx.run_until_parked();

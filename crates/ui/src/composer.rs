@@ -1177,6 +1177,13 @@ impl Composer {
     }
 
     pub fn bind_connection(&mut self, bridge: std::sync::Arc<bridge::Bridge>) {
+        if self
+            .bridge
+            .as_ref()
+            .is_none_or(|current| !std::sync::Arc::ptr_eq(current, &bridge))
+        {
+            self.reset_apps();
+        }
         self.bridge = Some(bridge);
     }
 
@@ -1537,6 +1544,7 @@ impl Composer {
     pub fn bind_thread(&mut self, id: &str) {
         if self.thread_id != id {
             self.thread_id = id.to_owned();
+            self.reset_apps();
         }
     }
 
@@ -2041,6 +2049,7 @@ impl Composer {
         self.attachment_error = None;
         self.context_menu = None;
         self.menu = None;
+        self.reset_apps();
         self.set_text("", cx);
         self.queued.clear();
         self.set_running(false, cx);

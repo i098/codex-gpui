@@ -1478,7 +1478,7 @@ impl SettingsPane {
                         select(
                             "Zed",
                             430.,
-                            Some(app_icon(over(t.primary_soft_alpha, t.background_panel))),
+                            Some(app_icon("icons/settings-zed.png".into(), 255, over(t.primary_soft_alpha, t.background_panel))),
                             false,
                             false,
                             t,
@@ -2245,31 +2245,44 @@ pub(crate) fn select_with(
         .child(icon("chevron-down", 14., t.text_tertiary))
 }
 
-/// The `Zed` app icon `<img>` (the app's 64 px `apps/zed.png` in an 18 px box) over the
-/// opaque `page`. Chromium draws it at its unsnapped position with bilinear filtering; on
+/// An app icon `<img>` (`path`, e.g. the app's 64 px `apps/zed.png`, in an 18 px box) at
+/// `alpha` (a CSS `opacity` folded into the draw, of 255) over the opaque `page`. Chromium draws it at its unsnapped position with bilinear filtering; on
 /// macOS Skia does the same (`shapes::raster_images`), drawn 1:1. Elsewhere GPUI scales it.
 /// Rasterized at paint, inside the scroller's `.layer()`: its tile origin sets the bilinear
 /// sample positions' float error (every 9th column at 1440 otherwise).
-fn app_icon(page: Hsla) -> AnyElement {
-    const PATH: &str = "icons/settings-zed.png";
+pub(crate) fn app_icon(path: SharedString, alpha: u8, page: Hsla) -> AnyElement {
     if !cfg!(target_os = "macos") {
-        return img(PATH).size(px(18.)).flex_none().into_any_element();
+        return img(path).size(px(18.)).flex_none().into_any_element();
     }
-    // (box, page) -> the drawn device rect and its image.
-    type Cached = (Bounds<Pixels>, Hsla, Bounds<Pixels>, Arc<RenderImage>);
+    // (path, box, page) -> the drawn device rect and its image.
+    type Cached = (
+        SharedString,
+        Bounds<Pixels>,
+        Hsla,
+        Bounds<Pixels>,
+        Arc<RenderImage>,
+    );
     thread_local! {
-        static CACHE: RefCell<Option<Cached>> = const { RefCell::new(None) };
+        static CACHE: RefCell<Vec<Cached>> = const { RefCell::new(Vec::new()) };
     }
     let raster = move |bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App| {
-        if let Some((b, p, at, image)) = CACHE.with_borrow(|c| c.clone())
-            && b == bounds
-            && p == page
-        {
-            return Some((at, image));
+        let hit = CACHE.with_borrow(|cache| {
+            cache
+                .iter()
+                .find(|(p, b, c, ..)| *p == path && *b == bounds && *c == page)
+                .map(|(.., at, image)| (*at, image.clone()))
+        });
+        if hit.is_some() {
+            return hit;
         }
-        let src = image::load_from_memory(&cx.asset_source().load(PATH).ok()??).ok()?;
+        let src = image::load_from_memory(&cx.asset_source().load(&path).ok()??).ok()?;
         let mut src = src.to_rgba8();
         shapes::premultiply(&mut src);
+        if alpha < 255 {
+            for v in src.iter_mut() {
+                *v = ((u32::from(*v) * u32::from(alpha) + 127) / 255) as u8;
+            }
+        }
         let image = Arc::new(shapes::raster_images(
             &[(&src, bounds)],
             bounds,
@@ -2284,7 +2297,10 @@ fn app_icon(page: Hsla) -> AnyElement {
         let (x, y) = (dev(bounds.left()), dev(bounds.top()));
         let (w, h) = (dev(bounds.right()) - x, dev(bounds.bottom()) - y);
         let at = Bounds::new(point(px(x / s), px(y / s)), size(px(w / s), px(h / s)));
-        CACHE.set(Some((bounds, page, at, image.clone())));
+        CACHE.with_borrow_mut(|cache| {
+            cache.retain(|(p, ..)| *p != path);
+            cache.push((path.clone(), bounds, page, at, image.clone()));
+        });
         Some((at, image))
     };
     canvas(

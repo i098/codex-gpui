@@ -7,6 +7,7 @@ bin=$(realpath "$1")
 out=$(realpath -m "$2")
 dir=$(mktemp -d)
 trap 'rm -rf -- "$dir"' EXIT
+chmod 755 "$dir" # appimagetool rejects the 0700 that mktemp makes
 install -D "$bin" "$dir/usr/bin/codex-gpui"
 cat >"$dir/codex-gpui.desktop" <<DESKTOP
 [Desktop Entry]

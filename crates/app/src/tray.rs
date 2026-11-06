@@ -127,7 +127,7 @@ mod native {
                     let id = usize::try_from(tag - 100)
                         .ok()
                         .and_then(|index| TRAY_IDS.with(|ids| ids.borrow().get(index).cloned()));
-                    let _ = app.update(|cx| act(tag, id, cx));
+                    app.update(|cx| act(tag, id, cx));
                 }));
                 let object = TrayTarget::alloc(mtm).set_ivars(handler);
                 unsafe { msg_send![super(object), init] }
