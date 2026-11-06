@@ -1,5 +1,5 @@
 use crate::*;
-use ui::screens::plugins::{self, Action, Data, Modal, Page, Plugin, Resource};
+use ui::screens::plugins::{self, Action, Data, Modal, Page, Plugin, Resource, Search};
 
 impl Root {
     pub fn plugins_page(&self) -> Option<&Entity<Page>> {
@@ -32,7 +32,9 @@ impl Root {
     }
 
     pub(crate) fn plugins_event(&mut self, event: &Event, cx: &mut Context<Self>) {
-        if matches!(event, Event::Notification {method, ..} if method == "skills/changed") {
+        if matches!(event, Event::Notification {method, ..}
+            if matches!(method.as_str(), "skills/changed" | "codex/event/skills_update_available"))
+        {
             self.refresh_skills(cx);
         }
         if matches!(event, Event::Notification {method, ..}
@@ -218,6 +220,50 @@ impl Root {
                     });
                 }
             });
+        })
+        .detach();
+    }
+
+    /// The original `use-search-plugins`: searches the server catalog and pages with its
+    /// cursor. A server without `plugin/search` keeps the local filter and reports the error.
+    fn search_plugins(
+        &self,
+        page: Entity<Page>,
+        term: String,
+        cursor: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let params =
+            plugin_search_params(&term, page.read(cx).section, &self.cwd, cursor.as_deref());
+        let generation = page.read(cx).search_gen;
+        page.update(cx, |page, cx| {
+            if let Some(search) = &mut page.search {
+                search.loading_more = true;
+            }
+            cx.notify();
+        });
+        let bridge = self.bridge.clone();
+        cx.spawn(async move |_, cx| {
+            let result = bridge.request::<_, Value>("plugin/search", params).await;
+            page.update(cx, |page, cx| {
+                if page.search_gen != generation {
+                    return;
+                }
+                match result {
+                    Ok(value) => {
+                        let (plugins, next) = plugin_search_results(&value);
+                        page.search
+                            .get_or_insert_with(Search::default)
+                            .push(plugins, next);
+                        page.error = None;
+                    }
+                    Err(error) => {
+                        page.search = None;
+                        page.error = Some(format!("Plugin search failed: {error}"));
+                    }
+                }
+                cx.notify();
+            })
         })
         .detach();
     }
@@ -506,6 +552,10 @@ impl Root {
                 }
             }
             Action::ConnectApp(app) => self.connect_plugin_app(page, app.clone(), cx),
+            Action::Search(term) => self.search_plugins(page, term.clone(), None, cx),
+            Action::SearchMore(term, cursor) => {
+                self.search_plugins(page, term.clone(), Some(cursor.clone()), cx)
+            }
             _ => self.mutate_plugin(page, action.clone(), cx),
         }
     }
@@ -889,6 +939,41 @@ fn plugin_params(plugin: &Plugin) -> Value {
     }
 }
 
+/// The original `use-search-plugins` request: lowercase scope, the search roots and a page
+/// cursor (`null` on the first page).
+fn plugin_search_params(term: &str, section: &str, cwd: &str, cursor: Option<&str>) -> Value {
+    let scope = if section == "Personal" {
+        "personal"
+    } else {
+        "global"
+    };
+    json!({
+        "searchTerm": term,
+        "scope": scope,
+        "cwds": [cwd],
+        "cursor": cursor,
+        "limit": plugins::SEARCH_LIMIT,
+    })
+}
+
+/// `plugin/search` answers `{data:[{marketplaceName, marketplacePath, plugin}], nextCursor}`.
+fn plugin_search_results(value: &Value) -> (Vec<Arc<Plugin>>, Option<String>) {
+    let plugins = plugins::array(value, "data")
+        .iter()
+        .map(|entry| {
+            let name = plugins::string(entry, "marketplaceName").to_owned();
+            let path = entry["marketplacePath"].as_str().map(str::to_owned);
+            Arc::new(Plugin {
+                summary: entry["plugin"].clone(),
+                remote_marketplace_name: path.is_none().then(|| name.clone()),
+                marketplace_name: name,
+                marketplace_path: path,
+            })
+        })
+        .collect();
+    (plugins, value["nextCursor"].as_str().map(str::to_owned))
+}
+
 /// The original's `requestPluginId`: a remote catalog entry uninstalls by its `remotePluginId`;
 /// its catalog `id` returns success without removing the plugin.
 fn request_plugin_id(plugin: &Plugin) -> &str {
@@ -1240,6 +1325,44 @@ mod tests {
             .is_err()
         );
         assert!(reconcile_plugin_suggestions_result(&json!({})).is_err());
+    }
+
+    #[test]
+    fn plugin_search_pages_the_server_catalog() {
+        // Shape from the original's `use-search-plugins`: `{data, nextCursor}`.
+        let first = json!({
+            "data": [
+                {"marketplaceName":"openai-curated",
+                 "marketplacePath":"/tmp/curated/marketplace.json",
+                 "plugin":{"id":"linear@openai-curated","name":"linear","installed":false}},
+                {"marketplaceName":"openai-curated",
+                 "plugin":{"id":"remote@openai-curated","name":"remote"}},
+            ],
+            "nextCursor": "page-2",
+        });
+        let (plugins, next) = plugin_search_results(&first);
+        assert_eq!(next.as_deref(), Some("page-2"));
+        assert_eq!(plugins[0].id(), "linear@openai-curated");
+        assert_eq!(
+            plugins[0].marketplace_path.as_deref(),
+            Some("/tmp/curated/marketplace.json")
+        );
+        assert_eq!(plugins[0].remote_marketplace_name, None);
+        assert_eq!(
+            plugins[1].remote_marketplace_name.as_deref(),
+            Some("openai-curated")
+        );
+        let (_, next) = plugin_search_results(&json!({"data":[],"nextCursor":null}));
+        assert_eq!(next, None);
+
+        let personal = plugin_search_params("linear", "Personal", "/work", Some("page-2"));
+        assert_eq!(personal["scope"], json!("personal"));
+        assert_eq!(personal["cursor"], json!("page-2"));
+        assert_eq!(personal["limit"], json!(50));
+        let first = plugin_search_params("linear", "Public", "/work", None);
+        assert_eq!(first["scope"], json!("global"));
+        assert_eq!(first["cursor"], Value::Null);
+        assert_eq!(first["cwds"], json!(["/work"]));
     }
 
     #[test]
