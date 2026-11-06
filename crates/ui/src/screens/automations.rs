@@ -497,7 +497,11 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     let server = serde_json::from_value(oracle("\"url\":\"/suggested_automations\""))
         .expect("suggested_automations shape");
     let (shell, _, _) = shell_with(server, Vec::new(), None, 0, cx);
-    shell.update(cx, |shell, _| shell.can_go_back = true);
+    shell.update(cx, |shell, _| {
+        shell.can_go_back = true;
+        // The reference has an unseen Explore destination: the rail's `…` carries the dot.
+        shell.unread_destinations = Some(["unseen".into()].into());
+    });
     shell.into()
 }
 
