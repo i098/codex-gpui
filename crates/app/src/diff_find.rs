@@ -41,6 +41,11 @@ impl Root {
         {
             return;
         }
+        if let Some(file) = self.visible_file()
+            && file.update(cx, |file, cx| file.next_find(previous, cx))
+        {
+            return;
+        }
         if let Some(thread) = &self.thread {
             thread.update(cx, |thread, cx| thread.next_find(previous, cx));
         }

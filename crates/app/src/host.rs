@@ -2201,6 +2201,9 @@ impl Host for LocalHost {
             | "gh-pr-patch"
             | "gh-pr-media"
             | "gh-create-pr"
+            | "gh-thread-pr"
+            | "gh-thread-compare"
+            | "gh-pr-repair"
             | "pull-request-chat"
             | "pull-request-chat-link" => github_pull_requests::fetch(self, endpoint, &params)?,
             "create-worktree" => self.create_worktree(&params)?,
@@ -2226,6 +2229,7 @@ impl Host for LocalHost {
             "read-file" => diff_files::text(&params)?,
             "read-file-binary" => diff_files::binary(&params)?,
             "read-git-file-binary" => diff_files::git_binary(&params)?,
+            "write-file" => diff_files::write(&params)?,
             "recommended-skills" => skills::recommended(&self.home, &params),
             "install-recommended-skill" => skills::install(&self.home, &params),
             "custom-pets" => json!({ "pets": crate::pets::load(&self.home)? }),

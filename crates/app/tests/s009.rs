@@ -69,7 +69,7 @@ fn file_link_opens_the_file_viewer_tab() -> Result<()> {
         .find(|t| t["selected"] == "true")
         .context("selected tab")?;
     ensure!(
-        fx.read(|r, _| r.side_panel()) == Some(SidePanel::File),
+        matches!(fx.read(|r, _| r.side_panel()), Some(SidePanel::File(_))),
         "{:?}",
         fx.read(|r, _| r.side_panel())
     );

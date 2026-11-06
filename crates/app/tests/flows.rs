@@ -1445,13 +1445,6 @@ fn open_terminal(fx: &mut Fx) -> Result<()> {
         })
         .collect();
     let mut events = ui::screens::terminal::running_command_replay();
-    for event in &mut events {
-        if let bridge::Event::Notification { params, .. } = event
-            && params["turn"].is_object()
-        {
-            params["turn"]["rootTurnId"] = params["turn"]["id"].clone();
-        }
-    }
     ensure!(status.len() == 2, "recorded active and idle statuses");
     events.insert(0, status[0].clone());
     events.push(status[1].clone());

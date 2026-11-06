@@ -74,12 +74,18 @@ pub use actions::{
 
 use actions::{TurnFocus, action_row};
 pub use hook_stats::{HookStats, OpenHookStats};
+#[derive(Clone, Copy)]
 pub enum GitAction {
     Refresh,
     OpenForm,
     CreateBranch,
     SwitchBranch,
     CreatePr,
+    ViewPr,
+    CopyPr,
+    AddPrToChat,
+    CompareBranch,
+    RepairPr,
 }
 
 impl gpui::EventEmitter<GitAction> for ThreadView {}
@@ -215,6 +221,7 @@ pub struct ThreadView {
     chat_actions_hovered: bool,
     git_repository: Option<Result<crate::dialog::CommitRepository, String>>,
     git_phase: Option<&'static str>,
+    pull_request: Option<Value>,
     worktree_status: Option<&'static str>,
     git_actions: Option<(gpui::FocusHandle, Option<usize>)>,
     /// The open More actions menu under a turn: its turn id and focus.
@@ -230,9 +237,10 @@ pub struct ThreadView {
     render_errors: RefCell<HashMap<String, String>>,
     stream_errors: HashMap<String, Vec<(bridge::types::TurnError, bool)>>,
     /// Inline notices of each turn (model reroute, verification) and the turns whose safety
-    /// buffering banner shows (`context.rs`).
+    /// buffering or strict review line shows (`context.rs`).
     notices: HashMap<String, Vec<String>>,
     safety_buffering: HashSet<String>,
+    strict_review: HashSet<String>,
     usage_limit_notice: UsageLimitNotice,
     clock: Clock,
     composer: AnyView,
@@ -434,9 +442,18 @@ impl ThreadView {
         cx.notify();
     }
 
+    pub fn set_pull_request(&mut self, pull_request: Option<Value>, cx: &mut Context<Self>) {
+        self.pull_request = pull_request;
+        cx.notify();
+    }
+
     pub fn set_worktree_status(&mut self, status: Option<&'static str>, cx: &mut Context<Self>) {
         self.worktree_status = status;
         cx.notify();
+    }
+
+    pub fn pull_request(&self) -> Option<&Value> {
+        self.pull_request.as_ref()
     }
 
     pub fn git_branch(&self) -> Option<&str> {
@@ -448,7 +465,7 @@ impl ThreadView {
             .as_deref()
     }
 
-    pub fn git_action_rows(&self) -> [(&'static str, Option<&'static str>); 5] {
+    pub fn git_action_rows(&self) -> [(&'static str, Option<&'static str>); 11] {
         let (commit, push) = match &self.git_repository {
             None => (Some("Loading diff…"), Some("Loading push status…")),
             Some(Err(_)) => (
@@ -481,7 +498,29 @@ impl ThreadView {
             ("Create branch", self.git_phase.or(create)),
             ("Switch branch", self.git_phase.or(switch)),
             ("Create pull request", self.git_phase.or(switch)),
+            (
+                "View PR",
+                self.pull_request.is_none().then_some("No pull request"),
+            ),
+            (
+                "Copy link",
+                self.pull_request.is_none().then_some("No pull request"),
+            ),
+            (
+                "Add to chat",
+                self.pull_request.is_none().then_some("No pull request"),
+            ),
+            ("Compare branch", self.git_phase),
+            (
+                "Repair",
+                self.pull_request.is_none().then_some("No pull request"),
+            ),
+            (
+                "Open in GitHub",
+                self.pull_request.is_none().then_some("No pull request"),
+            ),
         ]
+        .map(|(label, reason)| (label, self.git_phase.or(reason)))
     }
 
     pub fn git_command_available(&self) -> bool {
@@ -537,6 +576,12 @@ impl ThreadView {
             2 => GitAction::CreateBranch,
             3 => GitAction::SwitchBranch,
             4 => GitAction::CreatePr,
+            5 => GitAction::ViewPr,
+            6 => GitAction::CopyPr,
+            7 => GitAction::AddPrToChat,
+            8 => GitAction::CompareBranch,
+            9 => GitAction::RepairPr,
+            10 => GitAction::ViewPr,
             _ => GitAction::OpenForm,
         });
     }
@@ -610,12 +655,10 @@ impl ThreadView {
         )
     }
 
-    pub(super) fn git_popup(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
+    pub(super) fn git_popup(&self, _window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let t = cx.theme();
         let (_, active) = self.git_actions.as_ref().unwrap();
-        let menu_width = self.git_phase.map_or(112.03125, |phase| {
-            (f32::from(width(window, phase, 13., 430., None)) + 24.).max(112.03125)
-        });
+        let menu_width = 220.;
         let content = crate::composer::popover(t, menu_width, |mut menu| {
             if let Some(phase) = self.git_phase {
                 return menu.child(
@@ -744,6 +787,7 @@ impl ThreadView {
             chat_actions_hovered: false,
             git_repository: None,
             git_phase: None,
+            pull_request: None,
             worktree_status: None,
             git_actions: None,
             turn_menu: None,
@@ -769,6 +813,7 @@ impl ThreadView {
             stream_errors: HashMap::new(),
             notices: HashMap::new(),
             safety_buffering: HashSet::new(),
+            strict_review: HashSet::new(),
             usage_limit_notice: UsageLimitNotice::RetryLater,
             clock,
             composer,
@@ -1020,6 +1065,10 @@ impl ThreadView {
         Some(
             items::activities(
                 work,
+                self.hook_runs
+                    .get(turn_id)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default(),
                 turn.status == TurnStatus::InProgress,
                 self,
                 ReasoningVisibility::get(cx),
@@ -1705,8 +1754,9 @@ impl ThreadView {
                     )),
             );
         }
+        // A project thread's summary has no `Sources` (refs/terminal: read and edited files).
         let sources = crate::screens::sources::sources(&self.turns);
-        if !sources.is_empty() {
+        if self.projectless && !sources.is_empty() {
             let open = |row: gpui::Stateful<Div>| {
                 row.mx(px(12.))
                     .px(px(8.))
@@ -1768,7 +1818,7 @@ impl ThreadView {
                     ),
             );
         }
-        if self.projectless {
+        if self.projectless && sources.is_empty() {
             let button = self.summary_bounds("summary-sources-add", window, cx);
             sections.push(self.summary_section(
                 ("Sources", "Attach files or connect apps"),
@@ -2336,7 +2386,7 @@ impl ThreadView {
         if self.pending_question.as_deref() == Some(turn.id.as_str()) {
             col = col
                 .child(div().h(px(16.)))
-                .child(self.activity(work, false, window, t, cx));
+                .child(self.activity(&turn.id, work, false, window, t, cx));
             if let Some((item, answer)) = final_answer {
                 col = col.child(div().h(px(16.))).child(markdown::with_find(
                     answer,
@@ -2463,7 +2513,7 @@ impl ThreadView {
                         .size_full(),
                     )
                     .child(div().h(px(16.)))
-                    .child(self.activity(work, false, window, t, cx));
+                    .child(self.activity(&turn.id, work, false, window, t, cx));
                 col = col.child(if progress < 1. {
                     div()
                         .overflow_hidden()
@@ -2544,7 +2594,7 @@ impl ThreadView {
                 ThreadItem::ContextCompaction { id } => self.compacting.contains_key(id),
                 _ => false,
             });
-        col.child(self.activity(work, running, window, t, cx))
+        col.child(self.activity(&turn.id, work, running, window, t, cx))
             .when(waiting, |col| {
                 col.child(div().mt(px(if has_work { 16. } else { 0. })).child(text(
                     "Thinking",
@@ -2665,26 +2715,39 @@ impl ThreadView {
     /// matches.
     fn activity(
         &self,
+        turn_id: &str,
         items: &[ThreadItem],
         running: bool,
         window: &Window,
         t: &Theme,
         cx: &Context<Self>,
     ) -> Div {
+        let hooks = self
+            .hook_runs
+            .get(turn_id)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
         if self
             .find
             .as_ref()
             .is_none_or(|find| find.matches.is_empty())
         {
-            return activity(items, running, self, window, t, cx);
+            return activity(items, hooks, running, self, window, t, cx);
         }
         let mut column = div().flex().flex_col().gap(px(16.));
         let mut start = 0;
         for (index, item) in items.iter().enumerate() {
             if let ThreadItem::AgentMessage { id, text, .. } = item {
                 if start < index {
-                    column =
-                        column.child(activity(&items[start..index], running, self, window, t, cx));
+                    column = column.child(activity(
+                        &items[start..index],
+                        &[],
+                        running,
+                        self,
+                        window,
+                        t,
+                        cx,
+                    ));
                 }
                 column = column.child(markdown::with_find(
                     text,
@@ -2697,7 +2760,10 @@ impl ThreadView {
             }
         }
         if start < items.len() {
-            column = column.child(activity(&items[start..], running, self, window, t, cx));
+            column = column.child(activity(&items[start..], &[], running, self, window, t, cx));
+        }
+        if !hooks.is_empty() {
+            column = column.child(activity(&[], hooks, running, self, window, t, cx));
         }
         column
     }
@@ -3178,6 +3244,55 @@ impl Render for ThreadView {
                             .when_some(self.worktree_status, |d, status| {
                                 d.child(text(status, 14., 20., 400., t.text))
                             })
+                            .when_some(
+                                self.git_repository
+                                    .as_ref()
+                                    .and_then(|result| result.as_ref().ok()),
+                                |d, repo| {
+                                    d.child(
+                                        div()
+                                            .id("thread-git-summary")
+                                            .role(gpui::Role::Button)
+                                            .aria_label("Branch changes and pull request actions")
+                                            .tab_index(0)
+                                            .flex()
+                                            .gap(px(12.))
+                                            .p(px(8.))
+                                            .rounded(px(8.))
+                                            .border_1()
+                                            .border_color(t.border)
+                                            .child(text(
+                                                format!(
+                                                    "{} · {} files · +{} −{}",
+                                                    repo.branch
+                                                        .as_deref()
+                                                        .unwrap_or("Detached HEAD"),
+                                                    repo.all.files,
+                                                    repo.all.additions,
+                                                    repo.all.deletions
+                                                ),
+                                                13.,
+                                                20.,
+                                                400.,
+                                                t.text_secondary,
+                                            ))
+                                            .child(text(
+                                                if self.pull_request.is_some() {
+                                                    "View PR"
+                                                } else {
+                                                    "Create pull request"
+                                                },
+                                                13.,
+                                                20.,
+                                                500.,
+                                                t.text,
+                                            ))
+                                            .on_click(cx.listener(|view, _, window, cx| {
+                                                view.open_git_actions(false, window, cx)
+                                            })),
+                                    )
+                                },
+                            )
                             .children(turns)
                             .on_children_prepainted(measure),
                     )
@@ -3195,7 +3310,7 @@ impl Render for ThreadView {
             .when(self.summary_open, |d| {
                 d.child(gpui::deferred(self.summary(window, &t, cx)))
             })
-            .when(self.summary_open && self.git_actions.is_some(), |d| {
+            .when(self.git_actions.is_some(), |d| {
                 d.child(self.git_popup(window, cx))
             })
             // The `z-20` composer band is its own cc layer; its rect (and tile grid) starts at
@@ -4126,6 +4241,51 @@ mod tests {
         view.read_with(cx, |view, _| {
             assert!(!view.running_since.contains_key("turn"));
             assert!(!view.answer_secs.contains_key("turn"));
+        });
+    }
+
+    #[gpui::test]
+    fn strict_review_notice_shows_until_its_turn_ends(cx: &mut gpui::TestAppContext) {
+        let thread: Thread = serde_json::from_value(serde_json::json!({
+            "id": "strict", "preview": "", "modelProvider": "test",
+            "cwd": "/tmp/strict", "createdAt": 0, "updatedAt": 0,
+            "status": {"type": "idle"}, "turns": [],
+        }))
+        .unwrap();
+        cx.update(|cx| cx.set_global(theme::Theme::dark()));
+        let composer = cx.new(|_| gpui::EmptyView).into();
+        let clock = Clock {
+            utc_offset: 0,
+            pinned_now: Some(100),
+            elapsed_since: None,
+        };
+        let view = cx.new(|_| ThreadView::new(thread, clock, composer));
+        let event = |method: &str, params: serde_json::Value| Event::Notification {
+            method: method.into(),
+            params,
+        };
+        let turn = |status: &str| {
+            serde_json::json!({"threadId": "strict",
+                "turn": {"id": "turn", "items": [], "status": status, "error": null}})
+        };
+        let strict = serde_json::json!({"threadId": "strict", "turnId": "turn",
+            "startedAtMs": 1});
+        let notices = |view: &mut ThreadView, cx: &mut Context<ThreadView>| {
+            view.turn_notices(&view.turns[0], cx).len()
+        };
+        view.update(cx, |view, cx| {
+            view.apply(&event("turn/started", turn("inProgress")), cx);
+            assert_eq!(notices(view, cx), 0);
+            // A second notice in the same turn keeps one line, as the original folds them.
+            for _ in 0..2 {
+                view.apply(
+                    &event("autoApprovalReview/strictReviewRequired", strict.clone()),
+                    cx,
+                );
+            }
+            assert_eq!(notices(view, cx), 1);
+            view.apply(&event("turn/completed", turn("completed")), cx);
+            assert_eq!(notices(view, cx), 0);
         });
     }
 

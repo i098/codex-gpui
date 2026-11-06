@@ -24,6 +24,7 @@ use std::{
     collections::{HashMap, HashSet},
     ops::Range,
     path::Path,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use theme::{ActiveTheme as _, Appearance, Theme};
@@ -32,6 +33,8 @@ use theme::{ActiveTheme as _, Appearance, Theme};
 pub(crate) mod menu;
 use menu::ThreadMenu;
 mod chatgpt;
+mod cloud;
+pub use cloud::{CloudTaskRow, OpenCloudTask};
 mod mode;
 mod priority;
 pub use chatgpt::{ChatGptChat, ModeChanged};
@@ -40,6 +43,8 @@ pub use priority::{ActivityOpened, ArchiveActivity};
 
 pub mod projects;
 pub mod sections;
+mod sort;
+pub use sort::{ChatOptions, ChatOrderChanged, ChatSort, NewSectionRequested, Organize};
 
 /// `.sidebar-item`: `--radius-lg` (12.5 px) with `corner-shape: superellipse(1.5)`.
 const RADIUS_ROW: Pixels = px(12.5);
@@ -327,8 +332,9 @@ pub struct HomeSidebar {
     worktree_tip_epoch: u64,
     worktree_tip_bounds: Bounds<Pixels>,
     selected: Option<String>,
-    /// `Projects`, `Recents` collapsed by a click on their header.
-    collapsed: [bool; 3],
+    /// `Projects`, `Recents`, `Pinned` and `Cloud` collapsed by a click on their header.
+    collapsed: [bool; 4],
+    cloud_tasks: Vec<CloudTaskRow>,
     pinned: HashSet<String>,
     sections: Vec<CustomSection>,
     /// Each chat's emoji (the original's `sidebar-thread-metadata`), shown before its title.
@@ -350,6 +356,10 @@ pub struct HomeSidebar {
     /// The open row context menu.
     menu: Option<ThreadMenu>,
     native_menu_snapshot: Option<serde_json::Value>,
+    /// The `Chat sidebar options` choices, from the app's saved state.
+    pub chat_options: ChatOptions,
+    /// The open `Chat sidebar options` menu.
+    options_menu: Option<sort::OptionsMenu>,
     /// Thread id to the `cwd` it runs in: a project lists the chats in its root.
     cwds: HashMap<String, SharedString>,
     /// Projects whose `Show more` was clicked: they list every loaded chat.
@@ -473,7 +483,8 @@ impl HomeSidebar {
             worktree_tip_epoch: 0,
             worktree_tip_bounds: Bounds::default(),
             selected: selected.map(str::to_owned),
-            collapsed: [false; 3],
+            collapsed: [false; 4],
+            cloud_tasks: Vec::new(),
             pinned: pinned_ids(threads),
             sections: Vec::new(),
             emojis: HashMap::new(),
@@ -491,6 +502,8 @@ impl HomeSidebar {
             scroll: ScrollHandle::new(),
             menu: None,
             native_menu_snapshot: None,
+            chat_options: ChatOptions::default(),
+            options_menu: None,
             cwds: thread_cwds(threads),
             projects_shown_all: HashSet::new(),
         }
@@ -899,8 +912,9 @@ impl HomeSidebar {
     }
 
     pub fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
-        self.threads = threads
-            .iter()
+        self.threads = self
+            .sorted(threads)
+            .into_iter()
             .map(|t| (t.id.clone(), display_title(title(t)), t.updated_at))
             .collect();
         self.threads_state = ListState::Ready;
@@ -1087,7 +1101,9 @@ impl HomeSidebar {
             .iter()
             .enumerate()
             .filter(|(index, (id, _, _))| {
-                !self.pinned.contains(id) && !self.grouped_rows.contains(index)
+                !self.pinned.contains(id)
+                    && !self.grouped_rows.contains(index)
+                    && self.in_recents(id)
             })
             .map(|(_, thread)| thread)
     }
@@ -1126,8 +1142,10 @@ impl HomeSidebar {
             .filter(|index| match group {
                 ThreadGroup::Pinned => self.pinned.contains(&self.threads[*index].0),
                 ThreadGroup::Recents => {
-                    !self.pinned.contains(&self.threads[*index].0)
+                    let id = &self.threads[*index].0;
+                    !self.pinned.contains(id)
                         && !self.grouped_rows.contains(index)
+                        && self.in_recents(id)
                 }
                 ThreadGroup::Custom(_) => true,
             })
@@ -1417,6 +1435,8 @@ impl Render for HomeSidebar {
                     .child(
                         div()
                             .group(key.clone())
+                            .when(i == 0, |d| d.debug_selector(|| "projects-header".into()))
+                            .when(i == 1, |d| d.debug_selector(|| "recents-header".into()))
                             .relative()
                             .h(px(30.))
                             .flex()
@@ -1478,6 +1498,9 @@ impl Render for HomeSidebar {
                             )
                             .when(i >= self.collapsed.len(), |d| {
                                 d.child(self.section_actions(i - self.collapsed.len(), window, cx))
+                            })
+                            .when(i == 1, |d| {
+                                d.child(self.chat_options_button(key.clone(), window, cx))
                             }),
                     )
                     .when(!collapsed, |d| d.child(div().pt(px(4.)).child(body)))
@@ -1498,13 +1521,19 @@ impl Render for HomeSidebar {
             let projects = section(0, "Projects".into(), project_rows, window, cx);
             let recents = section(1, "Recents".into(), recents, window, cx);
             let pinned = pinned.map(|rows| section(2, "Pinned".into(), rows, window, cx));
+            let cloud = (!self.cloud_tasks.is_empty()).then(|| {
+                let rows = self.cloud_rows(window, cx);
+                section(3, "Cloud".into(), rows, window, cx)
+            });
             div()
                 .flex()
                 .flex_col()
                 .gap(px(16.))
                 .px(px(8.))
                 .children(pinned)
-                .child(projects)
+                .when(self.chat_options.organize == Organize::Project, |d| {
+                    d.child(projects)
+                })
                 .children((0..self.sections.len()).map(|index| {
                     let body = self.custom_body(index, window, cx);
                     section(
@@ -1516,6 +1545,7 @@ impl Render for HomeSidebar {
                     )
                 }))
                 .child(recents)
+                .children(cloud)
                 .into_any_element()
         };
         div()
@@ -1555,6 +1585,7 @@ impl Render for HomeSidebar {
                     .map(|_| self.menu_overlay(window, cx)),
             )
             .children(self.activity_menu_overlay(window, cx))
+            .children(self.chat_options_overlay(window, cx))
             .children(self.worktree_tip.then(|| self.worktree_tooltip_element(cx)))
     }
 }
@@ -4646,7 +4677,12 @@ fn span_widths(s: &str, size: f32, window: &Window) -> Vec<f32> {
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     let sidebar = home_sidebar(cx, None);
     let main = super::home::home_main(window, cx);
-    let shell = cx.new(|_| Shell::new(sidebar, main));
+    // The references show one unread Explore destination.
+    let shell = cx.new(|_| {
+        let mut shell = Shell::new(sidebar, main);
+        shell.unread_destinations = Some(Arc::from([SharedString::from("explore")]));
+        shell
+    });
     let menu = cx.new(|cx| CommandMenu::new("math", cx));
     let focus = menu.read(cx).focus.clone();
     focus.focus(window, cx);

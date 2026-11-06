@@ -33,12 +33,22 @@ pub struct CloudTaskRequest {
 
 pub fn create_cloud_task(host: &dyn host::Host, task: &CloudTaskRequest) -> Result<Value> {
     ensure!(
-        !task.prompt.trim().is_empty(),
-        "A cloud task needs a prompt"
-    );
-    ensure!(
         !task.environment_id.is_empty(),
         "A cloud task needs an environment"
+    );
+    post_task(host, task, None)
+}
+
+/// `POST /wham/tasks`. An inline `environment` (a local worktree snapshot) replaces the
+/// saved environment id, as in the original.
+pub(crate) fn post_task(
+    host: &dyn host::Host,
+    task: &CloudTaskRequest,
+    environment: Option<Value>,
+) -> Result<Value> {
+    ensure!(
+        !task.prompt.trim().is_empty(),
+        "A cloud task needs a prompt"
     );
     let identity = host
         .identity()
@@ -46,7 +56,6 @@ pub fn create_cloud_task(host: &dyn host::Host, task: &CloudTaskRequest) -> Resu
     let mut body = json!({
         "new_task": {
             "branch": task.branch,
-            "environment_id": task.environment_id,
             "run_environment_in_qa_mode": task.read_only,
         },
         "input_items": [{
@@ -54,10 +63,94 @@ pub fn create_cloud_task(host: &dyn host::Host, task: &CloudTaskRequest) -> Resu
             "content":[{"content_type":"text","text":task.prompt}],
         }],
     });
+    match environment {
+        Some(environment) => body["new_task"]["environment"] = environment,
+        None => body["new_task"]["environment_id"] = task.environment_id.clone().into(),
+    }
     if let Some(model) = &task.model {
         body["metadata"] = json!({"model_slug":model});
     }
     request(host, &identity, "POST", "/wham/tasks", Some(body))
+}
+
+/// The id of the task a `POST /wham/tasks` created: `{ "task": { "id" } }`.
+fn created_task_id(response: &Value) -> Result<String> {
+    response
+        .pointer("/task/id")
+        .or_else(|| response.get("id"))
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+        .context("The cloud task response has no task id")
+}
+
+/// The account's cloud environments as `(label, id)`, for the `Cloud` start's environment
+/// selector. Signed out or no Cloud access: an error.
+pub(crate) fn environment_names(host: &dyn host::Host) -> Result<Vec<(String, String)>> {
+    let identity = host
+        .identity()
+        .context("Cloud authentication is unavailable")?;
+    let response = execute(host, &identity, &Operation::Names)?;
+    Ok(environment_choices(&response))
+}
+
+fn environment_choices(response: &Value) -> Vec<(String, String)> {
+    response
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|environment| {
+            let id = environment["id"].as_str()?;
+            let label = environment["label"].as_str().unwrap_or(id);
+            Some((label.to_owned(), id.to_owned()))
+        })
+        .collect()
+}
+
+impl Root {
+    /// Home's `Work in` > `Cloud` submit: `POST /wham/tasks` in the chosen environment and
+    /// branch, then the task's `/remote/:taskId` page. A refusal restores the draft.
+    pub(crate) fn start_cloud_task(
+        &mut self,
+        s: ui::composer::Submission,
+        options: ui::screens::hotkey::Options,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let host = self.host.clone();
+        let hotkey = self.popout.is_some();
+        let task = CloudTaskRequest {
+            prompt: s.text.clone(),
+            branch: options
+                .branch
+                .filter(|branch| branch != "HEAD")
+                .unwrap_or_else(|| "main".into()),
+            environment_id: options.environment.unwrap_or_default(),
+            model: (!s.model.is_empty()).then(|| s.model.clone()),
+            read_only: false,
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            let created = cx
+                .background_spawn(async move {
+                    created_task_id(&create_cloud_task(host.as_ref(), &task)?)
+                })
+                .await;
+            this.update_in(cx, |this, window, cx| match created {
+                Ok(task_id) => this.open_remote_task(task_id, hotkey, window, cx),
+                Err(error) => {
+                    eprintln!("codex-gpui: cannot create cloud task: {error:#}");
+                    this.restore_start_draft(&s, cx);
+                    this.toast(
+                        ui::toast::Toast::danger("Couldn't create cloud task")
+                            .description(error.to_string()),
+                        cx,
+                    );
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
 }
 
 pub(crate) fn attach(
@@ -186,7 +279,7 @@ impl Root {
     }
 }
 
-fn request(
+pub(crate) fn request(
     host: &dyn host::Host,
     identity: &host::Identity,
     method: &str,
@@ -779,6 +872,26 @@ fn config_error_label(operation: &Operation) -> &'static str {
 mod tests {
     use super::*;
 
+    #[test]
+    fn cloud_start_reads_the_created_task_and_environment_choices() {
+        assert_eq!(
+            created_task_id(&json!({"task": {"id": "task_e_1", "title": "t"}})).unwrap(),
+            "task_e_1"
+        );
+        assert!(created_task_id(&json!({"task": {"id": ""}})).is_err());
+        assert!(created_task_id(&json!({})).is_err());
+        assert_eq!(
+            environment_choices(&json!([
+                {"id": "env_1", "label": "web"},
+                {"id": "env_2"},
+                {"label": "no id"}
+            ])),
+            [
+                ("web".to_owned(), "env_1".to_owned()),
+                ("env_2".to_owned(), "env_2".to_owned())
+            ]
+        );
+    }
     #[test]
     fn legacy_migration_takes_refs_from_the_created_draft() {
         let requested = [json!({"id": "repo-1", "name": "openai/codex"})];

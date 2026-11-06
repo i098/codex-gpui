@@ -48,6 +48,8 @@ pub struct Options {
     pub mode: Mode,
     pub cloud_available: bool,
     pub environments: Vec<(String, String)>,
+    /// Cloud environments `(label, id)`: the `Environment` choices of a `Cloud` start.
+    pub cloud_environments: Vec<(String, String)>,
     pub environment: Option<String>,
     pub environment_error: Option<String>,
 }
@@ -175,12 +177,17 @@ impl Controls {
                         self.options.start_in_disabled(),
                     ),
                 ];
-                if self.options.mode == Mode::Worktree {
+                if self.options.mode != Mode::Local {
+                    let choices = if self.options.mode == Mode::Cloud {
+                        &self.options.cloud_environments
+                    } else {
+                        &self.options.environments
+                    };
                     let environment = self
                         .options
                         .environment
                         .as_ref()
-                        .and_then(|path| self.options.environments.iter().find(|(_, p)| p == path))
+                        .and_then(|path| choices.iter().find(|(_, p)| p == path))
                         .map_or("None", |(name, _)| name.as_str());
                     rows.push((
                         format!("Environment\t{environment}"),
@@ -264,6 +271,19 @@ impl Controls {
                     )
                 })
                 .collect(),
+            Menu::Environment if self.options.mode == Mode::Cloud => self
+                .options
+                .cloud_environments
+                .iter()
+                .map(|(label, id)| {
+                    (
+                        label.clone(),
+                        Some(Change::Environment(Some(id.clone()))),
+                        None,
+                        None,
+                    )
+                })
+                .collect(),
             Menu::Environment => {
                 std::iter::once(("None".into(), Some(Change::Environment(None)), None, None))
                     .chain(self.options.environments.iter().map(|(name, path)| {
@@ -283,6 +303,7 @@ impl Controls {
                     .collect()
             }
             Menu::Permission => {
+                let composer = self.composer.upgrade();
                 let mut entries: Vec<_> = [
                     ("Ask for approval", Permission::Ask),
                     ("Approve for me", Permission::ApproveForMe),
@@ -296,6 +317,12 @@ impl Controls {
                             .try_global::<crate::composer::FullAccessHidden>()
                             .is_some_and(|hidden| hidden.0)
                 })
+                // Requirements can disable or remove a preset; the composer owns those rows.
+                .filter(|(label, _)| {
+                    composer
+                        .as_ref()
+                        .is_none_or(|c| c.read(cx).permission_disabled(label) == Some(None))
+                })
                 .map(|(label, permission)| {
                     (
                         label.into(),
@@ -305,7 +332,7 @@ impl Controls {
                     )
                 })
                 .collect();
-                if let Some(composer) = self.composer.upgrade() {
+                if let Some(composer) = composer {
                     entries.extend(composer.read(cx).named_permissions().map(|permission| {
                         (
                             permission.option_label().to_owned(),

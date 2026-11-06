@@ -617,6 +617,8 @@ pub(super) enum Activity<'a> {
     /// lines show under it while open (keyed `key`); its
     /// `image` always shows under it.
     Row(Row),
+    /// One `hook/started` or `hook/completed` run of the turn: its row and its output.
+    Hook(&'a HookRun),
 }
 
 pub(super) struct Row {
@@ -693,6 +695,9 @@ impl Activity<'_> {
                 )
                 .collect(),
             Activity::Tool(_, label) => vec![label.clone()],
+            Activity::Hook(run) => std::iter::once(super::hook_stats::activity_label(run))
+                .chain(super::hook_stats::output(run))
+                .collect(),
             Activity::Review(label) => vec![label.clone()],
             Activity::Group {
                 key, summary, rows, ..
@@ -710,6 +715,7 @@ impl Activity<'_> {
 /// The activity entries of a turn's `items`. A running turn names its running commands.
 pub(super) fn activities<'a>(
     items: &'a [ThreadItem],
+    hooks: &'a [HookRun],
     running: bool,
     view: &'a ThreadView,
     visibility: super::ReasoningVisibility,
@@ -811,6 +817,7 @@ pub(super) fn activities<'a>(
         }
     }
     flush(&mut out, &mut group);
+    out.extend(hooks.iter().map(Activity::Hook));
     out
 }
 
@@ -1226,6 +1233,7 @@ fn humanize(id: &str) -> String {
 /// Clicking the summary toggles `open` under the group's key.
 pub(super) fn activity(
     items: &[ThreadItem],
+    hooks: &[HookRun],
     running: bool,
     view: &ThreadView,
     window: &Window,
@@ -1314,6 +1322,7 @@ pub(super) fn activity(
     let now = cx.background_executor().now();
     for entry in activities(
         items,
+        hooks,
         running,
         view,
         super::ReasoningVisibility::get(cx),
@@ -1425,6 +1434,25 @@ pub(super) fn activity(
                     })
             }
             Activity::Tool(icon, words) => row(glyph(icon), plain(label(words.clone(), text60))),
+            Activity::Hook(run) => {
+                let failed = matches!(run.status.as_str(), "blocked" | "failed");
+                let color = if failed { t.text } else { text60 };
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap(px(4.))
+                    .child(row(
+                        glyph("settings-hooks"),
+                        plain(label(hook_stats::activity_label(run), color)),
+                    ))
+                    .children(
+                        hook_stats::output(run)
+                            .into_iter()
+                            .map(|line| text60_block(line, t)),
+                    )
+            }
             Activity::Mcp(item) => {
                 let ThreadItem::McpToolCall {
                     id,
