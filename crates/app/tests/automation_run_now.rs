@@ -1862,6 +1862,20 @@ mod app_tools {
                 line["msg"]["result"]["thread"] = thread.clone();
             }
         }
+        // The app reads a chat's turns from `thread/turns/list`, not from `thread/read`.
+        let pages: Vec<Value> = lines
+            .iter()
+            .filter(|line| {
+                line["msg"]["method"] == "thread/turns/list"
+                    && line["msg"]["params"]["threadId"] == SOURCE
+            })
+            .map(|line| line["msg"]["id"].clone())
+            .collect();
+        for line in &mut lines {
+            if line["dir"] == "recv" && pages.contains(&line["msg"]["id"]) {
+                line["msg"]["result"]["data"] = thread["turns"].clone();
+            }
+        }
         let mut fx = Fx::scripted(lines)?;
         fx.root
             .update(&mut fx.cx, |root, cx| root.set_host(local.clone(), cx));
