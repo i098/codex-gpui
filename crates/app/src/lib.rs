@@ -37,6 +37,7 @@ mod goals;
 pub mod host;
 pub mod host_settings;
 pub mod hotkey;
+mod ide_context;
 mod logging;
 pub mod native_menus;
 mod new_project;
@@ -5144,6 +5145,37 @@ impl Root {
             self.send_shell(side, s, window, cx);
             return;
         }
+        if s.ide_context
+            && retry.is_none()
+            && let Some((view, _)) = self.conversation(side)
+        {
+            // `/ide-context`: ask the IDE off the UI thread, then send with its context.
+            let root = view.read(cx).cwd().to_owned();
+            cx.spawn_in(window, async move |this, cx| {
+                let context = cx
+                    .background_executor()
+                    .spawn(async move { ide_context::fetch(&root) })
+                    .await;
+                this.update_in(cx, |this, window, cx| {
+                    this.send_inner(side, s, None, context, window, cx)
+                })
+            })
+            .detach();
+            return;
+        }
+        self.send_inner(side, s, retry, None, window, cx);
+    }
+
+    /// [`Self::send`] once the IDE's context (`ide`) is known.
+    fn send_inner(
+        &mut self,
+        side: Option<usize>,
+        s: Submission,
+        retry: Option<FailedQueuedMessage>,
+        ide: Option<ide_context::IdeContext>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some((view, _)) = self.conversation(side) else {
             return;
         };
@@ -5170,6 +5202,10 @@ impl Root {
                 .queue_edit(side)
                 .and_then(|edit| edit.take_if(|edit| edit.thread_id == id));
             let mut input = user_input(&s);
+            if let Some(context) = &ide {
+                let text = input[0]["text"].as_str().unwrap_or_default().to_owned();
+                input[0]["text"] = ide_context::prompt(text, context).into();
+            }
             input.extend(place.iter().flat_map(|edit| edit.extra.clone()));
             let client_id = uuid_v4();
             FailedQueuedMessage {
