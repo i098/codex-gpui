@@ -721,7 +721,9 @@ impl Render for MobileSetupPage {
                             .with_transformation(Transformation::rotate(radians(angle))),
                     )
                 })
-                .child(text(label, 14., 18., 430., foreground))
+                // The label box is the text's own width, so Blink's inherited `text-center`
+                // moves nothing; GPUI centers in the device-px-snapped box and shifts it.
+                .child(text(label, 14., 18., 430., foreground).text_left())
                 .when(disabled, |b| b.opacity(0.4));
             crate::focus::shadow_ring(control, focus, Theme::RADIUS_FULL, px(2.), cx)
         };
