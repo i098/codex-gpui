@@ -107,7 +107,10 @@ struct PolicyHost {
 impl app::host::Host for PolicyHost {
     fn fetch(&self, request: &app::host::Request) -> Result<serde_json::Value> {
         if let app::host::Request::Http(http) = request {
-            if http["url"].as_str().is_some_and(|url| url.starts_with("/composer/items")) {
+            if http["url"]
+                .as_str()
+                .is_some_and(|url| url.starts_with("/composer/items"))
+            {
                 anyhow::bail!("task suggestions are not under test");
             }
             assert_eq!(http["url"], "/wham/statsig/bootstrap");
