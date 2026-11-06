@@ -11,8 +11,10 @@ const PICKER_ENTER: Duration = Duration::from_millis(320);
 const PICKER_MOVE: Duration = Duration::from_millis(320);
 /// The simple view's box: 4 px panel padding, the 48 px top row, the 40 px slider row.
 const SIMPLE_VIEW_HEIGHT: f32 = 96.;
-/// The Daybreak row under the model list: a 4 px gap, the 28 px row, a 20 px safety notice.
-const DAYBREAK_HEIGHT: f32 = 4. + 28. + 20.;
+/// The Daybreak row under the model list (a 4 px gap and the 28 px row), and the two-line
+/// safety notice under it while Daybreak is on.
+const DAYBREAK_ROW: f32 = 4. + 28.;
+const DAYBREAK_NOTICE: f32 = 32. + 4.;
 /// `_ThumbSpring` grows to `scale(32 / 28)` while hovered or pressed (spring `jt`) and
 /// shrinks back with spring `Mt`.
 const THUMB_GROWN: f32 = 32. / 28.;
@@ -238,10 +240,10 @@ impl Composer {
         let list_height = 8.
             + 28.
             + 32. * self.models.len() as f32
-            + if self.daybreak_row() {
-                DAYBREAK_HEIGHT
-            } else {
-                0.
+            + match (self.daybreak_row(), self.daybreak) {
+                (false, _) => 0.,
+                (true, false) => DAYBREAK_ROW,
+                (true, true) => DAYBREAK_ROW + DAYBREAK_NOTICE,
             };
         let height = SIMPLE_VIEW_HEIGHT + (list_height - SIMPLE_VIEW_HEIGHT) * f.height;
         popover(t, 254., |d| {
@@ -677,13 +679,16 @@ impl Composer {
                     }),
             )
             .when(enabled, |d| {
-                d.child(div().px(px(8.)).child(text(
-                    "Some cybersecurity requests are still limited, even when Daybreak is on.",
-                    12.,
-                    16.,
-                    400.,
-                    t.text_tertiary,
-                )))
+                d.child(div().px(px(8.)).pb(px(4.)).child(
+                    text(
+                        "Some cybersecurity requests are still limited, even when Daybreak is on.",
+                        12.,
+                        16.,
+                        400.,
+                        t.text_tertiary,
+                    )
+                    .whitespace_normal(),
+                ))
             })
     }
 
