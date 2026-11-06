@@ -149,6 +149,27 @@ const STATES = {
     await d.click(byText("Open profile menu"));
     await d.waitFor(`document.querySelector("[role=menu]")?.innerText.includes("Log out")`, "profile menu");
   },
+  "chat-options": async (d) => {
+    // The button shows (and takes its width) only while its section title is hovered.
+    await d.hover(`document.querySelector('[data-app-action-sidebar-section-heading=Recents] [class*="group/nav-section-title"]')`, "Recents title");
+    await d.sleep(300);
+    await d.click(byText("Chat sidebar options"));
+    await d.waitFor(`document.querySelector("[role=menu]")?.innerText.includes("Sort chats by")`, "chat options menu");
+  },
+  // By keys: the pointer then rests on the titlebar without closing the submenu.
+  "chat-options-organize": async (d) => {
+    await STATES["chat-options"](d);
+    await d.key("ArrowDown", "ArrowDown", 40);
+    await d.key("ArrowRight", "ArrowRight", 39);
+    await d.waitFor(`[...document.querySelectorAll("[role=menu]")].some((m) => m.innerText.includes("In one list"))`, "organize submenu");
+  },
+  "chat-options-sort": async (d) => {
+    await STATES["chat-options"](d);
+    await d.key("ArrowDown", "ArrowDown", 40);
+    await d.key("ArrowDown", "ArrowDown", 40);
+    await d.key("ArrowRight", "ArrowRight", 39);
+    await d.waitFor(`[...document.querySelectorAll("[role=menu]")].some((m) => m.innerText.includes("Manual order"))`, "sort submenu");
+  },
   automations: async (d) => {
     await d.click(byText("Scheduled"));
     await d.waitFor(`document.body.innerText.includes("Scheduled") && !document.body.innerText.includes("Loading scheduled")`, "automations page");

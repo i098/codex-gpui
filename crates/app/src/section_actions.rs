@@ -130,11 +130,11 @@ impl Root {
         }
     }
 
-    /// A row menu's `Section` > `New section…`: the `New section` dialog; its Save creates the
-    /// section, then moves the row into it.
-    pub(crate) fn new_section_for(
+    /// The `New section` dialog, from a row menu's `Section` > `New section…` (`thread`: its
+    /// Save creates the section, then moves the row into it) or the Recents options menu.
+    pub(crate) fn new_section(
         &mut self,
-        thread: String,
+        thread: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -142,7 +142,7 @@ impl Root {
             return;
         }
         let dialog = cx.new(|cx| Dialog::section(None, String::new(), cx));
-        self.new_section_thread = Some(thread);
+        self.new_section_thread = thread;
         self.show_dialog(dialog, window, cx);
     }
 

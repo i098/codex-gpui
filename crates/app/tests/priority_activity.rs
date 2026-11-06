@@ -107,7 +107,10 @@ struct PolicyHost {
 impl app::host::Host for PolicyHost {
     fn fetch(&self, request: &app::host::Request) -> Result<serde_json::Value> {
         if let app::host::Request::Http(http) = request {
-            assert_eq!(http["url"], "/wham/statsig/bootstrap");
+            // The signed-in sidebar also reads its `Cloud` tasks: this account has none.
+            if http["url"] != "/wham/statsig/bootstrap" {
+                return Ok(serde_json::json!({"status": 404, "body": "{}"}));
+            }
             if self
                 .fail_next
                 .swap(false, std::sync::atomic::Ordering::SeqCst)

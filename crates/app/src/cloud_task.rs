@@ -776,6 +776,61 @@ pub(crate) fn segment(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
+/// The sidebar's `Cloud` group: the first `/wham/tasks/list?task_filter=current` page, as
+/// the original's sidebar asks. Without a ChatGPT account, or refused (401, 403, 404), the
+/// group is empty.
+pub(crate) fn current_tasks(host: &dyn Host) -> Result<Vec<ui::screens::sidebar::CloudTaskRow>> {
+    let Some(identity) = host.identity() else {
+        return Ok(Vec::new());
+    };
+    let path = "/wham/tasks/list?limit=20&task_filter=current";
+    let response = host.fetch(&request(&identity, path, "GET", None))?;
+    if matches!(
+        response_wire(&response)["status"].as_u64(),
+        Some(401 | 403 | 404)
+    ) {
+        return Ok(Vec::new());
+    }
+    let body = json_body(&response)?;
+    let items = body["items"]
+        .as_array()
+        .context("missing cloud task items")?;
+    items
+        .iter()
+        .filter(|task| task["archived"] != true)
+        .map(|task| {
+            let status = &task["task_status_display"]["latest_turn_status_display"]["turn_status"];
+            Ok(ui::screens::sidebar::CloudTaskRow {
+                id: task["id"].as_str().context("cloud task id")?.to_owned(),
+                title: task["title"]
+                    .as_str()
+                    .unwrap_or("Untitled task")
+                    .to_owned()
+                    .into(),
+                running: matches!(status.as_str(), Some("in_progress" | "pending")),
+                unread: task["has_unread_turn"] == true,
+            })
+        })
+        .collect()
+}
+
+impl Root {
+    pub(crate) fn load_cloud_tasks(&mut self, cx: &mut Context<Self>) {
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move { current_tasks(host.as_ref()) });
+        self.cloud_load = Some(cx.spawn(async move |this, cx| match read.await {
+            Ok(tasks) => {
+                this.update(cx, |this, cx| {
+                    this.sidebar
+                        .update(cx, |s, cx| s.set_cloud_tasks(tasks, cx))
+                })
+                .ok();
+            }
+            Err(error) => eprintln!("codex-gpui: cannot read cloud tasks: {error:#}"),
+        }));
+    }
+}
+
 pub(crate) fn request(
     identity: &Identity,
     path: &str,
@@ -1333,6 +1388,40 @@ mod tests {
                 hotkey: true
             })
         );
+    }
+
+    #[test]
+    fn sidebar_rows_are_the_current_tasks_with_their_status() -> Result<()> {
+        // The recording has no `oai-did` header, so `ReplayHost` reports no account.
+        struct SignedIn(crate::host::ReplayHost);
+        impl Host for SignedIn {
+            fn fetch(&self, request: &Request) -> Result<Value> {
+                self.0.fetch(request)
+            }
+            fn identity(&self) -> Option<Identity> {
+                Some(Identity {
+                    account_id: "acct-fixture".into(),
+                    user_id: "user-fixture".into(),
+                    device_id: "device-fixture".into(),
+                })
+            }
+        }
+        let host = SignedIn(crate::host::ReplayHost::from_recording(include_str!(
+            "../../../fixtures/orbit-tasks.json"
+        ))?);
+        let rows = current_tasks(&host)?;
+        let shown: Vec<_> = rows
+            .iter()
+            .map(|r| (r.id.as_str(), r.title.as_ref(), r.running, r.unread))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("task-fixture-1", "Update the greeting", false, true),
+                ("task-fixture-2", "Fix the flaky timer", true, false),
+            ]
+        );
+        Ok(())
     }
 }
 

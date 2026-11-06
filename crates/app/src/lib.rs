@@ -299,6 +299,8 @@ pub struct State {
     pub confirm_before_close: ConfirmBeforeClose,
     pub project_root: Option<String>,
     pub zoom: f32,
+    /// The Recents header's `Chat sidebar options` choices.
+    pub chat_options: ui::screens::sidebar::ChatOptions,
     /// The composer's sent prompts ([`ui::composer::PromptHistory`]).
     pub prompt_history: Vec<String>,
     /// The unsent composer text of each thread (`draftKey`), by thread id.
@@ -319,6 +321,7 @@ impl Default for State {
             confirm_before_close: ConfirmBeforeClose::default(),
             project_root: None,
             zoom: 1.,
+            chat_options: Default::default(),
             prompt_history: Vec::new(),
             drafts: HashMap::new(),
             path: None,
@@ -583,6 +586,8 @@ pub struct Root {
     last_agent_messages: HashMap<String, (String, String)>,
     _inbox_poll: Task<()>,
     project_load: Option<Task<()>>,
+    /// The sidebar `Cloud` group's `/wham/tasks/list` read; a newer read or a new host drops it.
+    cloud_load: Option<Task<()>>,
     destination_load: Option<Task<()>>,
     unread_destinations: Option<Arc<[SharedString]>>,
     /// The MCP catalog lists the `codex_security_cloud` destination.
@@ -883,6 +888,7 @@ impl Root {
             sidebar.threads_state = ListState::Loading;
             sidebar.set_activity_archive_supported(!bridge.is_acp());
             sidebar.activity_available = false;
+            sidebar.chat_options = state.chat_options.clone();
             sidebar
         });
         cx.subscribe_in(
@@ -905,6 +911,33 @@ impl Root {
             &sidebar,
             window,
             |this, _, mode: &ModeChanged, window, cx| this.mode_changed(mode.0, window, cx),
+        )
+        .detach();
+        cx.subscribe_in(
+            &sidebar,
+            window,
+            |this, sidebar, _: &ui::screens::sidebar::ChatOrderChanged, window, cx| {
+                this.state.chat_options = sidebar.read(cx).chat_options.clone();
+                let threads = std::mem::take(&mut this.threads);
+                this.set_threads(&threads, cx);
+                this.save(window, cx);
+            },
+        )
+        .detach();
+        cx.subscribe_in(
+            &sidebar,
+            window,
+            |this, _, _: &ui::screens::sidebar::NewSectionRequested, window, cx| {
+                this.new_section(None, window, cx)
+            },
+        )
+        .detach();
+        cx.subscribe_in(
+            &sidebar,
+            window,
+            |this, _, open: &ui::screens::sidebar::OpenCloudTask, window, cx| {
+                this.open_remote_task(open.0.clone(), false, window, cx)
+            },
         )
         .detach();
         let main = cx.new(|_| ui::EmptyMain).into();
@@ -1116,6 +1149,7 @@ impl Root {
             automation_runs: Vec::new(),
             running_automations: HashSet::new(),
             project_load: None,
+            cloud_load: None,
             destination_load: None,
             unread_destinations: None,
             security_cloud: false,
@@ -1638,6 +1672,9 @@ impl Root {
         self.automation_editor = None;
         self.new_project = None;
         self.project_load = None;
+        self.cloud_load = None;
+        self.sidebar
+            .update(cx, |s, cx| s.set_cloud_tasks(Vec::new(), cx));
         self.destination_load = None;
         self.set_unread_destinations(None, cx);
         self.suggestion_load = None;
@@ -1738,6 +1775,7 @@ impl Root {
     fn load_projects(&mut self, cx: &mut Context<Self>) {
         self.sidebar
             .update(cx, |s, cx| s.set_projects_state(ListState::Loading, cx));
+        self.load_cloud_tasks(cx);
         let host = self.host.clone();
         let bridge = self.bridge.clone();
         let local = self.host_id == "local";
@@ -4383,6 +4421,9 @@ impl Root {
                         this.threads_loaded = false;
                         this.automation_load = None;
                         this.project_load = None;
+                        this.cloud_load = None;
+                        this.sidebar
+                            .update(cx, |s, cx| s.set_cloud_tasks(Vec::new(), cx));
                         this.suggestion_load = None;
                         this.automations = None;
                         this.scheduled = None;
