@@ -2176,6 +2176,9 @@ impl Host for LocalHost {
                     .context("missing environment path")?,
             )?,
             "codex-worktrees" => self.worktrees()?,
+            "thread-worktree-info" => git::thread_worktree_info(&params)?,
+            "move-thread-to-worktree" => git::move_thread(&params, &self.home.join("worktrees"))?,
+            "rollback-thread-move" => git::rollback_move(&params)?,
             "worktree-delete" => {
                 self.delete_worktree(params["worktree"].as_str().context("missing worktree")?)?
             }

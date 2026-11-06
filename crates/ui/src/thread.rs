@@ -81,6 +81,7 @@ pub enum GitAction {
     CreateBranch,
     SwitchBranch,
     CreatePr,
+    MoveToWorktree,
     ViewPr,
     CopyPr,
     AddPrToChat,
@@ -464,7 +465,7 @@ impl ThreadView {
             .as_deref()
     }
 
-    pub fn git_action_rows(&self) -> [(&'static str, Option<&'static str>); 11] {
+    pub fn git_action_rows(&self) -> [(&'static str, Option<&'static str>); 12] {
         let (commit, push) = match &self.git_repository {
             None => (Some("Loading diff…"), Some("Loading push status…")),
             Some(Err(_)) => (
@@ -509,6 +510,7 @@ impl ThreadView {
                 "Add to chat",
                 self.pull_request.is_none().then_some("No pull request"),
             ),
+            ("Move to worktree", self.git_phase),
             ("Compare branch", self.git_phase),
             (
                 "Repair",
@@ -578,9 +580,10 @@ impl ThreadView {
             5 => GitAction::ViewPr,
             6 => GitAction::CopyPr,
             7 => GitAction::AddPrToChat,
-            8 => GitAction::CompareBranch,
-            9 => GitAction::RepairPr,
-            10 => GitAction::ViewPr,
+            8 => GitAction::MoveToWorktree,
+            9 => GitAction::CompareBranch,
+            10 => GitAction::RepairPr,
+            11 => GitAction::ViewPr,
             _ => GitAction::OpenForm,
         });
     }
