@@ -12,9 +12,16 @@ use std::{
 #[derive(Clone, Debug)]
 pub enum FileTreeRequest {
     Directory(String),
-    Search { query: String, generation: u64 },
+    Search {
+        query: String,
+        generation: u64,
+    },
     Open(String),
     PinPreview,
+    /// The header `Open` button: load the open-in targets for [`FileView::show_open_targets`].
+    OpenTargets,
+    /// A picked `Open` menu target.
+    OpenIn(OpenTargetRequest),
 }
 
 impl gpui::EventEmitter<FileTreeRequest> for FileView {}
@@ -214,6 +221,7 @@ impl FileView {
         self.tree.select(relative_path(&self.tree.root, &path));
         self.path = path;
         self.line = line;
+        self.show_source = line.is_some();
         self.contents = None;
         self.media = None;
         self.blame.clear();

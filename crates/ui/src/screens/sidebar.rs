@@ -77,6 +77,8 @@ pub struct Project {
     pub expanded: bool,
     /// In the global state's `pinned-project-ids`; pinned projects list first.
     pub pinned: bool,
+    /// The stored `updatedAt`, in seconds.
+    pub updated_at: Option<i64>,
 }
 
 /// Thread name or preview, cut to 80 characters. Views supply their own empty-state label.
@@ -777,6 +779,15 @@ impl HomeSidebar {
                 .as_ref()
                 .is_some_and(|root| self.cwds.get(id) == Some(root))
         })
+    }
+
+    /// The Projects index's `Updated`: the newest of the project's own `updatedAt` and its
+    /// loaded chats' times, in seconds (the original's `modifiedAt`).
+    pub fn project_activity(&self, project: &Project) -> Option<i64> {
+        self.project_chats(project)
+            .map(|(_, _, at)| *at)
+            .chain(project.updated_at)
+            .max()
     }
 
     /// An expanded project's chats: [`PROJECT_PAGE`] rows, then `Show more` while rows are

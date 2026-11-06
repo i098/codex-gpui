@@ -16,6 +16,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // (menu items carry their shortcut on a second line).
 const byText = (t, sel = "button,a,[role=button],[role=menuitem],[role=menuitemradio],[role=option],[role=tab],[role=link]") =>
   `[...document.querySelectorAll(${JSON.stringify(sel)})].find((e) => e.offsetParent !== null && ((e.getAttribute("aria-label") || "").trim() === ${JSON.stringify(t)} || e.innerText?.trim().split("\\n")[0].trim() === ${JSON.stringify(t)}))`;
+// The Files tree rows are 28 px tall from y 141: the open folder, then its files.
+const TREE_ROW = { "notes.txt": 1, "other.txt": 2, "README.md": 3 };
+async function openFile(d, name) {
+  await d.clickAt(1120, 141 + 28 * TREE_ROW[name]);
+  await d.sleep(1500);
+}
 const row = (prefix) => `[...document.querySelectorAll("nav [data-thread-title]")].find((e) => e.textContent.trim().startsWith(${JSON.stringify(prefix)}))`;
 
 function driver(p, w, h) {
@@ -43,7 +49,15 @@ function driver(p, w, h) {
   const type = (text) => p.send("Input.insertText", { text });
   // The pointer rests on the empty titlebar centre, where nothing reacts to hover.
   const park = () => mouse("mouseMoved", Math.round(w * 0.6), 6);
-  return { waitFor, hover, click, key, type, park, sleep, evaluate: p.evaluate };
+  // A press at window coordinates, for content outside the page's DOM (the Files tree).
+  const clickAt = async (x, y) => {
+    await mouse("mouseMoved", x, y);
+    await mouse("mousePressed", x, y, { button: "left", buttons: 1, clickCount: 1 });
+    await sleep(50);
+    await mouse("mouseReleased", x, y, { button: "left", clickCount: 1 });
+    await sleep(300);
+  };
+  return { waitFor, hover, click, clickAt, key, type, park, sleep, evaluate: p.evaluate };
 }
 
 // Each state starts on a freshly loaded Home route.
@@ -159,6 +173,47 @@ const STATES = {
   automations: async (d) => {
     await d.click(byText("Scheduled"));
     await d.waitFor(`document.body.innerText.includes("Scheduled") && !document.body.innerText.includes("Loading scheduled")`, "automations page");
+  },
+  // The subtract thread's Files tab with `cgx-b-panel-files` open; the server answers the
+  // file reads from `R1_FIXTURE_FS`. The tree is not in the page's DOM: wait by time.
+  files: async (d) => {
+    await STATES.thread(d);
+    await d.click(byText("New tab"));
+    await d.click(byText("Files"));
+    await d.sleep(3000);
+    await d.clickAt(1109, 141);
+    await d.sleep(2500);
+  },
+  "files-markdown": async (d) => {
+    await STATES.files(d);
+    await openFile(d, "README.md");
+    await d.click(byText("Toggle file tree"));
+  },
+  "files-open": async (d) => {
+    await STATES["files-markdown"](d);
+    await d.click(byText("Open options"));
+    await d.waitFor(`document.querySelector("[role=menu]")`, "Open menu");
+  },
+  // `notes.txt` pinned by a click in its text, then `other.txt`, which `README.md` replaces.
+  "files-tabs": async (d) => {
+    await STATES.files(d);
+    await openFile(d, "notes.txt");
+    await d.clickAt(900, 300);
+    await openFile(d, "other.txt");
+    await openFile(d, "README.md");
+    await d.click(byText("Toggle file tree"));
+  },
+  // `Find in file…` (the `find-in-thread` host message, as ⌘F sends it) for `the`, then Enter.
+  "files-find": async (d) => {
+    await STATES.files(d);
+    await openFile(d, "notes.txt");
+    await d.click(byText("Toggle file tree"));
+    await d.clickAt(900, 300);
+    await d.evaluate(`import(window.__R1__.appShared).then((s) => Object.values(s).find((v) => typeof v?.dispatchHostMessage === "function").dispatchHostMessage({ type: "find-in-thread" }))`);
+    await d.sleep(500);
+    await d.type("the");
+    await d.key("Enter", "Enter", 13);
+    await d.sleep(500);
   },
   terminal: async (d) => {
     await STATES.thread(d);

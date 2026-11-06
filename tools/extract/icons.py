@@ -41,6 +41,8 @@ NAMES = {
     "86c54dea26": "sidebar-sort",
     "95ef661454": "sidebar-organize-project",
     "d818a5d859": "sidebar-organize-list",
+    # Side panel file tab
+    "6bc7af0319": "side-tab-file",
     # Home
     "6e15153969": "codex-logo",
     "9191379992": "close",

@@ -8,6 +8,7 @@ use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use theme::ActiveTheme as _;
 
@@ -145,6 +146,41 @@ pub fn marketplaces(value: &Value) -> Vec<Marketplace> {
         .collect()
 }
 
+/// The original `use-search-plugins` debounce and page size.
+pub const SEARCH_DEBOUNCE: Duration = Duration::from_millis(200);
+pub const SEARCH_LIMIT: u32 = 50;
+
+/// The Plugins tab's server `plugin/search` results: the pages fetched so far and the cursor
+/// for the next one.
+#[derive(Debug)]
+pub struct Search {
+    pub results: Resource<Vec<Arc<Plugin>>>,
+    pub next: Option<String>,
+    pub loading_more: bool,
+}
+
+impl Default for Search {
+    fn default() -> Self {
+        Self {
+            results: Resource::Loading,
+            next: None,
+            loading_more: false,
+        }
+    }
+}
+
+impl Search {
+    /// Appends one page; the first page replaces `Loading`, and `next` closes the paging.
+    pub fn push(&mut self, plugins: Vec<Arc<Plugin>>, next: Option<String>) {
+        match &mut self.results {
+            Resource::Ready(list) => list.extend(plugins),
+            _ => self.results = Resource::Ready(plugins),
+        }
+        self.next = next;
+        self.loading_more = false;
+    }
+}
+
 #[derive(Debug, Default)]
 pub enum Resource<T> {
     #[default]
@@ -199,6 +235,10 @@ pub enum Action {
     Refresh,
     Manage,
     Navigate(String),
+    /// Searches the server catalog for this term.
+    Search(String),
+    /// Loads the next `plugin/search` page for this term and cursor.
+    SearchMore(String, String),
     Read(Arc<Plugin>),
     Install(Arc<Plugin>),
     EnablePlugin(Arc<Plugin>, bool),
@@ -261,6 +301,10 @@ pub struct Page {
     pub expanded: std::collections::HashSet<&'static str>,
     /// Cards shown per plugin marketplace section, raised by its `See more`.
     pub plugin_rows: std::collections::HashMap<String, usize>,
+    /// The server search behind a non-empty query; `None` filters the loaded catalog locally.
+    pub search: Option<Search>,
+    /// Bumped on every query and section change, so a late page cannot land on a newer search.
+    pub search_gen: usize,
     pub generation: u64,
     pub focus: FocusHandle,
     modal_focus: FocusHandle,
@@ -294,7 +338,8 @@ impl Page {
                 cx,
             )
         });
-        cx.observe(&query, |_, _, cx| cx.notify()).detach();
+        cx.observe(&query, |page, _, cx| page.query_changed(cx))
+            .detach();
         Self {
             tab,
             data: Data::default(),
@@ -316,6 +361,8 @@ impl Page {
             },
             expanded: Default::default(),
             plugin_rows: Default::default(),
+            search: None,
+            search_gen: 0,
             generation: 0,
             focus: cx.focus_handle(),
             modal_focus: cx.focus_handle(),
@@ -327,6 +374,31 @@ impl Page {
         if !self.pending {
             cx.emit(action);
         }
+    }
+
+    /// The query or section changed: drop the old results and search the server after the
+    /// original's debounce. An empty query filters the loaded catalog locally instead.
+    pub fn query_changed(&mut self, cx: &mut Context<Self>) {
+        self.search_gen += 1;
+        self.search = None;
+        let term = self.query.read(cx).field_text().trim().to_owned();
+        if term.is_empty() || self.tab != Tab::Plugins || !self.available {
+            cx.notify();
+            return;
+        }
+        let generation = self.search_gen;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SEARCH_DEBOUNCE).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.search_gen != generation {
+                    return;
+                }
+                this.search = Some(Search::default());
+                cx.emit(Action::Search(term.clone()));
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub fn show_modal(&mut self, modal: Modal, window: &mut Window, cx: &mut Context<Self>) {
@@ -411,6 +483,36 @@ mod tests {
         assert!(data.can_use(&plugin, Some(&detail)));
         plugin.summary["authPolicy"] = json!("ON_USE");
         assert!(Data::default().can_use(&plugin, None));
+    }
+
+    #[test]
+    fn search_pages_append_and_drop_the_finished_cursor() {
+        let plugin = |id: &str| {
+            Arc::new(Plugin {
+                summary: json!({"id":id,"name":id}),
+                marketplace_name: "market".into(),
+                marketplace_path: None,
+                remote_marketplace_name: Some("market".into()),
+            })
+        };
+        let mut search = Search::default();
+        assert!(matches!(search.results, Resource::Loading));
+        search.push(vec![plugin("a")], Some("page-2".into()));
+        search.loading_more = true;
+        search.push(vec![plugin("b")], None);
+        let Resource::Ready(list) = &search.results else {
+            panic!("search results are not ready");
+        };
+        let ids: Vec<_> = list.iter().map(|plugin| plugin.id()).collect();
+        assert_eq!(ids, ["a", "b"]);
+        assert_eq!(search.next, None);
+        assert!(!search.loading_more);
+        let mut failed = Search {
+            results: Resource::Failed("gone".into()),
+            ..Search::default()
+        };
+        failed.push(vec![plugin("c")], None);
+        assert!(matches!(failed.results, Resource::Ready(_)));
     }
 
     #[test]

@@ -84,6 +84,139 @@ pub fn execute(
     }
 }
 
+pub(super) fn repository_command(
+    host: &super::LocalHost,
+    cwd: &Path,
+    args: &[String],
+) -> Result<String> {
+    let bridge = host
+        .bridge
+        .as_ref()
+        .context("GitHub requires an app-server connection")?;
+    let output = execute(bridge, cwd, args, 120_000)?;
+    ensure!(
+        !output.stdout_cap_reached && !output.stderr_cap_reached,
+        "GitHub output is incomplete"
+    );
+    ensure!(output.exit_code == 0, "{}", output.stderr.trim());
+    Ok(output.stdout.trim().to_owned())
+}
+
+pub(super) fn summary(host: &super::LocalHost, params: &Value) -> Result<Value> {
+    let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
+    let branch = super::git::fetch("git-commit-status", params)?["branch"]
+        .as_str()
+        .context("Create a branch before opening a pull request")?
+        .to_owned();
+    let output = repository_command(
+        host,
+        cwd,
+        &[
+            "gh".into(),
+            "pr".into(),
+            "list".into(),
+            "--head".into(),
+            branch,
+            "--state".into(),
+            "open".into(),
+            "--json".into(),
+            "number,url,title,baseRefName,headRefName,isDraft".into(),
+        ],
+    )?;
+    let rows: Vec<Value> = serde_json::from_str(&output)?;
+    Ok(rows.into_iter().next().unwrap_or(Value::Null))
+}
+
+pub(super) fn create(host: &super::LocalHost, params: &Value) -> Result<Value> {
+    let existing = summary(host, params)?;
+    if !existing.is_null() && params["commitChanges"] != true {
+        return Ok(existing);
+    }
+    let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
+    let status = super::git::fetch("git-commit-status", params)?;
+    if status["all"]["files"].as_u64().unwrap_or_default() > 0 {
+        ensure!(
+            params["commitChanges"] == true,
+            "Commit local changes first, or select Commit and push local changes"
+        );
+        let committed = super::git::fetch(
+            "git-commit",
+            &json!({
+                "cwd": cwd, "includeUnstaged": true,
+                "message": params["title"].as_str().filter(|title| !title.trim().is_empty()).unwrap_or("Update working changes"),
+            }),
+        )?;
+        ensure!(committed["status"] == "success", "{}", committed["error"]);
+    }
+    let pushed = super::git::fetch("git-push", &json!({"cwd": cwd}))?;
+    ensure!(pushed["status"] == "success", "{}", pushed["error"]);
+    if !existing.is_null() {
+        return Ok(existing);
+    }
+    let mut args = vec!["gh".into(), "pr".into(), "create".into(), "--fill".into()];
+    for (field, flag) in [("title", "--title"), ("body", "--body"), ("base", "--base")] {
+        if let Some(value) = params[field]
+            .as_str()
+            .filter(|value| !value.trim().is_empty())
+        {
+            args.extend([flag.into(), value.into()]);
+        }
+    }
+    if params["draft"] == true {
+        args.push("--draft".into());
+    }
+    let url = repository_command(host, cwd, &args)?;
+    Ok(json!({"url": url}))
+}
+
+pub(super) fn compare(host: &super::LocalHost, params: &Value) -> Result<Value> {
+    let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
+    let repo: Value = serde_json::from_str(&repository_command(
+        host,
+        cwd,
+        &[
+            "gh".into(),
+            "repo".into(),
+            "view".into(),
+            "--json".into(),
+            "url,defaultBranchRef".into(),
+        ],
+    )?)?;
+    let status = super::git::fetch("git-commit-status", params)?;
+    let head = status["branch"]
+        .as_str()
+        .context("Create a branch before comparing")?;
+    let base = repo["defaultBranchRef"]["name"]
+        .as_str()
+        .context("Default branch is unavailable")?;
+    let mut url = url::Url::parse(
+        repo["url"]
+            .as_str()
+            .context("Repository URL is unavailable")?,
+    )?;
+    url.path_segments_mut()
+        .map_err(|_| anyhow::anyhow!("Invalid repository URL"))?
+        .push("compare")
+        .push(&format!("{base}...{head}"));
+    Ok(json!({"url": url.as_str()}))
+}
+
+pub(super) fn repair(host: &super::LocalHost, params: &Value) -> Result<Value> {
+    let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
+    let details = repository_command(
+        host,
+        cwd,
+        &[
+            "gh".into(),
+            "pr".into(),
+            "view".into(),
+            "--json".into(),
+            "url,title,body,comments,reviews,statusCheckRollup,mergeable".into(),
+        ],
+    )?;
+    Ok(serde_json::from_str(&details)?)
+}
+
 struct NotifyThread(Thread);
 
 impl Wake for NotifyThread {
@@ -124,6 +257,150 @@ fn cancel(bridge: &Bridge, handle: &str) {
 mod tests {
     use super::*;
     use std::process::Command;
+
+    fn pr_fixture(existing: &str) -> Result<(tempfile::TempDir, super::super::LocalHost)> {
+        let temp = tempfile::tempdir()?;
+        for args in [
+            &["init", "-b", "feature"][..],
+            &["config", "user.name", "Test"],
+            &["config", "user.email", "test@example.com"],
+        ] {
+            ensure!(
+                Command::new("git")
+                    .current_dir(temp.path())
+                    .args(args)
+                    .output()?
+                    .status
+                    .success(),
+                "Git setup failed"
+            );
+        }
+        std::fs::write(temp.path().join("tracked"), "original\n")?;
+        for args in [&["add", "."][..], &["commit", "-m", "Initial"]] {
+            ensure!(
+                Command::new("git")
+                    .current_dir(temp.path())
+                    .args(args)
+                    .output()?
+                    .status
+                    .success(),
+                "Git commit failed"
+            );
+        }
+        const SERVER: &str = r#"
+import json, sys
+for line in sys.stdin:
+    message = json.loads(line)
+    if message.get("method") == "initialize":
+        print(json.dumps({"id": message["id"], "result": {"userAgent":"pr-fixture","codexHome":"/tmp","platformOs":"linux"}}), flush=True)
+    elif message.get("method") == "process/spawn":
+        print(json.dumps({"id": message["id"], "result": {}}), flush=True)
+        print(json.dumps({"method":"process/exited","params":{"processHandle":message["params"]["processHandle"],"exitCode":0,"stdout":sys.argv[1],"stderr":"","stdoutCapReached":False,"stderrCapReached":False}}), flush=True)
+"#;
+        let mut command = Command::new("python3");
+        command.args(["-u", "-c", SERVER, existing]);
+        let (bridge, _) = Bridge::spawn(command)?;
+        let bridge = Arc::new(bridge);
+        pollster::block_on(bridge.initialize("codex_gpui", "0.1.0"))?;
+        let host = super::super::LocalHost::new(temp.path()).with_bridge(bridge);
+        Ok((temp, host))
+    }
+
+    #[test]
+    fn existing_pull_request_does_not_commit_local_changes() -> Result<()> {
+        let (temp, host) = pr_fixture(r#"[{"url":"https://github.com/example/project/pull/1"}]"#)?;
+        std::fs::write(temp.path().join("tracked"), "pending\n")?;
+        let before = super::super::git::fetch("git-commit-status", &json!({"cwd": temp.path()}))?;
+        let result = create(&host, &json!({"cwd": temp.path(), "title": "Update"}))?;
+        assert_eq!(result["url"], "https://github.com/example/project/pull/1");
+        let after = super::super::git::fetch("git-commit-status", &json!({"cwd": temp.path()}))?;
+        assert_eq!(after["commitsAhead"], before["commitsAhead"]);
+        assert_eq!(after["all"], before["all"]);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("tracked"))?,
+            "pending\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn existing_pull_request_pushes_changes_with_consent() -> Result<()> {
+        let (temp, host) = pr_fixture(r#"[{"url":"https://github.com/example/project/pull/1"}]"#)?;
+        let remote = tempfile::tempdir()?;
+        ensure!(
+            Command::new("git")
+                .args(["init", "--bare"])
+                .arg(remote.path())
+                .output()?
+                .status
+                .success(),
+            "Remote setup failed"
+        );
+        let remote_path = remote.path().to_str().context("Invalid remote path")?;
+        for args in [
+            &["remote", "add", "origin", remote_path][..],
+            &["push", "-u", "origin", "feature"],
+        ] {
+            ensure!(
+                Command::new("git")
+                    .current_dir(temp.path())
+                    .args(args)
+                    .output()?
+                    .status
+                    .success(),
+                "Remote setup failed"
+            );
+        }
+        std::fs::write(temp.path().join("tracked"), "pending\n")?;
+        let result = create(
+            &host,
+            &json!({"cwd": temp.path(), "commitChanges": true, "title": "Update"}),
+        )?;
+        assert_eq!(result["url"], "https://github.com/example/project/pull/1");
+        let pushed = Command::new("git")
+            .current_dir(remote.path())
+            .args(["show", "feature:tracked"])
+            .output()?;
+        assert!(pushed.status.success());
+        assert_eq!(pushed.stdout, b"pending\n");
+        let status = super::super::git::fetch("git-commit-status", &json!({"cwd": temp.path()}))?;
+        assert_eq!(status["all"]["files"], 0);
+        Ok(())
+    }
+
+    #[test]
+    fn compare_encodes_branch_names_as_one_path_segment() -> Result<()> {
+        let (temp, host) = pr_fixture(
+            r#"{"url":"https://github.com/example/project","defaultBranchRef":{"name":"release/v1"}}"#,
+        )?;
+        ensure!(
+            Command::new("git")
+                .current_dir(temp.path())
+                .args(["checkout", "-b", "topic/one#two"])
+                .output()?
+                .status
+                .success(),
+            "Branch setup failed"
+        );
+        let result = compare(&host, &json!({"cwd": temp.path()}))?;
+        assert_eq!(
+            result["url"],
+            "https://github.com/example/project/compare/release%2Fv1...topic%2Fone%23two"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn creating_pull_request_requires_consent_to_commit_changes() -> Result<()> {
+        let (temp, host) = pr_fixture("[]")?;
+        std::fs::write(temp.path().join("tracked"), "pending\n")?;
+        let error = create(&host, &json!({"cwd": temp.path(), "title": "Update"})).unwrap_err();
+        assert!(error.to_string().contains("Commit local changes first"));
+        let status = super::super::git::fetch("git-commit-status", &json!({"cwd": temp.path()}))?;
+        assert_eq!(status["all"]["files"], 1);
+        assert_eq!(status["commitsAhead"], 1);
+        Ok(())
+    }
 
     #[test]
     fn deadline_bounds_spawn_and_cleanup_replies() -> anyhow::Result<()> {
