@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Show the green `Awaiting approval` pill and the blue dot on a sidebar chat row while its thread waits for an approval (`thread/status/changed` with the `waitingOnApproval` active flag); both go when the flag clears or the thread goes idle.
+- Show the original's `This request requires additional safety checks, which can take extra time.` line under a running turn when the app-server sends `autoApprovalReview/strictReviewRequired`; it goes away when the turn ends.
 
 ## [0.1.1] - 2026-11-06
 
