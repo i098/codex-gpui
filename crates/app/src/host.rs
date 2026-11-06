@@ -2201,6 +2201,9 @@ impl Host for LocalHost {
             | "gh-pr-patch"
             | "gh-pr-media"
             | "gh-create-pr"
+            | "gh-thread-pr"
+            | "gh-thread-compare"
+            | "gh-pr-repair"
             | "pull-request-chat"
             | "pull-request-chat-link" => github_pull_requests::fetch(self, endpoint, &params)?,
             "create-worktree" => self.create_worktree(&params)?,
