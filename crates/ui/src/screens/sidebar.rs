@@ -24,6 +24,7 @@ use std::{
     collections::{HashMap, HashSet},
     ops::Range,
     path::Path,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use theme::{ActiveTheme as _, Appearance, Theme};
@@ -4676,7 +4677,12 @@ fn span_widths(s: &str, size: f32, window: &Window) -> Vec<f32> {
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     let sidebar = home_sidebar(cx, None);
     let main = super::home::home_main(window, cx);
-    let shell = cx.new(|_| Shell::new(sidebar, main));
+    // The references show one unread Explore destination.
+    let shell = cx.new(|_| {
+        let mut shell = Shell::new(sidebar, main);
+        shell.unread_destinations = Some(Arc::from([SharedString::from("explore")]));
+        shell
+    });
     let menu = cx.new(|cx| CommandMenu::new("math", cx));
     let focus = menu.read(cx).focus.clone();
     focus.focus(window, cx);

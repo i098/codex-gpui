@@ -33,12 +33,22 @@ pub struct CloudTaskRequest {
 
 pub fn create_cloud_task(host: &dyn host::Host, task: &CloudTaskRequest) -> Result<Value> {
     ensure!(
-        !task.prompt.trim().is_empty(),
-        "A cloud task needs a prompt"
-    );
-    ensure!(
         !task.environment_id.is_empty(),
         "A cloud task needs an environment"
+    );
+    post_task(host, task, None)
+}
+
+/// `POST /wham/tasks`. An inline `environment` (a local worktree snapshot) replaces the
+/// saved environment id, as in the original.
+pub(crate) fn post_task(
+    host: &dyn host::Host,
+    task: &CloudTaskRequest,
+    environment: Option<Value>,
+) -> Result<Value> {
+    ensure!(
+        !task.prompt.trim().is_empty(),
+        "A cloud task needs a prompt"
     );
     let identity = host
         .identity()
@@ -46,7 +56,6 @@ pub fn create_cloud_task(host: &dyn host::Host, task: &CloudTaskRequest) -> Resu
     let mut body = json!({
         "new_task": {
             "branch": task.branch,
-            "environment_id": task.environment_id,
             "run_environment_in_qa_mode": task.read_only,
         },
         "input_items": [{
@@ -54,6 +63,10 @@ pub fn create_cloud_task(host: &dyn host::Host, task: &CloudTaskRequest) -> Resu
             "content":[{"content_type":"text","text":task.prompt}],
         }],
     });
+    match environment {
+        Some(environment) => body["new_task"]["environment"] = environment,
+        None => body["new_task"]["environment_id"] = task.environment_id.clone().into(),
+    }
     if let Some(model) = &task.model {
         body["metadata"] = json!({"model_slug":model});
     }
@@ -266,7 +279,7 @@ impl Root {
     }
 }
 
-fn request(
+pub(crate) fn request(
     host: &dyn host::Host,
     identity: &host::Identity,
     method: &str,
