@@ -75,6 +75,31 @@ pub struct Draft {
 pub enum Outcome {
     Dismiss,
     Save(Draft),
+    /// The side panel's `Open settings`: show the saved task on the Automations page.
+    OpenSettings,
+}
+
+/// The side panel tab (PANEL-24) footer of a thread's task card, after the original's
+/// `automation.sidePanel` buttons.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Panel {
+    /// A `suggested_create` proposal: `Cancel` and `Create scheduled task`.
+    Create,
+    /// A `suggested_update` proposal: `Cancel` and `Apply changes`.
+    Apply,
+    /// A saved task: `Save` (`Retry save` after a failure) and `Open settings`.
+    Saved,
+}
+
+impl Panel {
+    /// The footer for the task card payload `item` (its `mode`).
+    pub fn for_item(item: &Value) -> Self {
+        match item["mode"].as_str() {
+            Some("suggested_update") => Self::Apply,
+            Some(mode) if mode.starts_with("suggested_") => Self::Create,
+            _ => Self::Saved,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -113,6 +138,8 @@ pub struct Editor {
     advanced: bool,
     zone: String,
     day_label: SharedString,
+    /// `Some` when the editor is a thread's side panel tab instead of a dialog.
+    panel: Option<Panel>,
 }
 
 impl EventEmitter<Outcome> for Editor {}
@@ -167,6 +194,7 @@ impl Editor {
             advanced: false,
             zone,
             day_label: "Monday".into(),
+            panel: None,
         };
         if let Some(rule) = this.original_rule.clone() {
             this.load_rule(&rule, cx);
@@ -308,6 +336,13 @@ impl Editor {
             _ => 5,
         }
     }
+    /// Shows the editor as side panel tab `panel` instead of a dialog.
+    pub fn set_panel(&mut self, panel: Panel) {
+        self.panel = Some(panel);
+    }
+    pub fn panel(&self) -> Option<Panel> {
+        self.panel
+    }
     pub fn saving(&self) -> bool {
         self.saving
     }
@@ -438,7 +473,8 @@ impl Editor {
         if self.saving {
             return;
         }
-        if self.menu.take().is_none() {
+        // A side panel tab stays open: only its `Cancel` closes it.
+        if self.menu.take().is_none() && self.panel.is_none() {
             cx.emit(Outcome::Dismiss);
         }
         cx.notify();
@@ -670,11 +706,22 @@ impl Editor {
         }
         handles.push(self.controls[ADVANCED].clone());
         self.append_advanced_controls(&mut handles);
-        if !self.editing {
+        if self.has_cancel() {
             handles.push(self.controls[CANCEL].clone());
         }
-        handles.extend([self.controls[SAVE].clone(), self.controls[CLOSE].clone()]);
+        handles.push(self.controls[SAVE].clone());
+        // A side panel has no close button; a saved task's `Open settings` takes its slot.
+        if self.panel.is_none_or(|panel| panel == Panel::Saved) {
+            handles.push(self.controls[CLOSE].clone());
+        }
         handles
+    }
+
+    fn has_cancel(&self) -> bool {
+        match self.panel {
+            Some(panel) => panel != Panel::Saved,
+            None => !self.editing,
+        }
     }
 
     fn append_advanced_controls(&self, handles: &mut Vec<FocusHandle>) {
@@ -1251,9 +1298,11 @@ impl Editor {
         t: &Theme,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
+        // In a side panel the close slot is the saved task's `Open settings` text button.
+        let close = control == CLOSE && self.panel.is_none();
         let (height, padding, radius, gap) = match control {
             ADVANCED => (28., 8., 10., 8.),
-            CLOSE => (32., 0., 10., 6.),
+            CLOSE if close => (32., 0., 10., 6.),
             _ => (36., 16., 9999., 6.),
         };
         let (weight, color) = if control == SAVE {
@@ -1269,7 +1318,7 @@ impl Editor {
             .h(px(height))
             .px(px(padding))
             .rounded(px(radius))
-            .when(control == CLOSE, |d| d.w(px(32.)))
+            .when(close, |d| d.w(px(32.)))
             .when(control == SAVE, |d| {
                 d.px(px(17.)).child(shapes::decoration(shapes::Decoration {
                     radius: gpui::Corners::all(px(9999.)),
@@ -1283,14 +1332,15 @@ impl Editor {
             .items_center()
             .justify_center()
             .gap(px(gap))
-            .when(control != CLOSE, |d| {
+            .when(!close, |d| {
                 d.child(
                     text(label, 14., 20., weight, color)
                         .when(control == ADVANCED, |d| d.w(px(58.87)).flex_none()),
                 )
             })
-            .when(control == CLOSE, |d| {
-                d.child(icon("close", 20., t.text_tertiary))
+            .when(close, |d| d.child(icon("close", 20., t.text_tertiary)))
+            .when(control == CLOSE && !close, |d| {
+                d.child(icon("arrow-up-right", 14., t.text_secondary))
             })
             .when(control == ADVANCED, |d| {
                 d.aria_expanded(self.advanced).child(icon(
@@ -1319,6 +1369,8 @@ impl Editor {
             self.toggle_control(control, cx);
         } else if control == SAVE {
             self.submit(window, cx);
+        } else if control == CLOSE && self.panel.is_some() {
+            cx.emit(Outcome::OpenSettings);
         } else if !self.saving {
             cx.emit(Outcome::Dismiss);
         }
@@ -1337,31 +1389,33 @@ impl Editor {
         } else {
             "Enter valid schedule fields"
         };
+        let label = match (self.saving, self.panel, self.editing) {
+            (true, ..) => "Saving…",
+            (false, Some(Panel::Create), _) => "Create scheduled task",
+            (false, Some(Panel::Apply), _) => "Apply changes",
+            (false, Some(Panel::Saved), _) if self.error.is_some() => "Retry save",
+            (false, _, true) => "Save",
+            (false, _, false) => "Create",
+        };
         div()
             .flex()
             .justify_end()
             .gap(px(12.))
-            .pt(px(20.))
-            .when(!self.editing, |d| {
+            .when(self.panel.is_none(), |d| d.pt(px(20.)))
+            .when(self.has_cancel(), |d| {
                 d.child(self.button(CANCEL, "Cancel", t, cx))
             })
             .child(tooltip(
-                self.button(
-                    SAVE,
-                    match (self.saving, self.editing) {
-                        (true, _) => "Saving…",
-                        (false, true) => "Save",
-                        (false, false) => "Create",
-                    },
-                    t,
-                    cx,
-                )
-                .aria_disabled(!valid)
-                .opacity(if valid { 1. } else { 0.4 }),
+                self.button(SAVE, label, t, cx)
+                    .aria_disabled(!valid)
+                    .opacity(if valid { 1. } else { 0.4 }),
                 if valid { "Save scheduled task" } else { reason },
                 None,
                 Side::Top,
             ))
+            .when(self.panel == Some(Panel::Saved), |d| {
+                d.child(self.button(CLOSE, "Open settings", t, cx))
+            })
     }
 }
 
@@ -1410,6 +1464,7 @@ fn clock_parts(value: &str, zone: &str) -> Option<(u8, u8)> {
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
+        let panel = self.panel.is_some();
         let title = if self.editing {
             "Edit task"
         } else {
@@ -1417,42 +1472,45 @@ impl Render for Editor {
         };
         let mut form = div()
             .id("automation-editor-form")
-            .role(Role::Dialog)
+            .role(if panel { Role::Group } else { Role::Dialog })
             .aria_label(title)
             .relative()
-            .w(px(680.).min(window.viewport_size().width * 0.92))
-            .max_h(window.viewport_size().height * 0.85)
-            .p(px(20.))
             .flex()
             .flex_col()
-            .child(shapes::decoration(shapes::Decoration {
-                radius: gpui::Corners::all(px(30.)),
-                fill: Some(t.surface_elevated_secondary),
-                shadows: vec![
-                    shapes::Shadow {
-                        color: t.border,
-                        offset: gpui::point(px(0.), px(0.)),
-                        blur: px(0.),
-                        spread: px(0.5),
-                        inset: false,
-                    },
-                    shapes::Shadow {
-                        color: gpui::black().opacity(0.1),
-                        offset: gpui::point(px(0.), px(8.)),
-                        blur: px(10.),
-                        spread: px(-6.),
-                        inset: false,
-                    },
-                    shapes::Shadow {
-                        color: gpui::black().opacity(0.1),
-                        offset: gpui::point(px(0.), px(20.)),
-                        blur: px(25.),
-                        spread: px(-5.),
-                        inset: false,
-                    },
-                ],
-                ..Default::default()
-            }))
+            .when(panel, |d| d.size_full().bg(t.surface))
+            .when(!panel, |d| {
+                d.w(px(680.).min(window.viewport_size().width * 0.92))
+                    .max_h(window.viewport_size().height * 0.85)
+                    .p(px(20.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: gpui::Corners::all(px(30.)),
+                        fill: Some(t.surface_elevated_secondary),
+                        shadows: vec![
+                            shapes::Shadow {
+                                color: t.border,
+                                offset: gpui::point(px(0.), px(0.)),
+                                blur: px(0.),
+                                spread: px(0.5),
+                                inset: false,
+                            },
+                            shapes::Shadow {
+                                color: gpui::black().opacity(0.1),
+                                offset: gpui::point(px(0.), px(8.)),
+                                blur: px(10.),
+                                spread: px(-6.),
+                                inset: false,
+                            },
+                            shapes::Shadow {
+                                color: gpui::black().opacity(0.1),
+                                offset: gpui::point(px(0.), px(20.)),
+                                blur: px(25.),
+                                spread: px(-5.),
+                                inset: false,
+                            },
+                        ],
+                        ..Default::default()
+                    }))
+            })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_key_down(cx.listener(Self::key))
             .on_action(cx.listener(|this, _: &Dismiss, _, cx| this.dismiss(cx)))
@@ -1469,23 +1527,25 @@ impl Render for Editor {
                 this.submit(window, cx);
                 cx.stop_propagation();
             }))
-            .child(
-                div()
-                    .relative()
-                    .h(px(26.))
-                    .mb(px(20.))
-                    .child(
-                        text(title, 16., 26., 590., t.text)
-                            .font_features(FORM_TITLE_FEATURES.clone()),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .right(px(-6.))
-                            .top(px(-4.))
-                            .child(self.button(CLOSE, "Close dialog", t, cx)),
-                    ),
-            )
+            .when(!panel, |d| {
+                d.child(
+                    div()
+                        .relative()
+                        .h(px(26.))
+                        .mb(px(20.))
+                        .child(
+                            text(title, 16., 26., 590., t.text)
+                                .font_features(FORM_TITLE_FEATURES.clone()),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .right(px(-6.))
+                                .top(px(-4.))
+                                .child(self.button(CLOSE, "Close dialog", t, cx)),
+                        ),
+                )
+            })
             .child(
                 div()
                     .id("automation-editor-fields")
@@ -1497,6 +1557,7 @@ impl Render for Editor {
                     .flex()
                     .flex_col()
                     .gap(px(16.))
+                    .when(panel, |d| d.flex_1().p(px(16.)))
                     .child(self.input(NAME, "Name", cx))
                     .child(self.input(PROMPT, "Prompt", cx))
                     .child(self.schedule(t, window, cx))
@@ -1510,9 +1571,15 @@ impl Render for Editor {
                     ),
             )
             .when_some(self.error.as_ref(), |d, error| {
-                d.child(text(error.clone(), 13., 20., 400., t.text_error).whitespace_normal())
+                d.child(
+                    text(error.clone(), 13., 20., 400., t.text_error)
+                        .whitespace_normal()
+                        .when(panel, |d| d.px(px(16.))),
+                )
             })
-            .child(self.footer(t, cx));
+            .child(self.footer(t, cx).when(panel, |d| {
+                d.flex_none().p(px(12.)).border_t_1().border_color(t.border)
+            }));
         if self.menu.is_some() {
             form = form.child(div().absolute().inset_0().occlude().on_mouse_down(
                 MouseButton::Left,
@@ -1525,6 +1592,9 @@ impl Render for Editor {
         }
         if self.saving {
             form = form.child(div().absolute().inset_0().occlude());
+        }
+        if panel {
+            return form.into_any_element();
         }
         div()
             .absolute()
@@ -1564,6 +1634,7 @@ impl Render for Editor {
                     .mb(px(-52.5))
                     .child(form),
             )
+            .into_any_element()
     }
 }
 

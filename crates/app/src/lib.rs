@@ -264,6 +264,9 @@ pub enum SidePanel {
     /// `⌘T` and a link's `Open in` ▸ `New tab`: the browser tab with this key
     /// ([`Root::browser_tab`]).
     Browser(usize),
+    /// A thread's task card (`automation_update` proposal or saved task): the task editor
+    /// ([`Root::automation_tab`]).
+    Automation,
 }
 
 /// Settings ▸ Appearance ▸ Theme (the original's `appearanceTheme`): follow the system, or
@@ -512,6 +515,8 @@ pub struct Root {
     subagents: Option<Entity<ui::screens::subagents::SubagentsView>>,
     /// The image view of [`SidePanel::Image`]; cleared with the thread.
     image: Option<Entity<ui::screens::thread::view::ImageView>>,
+    /// The tab title and task editor of [`SidePanel::Automation`]; cleared with the thread.
+    automation_tab: Option<(SharedString, Entity<automations::editor::Editor>)>,
     /// The open thread in the main shell, with its side panel if any.
     split: Option<Entity<SplitScreen>>,
     terminal: terminal::Terminals,
@@ -1077,6 +1082,7 @@ impl Root {
             new_tab: None,
             subagents: None,
             image: None,
+            automation_tab: None,
             split: None,
             terminal: terminal::Terminals::default(),
             tabs: Vec::new(),
@@ -3479,6 +3485,7 @@ impl Root {
         console: bool,
         new_tab: bool,
         subagents: bool,
+        automation: Option<&SharedString>,
         cx: &App,
     ) -> Option<Tab> {
         match side {
@@ -3554,6 +3561,11 @@ impl Root {
                     detail: None,
                 })
             }
+            SidePanel::Automation => automation.map(|title| Tab {
+                icon: "automation-scheduled",
+                label: title.clone(),
+                detail: None,
+            }),
         }
     }
 
@@ -3572,6 +3584,7 @@ impl Root {
         let console = self.terminal_panel().is_some();
         let new_tab = self.new_tab.is_some();
         let subagents = self.subagents.is_some();
+        let automation = self.automation_tab.as_ref().map(|(title, _)| title);
         let tab = |side: &SidePanel| {
             Self::side_tab(
                 *side,
@@ -3584,6 +3597,7 @@ impl Root {
                 console,
                 new_tab,
                 subagents,
+                automation,
                 cx,
             )
         };
@@ -3609,6 +3623,7 @@ impl Root {
             SidePanel::NewTab => self.new_tab.as_ref()?.clone().into(),
             SidePanel::Subagents => self.subagents.as_ref()?.clone().into(),
             SidePanel::Browser(key) => self.browser_tab(key)?.clone().into(),
+            SidePanel::Automation => self.automation_tab.as_ref()?.1.clone().into(),
         };
         Some((view, tabs, active))
     }
@@ -3897,7 +3912,14 @@ impl Root {
             self.set_automation_source("local");
         }
         let editor = cx.new(|cx| automations::editor::Editor::new(item.as_ref(), cx));
+        // A thread's task card opens in the side panel (PANEL-24); the rest are dialogs.
+        let panel = origin
+            .is_some()
+            .then(|| automations::editor::Panel::for_item(item.as_ref().unwrap_or(&Value::Null)));
         editor.update(cx, |editor, cx| {
+            if let Some(panel) = panel {
+                editor.set_panel(panel);
+            }
             editor.set_options(
                 &self.models,
                 &self.threads,
@@ -3907,10 +3929,27 @@ impl Root {
                 cx,
             );
         });
+        let title: SharedString = item
+            .as_ref()
+            .and_then(|item| item["name"].as_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("Scheduled task")
+            .to_owned()
+            .into();
         cx.subscribe_in(
             &editor,
             window,
             move |this, editor, outcome, window, cx| match outcome {
+                automations::editor::Outcome::Dismiss if panel.is_some() => {
+                    if this
+                        .automation_tab
+                        .as_ref()
+                        .is_some_and(|(_, e)| e == editor)
+                    {
+                        this.automation_tab = None;
+                        this.close_side(SidePanel::Automation, window, cx);
+                    }
+                }
                 automations::editor::Outcome::Dismiss => {
                     this.automation_editor = None;
                     window.focus(&this.focus, cx);
@@ -3921,11 +3960,25 @@ impl Root {
                         automation_save_request(item.as_ref(), origin.as_ref(), draft, &this.cwd);
                     this.save_automation(editor, request, origin.clone(), window, cx);
                 }
+                automations::editor::Outcome::OpenSettings => {
+                    if let Some(id) = item.as_ref().and_then(|item| item["id"].as_str()) {
+                        this.navigate(Route::Automation(id.to_owned()), window, cx);
+                    }
+                }
             },
         )
         .detach();
         window.focus(&editor.focus_handle(cx), cx);
-        self.automation_editor = Some(editor);
+        if panel.is_some() {
+            self.automation_tab = Some((title, editor));
+            if self.side_visible(SidePanel::Automation) {
+                self.sync(window, cx);
+            } else {
+                self.set_side(SidePanel::Automation, window, cx);
+            }
+        } else {
+            self.automation_editor = Some(editor);
+        }
         self.load_projects(cx);
         cx.notify();
     }
@@ -3935,7 +3988,8 @@ impl Root {
         projects: Option<&[ui::screens::sidebar::Project]>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(editor) = &self.automation_editor {
+        let tab = self.automation_tab.as_ref().map(|(_, editor)| editor);
+        for editor in self.automation_editor.iter().chain(tab) {
             editor.update(cx, |editor, cx| {
                 editor.set_options(
                     &self.models,
@@ -3971,7 +4025,8 @@ impl Root {
             let result = write.await;
             this.update_in(cx, |this, window, cx| {
                 if this.automation_source != source
-                    || this.automation_editor.as_ref() != Some(&editor)
+                    || (this.automation_editor.as_ref() != Some(&editor)
+                        && this.automation_tab.as_ref().map(|(_, e)| e) != Some(&editor))
                 {
                     return;
                 }
@@ -3988,7 +4043,8 @@ impl Root {
         .detach();
     }
 
-    /// Closes the editor, stores the saved task, and shows it or its originating card.
+    /// Closes the editor, stores the saved task, and shows it or its originating card; a
+    /// card's side panel tab stays open on the saved task.
     fn automation_saved(
         &mut self,
         item: Value,
@@ -4007,6 +4063,7 @@ impl Root {
                 items.push(item.clone());
             }
         }
+        let reopen = origin.clone();
         let route = if let Some((thread, call)) = origin {
             self.automation_card_results
                 .insert((thread.clone(), call.clone()), item.clone());
@@ -4028,6 +4085,16 @@ impl Root {
         }
         self.load_automations(cx);
         self.toast(Toast::success("Successfully saved scheduled task"), cx);
+        if let Some(origin) = reopen {
+            let mut saved = item;
+            saved["mode"] = json!("view");
+            self.show_automation_editor(Some(saved), Some(origin), window, cx);
+        }
+    }
+
+    /// The editor of the [`SidePanel::Automation`] tab.
+    pub fn automation_tab(&self) -> Option<&Entity<automations::editor::Editor>> {
+        self.automation_tab.as_ref().map(|(_, editor)| editor)
     }
 
     pub fn automation_editor(&self) -> Option<&Entity<automations::editor::Editor>> {
@@ -5044,6 +5111,7 @@ impl Root {
         self.new_tab = None;
         self.subagents = None;
         self.image = None;
+        self.automation_tab = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         view.update(cx, |view, cx| {
             view.set_git_phase(self.git_busy, cx);
