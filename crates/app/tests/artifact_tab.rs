@@ -39,6 +39,7 @@ fn artifact_links_open_an_artifact_tab_that_sends_annotations() -> Result<()> {
     fx.click(fx.at("home", "Add a subtract")?)?;
     fx.wait_thread(SUBTRACT)?;
 
+    let evidence = "CGX_ARTIFACT_TAB_EVIDENCE";
     // An Office file has no renderer here: the tab says so and reads nothing.
     fx.action(Box::new(OpenFile {
         path: "preview/deck.pptx".into(),
@@ -53,12 +54,12 @@ fn artifact_links_open_an_artifact_tab_that_sends_annotations() -> Result<()> {
         fx.read(|r, cx| r.file_view().map(|f| f.read(cx).contents.is_none())) == Some(true),
         "the .pptx tab read the file"
     );
+    fx.capture_evidence(evidence, "artifact-pptx")?;
 
     if !cfg!(target_os = "macos") {
         println!("artifact_tab: PDF pages require macOS");
         return Ok(());
     }
-    let evidence = "CGX_ARTIFACT_TAB_EVIDENCE";
     fx.action(Box::new(OpenFile {
         path: "preview/guide.pdf".into(),
         line: None,
@@ -66,23 +67,20 @@ fn artifact_links_open_an_artifact_tab_that_sends_annotations() -> Result<()> {
     fx.wait("guide.pdf", |fx| {
         fx.read(|r, cx| r.file_view().is_some_and(|f| f.read(cx).media_loaded()))
     })?;
+    // The PDF replaces the .pptx in the one preview artifact tab, as a file tab would.
     ensure!(
-        fx.read(|r, _| r
-            .side_tabs()
-            .iter()
-            .filter(|side| matches!(side, SidePanel::Artifact(_)))
-            .count())
-            == 2,
-        "the PDF did not open its own artifact tab"
+        fx.read(|r, _| matches!(r.side_tabs(), [SidePanel::Artifact(_)])),
+        "the PDF did not take over the preview artifact tab"
     );
     fx.capture_evidence(evidence, "artifact-pdf")?;
 
-    // The white page in the dark side panel.
+    // The light page in the dark side panel, below the header's light text.
     let shot = fx.shot()?;
     let scale = shot.width() as f32 / 1280.;
     let (mut left, mut top, mut right, mut bottom) = (u32::MAX, u32::MAX, 0, 0);
     for (x, y, pixel) in shot.enumerate_pixels() {
-        if x as f32 / scale > 660. && pixel.0[..3].iter().all(|&c| c > 245) {
+        let (x_px, y_px) = (x as f32 / scale, y as f32 / scale);
+        if x_px > 660. && y_px > 100. && pixel.0[..3].iter().all(|&c| c > 200) {
             (left, top) = (left.min(x), top.min(y));
             (right, bottom) = (right.max(x), bottom.max(y));
         }
