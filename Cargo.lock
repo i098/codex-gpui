@@ -193,7 +193,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -756,7 +756,7 @@ dependencies = [
 
 [[package]]
 name = "bridge"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -4540,7 +4540,7 @@ dependencies = [
 
 [[package]]
 name = "parity"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "gpui",
@@ -6001,7 +6001,7 @@ dependencies = [
 
 [[package]]
 name = "shapes"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -6514,7 +6514,7 @@ dependencies = [
 
 [[package]]
 name = "textsys"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "core-foundation 0.10.1",
@@ -6535,7 +6535,7 @@ dependencies = [
 
 [[package]]
 name = "theme"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "gpui",
@@ -6957,7 +6957,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-channel",

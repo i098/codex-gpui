@@ -6,6 +6,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-06
+
 ### Added
 - Start a cloud task from Home's `Cloud` mode with no saved environment: the project's tracked and untracked files, uncommitted edits included, are packed into a tarball and uploaded through `/wham/worktree_snapshots/upload_url` and `finish_upload`, and `POST /wham/tasks` starts from that `local_worktree` snapshot. Local files and the Git index are only read; a failed step restores the draft.
 - List the current thread's enabled, callable connectors in composer mentions and insert their `app://` links.
