@@ -342,10 +342,15 @@ pub fn home_main(window: &mut Window, cx: &mut App) -> AnyView {
     cx.new(|cx| HomeMain::new(window, cx)).into()
 }
 
-/// The Home sidebar and `main` in the shell.
+/// The Home sidebar and `main` in the shell, with the references' unread Explore destination.
 pub fn shell(main: AnyView, cx: &mut App) -> AnyView {
     let sidebar = super::sidebar::home_sidebar(cx, None);
-    cx.new(|_| Shell::new(sidebar, main)).into()
+    cx.new(|_| {
+        let mut shell = Shell::new(sidebar, main);
+        shell.unread_destinations = Some(std::sync::Arc::from([SharedString::from("explore")]));
+        shell
+    })
+    .into()
 }
 
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
