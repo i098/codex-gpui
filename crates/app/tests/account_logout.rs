@@ -78,6 +78,11 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
             json!({"account": {"type": "chatgpt", "email": "user@example.com", "planType": "promax"}, "requiresOpenaiAuth": true}),
         ));
     }
+    // The signed-in startup reads the requirements for the permission options.
+    lines.extend(exchange(
+        "configRequirements/read",
+        json!({"requirements": null}),
+    ));
     lines.extend(exchange(
         "configRequirements/read",
         json!({"requirements":{"allowedLoginMethods":["api"]}}),
