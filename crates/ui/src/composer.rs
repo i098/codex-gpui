@@ -1398,6 +1398,16 @@ impl Composer {
         &self.content
     }
 
+    /// Puts the caret at byte `offset` of the text, clamped to a character boundary.
+    pub fn set_cursor(&mut self, offset: usize, cx: &mut Context<Self>) {
+        let mut offset = offset.min(self.content.len());
+        while !self.content.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        self.selected_range = offset..offset;
+        cx.notify();
+    }
+
     pub fn set_secret(&mut self, secret: bool, cx: &mut Context<Self>) {
         self.secret = secret;
         cx.notify();

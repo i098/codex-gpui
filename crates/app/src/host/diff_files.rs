@@ -31,7 +31,27 @@ pub(super) fn scoped_path(params: &Value) -> Result<PathBuf> {
 
 pub(super) fn text(params: &Value) -> Result<Value> {
     let path = scoped_path(params)?;
-    Ok(json!({"contents": fs::read_to_string(path)?}))
+    Ok(json!({"contents": fs::read_to_string(&path)?, "mtimeMs": mtime_ms(&path)?}))
+}
+
+/// The original's `write-file`: answers `conflict` without writing when the file changed on
+/// disk since `expectedMtimeMs`, so a Files tab edit never overwrites a newer write.
+pub(super) fn write(params: &Value) -> Result<Value> {
+    let path = scoped_path(params)?;
+    let content = params["content"].as_str().context("missing content")?;
+    let mtime = mtime_ms(&path)?;
+    if let Some(expected) = params["expectedMtimeMs"].as_u64()
+        && expected != mtime
+    {
+        return Ok(json!({"outcome": "conflict", "mtimeMs": mtime}));
+    }
+    fs::write(&path, content)?;
+    Ok(json!({"outcome": "saved", "mtimeMs": mtime_ms(&path)?}))
+}
+
+fn mtime_ms(path: &Path) -> Result<u64> {
+    let modified = fs::metadata(path)?.modified()?;
+    Ok(modified.duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64)
 }
 
 /// Matches the original's optional `maxBytes`; omitting it reads the complete file.
