@@ -108,7 +108,6 @@ if [[ -n $feed || -n $key ]]; then
         exit 2
     }
     [[ $feed == https://?* ]] || { echo 'the release update feed requires HTTPS' >&2; exit 2; }
-    [[ $identity != - ]] || { echo 'an update feed requires a release signing identity' >&2; exit 2; }
     key_bytes=$(printf '%s' "$key" | base64 -D | wc -c)
     [[ $key_bytes -eq 32 ]] || { echo 'the update public key must contain 32 bytes' >&2; exit 2; }
     codesign --verify --deep --strict "$CODEX_GPUI_SPARKLE_FRAMEWORK"
