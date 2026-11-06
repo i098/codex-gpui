@@ -27,9 +27,11 @@ pub fn thread_composer(window: &mut Window, cx: &mut App) -> Entity<Composer> {
 
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     let main = cx.new(|cx| super::home::HomeMain::new(window, cx));
-    main.read(cx).composer.clone().update(cx, |c, cx| {
-        c.set_text("Refactor src/math.py", cx);
-        c.open_model_picker(cx);
+    let composer = main.read(cx).composer.clone();
+    composer.update(cx, |c, cx| c.set_text("Refactor src/math.py", cx));
+    // Open after the first (closed) frame: the open trigger keeps its closed width.
+    window.defer(cx, move |_, cx| {
+        composer.update(cx, |c, cx| c.open_model_picker(cx))
     });
     super::home::shell(main.into(), cx)
 }

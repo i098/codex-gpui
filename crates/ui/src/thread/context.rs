@@ -99,6 +99,13 @@ impl ThreadView {
                     self.safety_buffering.remove(turn);
                 }
             }
+            // The original's `strictReviewNotice`: shown until the turn ends.
+            "autoApprovalReview/strictReviewRequired" => {
+                let Some(turn) = params["turnId"].as_str() else {
+                    return false;
+                };
+                self.strict_review.insert(turn.to_owned());
+            }
             "model/verification" => {
                 let Some(turn) = params["turnId"].as_str() else {
                     return false;
@@ -184,11 +191,14 @@ impl ThreadView {
     }
 
     /// The inline notices under turn `turn`: reroutes, verification, and while the turn runs
-    /// the safety buffering line.
+    /// the safety buffering and strict review lines.
     pub(super) fn turn_notices(&self, turn: &bridge::types::Turn, cx: &Context<Self>) -> Vec<Div> {
-        let buffering = (self.safety_buffering.contains(&turn.id)
-            && turn.status == TurnStatus::InProgress)
+        let running = turn.status == TurnStatus::InProgress;
+        let buffering = (running && self.safety_buffering.contains(&turn.id))
             .then_some("Giving this request a little extra thought");
+        let strict = (running && self.strict_review.contains(&turn.id)).then_some(
+            "This request requires additional safety checks, which can take extra time.",
+        );
         let color = cx.theme().text_alpha_60;
         self.notices
             .get(&turn.id)
@@ -196,6 +206,7 @@ impl ThreadView {
             .flatten()
             .map(String::as_str)
             .chain(buffering)
+            .chain(strict)
             .map(|line| {
                 div()
                     .mt(px(16.))

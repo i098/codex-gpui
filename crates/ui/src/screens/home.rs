@@ -19,11 +19,17 @@ static PROJECT_TOOLTIP_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
 static CONTROL_TEXT_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
     std::sync::LazyLock::new(Default::default);
 
-/// Identifies the window whose scroll animation a static capture finishes.
+/// Identifies the window whose animations a static capture finishes.
 #[derive(Clone, Copy)]
-pub struct FinishedScrollAnimation(pub AnyWindowHandle);
+pub struct FinishedAnimation(pub AnyWindowHandle);
 
-impl Global for FinishedScrollAnimation {}
+impl Global for FinishedAnimation {}
+
+/// Whether a static capture of `window` shows its animations finished.
+pub fn animation_finished(window: &Window, cx: &App) -> bool {
+    cx.try_global::<FinishedAnimation>()
+        .is_some_and(|state| state.0 == window.window_handle())
+}
 
 actions!(
     home,
@@ -553,10 +559,15 @@ pub fn home_main(window: &mut Window, cx: &mut App) -> AnyView {
     cx.new(|cx| HomeMain::new(window, cx)).into()
 }
 
-/// The Home sidebar and `main` in the shell.
+/// The Home sidebar and `main` in the shell, with the references' unread Explore destination.
 pub fn shell(main: AnyView, cx: &mut App) -> AnyView {
     let sidebar = super::sidebar::home_sidebar(cx, None);
-    cx.new(|_| Shell::new(sidebar, main)).into()
+    cx.new(|_| {
+        let mut shell = Shell::new(sidebar, main);
+        shell.unread_destinations = Some(std::sync::Arc::from([SharedString::from("explore")]));
+        shell
+    })
+    .into()
 }
 
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
@@ -1298,9 +1309,7 @@ fn utility_bar(
             cx,
         )
     });
-    let finished = cx
-        .try_global::<FinishedScrollAnimation>()
-        .is_some_and(|state| state.0 == window.window_handle());
+    let finished = animation_finished(window, cx);
     div().mx(px(13.)).pb(px(20.)).mb(px(-24.)).child(
         div()
             .px(px(4.))

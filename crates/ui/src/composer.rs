@@ -2982,10 +2982,11 @@ pub fn label(s: impl Into<SharedString>, color: Hsla) -> Div {
 
 /// The model name sits in a `tabular-nums` span (`GPT-6`'s digit takes its tabular advance).
 pub(crate) fn tabular(d: Div) -> Div {
-    d.font_features(gpui::FontFeatures(std::sync::Arc::new(vec![(
-        "tnum".into(),
-        1,
-    )])))
+    d.font_features(tabular_features())
+}
+
+pub(crate) fn tabular_features() -> gpui::FontFeatures {
+    gpui::FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)]))
 }
 
 pub(crate) fn shadow(color: Hsla, y: f32, blur: f32, spread: f32, inset: bool) -> shapes::Shadow {
