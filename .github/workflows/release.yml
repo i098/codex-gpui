@@ -12,8 +12,8 @@ jobs:
       CODEX_GPUI_UNIVERSAL: "1"
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       GH_TOKEN: ${{ github.token }}
-      # With SPARKLE_ED_PRIVATE_KEY, SPARKLE_ED_PUBLIC_KEY and CODEX_GPUI_SIGN_IDENTITY set, the zip
-      # embeds the update feed and the release also publishes appcast.xml; without them it ships no feed.
+      # With SPARKLE_ED_PRIVATE_KEY and SPARKLE_ED_PUBLIC_KEY set, the zip
+      # embeds the update feed and the release also publishes appcast.xml; without them it ships no feed. With no CODEX_GPUI_SIGN_IDENTITY the bundle is signed ad hoc.
       SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
       SPARKLE_ED_PUBLIC_KEY: ${{ secrets.SPARKLE_ED_PUBLIC_KEY }}
       CODEX_GPUI_SIGN_IDENTITY: ${{ secrets.CODEX_GPUI_SIGN_IDENTITY }}
