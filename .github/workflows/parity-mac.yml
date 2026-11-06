@@ -42,6 +42,10 @@ jobs:
         run: |
           curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal --default-toolchain none
           rustup show active-toolchain || rustup toolchain install
+      - name: Probe Metal toolchain
+        run: |
+          xcode-select -p; ls -d /Applications/Xcode*; xcrun --find metal || true
+          xcodebuild -version || true; xcodebuild -showComponent metalToolchain || true
       - name: Run the parity gate
         run: |
           mkdir -p "$SCRATCH/out"
