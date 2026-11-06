@@ -1705,8 +1705,9 @@ impl ThreadView {
                     )),
             );
         }
+        // A project thread's summary has no `Sources` (refs/terminal: read and edited files).
         let sources = crate::screens::sources::sources(&self.turns);
-        if !sources.is_empty() {
+        if self.projectless && !sources.is_empty() {
             let open = |row: gpui::Stateful<Div>| {
                 row.mx(px(12.))
                     .px(px(8.))
@@ -1768,7 +1769,7 @@ impl ThreadView {
                     ),
             );
         }
-        if self.projectless {
+        if self.projectless && sources.is_empty() {
             let button = self.summary_bounds("summary-sources-add", window, cx);
             sections.push(self.summary_section(
                 ("Sources", "Attach files or connect apps"),
