@@ -32,7 +32,9 @@ impl Root {
     }
 
     pub(crate) fn plugins_event(&mut self, event: &Event, cx: &mut Context<Self>) {
-        if matches!(event, Event::Notification {method, ..} if method == "skills/changed") {
+        if matches!(event, Event::Notification {method, ..}
+            if matches!(method.as_str(), "skills/changed" | "codex/event/skills_update_available"))
+        {
             self.refresh_skills(cx);
         }
         if matches!(event, Event::Notification {method, ..}
