@@ -3644,6 +3644,16 @@ impl Root {
     /// the previous, is selected; closing the last tab closes the panel. A side chat's tab
     /// discards its conversation.
     fn close_side(&mut self, side: SidePanel, window: &mut Window, cx: &mut Context<Self>) {
+        // A file tab with unsaved edits saves first and closes itself once clean.
+        if let SidePanel::File(key) = side
+            && let Some(file) = self.file(key).cloned()
+            && !file.update(cx, |file, cx| file.request_close(cx))
+        {
+            if self.side != Some(side) {
+                self.set_side(side, window, cx);
+            }
+            return;
+        }
         let open = self.tabs.contains(&side);
         match side {
             SidePanel::SideChat(key) => self.discard_side_chat(key, cx),
