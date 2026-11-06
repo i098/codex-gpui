@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Start a cloud task from Home's `Cloud` mode with no saved environment: the project's tracked and untracked files, uncommitted edits included, are packed into a tarball and uploaded through `/wham/worktree_snapshots/upload_url` and `finish_upload`, and `POST /wham/tasks` starts from that `local_worktree` snapshot. Local files and the Git index are only read; a failed step restores the draft.
 - List the current thread's enabled, callable connectors in composer mentions and insert their `app://` links.
 - Open the Projects page from the Explore menu (`/projects`): the app-server's projects (`project/list`) with `Search projects`, the `Name` and `Updated` sort, `Create`, `Edit project` (`project/update`), `Start new chat in project`, and the empty, no-match and load-error states.
 - Search the Plugins directory through the server: typing in the search box sends the original's `plugin/search` (`searchTerm`, `scope`, `cwds`, `limit` 50) after its 200 ms debounce, shows the returned catalog cards, and loads the next page from `See more` with the server's `nextCursor`; a server without the method keeps the local filter and reports the error.
