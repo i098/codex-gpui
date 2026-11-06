@@ -350,7 +350,14 @@ pub fn shell(main: AnyView, cx: &mut App) -> AnyView {
 
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     let main = home_main(window, cx);
-    shell(main, cx)
+    let sidebar = super::sidebar::home_sidebar(cx, None);
+    // The references show one unread Explore destination.
+    cx.new(|_| {
+        let mut shell = Shell::new(sidebar, main);
+        shell.unread_destinations = Some(std::sync::Arc::from([SharedString::from("explore")]));
+        shell
+    })
+    .into()
 }
 
 fn open_folder_key(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {
