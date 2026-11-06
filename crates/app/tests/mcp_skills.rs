@@ -119,7 +119,7 @@ fn changed_skills_refresh_open_composers_and_remove_disabled_skills() -> Result<
         root.update(cx, |root, cx| {
             root.on_event(
                 bridge::Event::Notification {
-                    method: "skills/changed".into(),
+                    method: "codex/event/skills_update_available".into(),
                     params: json!({}),
                 },
                 cx,

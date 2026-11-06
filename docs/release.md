@@ -40,10 +40,10 @@ It generates `THIRD_PARTY_NOTICES.txt` from production Rust dependencies and the
 Development bundles have no update feed, so update checks and the update menu stay off.
 For a release, set `CODEX_GPUI_UPDATE_FEED`, `CODEX_GPUI_UPDATE_PUBLIC_KEY`, and `CODEX_GPUI_SPARKLE_FRAMEWORK` before running `tools/bundle.sh`.
 The framework path refers to the Mac build host and must contain the verified Sparkle 2.9 framework.
-Set `CODEX_GPUI_SIGN_IDENTITY` to the release signing identity.
-The script rejects an update feed with an ad-hoc signing identity.
+Set `CODEX_GPUI_SIGN_IDENTITY` to the release signing identity; without it the bundle is signed ad hoc and not notarized.
+Sparkle checks the Ed25519 signature of the zip, so an ad-hoc bundle still updates.
 The script embeds the feed and Ed25519 public key, then signs Sparkle's helpers, framework, and app with that identity.
-The release workflow does this when the repository secrets `SPARKLE_ED_PRIVATE_KEY`, `SPARKLE_ED_PUBLIC_KEY` and `CODEX_GPUI_SIGN_IDENTITY` exist.
+The release workflow does this when the repository secrets `SPARKLE_ED_PRIVATE_KEY` and `SPARKLE_ED_PUBLIC_KEY` exist.
 It then runs `tools/appcast.py` and uploads `appcast.xml` and `<zip>.sha256` beside the zip; run `python3 tools/test_appcast.py` for its checks.
 General settings has an `Automatically check for updates` switch that sets Sparkle's `automaticallyChecksForUpdates`.
 The release owner must supply the production feed and complete signing and notarization before distribution.
