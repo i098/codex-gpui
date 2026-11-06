@@ -1444,7 +1444,13 @@ impl SettingsPane {
                         d.border_color(t.border)
                             .group_hover("appearance-mode-tile", move |s| s.border_color(strong))
                     });
-                let focus = focus::handle("appearance-mode", index as isize, window, cx);
+                // One keyed focus per tile, in document order like the segmented controls.
+                let focus = focus::handle(
+                    (gpui::ElementId::from("appearance-mode"), value),
+                    0,
+                    window,
+                    cx,
+                );
                 let tile = div()
                     .id(("appearance-mode", index))
                     .role(gpui::Role::RadioButton)
