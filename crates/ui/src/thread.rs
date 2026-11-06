@@ -79,6 +79,7 @@ pub enum GitAction {
     OpenForm,
     CreateBranch,
     SwitchBranch,
+    CreatePr,
 }
 
 impl gpui::EventEmitter<GitAction> for ThreadView {}
@@ -438,7 +439,16 @@ impl ThreadView {
         cx.notify();
     }
 
-    pub fn git_action_rows(&self) -> [(&'static str, Option<&'static str>); 4] {
+    pub fn git_branch(&self) -> Option<&str> {
+        self.git_repository
+            .as_ref()?
+            .as_ref()
+            .ok()?
+            .branch
+            .as_deref()
+    }
+
+    pub fn git_action_rows(&self) -> [(&'static str, Option<&'static str>); 5] {
         let (commit, push) = match &self.git_repository {
             None => (Some("Loading diff…"), Some("Loading push status…")),
             Some(Err(_)) => (
@@ -470,6 +480,7 @@ impl ThreadView {
             ("Push", self.git_phase.or(push)),
             ("Create branch", self.git_phase.or(create)),
             ("Switch branch", self.git_phase.or(switch)),
+            ("Create pull request", self.git_phase.or(switch)),
         ]
     }
 
@@ -525,6 +536,7 @@ impl ThreadView {
         cx.emit(match index {
             2 => GitAction::CreateBranch,
             3 => GitAction::SwitchBranch,
+            4 => GitAction::CreatePr,
             _ => GitAction::OpenForm,
         });
     }

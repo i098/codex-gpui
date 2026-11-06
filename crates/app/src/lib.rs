@@ -2292,6 +2292,64 @@ impl Root {
     }
 
     /// Both original header actions open the form, including a push with no local changes.
+    fn open_create_pr(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.git_busy.is_some() || self.has_dialog() {
+            return;
+        }
+        let Some(thread) = self.thread.as_ref() else {
+            return;
+        };
+        let view = thread.read(cx);
+        let title = view.header_title().to_string();
+        let cwd = view.cwd().to_owned();
+        let branch = view.git_branch().unwrap_or("Detached HEAD").to_owned();
+        let dialog = cx.new(|cx| Dialog::create_pr(title, branch, cx));
+        self.commit_cwd = Some(cwd);
+        self.show_dialog(dialog, window, cx);
+    }
+
+    fn create_pr(
+        &mut self,
+        dialog: Entity<Dialog>,
+        mut params: Value,
+        open: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(cwd) = self.commit_cwd.clone() else {
+            return;
+        };
+        params["cwd"] = json!(cwd);
+        self.set_git_phase(Some("Creating pull request…"), cx);
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move { git_call(&*host, "gh-create-pr", params) });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = read.await;
+            this.update_in(cx, |this, window, cx| {
+                this.set_git_phase(None, cx);
+                match result {
+                    Ok(pr) => {
+                        if open && let Some(url) = pr["url"].as_str() {
+                            cx.open_url(url);
+                        }
+                        if this.dialog.as_ref() == Some(&dialog) {
+                            this.dialog = None;
+                            this.commit_cwd = None;
+                            window.focus(&this.composer(cx).focus_handle(cx), cx);
+                        }
+                        this.toast(Toast::info("Pull request created"), cx);
+                        this.refresh_git_actions(cx);
+                    }
+                    Err(error) => dialog.update(cx, |dialog, cx| {
+                        dialog.schedule_result(error.to_string(), cx)
+                    }),
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn open_git_form(&mut self, kind: DialogKind, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.thread.clone() else {
             return;
@@ -3944,7 +4002,10 @@ impl Root {
         self.command_menu = None;
         let git_dialog = matches!(
             dialog.read(cx).kind(),
-            DialogKind::Commit | DialogKind::Branches | DialogKind::CreateBranch
+            DialogKind::Commit
+                | DialogKind::Branches
+                | DialogKind::CreateBranch
+                | DialogKind::CreatePr
         );
         if git_dialog
             && dialog.read(cx).kind() != DialogKind::Branches
@@ -3995,6 +4056,10 @@ impl Root {
             }
             if let DialogOutcome::ScheduleTask { prompt, rrule } = outcome {
                 this.create_task(prompt.clone(), rrule.clone(), window, cx);
+                return;
+            }
+            if let DialogOutcome::CreatePr { title, body, base, draft, commit_changes, open_browser } = outcome {
+                this.create_pr(dialog.clone(), json!({"title": title, "body": body, "base": base, "draft": draft, "commitChanges": commit_changes}), *open_browser, window, cx);
                 return;
             }
             if let DialogOutcome::CheckoutBranch { name, create } = outcome {
@@ -4148,6 +4213,7 @@ impl Root {
                 | DialogOutcome::DeleteTask { .. }
                 | DialogOutcome::CheckoutBranch { .. }
                 | DialogOutcome::CommitBeforeCheckout
+                | DialogOutcome::CreatePr { .. }
                 | DialogOutcome::DeleteMemories
                 | DialogOutcome::ChatMemories { .. }
                 | DialogOutcome::WritingConnect(_)
@@ -4875,6 +4941,7 @@ impl Root {
                 GitAction::OpenForm => this.open_git_form(DialogKind::Commit, window, cx),
                 GitAction::CreateBranch => this.open_git_form(DialogKind::CreateBranch, window, cx),
                 GitAction::SwitchBranch => this.open_git_form(DialogKind::Branches, window, cx),
+                GitAction::CreatePr => this.open_create_pr(window, cx),
             },
         )
         .detach();
