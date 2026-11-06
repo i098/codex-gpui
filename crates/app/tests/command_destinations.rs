@@ -97,7 +97,7 @@ fn file_search_ignores_old_queries_and_opens_the_selected_file() -> Result<()> {
     fx.keys("enter")?;
     fx.wait("the selected file opens", |fx| {
         fx.read(|root, cx| {
-            root.side_panel() == Some(SidePanel::File)
+            matches!(root.side_panel(), Some(SidePanel::File(_)))
                 && root
                     .file_view()
                     .is_some_and(|file| file.read(cx).path == target.to_string_lossy().as_ref())
