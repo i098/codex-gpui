@@ -1347,6 +1347,7 @@ fn utility_bar(
                                     project,
                                     project_menu,
                                     compact,
+                                    t.text_tertiary,
                                     "Select a project to run your chat in",
                                     Some("⌥⇧⌘O"),
                                     t,
@@ -1461,6 +1462,7 @@ fn project_chip(
     project: Option<SharedString>,
     project_menu: Option<gpui::AnyElement>,
     compact: bool,
+    fg: Hsla,
     tip: &'static str,
     shortcut: Option<&'static str>,
     t: &Theme,
@@ -1478,7 +1480,7 @@ fn project_chip(
         "choose-project",
         "folder",
         project.unwrap_or_else(|| "Choose project".into()),
-        t.text_tertiary,
+        fg,
         compact,
         t,
         focus,
@@ -1545,9 +1547,9 @@ fn work_utility_bar(
                     ..Default::default()
                 }))
                 .child(
-                    div().py(px(3.)).child(
+                    div().py(px(4.)).child(
                         div()
-                            .p(px(2.))
+                            .py(px(2.))
                             .flex()
                             .items_center()
                             .gap(px(8.))
@@ -1556,6 +1558,7 @@ fn work_utility_bar(
                                 project,
                                 project_menu,
                                 compact,
+                                t.text,
                                 "Change project",
                                 None,
                                 t,
