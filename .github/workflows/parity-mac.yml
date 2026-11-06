@@ -1,6 +1,6 @@
 name: parity-mac
 # Pixel-parity gate on the Mac mini runner. Run it from the Actions tab (`pr` = PR number, empty =
-# main) or by adding the `parity-gate` label to a PR. It is not a required check.
+# main). It is not a required check and never runs on its own.
 on:
   workflow_dispatch:
     inputs:
@@ -10,20 +10,17 @@ on:
       screen:
         description: One parity screen (empty runs all)
         required: false
-  pull_request:
-    types: [labeled]
 concurrency:
   group: parity-mac
   cancel-in-progress: false
 jobs:
   parity:
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'parity-gate'
     runs-on: [self-hosted, macOS, ARM64, macmini-arm64]
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.pr && format('refs/pull/{0}/head', inputs.pr) || 'main' }}
+          ref: ${{ inputs.pr && format('refs/pull/{0}/head', inputs.pr) || 'main' }}
       # All scratch lives in one /tmp directory that the last step deletes.
       - name: Prepare scratch
         run: |
