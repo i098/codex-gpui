@@ -2794,6 +2794,8 @@ pub fn split_screen(
     let shell = cx.new(|_| {
         let mut shell = Shell::new(sidebar, thread.clone().into());
         shell.can_go_back = true;
+        // The reference has an unseen Explore destination: the rail's `…` carries the dot.
+        shell.unread_destinations = Some(["unseen".into()].into());
         shell
     });
     with_side_panel(shell, thread, panel, cx).into()
