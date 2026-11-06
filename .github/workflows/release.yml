@@ -13,6 +13,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Install the GitHub CLI
+        run: command -v gh >/dev/null || { sudo apt-get update && sudo apt-get install -y --no-install-recommends gh; }
       - uses: actions/checkout@v4
       - name: Create the release
         run: |
@@ -124,6 +126,8 @@ jobs:
       CODEX_GPUI_UPDATE_PRIVATE_KEY: ${{ secrets.CODEX_GPUI_UPDATE_PRIVATE_KEY }}
       CODEX_GPUI_UPDATE_PUBLIC_KEY: ${{ secrets.CODEX_GPUI_UPDATE_PUBLIC_KEY }}
     steps:
+      - name: Install the GitHub CLI
+        run: command -v gh >/dev/null || { sudo apt-get update && sudo apt-get install -y --no-install-recommends gh; }
       - uses: actions/checkout@v4
       - name: Check the signing key is configured
         id: gate
