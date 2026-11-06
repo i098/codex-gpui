@@ -6,7 +6,22 @@ on:
 permissions:
   contents: write
 jobs:
+  release:
+    # Creates the release so each platform job below only uploads to it. GitHub-hosted macOS and
+    # Windows runners are not available to this private repository; the Linux job runs on ours.
+    runs-on: codex-gpui-quick
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create the release
+        run: |
+          version=$(tools/version.sh)
+          [[ $GITHUB_REF_NAME == "v$version" ]] || { echo "tag $GITHUB_REF_NAME is not v$version" >&2; exit 1; }
+          awk -v heading="## [$version]" 'index($0, heading) == 1 { found = 1; next } found && /^## \[/ { exit } found' CHANGELOG.md >notes.md
+          gh release create "$GITHUB_REF_NAME" --title "Codex GPUI $version" --notes-file notes.md --verify-tag
   macos:
+    needs: release
     runs-on: macos-14
     env:
       CODEX_GPUI_UNIVERSAL: "1"
@@ -73,11 +88,9 @@ jobs:
               (cd feed && ln -s "../$zip" . && shasum -a 256 -c "$zip.sha256" && rm "$zip")
               assets+=(feed/appcast.xml "feed/$zip.sha256")
           fi
-          awk -v heading="## [$VERSION]" 'index($0, heading) == 1 { found = 1; next } found && /^## \[/ { exit } found' CHANGELOG.md >notes.md
-          gh release create "$GITHUB_REF_NAME" "${assets[@]}" --title "Codex GPUI $VERSION" --notes-file notes.md --verify-tag
+          gh release upload "$GITHUB_REF_NAME" "${assets[@]}"
   windows:
-    # Runs after the macOS job so the release exists to receive the upload.
-    needs: macos
+    needs: release
     runs-on: windows-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -104,8 +117,8 @@ jobs:
   linux-x86_64:
     # The AppImage self-updates from latest.json, which is signed with an Ed25519 key.
     # Without the three secrets below the release ships no Linux build.
-    needs: macos
-    runs-on: ubuntu-24.04
+    needs: release
+    runs-on: codex-gpui
     env:
       GH_TOKEN: ${{ github.token }}
       CODEX_GPUI_UPDATE_PRIVATE_KEY: ${{ secrets.CODEX_GPUI_UPDATE_PRIVATE_KEY }}
