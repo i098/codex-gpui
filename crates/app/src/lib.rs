@@ -3968,7 +3968,7 @@ impl Root {
             },
         )
         .detach();
-        window.focus(&editor.focus_handle(cx), cx);
+        let editor_focus = editor.focus_handle(cx);
         if panel.is_some() {
             self.automation_tab = Some((title, editor));
             if self.side_visible(SidePanel::Automation) {
@@ -3979,6 +3979,8 @@ impl Root {
         } else {
             self.automation_editor = Some(editor);
         }
+        // After the tab opens: opening it moves focus.
+        window.focus(&editor_focus, cx);
         self.load_projects(cx);
         cx.notify();
     }
