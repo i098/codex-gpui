@@ -102,11 +102,11 @@ pub fn render(case: &Case, assets: Arc<dyn AssetSource>, w: u32, h: u32) -> Resu
 
 /// Captures the animation-finished reference state, then restores the live window.
 pub fn capture_frozen(cx: &mut HeadlessAppContext, window: AnyWindowHandle) -> Result<RgbaImage> {
-    use ui::screens::home::FinishedScrollAnimation;
+    use ui::screens::home::FinishedAnimation;
 
     let previous = cx.update(|cx| {
-        let previous = cx.try_global::<FinishedScrollAnimation>().copied();
-        cx.set_global(FinishedScrollAnimation(window));
+        let previous = cx.try_global::<FinishedAnimation>().copied();
+        cx.set_global(FinishedAnimation(window));
         previous
     });
     let image = (|| {
@@ -120,7 +120,7 @@ pub fn capture_frozen(cx: &mut HeadlessAppContext, window: AnyWindowHandle) -> R
         cx.capture_screenshot(window)
     })();
     cx.update(|cx| {
-        cx.remove_global::<FinishedScrollAnimation>();
+        cx.remove_global::<FinishedAnimation>();
         if let Some(previous) = previous {
             cx.set_global(previous);
         }
@@ -341,7 +341,7 @@ fn html(report: &[Metrics]) -> String {
 #[test]
 fn frozen_home_capture_restores_live_scroll_masks() -> Result<()> {
     use gpui::PlatformWindow as _;
-    use ui::screens::home::FinishedScrollAnimation;
+    use ui::screens::home::FinishedAnimation;
     std::panic::set_hook(Box::new(|info| {
         eprintln!("{info}");
         std::process::exit(101);
@@ -376,6 +376,6 @@ fn frozen_home_capture_restores_live_scroll_masks() -> Result<()> {
     assert!(capture_frozen(&mut cx, windows[0]).is_err());
     assert_eq!(cx.capture_screenshot(windows[1])?, other_live);
     assert!(cx.update(|cx| cx.reduce_motion()));
-    assert!(!cx.update(|cx| cx.has_global::<FinishedScrollAnimation>()));
+    assert!(!cx.update(|cx| cx.has_global::<FinishedAnimation>()));
     Ok(())
 }
