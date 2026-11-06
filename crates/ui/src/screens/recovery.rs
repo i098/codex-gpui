@@ -127,13 +127,13 @@ impl RenderOnce for Recovery {
 }
 
 /// A theme fill from its sRGB bytes.
-fn color(bytes: u32) -> Hsla {
+pub(crate) fn color(bytes: u32) -> Hsla {
     rgba(bytes).into()
 }
 
 /// The `Ir` primary button at rest, `size: large`: a 36 px pill (`9999px` radius,
 /// `8px 20px` padding, 14/18 w430) — values probed from the original page.
-fn button<A: Action + Default + Clone>(
+pub(crate) fn button<A: Action + Default + Clone>(
     id: &'static str,
     label: &'static str,
     action: &A,

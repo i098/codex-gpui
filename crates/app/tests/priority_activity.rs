@@ -107,6 +107,12 @@ struct PolicyHost {
 impl app::host::Host for PolicyHost {
     fn fetch(&self, request: &app::host::Request) -> Result<serde_json::Value> {
         if let app::host::Request::Http(http) = request {
+            if http["url"]
+                .as_str()
+                .is_some_and(|url| url.starts_with("/composer/items"))
+            {
+                anyhow::bail!("task suggestions are not under test");
+            }
             // The signed-in sidebar also reads its `Cloud` tasks: this account has none.
             if http["url"] != "/wham/statsig/bootstrap" {
                 return Ok(serde_json::json!({"status": 404, "body": "{}"}));

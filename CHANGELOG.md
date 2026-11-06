@@ -70,6 +70,11 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add Settings ▸ `Appshots` on macOS: press both ⌘, ⌥ or ⇧ keys to capture the frontmost window into the current chat, a new chat or a visible Mini, with destination and sound settings.
 - Show an image or PDF in the Files tab as a preview (PDFs with page arrows), not as text lines that fail with `Could not open file`.
 - Open the latest plan from Thread summary ▸ `Plan` in an editable `Plan` side panel tab that saves to `$CODEX_HOME/plans/<thread>/<plan item>/PLAN.md`.
+- Start a cloud task from Home: `Work in` > `Cloud` with an environment picker posts `/wham/tasks` and opens the task page.
+- Add Home's starting branch picker and local environment picker for `New worktree` starts.
+- Show Home task suggestions from the ChatGPT backend under the composer; a card fills the composer, and its `×` dismisses it.
+- Show the Home rate limit reset and subagents banners, with `See resets`, `Try now` and dismissal that the app remembers.
+- Show the `We couldn't load your account` page when `account/read` fails, with `Reload` and `Sign out`.
 - Add the Recents header's `Chat sidebar options` menu as the original draws it: `Organize sidebar` (By project, In one list), `Sort chats by` (Last updated, Manual order), `Show` ▸ `Projects` and `New section`. The choices are saved.
 - Add the sidebar `Cloud` group: the account's current cloud tasks from `/wham/tasks/list`, with a spinner while a task runs and the unread dot. A click opens the task.
 - Add the Files tab `Find in file…` bar (⌘F, Enter and ⇧Enter, match count), the Markdown live preview as the original's file editor draws it with `View source` / `View preview` and `Copy Markdown`, several file tabs with one preview tab that the next opened file replaces until pinned, a hover card with the path of a file tab, and the `Open` split button with the preferred app, its menu of open-in apps, `Open in folder` and `Save as…`.
