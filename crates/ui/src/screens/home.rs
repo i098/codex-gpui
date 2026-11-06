@@ -1342,64 +1342,17 @@ fn utility_bar(
                                 .gap(px(8.))
                                 .overflow_x_scroll()
                                 .track_scroll(&scroll)
-                                .child(
-                                    crate::tooltip::tooltip(
-                                        {
-                                            let toggle = {
-                                                let owner = owner.clone();
-                                                move |window: &mut Window, cx: &mut App| {
-                                                    set_project_menu(&owner, None, window, cx)
-                                                }
-                                            };
-                                            let key_toggle = toggle.clone();
-                                            let bounds_owner = owner.clone();
-                                            chip(
-                                                "choose-project",
-                                                "folder",
-                                                project.unwrap_or_else(|| "Choose project".into()),
-                                                t.text_tertiary,
-                                                compact,
-                                                t,
-                                                &project_focus,
-                                                cx,
-                                            )
-                                            // Ghost `[data-state=open]` fill.
-                                            .when(project_menu.is_some(), |d| {
-                                                d.bg(t.ghost_hover).rounded_full()
-                                            })
-                                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                                cx.stop_propagation()
-                                            })
-                                            .on_click(move |_, window, cx| toggle(window, cx))
-                                            .on_key_down(move |event, window, cx| {
-                                                if matches!(
-                                                    event.keystroke.key.as_str(),
-                                                    "enter" | "space"
-                                                ) {
-                                                    key_toggle(window, cx);
-                                                    cx.stop_propagation();
-                                                }
-                                            })
-                                            .child(
-                                                canvas(
-                                                    move |b, _, cx| {
-                                                        bounds_owner.update(cx, |main, _| {
-                                                            main.projects.bounds = b
-                                                        })
-                                                    },
-                                                    |_, (), _, _| {},
-                                                )
-                                                .absolute()
-                                                .size_full(),
-                                            )
-                                            .children(project_menu)
-                                        },
-                                        "Select a project to run your chat in",
-                                        Some("⌥⇧⌘O"),
-                                        crate::tooltip::Side::Top,
-                                    )
-                                    .focus_handle(&project_focus.read(cx).handle),
-                                )
+                                .child(project_chip(
+                                    owner,
+                                    project,
+                                    project_menu,
+                                    compact,
+                                    "Select a project to run your chat in",
+                                    Some("⌥⇧⌘O"),
+                                    t,
+                                    &project_focus,
+                                    cx,
+                                ))
                                 .child({
                                     let toggle = {
                                         let owner = owner.clone();
@@ -1501,6 +1454,119 @@ fn utility_bar(
     )
 }
 
+/// The utility bar's `Choose project` chip; it opens the project menu.
+#[allow(clippy::too_many_arguments)]
+fn project_chip(
+    owner: &Entity<HomeMain>,
+    project: Option<SharedString>,
+    project_menu: Option<gpui::AnyElement>,
+    compact: bool,
+    tip: &'static str,
+    shortcut: Option<&'static str>,
+    t: &Theme,
+    focus: &Entity<focus::ControlFocus>,
+    cx: &App,
+) -> crate::tooltip::Tooltip {
+    let toggle = {
+        let owner = owner.clone();
+        move |window: &mut Window, cx: &mut App| set_project_menu(&owner, None, window, cx)
+    };
+    let key_toggle = toggle.clone();
+    let bounds_owner = owner.clone();
+    let open = project_menu.is_some();
+    let chip = chip(
+        "choose-project",
+        "folder",
+        project.unwrap_or_else(|| "Choose project".into()),
+        t.text_tertiary,
+        compact,
+        t,
+        focus,
+        cx,
+    )
+    // Ghost `[data-state=open]` fill.
+    .when(open, |d| d.bg(t.ghost_hover).rounded_full())
+    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    .on_click(move |_, window, cx| toggle(window, cx))
+    .on_key_down(move |event, window, cx| {
+        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+            key_toggle(window, cx);
+            cx.stop_propagation();
+        }
+    })
+    .child(
+        canvas(
+            move |b, _, cx| bounds_owner.update(cx, |main, _| main.projects.bounds = b),
+            |_, (), _, _| {},
+        )
+        .absolute()
+        .size_full(),
+    )
+    .children(project_menu);
+    crate::tooltip::tooltip(chip, tip, shortcut, crate::tooltip::Side::Top)
+        .focus_handle(&focus.read(cx).handle)
+}
+
+/// The Work home's `Composer utility bar`, attached under the card (`absolute inset-x-0
+/// top-full`, `data-composer-rail-placement=below`): `Choose project`.
+fn work_utility_bar(
+    owner: &Entity<HomeMain>,
+    project: Option<SharedString>,
+    project_menu: Option<gpui::AnyElement>,
+    compact: bool,
+    t: &Theme,
+    window: &mut Window,
+    cx: &mut App,
+) -> Div {
+    let focus = focus::handle("choose-project", 0, window, cx);
+    // `padding-top: --radius-2xl` and `margin-top: -(tuck + --radius-2xl)` tuck 4 px of
+    // the rail under the card.
+    div()
+        .absolute()
+        .left_0()
+        .right_0()
+        .top(relative(1.))
+        .mx(px(13.))
+        .pt(px(20.))
+        .mt(px(-24.))
+        .child(
+            div()
+                .px(px(4.))
+                .pt(px(4.))
+                .relative()
+                .child(shapes::decoration(shapes::Decoration {
+                    radius: Corners {
+                        bottom_left: px(20.),
+                        bottom_right: px(20.),
+                        ..Corners::all(px(0.))
+                    },
+                    corner: shapes::Corner::Squircle,
+                    fill: Some(t.composer_action_bar),
+                    ..Default::default()
+                }))
+                .child(
+                    div().py(px(3.)).child(
+                        div()
+                            .p(px(2.))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(project_chip(
+                                owner,
+                                project,
+                                project_menu,
+                                compact,
+                                "Change project",
+                                None,
+                                t,
+                                &focus,
+                                cx,
+                            )),
+                    ),
+                ),
+        )
+}
+
 impl Render for HomeMain {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
@@ -1553,7 +1619,8 @@ impl Render for HomeMain {
                 )
         };
         let chat = self.headline.is_some();
-        let project_menu = project_menu(
+        let compact = self.composer.read(cx).utility_compact();
+        let mut project_menu = project_menu(
             &cx.entity(),
             &self.projects,
             self.composer.read(cx),
@@ -1561,6 +1628,10 @@ impl Render for HomeMain {
             window,
             cx,
         );
+        let work_rail = (self.headline == Some(WORK_HEADLINE)).then(|| {
+            let menu = project_menu.take();
+            work_utility_bar(&owner, self.project.clone(), menu, compact, &t, window, cx)
+        });
         let column = div()
             .w_full()
             // The ChatGPT composer is 640 px wide.
@@ -1584,13 +1655,24 @@ impl Render for HomeMain {
                     self.project.clone(),
                     picker,
                     project_menu,
-                    self.composer.read(cx).utility_compact(),
+                    compact,
                     &t,
                     window,
                     cx,
                 ))
             })
-            .child(self.composer.clone())
+            // The Work rail comes first so the card paints over its tucked top.
+            .map(|column| match work_rail {
+                Some(rail) => column.child(
+                    div()
+                        .relative()
+                        .flex()
+                        .flex_col()
+                        .child(rail)
+                        .child(self.composer.clone()),
+                ),
+                None => column.child(self.composer.clone()),
+            })
             .when(
                 self.suggestions_loading || !self.suggestions.is_empty(),
                 |column| column.child(self.suggestions(&t, window, cx)),
