@@ -157,6 +157,7 @@ pub enum Kind {
     Commit,
     Branches,
     CreateBranch,
+    CreatePr,
     BranchConflict,
     DiscardInstructions,
     DeleteMemories,
@@ -222,6 +223,14 @@ pub enum Outcome {
         name: String,
         create: bool,
     },
+    CreatePr {
+        title: String,
+        body: String,
+        base: String,
+        draft: bool,
+        commit_changes: bool,
+        open_browser: bool,
+    },
     CommitBeforeCheckout,
     WritingSample,
     WritingManage,
@@ -276,6 +285,16 @@ struct BranchForm {
     conflicts: Vec<String>,
 }
 
+#[derive(Default)]
+struct GitForm {
+    title: String,
+    base: String,
+    head: String,
+    draft: bool,
+    commit_changes: bool,
+    open_browser: bool,
+}
+
 /// The `Chat memories` switches. `Use memories` is fixed once the chat has started.
 struct ChatMemories {
     started: bool,
@@ -314,6 +333,7 @@ pub struct Dialog {
     announcement: Option<ModelAnnouncement>,
     commit: Option<CommitForm>,
     branch: Option<BranchForm>,
+    git_form: GitForm,
     writing: Option<WritingSetup>,
     memories: Option<ChatMemories>,
     hook_stats: Option<HookStatsForm>,
@@ -343,6 +363,7 @@ impl Dialog {
         }
         Self {
             kind,
+            git_form: GitForm::default(),
             controls: std::array::from_fn(|_| cx.focus_handle()),
             selected: usize::from(kind == Kind::RevertChanges),
             query: String::new(),
@@ -1503,6 +1524,19 @@ impl Dialog {
     pub fn task(&self) -> &str {
         &self.thread
     }
+    pub fn create_pr(title: String, head: String, cx: &mut Context<Self>) -> Self {
+        Self {
+            selected: 1,
+            git_form: GitForm {
+                title,
+                head,
+                open_browser: true,
+                ..Default::default()
+            },
+            ..Self::new(Kind::CreatePr, cx)
+        }
+    }
+
     /// `Commit or push` for the repository `repo` describes.
     pub fn commit(repo: CommitRepository, cx: &mut Context<Self>) -> Self {
         let form = CommitForm {
@@ -1966,6 +2000,13 @@ impl Dialog {
             (Kind::Rename | Kind::NewSection | Kind::EditSection, 0) => self.name_label(),
             (Kind::Rename | Kind::NewSection | Kind::EditSection, 1) => self.name_submit(),
             (Kind::Rename | Kind::NewSection | Kind::EditSection, _) => "Cancel",
+            (Kind::CreatePr, 0) => "Description",
+            (Kind::CreatePr, 1) => "Title",
+            (Kind::CreatePr, 2) => "Base branch",
+            (Kind::CreatePr, 3) => "Create draft PR",
+            (Kind::CreatePr, 4) => "Commit and push local changes",
+            (Kind::CreatePr, 5) => "Open PR in browser",
+            (Kind::CreatePr, _) => "Create PR",
             (Kind::Commit, 0) => "Commit message",
             (Kind::Commit, 1) => "Include unstaged changes",
             (Kind::Commit, 2) => "Commit to",
@@ -1997,18 +2038,26 @@ impl Dialog {
                 | Kind::Commit
                 | Kind::Branches
                 | Kind::CreateBranch
+                | Kind::CreatePr
         ) && self.selected == 0)
             || (self.kind == Kind::ScheduleTask && self.selected == 4)
             || (self.kind == Kind::Commit && self.selected == 3)
+            || (matches!(self.kind, Kind::CreatePr) && self.selected == 1)
+            || (self.kind == Kind::CreatePr && self.selected == 2)
     }
 
     /// The focused input takes `Enter` as a new line and keeps a caret and selection.
     fn multiline(&self) -> bool {
-        matches!(self.kind, Kind::ScheduleTask | Kind::Commit) && self.selected == 0
+        matches!(
+            self.kind,
+            Kind::ScheduleTask | Kind::Commit | Kind::CreatePr
+        ) && self.selected == 0
     }
 
     fn input(&mut self) -> &mut String {
         match (self.kind, self.selected) {
+            (Kind::CreatePr, 1) => &mut self.git_form.title,
+            (Kind::CreatePr, 2) => &mut self.git_form.base,
             (Kind::ScheduleTask, 4) => &mut self.schedule_time,
             (Kind::Commit, 3) => &mut self.form_mut().branch_name,
             _ => &mut self.query,
@@ -2171,6 +2220,31 @@ impl Dialog {
                     },
                 });
             }
+            (Kind::CreatePr, 3) => {
+                self.git_form.draft = !self.git_form.draft;
+                cx.notify();
+            }
+            (Kind::CreatePr, 4) => {
+                self.git_form.commit_changes = !self.git_form.commit_changes;
+                cx.notify();
+            }
+            (Kind::CreatePr, 5) => {
+                self.git_form.open_browser = !self.git_form.open_browser;
+                cx.notify();
+            }
+            (Kind::CreatePr, 6) => {
+                self.saving = true;
+                cx.emit(Outcome::CreatePr {
+                    title: self.git_form.title.clone(),
+                    body: self.query.clone(),
+                    base: self.git_form.base.clone(),
+                    draft: self.git_form.draft,
+                    commit_changes: self.git_form.commit_changes,
+                    open_browser: self.git_form.open_browser,
+                });
+                cx.notify();
+            }
+            (Kind::CreatePr, _) => {}
             (Kind::Commit, 1) => {
                 let form = self.form_mut();
                 form.include_unstaged = !form.include_unstaged;
@@ -2380,6 +2454,7 @@ impl Dialog {
                     Kind::Branches => vec![0, 1],
                     Kind::BranchConflict => vec![1, 2],
                     Kind::Commit => self.commit_tab_order(),
+                    Kind::CreatePr => vec![1, 0, 2, 3, 4, 5, 6],
                     _ => vec![0, 1, 2],
                 };
                 let count = order.len();
@@ -3815,6 +3890,125 @@ impl Dialog {
 }
 
 impl Dialog {
+    fn git_field(
+        &self,
+        index: usize,
+        label: &'static str,
+        value: &str,
+        t: &Theme,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        div()
+            .id(("git-form-field", index))
+            .role(gpui::Role::TextInput)
+            .aria_label(label)
+            .aria_value(value.to_owned())
+            .track_focus(&self.controls[index])
+            .tab_index(0)
+            .border_1()
+            .border_color(t.border)
+            .rounded(px(8.))
+            .p(px(8.))
+            .child(text(format!("{label}: {value}"), 14., 20., 400., t.text))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.selected = index;
+                this.select_all = true;
+                this.controls[index].focus(window, cx);
+                cx.notify();
+            }))
+    }
+
+    fn git_toggle(
+        &self,
+        index: usize,
+        label: &'static str,
+        checked: bool,
+        t: &Theme,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        div()
+            .id(("git-form-toggle", index))
+            .role(gpui::Role::CheckBox)
+            .aria_label(label)
+            .aria_toggled(if checked {
+                gpui::Toggled::True
+            } else {
+                gpui::Toggled::False
+            })
+            .track_focus(&self.controls[index])
+            .tab_index(0)
+            .child(text(
+                format!("{} {label}", if checked { "☑" } else { "☐" }),
+                14.,
+                24.,
+                400.,
+                t.text,
+            ))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.selected = index;
+                this.controls[index].focus(window, cx);
+                this.activate(cx);
+            }))
+    }
+
+    fn git_form_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let mut content = div().p(px(20.)).flex().flex_col().gap(px(12.)).child(text(
+            "Create PR",
+            20.,
+            28.,
+            600.,
+            t.text,
+        ));
+        content = content
+            .child(self.git_field(1, "Title", &self.git_form.title, t, cx))
+            .child(
+                self.editor(
+                    "pr-description",
+                    "Description",
+                    "Description (empty = generated)",
+                    t,
+                    cx,
+                )
+                .h(px(80.))
+                .border_1()
+                .border_color(t.border)
+                .rounded(px(8.))
+                .p(px(8.)),
+            )
+            .child(self.git_field(2, "Base branch", &self.git_form.base, t, cx))
+            .child(text(
+                format!(
+                    "{} → {}",
+                    if self.git_form.base.is_empty() {
+                        "Default branch"
+                    } else {
+                        &self.git_form.base
+                    },
+                    self.git_form.head
+                ),
+                13.,
+                20.,
+                400.,
+                t.text_secondary,
+            ))
+            .child(self.git_toggle(3, "Create draft PR", self.git_form.draft, t, cx))
+            .child(self.git_toggle(
+                4,
+                "Commit and push local changes",
+                self.git_form.commit_changes,
+                t,
+                cx,
+            ))
+            .child(self.git_toggle(5, "Open PR in browser", self.git_form.open_browser, t, cx));
+        content
+            .when_some(self.error.as_ref(), |content, error| {
+                content.child(text(error.clone(), 13., 20., 400., t.text).whitespace_normal())
+            })
+            .child(self.button(6, "Create PR", 130., t, cx))
+    }
+}
+
+impl Dialog {
     fn form(&self) -> &CommitForm {
         self.commit.as_ref().expect("commit form")
     }
@@ -4510,6 +4704,7 @@ impl Render for Dialog {
             Kind::HookStats => (680., 800.),
             Kind::ModelAnnouncement => (480., 432.),
             Kind::Commit => (420., self.commit_height()),
+            Kind::CreatePr => (480., 470. + if self.error.is_some() { 60. } else { 0. }),
             Kind::Branches => (
                 300.,
                 152. + self.branch_names().len().min(8) as f32 * 34.
@@ -4540,6 +4735,7 @@ impl Render for Dialog {
             Kind::HookStats => self.hook_stats_content(t, cx),
             Kind::ModelAnnouncement => self.announcement_content(t, cx),
             Kind::Commit => self.commit_content(t, cx),
+            Kind::CreatePr => self.git_form_content(t, cx),
             Kind::Branches | Kind::CreateBranch | Kind::BranchConflict => {
                 self.branch_content(t, cx)
             }
@@ -4598,6 +4794,7 @@ impl Render for Dialog {
                         Kind::WritingStyle => "Writing style".into(),
                         Kind::HookStats => "Hook stats".into(),
                         Kind::Commit => "Commit or push".into(),
+                        Kind::CreatePr => "Create PR".into(),
                         Kind::Branches => "Switch branch".into(),
                         Kind::CreateBranch => "Create and checkout branch".into(),
                         Kind::BranchConflict => "Commit changes to switch branch".into(),
