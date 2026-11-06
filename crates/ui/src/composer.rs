@@ -576,6 +576,8 @@ pub struct Submission {
     pub plan: bool,
     /// `composer.submitInBackground`: create the chat and start its turn without opening it.
     pub background: bool,
+    /// `/ide-context` is on: the app adds the connected IDE's selection and open files.
+    pub ide_context: bool,
 }
 
 /// Enter in a single-line settings form field.
@@ -956,6 +958,8 @@ pub struct Composer {
     default_selection: (usize, Option<String>),
     /// Index into [`SPEEDS`] and [`SERVICE_TIERS`].
     speed: usize,
+    /// `/ide-context`: turns carry the connected IDE's selection and open files.
+    ide_context: bool,
     /// Plan mode: the next turns run in the `plan` collaboration mode.
     plan: bool,
     /// `collaborationMode/list` masks: each names a `mode` and may preset `model` and
@@ -1109,6 +1113,7 @@ impl Composer {
             effort: Some("medium".into()),
             default_selection: (0, Some("medium".into())),
             speed: 0,
+            ide_context: true,
             plan: false,
             collaboration_modes: Vec::new(),
             permission: Permission::Custom,
@@ -2386,6 +2391,7 @@ impl Composer {
             service_tier: SERVICE_TIERS[self.speed],
             plan: self.plan,
             background,
+            ide_context: self.ide_context,
         }
     }
 
@@ -2793,6 +2799,11 @@ impl Composer {
             .collect();
         let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
         self.menu_focus.typeahead(key, &labels, window, cx);
+    }
+
+    /// Whether `/ide-context` is on.
+    pub fn ide_context(&self) -> bool {
+        self.ide_context
     }
 
     /// The stop confirmation is armed (first Escape of two).
