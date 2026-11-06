@@ -37,6 +37,7 @@ mod goals;
 pub mod host;
 pub mod host_settings;
 pub mod hotkey;
+mod ide_context;
 mod logging;
 pub mod native_menus;
 mod new_project;
@@ -1331,7 +1332,8 @@ impl Root {
             let profiles = if acp {
                 Value::Null
             } else {
-                permissions::list_profiles(&bridge, &cwd)
+                let signed_in = matches!(&account, Some(Ok(a)) if a.account.is_some());
+                permissions::list_profiles(&bridge, &cwd, signed_in)
                     .await
                     .unwrap_or_else(|error| {
                         eprintln!("codex-gpui: permission profiles: {error:#}");
@@ -1432,7 +1434,7 @@ impl Root {
                         c.set_models(&models, &config.config, cx);
                         c.set_slash_skills(&skills, cx);
                         c.set_collaboration_modes(&modes, cx);
-                        c.set_permission_profiles(&profiles, cx);
+                        c.set_permission_profiles(&profiles, &config.config, cx);
                     });
                 }
                 this.config = config.config;
@@ -3644,6 +3646,16 @@ impl Root {
     /// the previous, is selected; closing the last tab closes the panel. A side chat's tab
     /// discards its conversation.
     fn close_side(&mut self, side: SidePanel, window: &mut Window, cx: &mut Context<Self>) {
+        // A file tab with unsaved edits saves first and closes itself once clean.
+        if let SidePanel::File(key) = side
+            && let Some(file) = self.file(key).cloned()
+            && !file.update(cx, |file, cx| file.request_close(cx))
+        {
+            if self.side != Some(side) {
+                self.set_side(side, window, cx);
+            }
+            return;
+        }
         let open = self.tabs.contains(&side);
         match side {
             SidePanel::SideChat(key) => self.discard_side_chat(key, cx),
@@ -5133,6 +5145,37 @@ impl Root {
             self.send_shell(side, s, window, cx);
             return;
         }
+        if s.ide_context
+            && retry.is_none()
+            && let Some((view, _)) = self.conversation(side)
+        {
+            // `/ide-context`: ask the IDE off the UI thread, then send with its context.
+            let root = view.read(cx).cwd().to_owned();
+            cx.spawn_in(window, async move |this, cx| {
+                let context = cx
+                    .background_executor()
+                    .spawn(async move { ide_context::fetch(&root) })
+                    .await;
+                this.update_in(cx, |this, window, cx| {
+                    this.send_inner(side, s, None, context, window, cx)
+                })
+            })
+            .detach();
+            return;
+        }
+        self.send_inner(side, s, retry, None, window, cx);
+    }
+
+    /// [`Self::send`] once the IDE's context (`ide`) is known.
+    fn send_inner(
+        &mut self,
+        side: Option<usize>,
+        s: Submission,
+        retry: Option<FailedQueuedMessage>,
+        ide: Option<ide_context::IdeContext>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some((view, _)) = self.conversation(side) else {
             return;
         };
@@ -5159,6 +5202,10 @@ impl Root {
                 .queue_edit(side)
                 .and_then(|edit| edit.take_if(|edit| edit.thread_id == id));
             let mut input = user_input(&s);
+            if let Some(context) = &ide {
+                let text = input[0]["text"].as_str().unwrap_or_default().to_owned();
+                input[0]["text"] = ide_context::prompt(text, context).into();
+            }
             input.extend(place.iter().flat_map(|edit| edit.extra.clone()));
             let client_id = uuid_v4();
             FailedQueuedMessage {
@@ -5879,7 +5926,7 @@ impl Root {
             composer.bind_connection(self.bridge.clone());
             composer.bind_thread(&thread.id);
             composer.set_models(&self.models, &self.config, cx);
-            composer.set_permission_profiles(&self.permission_profiles, cx);
+            composer.set_permission_profiles(&self.permission_profiles, &self.config, cx);
             composer.restore_run_settings(
                 &settings.collaboration_mode,
                 settings.permission.clone(),
@@ -8265,7 +8312,7 @@ fn apply_permissions(params: &mut Value, permission: &Permission) {
         Permission::Ask => ("on-request", ":workspace", "user"),
         Permission::ApproveForMe => ("on-request", ":workspace", "guardian_subagent"),
         Permission::FullAccess => ("never", ":danger-full-access", "user"),
-        Permission::Custom => return,
+        Permission::Custom | Permission::Managed => return,
         Permission::Named(profile) => {
             params["permissions"] = profile.as_ref().into();
             return;

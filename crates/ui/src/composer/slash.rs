@@ -109,6 +109,13 @@ const COMMANDS: &[Command] = &[
         requires_empty: false,
     },
     Command {
+        id: "ide-context",
+        title: "IDE context",
+        description: "Include current selection, open files, and other context from your IDE",
+        icon: "sidebar-cmd-create-page",
+        requires_empty: false,
+    },
+    Command {
         id: "feedback",
         title: "Feedback",
         description: "Send feedback about this chat",
@@ -600,6 +607,7 @@ impl Composer {
             let description = match command.id {
                 "reasoning" => effort_label(self.displayed_effort()),
                 "plan-mode" if self.plan => "Turn plan mode off",
+                "ide-context" if self.ide_context => "Turn off IDE context",
                 _ => command.description,
             };
             (command.title, description, command.icon)
@@ -679,6 +687,12 @@ impl Composer {
             "review-mode" => {
                 self.open_sub(command.id, cx);
                 cx.emit(SlashCommand::ReviewBranches);
+                return;
+            }
+            "ide-context" => {
+                self.finish_command(window, cx);
+                self.ide_context = !self.ide_context;
+                cx.notify();
                 return;
             }
             "plan-mode" => {

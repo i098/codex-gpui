@@ -65,6 +65,7 @@ impl Composer {
             service_tier: SERVICE_TIERS[self.speed],
             plan: self.plan,
             background: false,
+            ide_context: self.ide_context,
         };
         if let Some(send) = self.on_submit.clone() {
             send(&submission, window, cx);

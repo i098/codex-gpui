@@ -67,6 +67,7 @@ impl Composer {
             service_tier: self.service_tier(),
             plan: self.plan,
             background: false,
+            ide_context: self.ide_context,
         })
     }
 
