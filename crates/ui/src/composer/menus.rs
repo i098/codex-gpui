@@ -631,7 +631,7 @@ impl Composer {
     /// leading icon, label, description and, on the current mode, the check.
     pub(super) fn permissions_menu(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
         let hover = t.menu_item_hover;
-        let presets = permission_presets(cx);
+        let rows = permission_menu_rows(&self.permission_rows, cx);
         popover(t, 417., |d| {
             d.child(
                 div()
@@ -655,76 +655,74 @@ impl Composer {
                             .on_click(|_, _, cx| cx.open_url(PERMISSIONS_DOCS)),
                     ),
             )
-            .children(
-                presets
-                    .iter()
-                    .map(|p| (p, p.description()))
-                    .chain(
-                        self.permission_profiles
-                            .iter()
-                            .map(|(p, description)| (p, description.as_str())),
-                    )
-                    .enumerate()
-                    .map(|(i, (p, description))| {
-                        // `Full access` is all `text-warning`.
-                        let (color, tertiary) = if *p == Permission::FullAccess {
-                            (t.text_warning, t.text_warning)
-                        } else {
-                            (t.text, t.text_tertiary)
-                        };
+            .children(rows.into_iter().enumerate().map(|(i, row)| {
+                let p = &row.permission;
+                let disabled = row.disabled;
+                // `Full access` is all `text-warning`.
+                let (color, tertiary) = if *p == Permission::FullAccess {
+                    (t.text_warning, t.text_warning)
+                } else {
+                    (t.text, t.text_tertiary)
+                };
+                let item = div()
+                    .id(("permission-option", i))
+                    .track_focus(&self.menu_focus.items[i])
+                    .focus(move |s| s.bg(hover))
+                    .on_mouse_move(cx.listener(move |this, _, window, cx| {
+                        this.menu_focus.items[i].focus(window, cx);
+                        cx.stop_propagation();
+                    }))
+                    .hover_listener_mode(gpui::HoverListenerMode::InputModalityIndependent)
+                    // The tooltip owns a disabled row's hover listener.
+                    .when(disabled.is_none(), |d| {
+                        d.on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
+                            if !hovered && this.menu_focus.items[i].is_focused(window) {
+                                this.menu_focus.content.focus(window, cx);
+                            }
+                        }))
+                    })
+                    .aria_disabled(disabled.is_some())
+                    .px(px(8.))
+                    .py(px(5.))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .rounded(px(15.))
+                    .hover(move |s| s.bg(hover))
+                    .when(disabled.is_some(), |d| d.opacity(0.5))
+                    // The 18 px `icon-sm` svg overhangs its 16 px `_leadingIcon` slot.
+                    .child(icon(p.menu_icon(), 18., color).mx(px(-1.)).opacity(0.75))
+                    .child(
                         div()
-                            .id(("permission-option", i))
-                            .track_focus(&self.menu_focus.items[i])
-                            .focus(move |s| s.bg(hover))
-                            .on_mouse_move(cx.listener(move |this, _, window, cx| {
-                                this.menu_focus.items[i].focus(window, cx);
-                                cx.stop_propagation();
-                            }))
-                            .hover_listener_mode(gpui::HoverListenerMode::InputModalityIndependent)
-                            .on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
-                                if !hovered && this.menu_focus.items[i].is_focused(window) {
-                                    this.menu_focus.content.focus(window, cx);
-                                }
-                            }))
-                            .px(px(8.))
-                            .py(px(5.))
+                            .flex_1()
+                            .min_w_0()
                             .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .rounded(px(15.))
-                            .hover(move |s| s.bg(hover))
-                            // The 18 px `icon-sm` svg overhangs its 16 px `_leadingIcon` slot.
-                            .child(icon(p.menu_icon(), 18., color).mx(px(-1.)).opacity(0.75))
+                            .flex_col()
+                            .child(text(p.option_label().to_owned(), 13., 18.5714, 430., color))
                             .child(
                                 div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .flex()
-                                    .flex_col()
-                                    .child(text(
-                                        p.option_label().to_owned(),
-                                        13.,
-                                        18.5714,
-                                        430.,
-                                        color,
-                                    ))
-                                    .child(
-                                        div()
-                                            .whitespace_nowrap()
-                                            .text_size(px(12.))
-                                            .line_height(px(14.))
-                                            .text_color(tertiary)
-                                            .child(description.to_owned()),
-                                    ),
-                            )
-                            .when(*p == self.permission, |d| {
-                                d.child(icon("archive-check", 16., t.text).opacity(0.75))
-                            })
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.activate_menu_item(i, window, cx)
-                            }))
-                    }),
-            )
+                                    .whitespace_nowrap()
+                                    .text_size(px(12.))
+                                    .line_height(px(14.))
+                                    .text_color(tertiary)
+                                    .child(row.description.clone()),
+                            ),
+                    )
+                    .when(*p == self.permission, |d| {
+                        d.child(icon("archive-check", 16., t.text).opacity(0.75))
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.activate_menu_item(i, window, cx)
+                    }));
+                match disabled {
+                    // `composer.permissionsDropdown.disabledBy*.tooltip`
+                    Some(reason) => {
+                        crate::tooltip::tooltip(item, reason, None, crate::tooltip::Side::Right)
+                            .into_any_element()
+                    }
+                    None => item.into_any_element(),
+                }
+            }))
         })
         // `sideOffset` 0: 6 px lower than the model menu's slot.
         .mb(px(-6.))

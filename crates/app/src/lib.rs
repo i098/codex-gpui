@@ -1331,7 +1331,8 @@ impl Root {
             let profiles = if acp {
                 Value::Null
             } else {
-                permissions::list_profiles(&bridge, &cwd)
+                let signed_in = matches!(&account, Some(Ok(a)) if a.account.is_some());
+                permissions::list_profiles(&bridge, &cwd, signed_in)
                     .await
                     .unwrap_or_else(|error| {
                         eprintln!("codex-gpui: permission profiles: {error:#}");
@@ -1432,7 +1433,7 @@ impl Root {
                         c.set_models(&models, &config.config, cx);
                         c.set_slash_skills(&skills, cx);
                         c.set_collaboration_modes(&modes, cx);
-                        c.set_permission_profiles(&profiles, cx);
+                        c.set_permission_profiles(&profiles, &config.config, cx);
                     });
                 }
                 this.config = config.config;
@@ -5889,7 +5890,7 @@ impl Root {
             composer.bind_connection(self.bridge.clone());
             composer.bind_thread(&thread.id);
             composer.set_models(&self.models, &self.config, cx);
-            composer.set_permission_profiles(&self.permission_profiles, cx);
+            composer.set_permission_profiles(&self.permission_profiles, &self.config, cx);
             composer.restore_run_settings(
                 &settings.collaboration_mode,
                 settings.permission.clone(),
@@ -8268,7 +8269,7 @@ fn apply_permissions(params: &mut Value, permission: &Permission) {
         Permission::Ask => ("on-request", ":workspace", "user"),
         Permission::ApproveForMe => ("on-request", ":workspace", "guardian_subagent"),
         Permission::FullAccess => ("never", ":danger-full-access", "user"),
-        Permission::Custom => return,
+        Permission::Custom | Permission::Managed => return,
         Permission::Named(profile) => {
             params["permissions"] = profile.as_ref().into();
             return;

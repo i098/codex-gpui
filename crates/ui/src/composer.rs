@@ -356,12 +356,11 @@ pub struct FullAccessHidden(pub bool);
 
 impl gpui::Global for FullAccessHidden {}
 
-/// The preset rows of the permissions menu, before the named profiles.
-fn permission_presets(cx: &App) -> Vec<Permission> {
+/// The rows of the permissions menu: `rows` without `Full access` when the host hides it.
+fn permission_menu_rows<'a>(rows: &'a [PermissionRow], cx: &App) -> Vec<&'a PermissionRow> {
     let hidden = cx.try_global::<FullAccessHidden>().is_some_and(|h| h.0);
-    Permission::ALL
-        .into_iter()
-        .filter(|p| !hidden || *p != Permission::FullAccess)
+    rows.iter()
+        .filter(|row| !hidden || row.permission != Permission::FullAccess)
         .collect()
 }
 
@@ -491,6 +490,110 @@ pub enum Permission {
     FullAccess,
     Custom,
     Named(SharedString),
+    /// `composer.permissionsDropdown.managed`: requirements leave no option, so turns use the
+    /// server's resolved permissions.
+    Managed,
+}
+
+/// One row of the permissions dropdown; `disabled` is its tooltip.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PermissionRow {
+    pub permission: Permission,
+    pub description: String,
+    pub disabled: Option<&'static str>,
+}
+
+const DISABLED_BY_REQUIREMENTS: &str = "Disabled by requirements.toml";
+
+/// The dropdown rows for `permissionProfile/list` (with `configRequirements/read` under
+/// `requirements`) and `config/read`, like the original's `permissionsDropdown` options: a
+/// preset the profiles or requirements do not allow is disabled; with no preset and no named
+/// profile left, only `Managed`. Without a profile list every preset stays enabled.
+pub(crate) fn permission_rows(profiles: &Value, config: &Value) -> Vec<PermissionRow> {
+    let row = |permission: Permission, disabled| PermissionRow {
+        description: permission.description().to_owned(),
+        permission,
+        disabled,
+    };
+    let named = profiles["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|profile| profile["allowed"] == true)
+        .filter_map(|profile| {
+            let id = profile["id"].as_str().filter(|id| !id.starts_with(':'))?;
+            Some(PermissionRow {
+                permission: Permission::Named(id.to_owned().into()),
+                description: profile["description"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                disabled: None,
+            })
+        });
+    let Some(data) = profiles["data"].as_array() else {
+        return Permission::ALL.map(|p| row(p, None)).into();
+    };
+    let allowed = |id: &str| data.iter().any(|p| p["id"] == id && p["allowed"] == true);
+    let requirements = &profiles["requirements"];
+    let guardian = |r: &str| matches!(r, "auto_review" | "guardian_subagent");
+    let permits = |policy: &str, reviewer: &str| {
+        requirements["allowedApprovalPolicies"]
+            .as_array()
+            .is_none_or(|p| p.iter().any(|p| p == policy))
+            && requirements["allowedApprovalsReviewers"]
+                .as_array()
+                .is_none_or(|r| {
+                    r.iter()
+                        .filter_map(Value::as_str)
+                        .any(|r| r == reviewer || guardian(r) && guardian(reviewer))
+                })
+    };
+    let guardian_off = config["features.guardian_approval"] == false
+        || config["features"]["guardian_approval"] == false;
+    let presets = [
+        (
+            Permission::Ask,
+            (allowed(":workspace") || allowed(":read-only")) && permits("on-request", "user"),
+            DISABLED_BY_REQUIREMENTS,
+        ),
+        (
+            Permission::ApproveForMe,
+            !guardian_off && allowed(":workspace") && permits("on-request", "guardian_subagent"),
+            if guardian_off {
+                "Disabled in config.toml"
+            } else {
+                DISABLED_BY_REQUIREMENTS
+            },
+        ),
+        (
+            Permission::FullAccess,
+            allowed(":danger-full-access") && permits("never", "user"),
+            DISABLED_BY_REQUIREMENTS,
+        ),
+    ];
+    let named: Vec<_> = named.collect();
+    if !presets.iter().any(|(_, on, _)| *on) {
+        if named.is_empty() {
+            return vec![row(Permission::Managed, None)];
+        }
+        return std::iter::once(row(Permission::Custom, None))
+            .chain(named)
+            .collect();
+    }
+    presets
+        .into_iter()
+        .map(|(permission, on, reason)| {
+            let mut preset = row(permission, (!on).then_some(reason));
+            if !on && preset.permission == Permission::FullAccess {
+                // `composer.permissionsDropdown.fullAccess.disabledDescription`
+                preset.description = DISABLED_BY_REQUIREMENTS.into();
+            }
+            preset
+        })
+        .chain([row(Permission::Custom, None)])
+        .chain(named)
+        .collect()
 }
 
 impl Permission {
@@ -527,6 +630,7 @@ impl Permission {
             Self::FullAccess => "Full access",
             Self::Custom => "Custom",
             Self::Named(name) => name,
+            Self::Managed => "Managed",
         }
     }
 
@@ -544,6 +648,7 @@ impl Permission {
             Self::FullAccess => "Unrestricted access to the internet and any file on your computer",
             Self::Custom => "Uses permissions defined in config.toml",
             Self::Named(_) => "Uses the selected permission profile",
+            Self::Managed => "Uses permissions resolved from your configuration",
         }
     }
 
@@ -553,7 +658,7 @@ impl Permission {
             Self::Ask => "hand",
             Self::ApproveForMe => "security",
             Self::FullAccess => "permission-full-access",
-            Self::Custom | Self::Named(_) => "permissions",
+            Self::Custom | Self::Named(_) | Self::Managed => "permissions",
         }
     }
 }
@@ -962,7 +1067,7 @@ pub struct Composer {
     /// `reasoning_effort`. Empty until the server answers (or when it lacks the method).
     collaboration_modes: Vec<Value>,
     permission: Permission,
-    permission_profiles: Vec<(Permission, String)>,
+    permission_rows: Vec<PermissionRow>,
     menu: Option<Menu>,
     slash: slash::Slash,
     sketch: Option<sketch::Sketch>,
@@ -1112,7 +1217,7 @@ impl Composer {
             plan: false,
             collaboration_modes: Vec::new(),
             permission: Permission::Custom,
-            permission_profiles: Vec::new(),
+            permission_rows: permission_rows(&Value::Null, &Value::Null),
             menu: None,
             slash: slash::Slash::default(),
             sketch: None,
@@ -2454,7 +2559,7 @@ impl Composer {
         } else {
             self.menu = Some(menu);
             let count = match menu {
-                Menu::Permissions => permission_presets(cx).len() + self.permission_profiles.len(),
+                Menu::Permissions => permission_menu_rows(&self.permission_rows, cx).len(),
                 Menu::Models => self.models.len(),
                 Menu::Effort => 3,
                 Menu::Comments => self.diff_comments.len(),
@@ -2661,12 +2766,11 @@ impl Composer {
     fn activate_menu_item(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         match self.menu {
             Some(Menu::Permissions) => {
-                let presets = permission_presets(cx);
-                let permission = if index < presets.len() {
-                    presets[index].clone()
-                } else {
-                    self.permission_profiles[index - presets.len()].0.clone()
-                };
+                let row = permission_menu_rows(&self.permission_rows, cx)[index].clone();
+                if row.disabled.is_some() {
+                    return;
+                }
+                let permission = row.permission;
                 self.dismiss(&Dismiss, window, cx);
                 if permission == Permission::FullAccess {
                     window.dispatch_action(Box::new(RequestFullAccess), cx);
@@ -2720,6 +2824,14 @@ impl Composer {
         self.permission.clone()
     }
 
+    /// The tooltip that disables the dropdown row `label`, for the tests; `None` without the row.
+    pub fn permission_disabled(&self, label: &str) -> Option<Option<&'static str>> {
+        self.permission_rows
+            .iter()
+            .find(|row| row.permission.option_label() == label)
+            .map(|row| row.disabled)
+    }
+
     pub fn run_settings(&self) -> (Value, Permission) {
         (
             json!({"mode": if self.plan { "plan" } else { "default" }, "settings": {
@@ -2756,50 +2868,39 @@ impl Composer {
     }
 
     pub(crate) fn named_permissions(&self) -> impl Iterator<Item = &Permission> {
-        self.permission_profiles
+        self.permission_rows
             .iter()
-            .map(|(permission, _)| permission)
+            .map(|row| &row.permission)
+            .filter(|permission| matches!(permission, Permission::Named(_)))
     }
 
-    pub fn set_permission_profiles(&mut self, profiles: &Value, cx: &mut Context<Self>) {
-        self.permission_profiles = profiles["data"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|profile| profile["allowed"] == true)
-            .filter(|profile| {
-                profile["id"]
-                    .as_str()
-                    .is_some_and(|id| !id.starts_with(':'))
-            })
-            .filter_map(|profile| {
-                Some((
-                    Permission::Named(profile["id"].as_str()?.to_owned().into()),
-                    profile["description"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                ))
-            })
-            .collect();
+    /// `profiles` is `permissionProfile/list` with `configRequirements/read` under
+    /// `requirements`; `config` is `config/read` (its `guardian_approval` feature).
+    pub fn set_permission_profiles(
+        &mut self,
+        profiles: &Value,
+        config: &Value,
+        cx: &mut Context<Self>,
+    ) {
+        self.permission_rows = permission_rows(profiles, config);
+        if let [only] = self.permission_rows.as_slice()
+            && only.permission == Permission::Managed
+        {
+            self.permission = Permission::Managed;
+        } else if self.permission == Permission::Managed {
+            self.permission = Permission::Custom;
+        }
         if self.menu == Some(Menu::Permissions) {
-            self.menu_focus.prepare(
-                permission_presets(cx).len() + self.permission_profiles.len(),
-                cx,
-            );
+            self.menu_focus
+                .prepare(permission_menu_rows(&self.permission_rows, cx).len(), cx);
         }
         cx.notify();
     }
 
     fn permission_typeahead(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let labels: Vec<String> = permission_presets(cx)
-            .iter()
-            .map(|p| p.option_label().to_owned())
-            .chain(
-                self.permission_profiles
-                    .iter()
-                    .map(|(p, _)| p.option_label().to_owned()),
-            )
+        let labels: Vec<String> = permission_menu_rows(&self.permission_rows, cx)
+            .into_iter()
+            .map(|row| row.permission.option_label().to_owned())
             .collect();
         let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
         self.menu_focus.typeahead(key, &labels, window, cx);
@@ -4161,5 +4262,67 @@ mod tests {
         assert_eq!(model_label("gpt-5.6-sol"), "GPT-5.6 Sol");
         assert_eq!(model_label("gpt-oss"), "GPT-Oss");
         assert_eq!(model_label("o3"), "o3");
+    }
+
+    #[test]
+    fn permission_rows_follow_profiles_requirements_and_config() {
+        let presets = |extra: Value| {
+            let mut profiles = json!({"data": [
+                {"id": ":read-only", "allowed": true},
+                {"id": ":workspace", "allowed": true},
+                {"id": ":danger-full-access", "allowed": true},
+            ]});
+            profiles["requirements"] = extra;
+            profiles
+        };
+        let disabled = |rows: Vec<PermissionRow>| -> Vec<(String, Option<&str>)> {
+            rows.into_iter()
+                .map(|r| (r.permission.option_label().to_owned(), r.disabled))
+                .collect()
+        };
+        let req = "Disabled by requirements.toml";
+        // No profile list: every preset stays enabled.
+        assert!(
+            permission_rows(&Value::Null, &Value::Null)
+                .iter()
+                .all(|r| r.disabled.is_none())
+        );
+        // `never` is not an allowed policy: Full access is disabled with its own description.
+        let rows = permission_rows(
+            &presets(json!({"allowedApprovalPolicies": ["on-request"]})),
+            &json!({"features": {"guardian_approval": false}}),
+        );
+        assert_eq!(rows[2].description, req);
+        assert_eq!(
+            disabled(rows),
+            [
+                ("Ask for approval".into(), None),
+                ("Approve for me".into(), Some("Disabled in config.toml")),
+                ("Full access".into(), Some(req)),
+                ("Custom (config.toml)".into(), None),
+            ]
+        );
+        // A guardian reviewer allows `auto_review` as well as `guardian_subagent`.
+        let rows = permission_rows(
+            &presets(json!({"allowedApprovalsReviewers": ["auto_review"]})),
+            &Value::Null,
+        );
+        assert_eq!(rows[0].disabled, Some(req));
+        assert_eq!(rows[1].disabled, None);
+        // Nothing allowed and no named profile: only Managed.
+        let none = json!({"data": [{"id": ":workspace", "allowed": false}]});
+        assert_eq!(
+            disabled(permission_rows(&none, &Value::Null)),
+            [("Managed".into(), None)]
+        );
+        // Nothing allowed but a named profile: Custom and the profile, no presets.
+        let named = json!({"data": [{"id": "research", "allowed": true}]});
+        assert_eq!(
+            disabled(permission_rows(&named, &Value::Null)),
+            [
+                ("Custom (config.toml)".into(), None),
+                ("research".into(), None)
+            ]
+        );
     }
 }
