@@ -835,6 +835,7 @@ impl Root {
                     ui::composer::SlashCommand::ForkWorktree => this.fork_worktree(window, cx),
                     ui::composer::SlashCommand::Feedback => this.open_feedback(window, cx),
                     ui::composer::SlashCommand::Export => this.export_transcript(window, cx),
+                    ui::composer::SlashCommand::Share => this.share_open_thread(cx),
                     ui::composer::SlashCommand::Recap => this.recap(window, cx),
                     ui::composer::SlashCommand::Goal { .. }
                     | ui::composer::SlashCommand::ReadGoal

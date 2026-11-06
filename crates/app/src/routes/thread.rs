@@ -209,6 +209,9 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             this.run_environment_action(a.0, window, cx);
         },
     ))
+    .on_action(cx.listener(|this, _: &ui::screens::thread::view::ShareThread, _, cx| {
+        this.share_open_thread(cx);
+    }))
     .on_action(cx.listener(|this, _: &ui::browser::BrowserBack, _, cx| {
         on_active_browser(this, cx, |tab, cx| tab.go_back(cx));
     }))
