@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Show the original's `This request requires additional safety checks, which can take extra time.` line under a running turn when the app-server sends `autoApprovalReview/strictReviewRequired`; it goes away when the turn ends.
+- Open a file link to an artifact (`.pdf`, `.tex`, `.csv`, `.tsv`, `.ipynb`, `.docx`, `.pptx`, `.xlsx`) in its own artifact tab, as the original's `artifact` tab kind does. On a PDF there, drag a region or click a point to annotate the page, then send the annotations with Send or Cmd+Enter as one `artifact-direct-comment` turn. Office files show `This document type cannot be viewed here yet`.
 
 ## [0.1.1] - 2026-11-06
 

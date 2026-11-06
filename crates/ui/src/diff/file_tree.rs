@@ -22,6 +22,9 @@ pub enum FileTreeRequest {
     OpenTargets,
     /// A picked `Open` menu target.
     OpenIn(OpenTargetRequest),
+    /// An artifact tab's `artifact.sendAnnotations` batch (`artifact-direct-comment`); answer
+    /// with [`FileView::artifact_annotations_sent`].
+    SendAnnotations(Vec<comments::Comment>),
 }
 
 impl gpui::EventEmitter<FileTreeRequest> for FileView {}
