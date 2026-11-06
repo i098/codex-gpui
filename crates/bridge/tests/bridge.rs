@@ -234,3 +234,33 @@ fn live_turn() {
         println!("thread/list: {} threads", listed.data.len());
     });
 }
+
+#[test]
+fn daybreak_access_and_thread_value_decode() {
+    let model = |cyber: Value| -> Model {
+        serde_json::from_value(serde_json::json!({
+            "id": "m", "model": "m", "displayName": "M", "description": "", "hidden": false,
+            "defaultReasoningEffort": "medium", "supportedReasoningEfforts": [],
+            "isDefault": true, "availableAccessPrograms": { "cyber": cyber },
+        }))
+        .unwrap()
+    };
+    assert!(model(serde_json::json!(["standard", "daybreakBlue"])).daybreak_available());
+    assert!(!model(serde_json::json!(["standard"])).daybreak_available());
+    let thread = |extra: Value| -> Thread {
+        let mut v = serde_json::json!({
+            "id": "t", "preview": "", "name": null, "model": null, "reasoningEffort": null,
+            "modelProvider": "openai", "cwd": "/", "path": null, "createdAt": 0, "updatedAt": 0,
+            "section": null, "status": { "type": "idle" }, "gitInfo": null,
+        });
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        serde_json::from_value(v).unwrap()
+    };
+    assert_eq!(
+        thread(serde_json::json!({ "daybreakEnabled": true })).daybreak_enabled,
+        Some(true)
+    );
+    assert_eq!(thread(serde_json::json!({})).daybreak_enabled, None);
+}

@@ -43,6 +43,9 @@ pub struct Thread {
     pub section: Option<ThreadSection>,
     pub status: ThreadStatus,
     pub git_info: Option<Value>,
+    /// Server value of the model picker's Daybreak toggle (`thread/metadata/update`).
+    #[serde(default)]
+    pub daybreak_enabled: Option<bool>,
     /// The chat this one was forked from.
     #[serde(default)]
     pub forked_from_id: Option<String>,
@@ -376,6 +379,24 @@ pub struct Model {
     /// `inputModalities`; absent means the server default, text and image.
     #[serde(default)]
     pub input_modalities: Option<Vec<String>>,
+    /// `availableAccessPrograms.cyber`, e.g. `standard`, `daybreakBlue`, `daybreakRed`.
+    #[serde(default)]
+    pub available_access_programs: Option<AccessPrograms>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AccessPrograms {
+    #[serde(default)]
+    pub cyber: Vec<String>,
+}
+
+impl Model {
+    /// Whether the account may turn Daybreak on for this model.
+    pub fn daybreak_available(&self) -> bool {
+        self.available_access_programs
+            .as_ref()
+            .is_some_and(|p| p.cyber.iter().any(|c| c.starts_with("daybreak")))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
