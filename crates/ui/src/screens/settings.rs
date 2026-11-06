@@ -2116,7 +2116,7 @@ fn switch_sized(
                     shapes::paint(&thumb, None, at, window, cx);
                 };
                 if disabled {
-                    shapes::with_composited_opacity(153, b, window, cx, paint)
+                    shapes::with_layer(153, b, window, paint)
                 } else {
                     paint(window)
                 }
