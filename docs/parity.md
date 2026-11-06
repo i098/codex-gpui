@@ -19,6 +19,8 @@ tools/mac.sh 'cargo run -p parity -- [--screen home] [--gate]'
 - `--gate` exits with code 1 if one case fails.
 - The report is in `target/parity/` (`report.html`, `report.json`, and the ref, port and diff PNGs).
 
+The `parity-mac` workflow runs the same gate on the Mac mini runner (`macmini-arm64`) for a PR head: dispatch it from the Actions tab with the PR number (empty gates main). It uploads the report as an artifact and prints the `Parity gate:` numbers in its summary. It is not a required check.
+
 `tools/parity/publish.sh <out_dir>` uploads a report to the public R2 evidence bucket.
 It prints a Markdown table for a PR body.
 

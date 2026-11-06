@@ -37,6 +37,8 @@ NAMES = {
     "fb6a94331e": "arrow-left",  # Back; Forward is the same glyph mirrored (-scale-x-100)
     "d3e3e867e7": "sidebar",
     "915d9f4750": "new-tab",
+    # Side panel file tab
+    "6bc7af0319": "side-tab-file",
     # Home
     "6e15153969": "codex-logo",
     "9191379992": "close",

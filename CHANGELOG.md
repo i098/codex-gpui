@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - List the current thread's enabled, callable connectors in composer mentions and insert their `app://` links.
+- Open the Projects page from the Explore menu (`/projects`): the app-server's projects (`project/list`) with `Search projects`, the `Name` and `Updated` sort, `Create`, `Edit project` (`project/update`), `Start new chat in project`, and the empty, no-match and load-error states.
 - Search the Plugins directory through the server: typing in the search box sends the original's `plugin/search` (`searchTerm`, `scope`, `cwds`, `limit` 50) after its 200 ms debounce, shows the returned catalog cards, and loads the next page from `See more` with the server's `nextCursor`; a server without the method keeps the local filter and reports the error.
 - Add the Settings ▸ Mini & Pets page (also `codex://pets/install`): Show or Hide mini, a preview of the chosen pet over the Mini bar, a Customize dialog with the pet size slider (80–224, Reset to 112), and a My pets grid with None, the bundled pets and custom pets from `$CODEX_HOME/pets`, plus Refresh and Create pet (installs and enables the Hatch Pet skill and starts a chat with it).
 - Add the Settings ▸ Code Review page (also `codex://settings/code-review`) on the ChatGPT backend's `/wham/settings` review service: personal automatic review, trigger, exhaustive review and credits, Security review preferences, the repository list with search and paging, and each repository's review, security review, threat model, path rules and AGENTS.md link.
@@ -68,6 +69,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add Settings ▸ `Appshots` on macOS: press both ⌘, ⌥ or ⇧ keys to capture the frontmost window into the current chat, a new chat or a visible Mini, with destination and sound settings.
 - Show an image or PDF in the Files tab as a preview (PDFs with page arrows), not as text lines that fail with `Could not open file`.
 - Open the latest plan from Thread summary ▸ `Plan` in an editable `Plan` side panel tab that saves to `$CODEX_HOME/plans/<thread>/<plan item>/PLAN.md`.
+- Add the Files tab `Find in file…` bar (⌘F, Enter and ⇧Enter, match count), the Markdown live preview as the original's file editor draws it with `View source` / `View preview` and `Copy Markdown`, several file tabs with one preview tab that the next opened file replaces until pinned, a hover card with the path of a file tab, and the `Open` split button with the preferred app, its menu of open-in apps, `Open in folder` and `Save as…`.
 - Open the Maps page from the Explore menu: the ChatGPT backend `/local/home` prompt suggestions and map, with loading, error with Try again, and empty states.
 - Store app state, host settings, notification sounds and the QA profile in the per-OS user data directory (`%APPDATA%` on Windows, XDG config on Linux).
 - Show generated images in the chat, and open one in an `Image view` side panel tab with a click.

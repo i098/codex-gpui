@@ -6978,6 +6978,7 @@ dependencies = [
  "pulldown-cmark",
  "qrcodegen",
  "raw-window-handle",
+ "regex",
  "semver",
  "serde",
  "serde_json",
