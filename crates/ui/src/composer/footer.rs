@@ -151,9 +151,10 @@ impl Composer {
             px((f32::from(width) * unit).ceil() / unit)
         };
         if let Some(model) = model.filter(|_| !open) {
-            let tnum = gpui::FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)]));
             let effort = effort_label(self.displayed_effort());
-            let width = measure(&model.label, tnum) + px(4.) + measure(effort, Default::default());
+            let width = measure(&model.label, tabular_features())
+                + px(4.)
+                + measure(effort, Default::default());
             closed_width.update(cx, |w, _| *w = width);
         }
         let min_width =
