@@ -9,6 +9,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ### Added
 - Show the original's `This request requires additional safety checks, which can take extra time.` line under a running turn when the app-server sends `autoApprovalReview/strictReviewRequired`; it goes away when the turn ends.
 - Open a file link to an artifact (`.pdf`, `.tex`, `.csv`, `.tsv`, `.ipynb`, `.docx`, `.pptx`, `.xlsx`) in its own artifact tab, as the original's `artifact` tab kind does. On a PDF there, drag a region or click a point to annotate the page, then send the annotations with Send or Cmd+Enter as one `artifact-direct-comment` turn. Office files show `This document type cannot be viewed here yet`.
+- Edit files in the Files tab: double-click a line to edit at that line. Edits save to disk 3 s after they start or on `⌘S` through the host's `write-file`, which refuses to overwrite a file that changed on disk since it was read (`Could not save file`). Closing a tab saves first; a failed save asks `Discard file changes?` (`Continue viewing` / `Discard changes`). A text file over 10 MiB opens read-only with `Large file opened read-only`.
 
 ## [0.1.1] - 2026-11-06
 

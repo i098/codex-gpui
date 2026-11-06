@@ -184,7 +184,8 @@ impl Composer {
             .iter()
             .position(|e| e == self.displayed_effort())
             .unwrap_or(0) as f32;
-        let reduced = motion::reduced(cx);
+        // A static capture shows the picker after its motion, as the reference does.
+        let reduced = motion::reduced(cx) || crate::screens::home::animation_finished(window, cx);
         let state = window.use_keyed_state("effort-picker-motion", cx, |_, cx| {
             PickerMotion::new(advanced, selected, cx.background_executor().now())
         });
