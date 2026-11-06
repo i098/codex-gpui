@@ -1,0 +1,74 @@
+name: parity-mac
+# Pixel-parity gate on the Mac mini runner. Run it from the Actions tab (`pr` = PR number, empty =
+# main) or by adding the `parity-gate` label to a PR. It is not a required check.
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to gate (empty gates main)
+        required: false
+      screen:
+        description: One parity screen (empty runs all)
+        required: false
+  pull_request:
+    types: [labeled]
+concurrency:
+  group: parity-mac
+  cancel-in-progress: false
+jobs:
+  parity:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'parity-gate'
+    runs-on: [self-hosted, macOS, ARM64, macmini-arm64]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.pr && format('refs/pull/{0}/head', inputs.pr) || 'main' }}
+      # All scratch lives in one /tmp directory that the last step deletes.
+      - name: Prepare scratch
+        run: |
+          scratch=$(mktemp -d /tmp/cgx-parity.XXXXXXXX)
+          {
+            echo "SCRATCH=$scratch"
+            echo "CARGO_TARGET_DIR=$scratch/target"
+            echo "TMPDIR=$scratch"
+            echo "CARGO_INCREMENTAL=0"
+            echo "RUSTUP_HOME=$scratch/rustup"
+            echo "CARGO_HOME=$scratch/cargo"
+          } >>"$GITHUB_ENV"
+          echo "$scratch/cargo/bin" >>"$GITHUB_PATH"
+          echo "HEAD_SHA=$(git rev-parse HEAD)" >>"$GITHUB_ENV"
+      - name: Install Rust toolchain
+        run: |
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal --default-toolchain none
+          rustup show active-toolchain || rustup toolchain install
+      - name: Run the parity gate
+        run: |
+          mkdir -p "$SCRATCH/out"
+          rc=0
+          cargo run --locked -p parity -- --out "$SCRATCH/out" ${INPUT_SCREEN:+--screen "$INPUT_SCREEN"} --gate \
+            2>&1 | tee "$SCRATCH/out/parity.log" || rc=${PIPESTATUS[0]}
+          echo "PARITY_RC=$rc" >>"$GITHUB_ENV"
+          [[ -f $SCRATCH/out/report.json ]] || exit 1
+          jq -r --arg sha "$HEAD_SHA" '
+            "Parity gate: \($sha[0:10]) outside=\(map(.diff_px_outside_text) | max)px inside=\(map(.text_diff_ratio) | max * 100000 | round / 1000)%",
+            "",
+            "| screen | theme | size | outside px | text ratio | result |",
+            "|---|---|---|---|---|---|",
+            (.[] | "| \(.screen) | \(.theme) | \(.width)x\(.height) | \(.diff_px_outside_text) | \(.text_diff_ratio * 100000 | round / 1000)% | \(if .pass then "PASS" else "FAIL" end) |")
+          ' "$SCRATCH/out/report.json" | tee "$SCRATCH/out/summary.md" >>"$GITHUB_STEP_SUMMARY"
+        env:
+          INPUT_SCREEN: ${{ inputs.screen }}
+      - uses: actions/upload-artifact@v4
+        if: always() && env.SCRATCH != ''
+        with:
+          name: parity-${{ env.HEAD_SHA }}
+          if-no-files-found: ignore
+          path: ${{ env.SCRATCH }}/out
+          retention-days: 14
+      - name: Fail when the gate missed
+        if: env.PARITY_RC != '' && env.PARITY_RC != '0'
+        run: exit 1
+      - name: Remove scratch
+        if: always()
+        run: '[[ $SCRATCH == /tmp/cgx-parity.* ]] && rm -rf -- "$SCRATCH"'
