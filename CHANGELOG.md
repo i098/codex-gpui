@@ -180,8 +180,10 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Draw the Appearance Background and Foreground hex inputs at 12 px, as the original does.
 - Open and close the thread's activity groups, reasoning, MCP and command rows over the original's 300 ms `ease-enter` height and opacity track, instead of at once.
 - Put the site's favicon before an external markdown link, with the original's globe until the image loads, and fetch remote images such as favicons and avatars over HTTP.
+- Show the Appearance `Mode` choice as the original's System, Light and Dark preview tiles instead of a text segmented control.
 - Match the original fill, text size and padding of the Appearance theme, accent and font pickers.
 - Use the original's compact 44 px rows in the Appearance theme cards.
+- Draw the Appearance theme Import and Copy buttons at the original's 32 px, so the Theme row is 48 px tall.
 - Show the text overflow icon on a code block's `Enable word wrap` button, and the wrap icon only while wrap is on, as the original does.
 - Show the Appearance theme picker's Codex themes in a `Codex themes` flyout submenu beside `ChatGPT`, with 24 px theme icons, as the original does.
 - Fold a running turn's interim messages under `Working for` once its final answer starts, as the original does.
