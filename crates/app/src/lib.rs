@@ -245,8 +245,8 @@ pub enum SidePanel {
     Terminal,
     /// An interactive shell, separate from a background command's read-only output.
     Console,
-    /// A file link in an answer: the file viewer ([`Root::file`]).
-    File,
+    /// A file link in an answer: the file viewer with this key in [`Root::files`].
+    File(usize),
     /// A generated image: the image view ([`Root::image`]).
     Image,
     /// `Open in side chat`: the side chat with this [`SideChat::key`].
@@ -495,8 +495,10 @@ pub struct Root {
     archived: HashSet<String>,
     diff: Option<Entity<DiffPanel>>,
     diff_watch: Option<diff_watch::Watch>,
-    /// The file viewer of [`SidePanel::File`]; cleared with the thread.
-    file: Option<Entity<FileView>>,
+    /// The file viewers of the [`SidePanel::File`] tabs, by key; cleared with the thread.
+    /// At most one is a preview tab, which the next opened file replaces.
+    files: Vec<(usize, Entity<FileView>)>,
+    next_file: usize,
     /// The plan of [`SidePanel::Plan`]; cleared with the thread.
     plan: Option<Entity<ui::screens::plan::PlanView>>,
     /// The page of [`SidePanel::NewTab`]; cleared with the thread.
@@ -1037,7 +1039,8 @@ impl Root {
             archived: HashSet::new(),
             diff: None,
             diff_watch: None,
-            file: None,
+            files: Vec::new(),
+            next_file: 1,
             plan: None,
             new_tab: None,
             subagents: None,
@@ -1574,7 +1577,26 @@ impl Root {
 
     /// The file viewer of the open thread, once a file link was clicked.
     pub fn file_view(&self) -> Option<&Entity<FileView>> {
-        self.file.as_ref()
+        match self.side {
+            Some(SidePanel::File(key)) => self.file(key),
+            _ => self.files.last().map(|(_, file)| file),
+        }
+    }
+
+    /// The file viewer of tab [`SidePanel::File`] `key`.
+    pub(crate) fn file(&self, key: usize) -> Option<&Entity<FileView>> {
+        self.files
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, file)| file)
+    }
+
+    /// The file viewer of the selected tab, when that tab is a file and shows.
+    pub(crate) fn visible_file(&self) -> Option<&Entity<FileView>> {
+        match self.side {
+            Some(side @ SidePanel::File(key)) if self.side_visible(side) => self.file(key),
+            _ => None,
+        }
     }
 
     /// The `⌘K` command menu, while open.
@@ -3327,7 +3349,7 @@ impl Root {
     fn side_tab(
         side: SidePanel,
         view: &Entity<ThreadView>,
-        file: Option<&Entity<FileView>>,
+        files: &[(usize, Entity<FileView>)],
         plan: Option<&Entity<ui::screens::plan::PlanView>>,
         image: bool,
         side_chats: &[SideChat],
@@ -3341,33 +3363,33 @@ impl Root {
             SidePanel::Changes => Some(Tab {
                 icon: "diff-tab-changes",
                 label: "Changes".into(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::Terminal => {
                 let (_, command, _) = view.read(cx).terminal()?;
                 Some(Tab {
                     icon: "thread-terminal",
                     label: command.into(),
-                    preview: false,
+                    detail: None,
                 })
             }
             SidePanel::Console => console.then(|| Tab {
                 icon: "terminal-interactive",
                 label: "Terminal".into(),
-                preview: false,
+                detail: None,
             }),
-            SidePanel::File => {
-                let file = file?.read(cx);
+            SidePanel::File(key) => {
+                let file = files.iter().find(|(k, _)| *k == key)?.1.read(cx);
                 Some(Tab {
                     icon: file.tab_icon(),
                     label: file.name(),
-                    preview: file.is_preview(),
+                    detail: Some(file.path.clone().into()),
                 })
             }
             SidePanel::Image => image.then(|| Tab {
                 icon: "diff-file-image",
                 label: "Image view".into(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::SideChat(key) => {
                 let chat = side_chats.iter().find(|chat| chat.key == key)?;
@@ -3379,35 +3401,35 @@ impl Root {
                         "side-chat"
                     },
                     label: chat.title.clone(),
-                    preview: false,
+                    detail: None,
                 })
             }
             SidePanel::Sources => Some(Tab {
                 icon: "navigation-files",
                 label: "Sources".into(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::Plan => Some(Tab {
                 icon: "navigation-files",
                 label: plan?.read(cx).title(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::NewTab => new_tab.then(|| Tab {
                 icon: "diff-new-tab",
                 label: "New tab".into(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::Subagents => subagents.then(|| Tab {
                 icon: "side-chat",
                 label: "Subagents".into(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::Browser(key) => {
                 let (_, tab) = browsers.iter().find(|(k, _)| *k == key)?;
                 Some(Tab {
                     icon: "sidebar-cmd-browser",
                     label: tab.read(cx).title(),
-                    preview: false,
+                    detail: None,
                 })
             }
         }
@@ -3420,7 +3442,7 @@ impl Root {
         view: &Entity<ThreadView>,
         cx: &mut Context<Self>,
     ) -> Option<(AnyView, Vec<Tab>, usize)> {
-        let file = self.file.clone();
+        let files = &self.files;
         let plan = self.plan.clone();
         let image = self.image.is_some();
         let chats = &self.side_chats;
@@ -3432,7 +3454,7 @@ impl Root {
             Self::side_tab(
                 *side,
                 view,
-                file.as_ref(),
+                files,
                 plan.as_ref(),
                 image,
                 chats,
@@ -3455,7 +3477,7 @@ impl Root {
             SidePanel::Changes => self.diff.as_ref()?.clone().into(),
             SidePanel::Terminal => cx.new(|cx| Xterm::new(view.clone(), cx)).into(),
             SidePanel::Console => self.terminal_panel()?.clone().into(),
-            SidePanel::File => self.file.as_ref()?.clone().into(),
+            SidePanel::File(key) => self.file(key)?.clone().into(),
             SidePanel::Image => self.image.as_ref()?.clone().into(),
             SidePanel::SideChat(key) => self.chat(key)?.view.clone().into(),
             SidePanel::Sources => cx
@@ -3520,6 +3542,9 @@ impl Root {
             return;
         };
         self.tabs.remove(ix);
+        if let SidePanel::File(key) = side {
+            self.files.retain(|(k, _)| *k != key);
+        }
         if self.side == Some(side) {
             self.side = self.tabs.get(ix).or(self.tabs.last()).copied();
         }
@@ -4263,7 +4288,7 @@ impl Root {
                         this.cloud_modal = None;
                         this.thread = None;
                         this.diff = None;
-                        this.file = None;
+                        this.files.clear();
                         this.plan = None;
                         this.split = None;
                         this.pull_requests_page = None;
@@ -4889,7 +4914,7 @@ impl Root {
         )
         .detach();
         self.diff = Some(diff);
-        self.file = None;
+        self.files.clear();
         self.plan = None;
         self.new_tab = None;
         self.subagents = None;

@@ -13,6 +13,8 @@ pub(crate) struct Item {
     pub label: SharedString,
     pub enabled: bool,
     pub icon: Option<&'static [u8]>,
+    /// An 18 px app image (`apps/<name>`) at 75 % in the 16 px icon slot.
+    pub image: Option<SharedString>,
     /// Shown at the right, as the native menu shows `⌘X`.
     pub accelerator: Option<&'static str>,
     /// Overrides the menu subject for this action, such as a spelling suggestion.
@@ -49,6 +51,9 @@ pub(crate) struct ContextMenu {
     focus: FocusHandle,
     return_focus: Option<FocusHandle>,
     width: f32,
+    /// The Radix app menu (`gap-0.5`, 8 px above the rows, 4 px below) instead of the
+    /// native-like context menu.
+    app_menu: bool,
 }
 
 /// What a key did to the open menu.
@@ -79,6 +84,21 @@ impl ContextMenu {
     ) -> Self {
         let mut menu = Self::build(items, subject, button.bottom_right(), 0., window, cx);
         // The recorded original box sits 2 px below the button and 1 px inside its right edge.
+        menu.position.x -= px(menu.width + 1.);
+        menu.position.y += px(2.);
+        menu
+    }
+
+    /// [`Self::dropdown`] as the Radix app menu draws it: at least 160 px of rows.
+    pub fn app_dropdown(
+        items: Vec<Item>,
+        subject: String,
+        button: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let mut menu = Self::build(items, subject, button.bottom_right(), 168., window, cx);
+        menu.app_menu = true;
         menu.position.x -= px(menu.width + 1.);
         menu.position.y += px(2.);
         menu
@@ -119,7 +139,11 @@ impl ContextMenu {
             .map(|item| {
                 text_width(&item.label)
                     + item.accelerator.map_or(0., |keys| text_width(keys) + 6.)
-                    + if item.icon.is_some() { 22. } else { 0. }
+                    + if item.icon.is_some() || item.image.is_some() {
+                        22.
+                    } else {
+                        0.
+                    }
                     + 24.
             })
             .fold(minimum_width, f32::max)
@@ -135,6 +159,7 @@ impl ContextMenu {
             return_focus,
             focus,
             width,
+            app_menu: false,
         }
     }
 
@@ -201,6 +226,8 @@ impl ContextMenu {
     ) -> impl IntoElement {
         let t = cx.theme();
         let hover = t.menu_item_hover;
+        // What an app image blends over: the popover's fill over the panel surface.
+        let menu_page = crate::over(t.menu_background.opacity(0.9), t.surface);
         let close = move |this: &mut V, window: &mut Window, cx: &mut Context<V>| {
             if let Some(open) = menu(this).take() {
                 open.close(window, cx);
@@ -286,6 +313,16 @@ impl ContextMenu {
                         ),
                     )
                 })
+                .when_some(item.image.clone(), |d, image| {
+                    // The 18 px image at `opacity: 0.75` overhangs its 16 px slot by 1 px each side.
+                    d.child(
+                        div().size(px(16.)).flex_none().child(
+                            div()
+                                .m(px(-1.))
+                                .child(crate::screens::settings::app_icon(image, 191, menu_page)),
+                        ),
+                    )
+                })
                 .child(
                     text(
                         item.label.clone(),
@@ -301,60 +338,74 @@ impl ContextMenu {
                 })
                 .into_any_element()
         });
-        let popup = crate::composer::popover(t, self.width, |d| d.children(rows))
-            .ml_0()
-            .pl_0()
-            .id(id)
-            .role(Role::Menu)
-            .aria_label(aria_label)
-            .track_focus(&self.focus)
-            .on_action(cx.listener(move |this, _: &crate::Copy, window, cx| {
-                let index = menu(this).as_ref().and_then(|open| {
-                    open.items
-                        .iter()
-                        .position(|item| item.id == "copy" && item.enabled)
-                });
-                if let Some(index) = index {
-                    pick(this, index, window, cx);
-                } else {
-                    cx.propagate();
-                }
-            }))
-            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-                let Some(outcome) = menu(this).as_mut().and_then(|m| m.key(event)) else {
-                    return;
-                };
-                match outcome {
-                    Outcome::Moved => {}
-                    Outcome::Close => close(this, window, cx),
-                    Outcome::Activate(index) => pick(this, index, window, cx),
-                }
-                cx.stop_propagation();
-                cx.notify();
-            }))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
+        let app_menu = self.app_menu;
+        let popup = crate::composer::popover(t, self.width, |d| {
+            d.when(app_menu, |d| d.pt(px(8.)).gap(px(2.)))
+                .children(rows)
+        })
+        // The app menu keeps the popover's layer inset: its shadow's ink.
+        .when(!app_menu, |d| d.ml_0().pl_0())
+        .id(id)
+        .role(Role::Menu)
+        .aria_label(aria_label)
+        .track_focus(&self.focus)
+        .on_action(cx.listener(move |this, _: &crate::Copy, window, cx| {
+            let index = menu(this).as_ref().and_then(|open| {
+                open.items
+                    .iter()
+                    .position(|item| item.id == "copy" && item.enabled)
+            });
+            if let Some(index) = index {
+                pick(this, index, window, cx);
+            } else {
+                cx.propagate();
+            }
+        }))
+        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+            let Some(outcome) = menu(this).as_mut().and_then(|m| m.key(event)) else {
+                return;
+            };
+            match outcome {
+                Outcome::Moved => {}
+                Outcome::Close => close(this, window, cx),
+                Outcome::Activate(index) => pick(this, index, window, cx),
+            }
+            cx.stop_propagation();
+            cx.notify();
+        }))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
         deferred(
-            anchored().position(gpui::point(px(0.), px(0.))).child(
-                div()
-                    .w(window.viewport_size().width)
-                    .h(window.viewport_size().height)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _, window, cx| close(this, window, cx)),
-                    )
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, _, window, cx| close(this, window, cx)),
-                    )
-                    .child(
-                        anchored()
-                            .position(self.position)
-                            .anchor(Anchor::TopLeft)
-                            .snap_to_window_with_margin(px(8.))
-                            .child(popup),
-                    ),
-            ),
+            anchored()
+                .position(gpui::point(px(0.), px(0.)))
+                .when(app_menu, |a| a.exact())
+                .child(
+                    div()
+                        .w(window.viewport_size().width)
+                        .h(window.viewport_size().height)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, window, cx| close(this, window, cx)),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(move |this, _, window, cx| close(this, window, cx)),
+                        )
+                        .child(
+                            anchored()
+                                .position(self.position)
+                                .anchor(Anchor::TopLeft)
+                                // The app menu's box sits where the original's popper put it.
+                                .map(|a| {
+                                    if app_menu {
+                                        a.exact()
+                                    } else {
+                                        a.snap_to_window_with_margin(px(8.))
+                                    }
+                                })
+                                .child(popup),
+                        ),
+                ),
         )
         .with_priority(4)
     }

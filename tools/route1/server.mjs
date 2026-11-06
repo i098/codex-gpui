@@ -22,6 +22,29 @@ const PORT = +(process.env.R1_PORT || 4517);
 const NOW = Date.UTC(2026, 9, 15, 17, 0, 0);
 const APP_SERVER = `cd /tmp/cgx-mac/proj && CODEX_HOME=/tmp/cgx-mac/home /Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex app-server -c 'notify=[]'`;
 const log = (...a) => process.env.R1_QUIET || console.log(new Date().toISOString().slice(11, 23), ...a);
+// R1_FIXTURE_FS: a local copy of /tmp/cgx-mac/proj answers the workspace file reads and the
+// recorded `openIn.getTargets` (capture.mjs `files-*`), which the offline oracle lacks.
+const FIXTURE_FS = process.env.R1_FIXTURE_FS;
+const fixturePath = (p) => p && path.join(FIXTURE_FS, p.replace(/^\/private/, "").replace(/^\/tmp\/cgx-mac\/proj\/?/, ""));
+function fixtureFetch(handler, body) {
+  if (!FIXTURE_FS) return undefined;
+  const q = JSON.parse(body || "{}");
+  if (handler === "workspace-directory-entries") {
+    const rel = q.directoryPath ?? "";
+    const dir = path.join(fixturePath(q.workspaceRoot), rel);
+    const entries = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => q.includeHidden || !e.name.startsWith("."))
+      .map((e) => ({ name: e.name, path: rel ? `${rel}/${e.name}` : e.name, type: e.isDirectory() ? "directory" : "file", isSymlink: false }))
+      .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === "directory" ? -1 : 1));
+    return { workspaceRoot: q.workspaceRoot, directoryPath: rel, parentPath: rel ? rel.split("/").slice(0, -1).join("/") : null, entries };
+  }
+  const file = fixturePath(q.path);
+  if (!file || !fs.existsSync(file)) return undefined;
+  const st = fs.statSync(file);
+  if (handler === "read-file-metadata") return { isFile: st.isFile(), mtimeMs: NOW - 3600e3, sizeBytes: st.size, contentKind: "text" };
+  if (handler === "read-file") return { contents: fs.readFileSync(file, "utf8") };
+  if (handler === "read-file-binary") return { contentsBase64: fs.readFileSync(file).toString("base64") };
+  return undefined;
+}
 
 // ---- scrub: personal values become the placeholders the repo fixtures use. Every entry (key and
 // value, nested JSON bodies and base64 JSON tokens included) is scrubbed before it is stored, and
@@ -248,6 +271,12 @@ async function fromView(s, msg) {
         s.emit({ type: "fetch-response", responseType: "success", requestId: msg.requestId, status: 200, headers: { "content-type": "application/json" }, bodyJsonString: "null" });
         break;
       }
+      const fixed = fixtureFetch(handler, msg.body);
+      if (fixed !== undefined) {
+        log("fixture", handler, String(msg.body).slice(0, 120));
+        s.emit({ type: "fetch-response", responseType: "success", requestId: msg.requestId, status: 200, headers: { "content-type": "application/json" }, bodyJsonString: JSON.stringify(fixed) });
+        break;
+      }
       const key = `fetch ${msg.method ?? "GET"} ${msg.url} ${keyOf(msg.body ?? "")}`;
       const res = await recall(key, () => {
         const rid = `r1-${crypto.randomUUID()}`;
@@ -352,6 +381,7 @@ async function callService(s, { svc, method, args }) {
     if (process.env.R1_TRACE) log("private (local answer)", svc, method, JSON.stringify(args).slice(0, 120));
     return own;
   }
+  if (FIXTURE_FS && svc === "openIn" && method === "getTargets") return oracle[`svc openIn.getTargets ${keyOf([{ cwd: "/private/tmp/cgx-mac/proj", hostId: "local" }])}`] ?? {};
   const r =
     (await recall(`svc ${svc}.${method} ${keyOf(args)}`, () =>
       liveEval(`(async () => {
