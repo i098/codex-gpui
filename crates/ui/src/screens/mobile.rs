@@ -6,9 +6,9 @@ use super::connections::{self, Action, ConnectionsState};
 use crate::{EmptySidebar, Shell, icon, text};
 use gpui::{
     AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity, Hsla,
-    InteractiveElement as _, IntoElement, ParentElement, Pixels, Render, RenderImage, Stateful,
-    StatefulInteractiveElement as _, Styled, Transformation, Window, actions, canvas, div, point,
-    prelude::FluentBuilder as _, px, radians, rgb, size,
+    InteractiveElement as _, IntoElement, ParentElement, Pixels, Render, RenderImage, SharedString,
+    Stateful, StatefulInteractiveElement as _, Styled, Transformation, Window, actions, canvas,
+    div, point, prelude::FluentBuilder as _, px, radians, rgb, size,
 };
 use image::{Frame, Rgba, RgbaImage};
 use shapes::Corner::Squircle;
@@ -53,7 +53,11 @@ pub enum SetupStep {
 
 pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     let (shell, _) = shell(cx);
-    shell.update(cx, |shell, _| shell.can_go_back = true);
+    // The references show one unread Explore destination.
+    shell.update(cx, |shell, _| {
+        shell.can_go_back = true;
+        shell.unread_destinations = Some(Arc::from([SharedString::from("explore")]));
+    });
     shell.into()
 }
 
