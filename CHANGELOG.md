@@ -171,6 +171,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add `Group by` (`Project` or `None`) to the Archived chats filter menu; `None` shows every archived chat in one list without project headers.
 
 ### Fixed
+- List the Settings nav rows as the original does: `Ads controls` only with Statsig gate `665873859`, `Debug` only with gate `2423536643` or `CODEX_GPUI_DEBUG_MENU=1` (debug builds no longer show it), and `File type handlers` only while a plugin file viewer exists or its page is open.
 - Match the original profile menu: the account name and plan header, `Usage` with the percent left, `Show Pet`, `Settings` with their shortcuts, a `Help` flyout with What's new posts, setup, guide and privacy links, and `Log out`.
 - Draw the Help ▸ What's new timeline as the original does: one segment per post, through the dot centers, from 8 px below each dot to 8 px above the next.
 - Hide the whole Home sidebar, including the header, `New chat` and `Your dot` rows, with the panel when it collapses, and fit project and Recents titles to a resized panel instead of a fixed 264 px width.
