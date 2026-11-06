@@ -120,6 +120,8 @@ impl Root {
     ) {
         let host = self.host.clone();
         let appearance_changed = dialog.read(cx).appearance_changed();
+        // A rename from the Projects page stays on the page, which shows the new name.
+        let stay = project_id.is_some() && self.state.route == crate::Route::Projects;
         let threads = self
             .threads
             .iter()
@@ -164,7 +166,7 @@ impl Root {
                         this.close_new_project(window, cx);
                     }
                     this.load_projects(cx);
-                    if this.host_id == host_id && !root.is_empty() {
+                    if this.host_id == host_id && !root.is_empty() && !stay {
                         this.select_project(root, window, cx);
                     }
                 }

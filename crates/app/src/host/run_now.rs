@@ -982,7 +982,7 @@ pub(crate) mod heartbeat {
             Permission::ApproveForMe => "guardian-approvals",
             Permission::FullAccess => "full-access",
             Permission::Custom => "custom",
-            Permission::Named(_) => "custom",
+            Permission::Named(_) | Permission::Managed => "custom",
         });
         let (config, mut permissions) = read_permissions(bridge, cwd, selected).await?;
         if let Some(RendererState {

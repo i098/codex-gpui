@@ -104,6 +104,18 @@ Run `cargo test -p app --lib oauth::model::tests` for URL and identity boundarie
 Run `cargo test -p app --test oauth -- --test-threads=1` for native root lifecycle checks with schema-level responses.
 These checks do not sign in or change a real provider account.
 
+## Connector mentions
+
+The composer's `@` menu loads installed connectors through `app/installed` with the current `threadId` and `forceRefresh`.
+Only enabled, callable connectors appear.
+The menu reads their names and descriptions through `app/read`.
+If metadata cannot load, the menu uses the connector's installed runtime name.
+Selecting a connector inserts its `[$name](app://id)` reference into the prompt.
+Changing the thread, host connection, or account discards the previous connector list and pending replies.
+
+Run `cargo test -p app --test plugin_mentions -- --test-threads=1` for the fixture-driven native flow.
+It checks thread-specific requests, filtering, keyboard selection, Add-menu refresh, metadata failures, and late replies.
+
 ## ACP backend
 
 Set `CODEX_GPUI_ACP` to the command line of an [Agent Client Protocol](https://agentclientprotocol.com) agent to use that agent instead of `codex app-server`:

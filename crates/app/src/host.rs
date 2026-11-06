@@ -647,6 +647,14 @@ fn project_rows(
             pinned: pinned
                 .as_array()
                 .is_some_and(|ids| ids.iter().any(|pin| pin == id)),
+            // The original's `Or`: app-server stores seconds, the desktop store milliseconds.
+            updated_at: stored["updatedAt"].as_i64().map(|at| {
+                if at < 1_000_000_000_000 {
+                    at
+                } else {
+                    at / 1000
+                }
+            }),
         });
     }
     if let Some(order) = state["project-order"].as_array() {
@@ -2226,6 +2234,7 @@ impl Host for LocalHost {
             "read-file" => diff_files::text(&params)?,
             "read-file-binary" => diff_files::binary(&params)?,
             "read-git-file-binary" => diff_files::git_binary(&params)?,
+            "write-file" => diff_files::write(&params)?,
             "recommended-skills" => skills::recommended(&self.home, &params),
             "install-recommended-skill" => skills::install(&self.home, &params),
             "custom-pets" => json!({ "pets": crate::pets::load(&self.home)? }),

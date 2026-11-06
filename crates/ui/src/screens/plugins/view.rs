@@ -272,13 +272,13 @@ impl Page {
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.section = label;
-                    cx.notify();
+                    this.query_changed(cx);
                 }))
                 .on_key_down(cx.listener(
                     move |this, event: &KeyDownEvent, _, cx| {
                         if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                             this.section = label;
-                            cx.notify();
+                            this.query_changed(cx);
                             cx.stop_propagation();
                         }
                     },
@@ -413,6 +413,15 @@ impl Page {
         if !self.available {
             return self.status("Plugins are not available for this host", None, cx);
         }
+        if let Some(search) = &self.search {
+            return match &search.results {
+                Resource::Loading => self.status("Searching plugins…", None, cx),
+                Resource::Failed(error) => {
+                    self.failure("Failed to search plugins", error, window, cx)
+                }
+                Resource::Ready(found) => self.search_results(found, query, window, cx),
+            };
+        }
         let markets = match &self.data.plugins {
             Resource::Loading => return self.status("Loading plugins…", None, cx),
             Resource::Failed(error) => {
@@ -498,6 +507,60 @@ impl Page {
                 section
             }))
             .into_any_element()
+    }
+
+    /// `plugin/search` results: the visible cards, then `See more` while a cursor remains.
+    fn search_results(
+        &self,
+        found: &[Arc<Plugin>],
+        query: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = cx.theme().clone();
+        let plugins: Vec<_> = found.iter().filter(|plugin| plugin.visible()).collect();
+        if plugins.is_empty() {
+            return self.status("No plugins found", None, cx);
+        }
+        let mut body = div().mt(px(24.)).flex().flex_col().gap(px(8.)).child(
+            div().grid().grid_cols(2).gap(px(16.)).children(
+                plugins
+                    .iter()
+                    .map(|plugin| self.plugin_card(plugin, window, cx)),
+            ),
+        );
+        let Some(search) = &self.search else {
+            return body.into_any_element();
+        };
+        body = if search.loading_more {
+            body.child(text("Loading more…", 13., 21.125, 430., t.text_secondary))
+        } else if let Some(cursor) = &search.next {
+            let handle = focus::handle("plugins-search-more", 0, window, cx);
+            let action = Action::SearchMore(query.to_owned(), cursor.clone());
+            body.child(
+                focus::ring(
+                    div()
+                        .id("plugins-search-more")
+                        .role(gpui::Role::Button)
+                        .aria_label("See more")
+                        .min_h(px(31.))
+                        .px(px(8.))
+                        .flex()
+                        .items_center()
+                        .rounded_full()
+                        .hover(|d| d.bg(t.ghost_hover))
+                        .child(text("See more", 13., 21.125, 430., t.text_secondary)),
+                    &handle,
+                    px(16.),
+                    px(2.),
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| this.act(action.clone(), cx))),
+            )
+        } else {
+            body
+        };
+        body.into_any_element()
     }
 
     /// `Installed` (every standalone skill), then the `Personal` and `System` groups.

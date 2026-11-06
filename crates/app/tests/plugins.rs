@@ -163,3 +163,118 @@ fn opening_share_does_not_publish_a_plugin() -> Result<()> {
     );
     Ok(())
 }
+
+/// The search box sends the original's `plugin/search`; `See more` loads the next page with the
+/// returned cursor.
+#[test]
+fn plugin_search_sends_the_query_and_pages_the_catalog() -> Result<()> {
+    let entry = |id: &str| {
+        json!({
+            "marketplaceName": "openai-curated",
+            "marketplacePath": "/tmp/curated/.agents/plugins/marketplace.json",
+            "plugin": {"id": id, "name": id, "installed": false, "enabled": false},
+        })
+    };
+    let mut lines = catalog_fixture()?;
+    lines.extend(exchange(
+        "plugin/search",
+        json!({
+            "data": [entry("linear@openai-curated"), entry("notion@openai-curated")],
+            "nextCursor": "page-2",
+        }),
+    ));
+    lines.extend(exchange(
+        "plugin/search",
+        json!({"data": [entry("slack@openai-curated")], "nextCursor": null}),
+    ));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.action(Box::new(ui::OpenPlugins))?;
+    fx.wait("plugin catalog", |fx| {
+        fx.read(|root, cx| {
+            root.plugins_page()
+                .is_some_and(|page| matches!(page.read(cx).data.plugins, Resource::Ready(_)))
+        })
+    })?;
+    let page = fx
+        .read(|root, _| root.plugins_page().cloned())
+        .context("plugin page")?;
+    fx.cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.query
+                .update(cx, |query, cx| query.set_text("  line ", cx))
+        })
+    });
+    fx.advance(std::time::Duration::from_millis(250))?;
+    fx.wait("first search page", |fx| {
+        fx.read(|_, cx| {
+            page.read(cx)
+                .search
+                .as_ref()
+                .is_some_and(|search| matches!(search.results, Resource::Ready(_)))
+        })
+    })?;
+    let (found, next) = fx.read(|_, cx| {
+        let search = page.read(cx).search.as_ref().unwrap();
+        let Resource::Ready(found) = &search.results else {
+            panic!("search results are not ready");
+        };
+        (
+            found
+                .iter()
+                .map(|plugin| plugin.id().to_owned())
+                .collect::<Vec<_>>(),
+            search.next.clone(),
+        )
+    });
+    ensure!(
+        found == ["linear@openai-curated", "notion@openai-curated"],
+        "found {found:?}"
+    );
+    ensure!(next.as_deref() == Some("page-2"));
+
+    let sent = fx.sent()?;
+    let requests: Vec<&Value> = sent
+        .iter()
+        .filter(|message| message["method"] == "plugin/search")
+        .collect();
+    ensure!(requests.len() == 1, "sent {} searches", requests.len());
+    let params = &requests[0]["params"];
+    ensure!(params["searchTerm"] == "line", "trimmed term: {params}");
+    ensure!(params["scope"] == "global", "public scope: {params}");
+    ensure!(
+        params["limit"] == 50 && params["cursor"].is_null(),
+        "first page: {params}"
+    );
+    ensure!(
+        params["cwds"]
+            .as_array()
+            .is_some_and(|cwds| cwds.len() == 1),
+        "search roots: {params}"
+    );
+
+    fx.cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.act(Action::SearchMore("line".into(), "page-2".into()), cx)
+        })
+    });
+    fx.wait("second search page", |fx| {
+        fx.read(|_, cx| {
+            page.read(cx).search.as_ref().is_some_and(|search| {
+                search.next.is_none()
+                    && matches!(&search.results, Resource::Ready(list) if list.len() == 3)
+            })
+        })
+    })?;
+    let sent = fx.sent()?;
+    let last = sent
+        .iter()
+        .filter(|message| message["method"] == "plugin/search")
+        .last()
+        .context("second plugin/search")?;
+    ensure!(
+        last["params"]["cursor"] == "page-2",
+        "cursor: {}",
+        last["params"]
+    );
+    Ok(())
+}

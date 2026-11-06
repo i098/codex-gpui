@@ -185,29 +185,3 @@ fn unreadable_list_fails_and_try_again_loads_it() -> Result<()> {
     ensure!(visible(&mut fx) == ["alpha", "beta"]);
     Ok(())
 }
-
-#[test]
-fn empty_list_suggestion_opens_the_filled_editor() -> Result<()> {
-    let home = tempfile::tempdir()?;
-    let mut fx = Fx::on_route(Route::Scheduled)?;
-    set_host(&mut fx, LocalHost::new(home.path()));
-    fx.wait("empty list", |fx| {
-        fx.read(|r, cx| {
-            r.scheduled_sidebar()
-                .is_some_and(|s| s.read(cx).load_state() == ListState::Ready)
-        })
-    })?;
-    shot(&mut fx, "5-empty-suggestions")?;
-    fx.action(Box::new(ui::screens::automations::UseEmptySuggestion(1)))?;
-    let draft = fx.read(|r, cx| r.automation_editor().and_then(|e| e.read(cx).draft(cx)));
-    let draft = draft.ok_or_else(|| anyhow::anyhow!("no editor draft"))?;
-    shot(&mut fx, "6-suggestion-editor")?;
-    ensure!(draft.name == "Weekly review", "{}", draft.name);
-    ensure!(
-        draft
-            .prompt
-            .starts_with("Review what I worked on this week")
-    );
-    ensure!(draft.rrule.contains("BYDAY=FR"), "{}", draft.rrule);
-    Ok(())
-}

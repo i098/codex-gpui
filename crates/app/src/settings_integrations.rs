@@ -224,7 +224,10 @@ impl Root {
         let Event::Notification { method, .. } = event else {
             return;
         };
-        if method == "skills/changed" {
+        if matches!(
+            method.as_str(),
+            "skills/changed" | "codex/event/skills_update_available"
+        ) {
             if self.settings_integrations.read(cx).dispatch.is_some()
                 && matches!(
                     self.state.route,
