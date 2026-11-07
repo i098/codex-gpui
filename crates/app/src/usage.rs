@@ -369,7 +369,7 @@ pub(crate) fn statsig(host: &dyn Host, identity: &Identity) -> Value {
     }))).and_then(payload_gates).unwrap_or(Value::Null)
 }
 
-fn fetch(
+pub(crate) fn fetch(
     host: &dyn Host,
     identity: &Identity,
     method: &str,

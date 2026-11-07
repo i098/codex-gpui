@@ -19,6 +19,9 @@ static PROJECT_TOOLTIP_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
 static CONTROL_TEXT_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
     std::sync::LazyLock::new(Default::default);
 
+mod work;
+pub use work::{LibraryFile, LibraryLoad, WorkEvent, local_matches};
+
 /// Identifies the window whose animations a static capture finishes.
 #[derive(Clone, Copy)]
 pub struct FinishedAnimation(pub AnyWindowHandle);
@@ -173,6 +176,8 @@ pub struct HomeMain {
     picker_bounds: [Bounds<Pixels>; 2],
     /// `account/read` failed: Home shows `We couldn’t load your account` instead.
     pub account_error: bool,
+    /// The Work rail's `Files`, `Plugins` and run-location menus.
+    pub work: work::WorkControls,
 }
 
 impl HomeMain {
@@ -202,6 +207,7 @@ impl HomeMain {
             picker: None,
             picker_bounds: Default::default(),
             account_error: false,
+            work: work::WorkControls::new(cx),
         }
     }
 
@@ -236,6 +242,7 @@ impl HomeMain {
             _ => (None, "Do anything"),
         };
         self.headline = headline;
+        self.close_work_menus();
         let chat = placeholder == "Ask ChatGPT";
         self.composer.update(cx, |composer, cx| {
             composer.set_placeholder(placeholder, cx);
@@ -1510,17 +1517,21 @@ fn project_chip(
 }
 
 /// The Work home's `Composer utility bar`, attached under the card (`absolute inset-x-0
-/// top-full`, `data-composer-rail-placement=below`): `Choose project`.
+/// top-full`, `data-composer-rail-placement=below`): `Choose project`, `Files` and `Plugins`,
+/// and the run-location button at the end.
+#[allow(clippy::too_many_arguments)]
 fn work_utility_bar(
     owner: &Entity<HomeMain>,
     project: Option<SharedString>,
     project_menu: Option<gpui::AnyElement>,
+    work_menus: [Option<gpui::AnyElement>; 3],
     compact: bool,
     t: &Theme,
     window: &mut Window,
     cx: &mut App,
 ) -> Div {
     let focus = focus::handle("choose-project", 0, window, cx);
+    let (pills, run) = work::rail_controls(owner, work_menus, compact, t, window, cx);
     // `padding-top: --radius-2xl` and `margin-top: -(tuck + --radius-2xl)` tuck 4 px of
     // the rail under the card.
     div()
@@ -1552,19 +1563,27 @@ fn work_utility_bar(
                             .py(px(2.))
                             .flex()
                             .items_center()
-                            .gap(px(8.))
-                            .child(project_chip(
-                                owner,
-                                project,
-                                project_menu,
-                                compact,
-                                t.text,
-                                "Change project",
-                                None,
-                                t,
-                                &focus,
-                                cx,
-                            )),
+                            .justify_between()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.))
+                                    .child(project_chip(
+                                        owner,
+                                        project,
+                                        project_menu,
+                                        compact,
+                                        t.text,
+                                        "Change project",
+                                        None,
+                                        t,
+                                        &focus,
+                                        cx,
+                                    ))
+                                    .children(pills),
+                            )
+                            .child(run),
                     ),
                 ),
         )
@@ -1631,10 +1650,22 @@ impl Render for HomeMain {
             window,
             cx,
         );
-        let work_rail = (self.headline == Some(WORK_HEADLINE)).then(|| {
+        let work_rail = if self.headline == Some(WORK_HEADLINE) {
             let menu = project_menu.take();
-            work_utility_bar(&owner, self.project.clone(), menu, compact, &t, window, cx)
-        });
+            let work_menus = self.work_menus(&t, window, cx);
+            Some(work_utility_bar(
+                &owner,
+                self.project.clone(),
+                menu,
+                work_menus,
+                compact,
+                &t,
+                window,
+                cx,
+            ))
+        } else {
+            None
+        };
         let column = div()
             .w_full()
             // The ChatGPT composer is 640 px wide.
