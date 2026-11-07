@@ -250,9 +250,14 @@ impl Root {
                 this.change_diff_comments(&rest, cx);
             }
             this.diff_confirmation = None;
+            this.sync_browser_pages(cx);
             cx.notify();
         })
         .detach();
+        // The native page draws over every gpui element, the dialog included.
+        for (_, tab) in &self.browser_tabs {
+            tab.update(cx, |tab, cx| tab.set_page_hidden(true, cx));
+        }
         self.diff_confirmation = Some(dialog);
         cx.notify();
     }
