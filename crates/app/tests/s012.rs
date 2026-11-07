@@ -84,10 +84,7 @@ fn row_center((x, y): (f32, f32), index: usize) -> (f32, f32) {
 
 #[test]
 fn link_context_menu_and_find_close_match_original() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        println!("s012: the Metal replay requires macOS");
-        return Ok(());
-    }
+    common::skip_unless_macos!("s012");
     let rec: Value = serde_json::from_str(include_str!("../../../refs/interactions/s012.json"))?;
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
     let steps = rec["steps"].as_array().context("steps")?;

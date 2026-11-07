@@ -14,9 +14,7 @@ fn proxy() {
 
 #[test]
 fn up_recalls_the_sent_prompt() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("prompt_history");
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
     let composer = fx.composer();
     fx.cx.update_window(fx.window, |_, window, cx| {

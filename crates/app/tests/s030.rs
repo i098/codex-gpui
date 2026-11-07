@@ -66,10 +66,7 @@ fn drag(fx: &mut Fx, dx: f32) -> Result<f32> {
 
 #[test]
 fn divider_drag_resizes_the_panel() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        println!("s030: the Metal replay requires macOS");
-        return Ok(());
-    }
+    common::skip_unless_macos!("s030");
     let rec: Value = serde_json::from_str(include_str!("../../../refs/interactions/s030.json"))?;
     let steps = rec["steps"].as_array().context("steps")?;
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;

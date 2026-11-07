@@ -153,10 +153,7 @@ fn center(bbox: &Value) -> (f32, f32) {
 
 #[test]
 fn tooltips_match_the_recording() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        println!("f1a: macOS only, skipped");
-        return Ok(());
-    }
+    common::skip_unless_macos!("f1a");
     let path = format!("{ROOT}/refs/interactions/f1a.json");
     let rec: Value = serde_json::from_slice(&fs::read(&path).context(path.clone())?)?;
     let steps = rec["steps"].as_array().context("steps")?;
@@ -297,9 +294,7 @@ impl Render for BorderedTrigger {
 
 #[test]
 fn bordered_trigger_offset_matches_native_add_without_changing_the_default() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("f1a");
     let proof = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::create_dir_all(proof)?;
     // Native original: 1280x832 @2, trigger y776..804, tooltip y742..772.
@@ -393,9 +388,7 @@ impl Render for FocusTriggers {
 
 #[test]
 fn keyboard_tooltip_ownership_and_dismissal_follow_focus() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("f1a");
     let mut cx = HeadlessAppContext::with_platform(
         textsys::text_system(),
         Arc::new(theme::Assets),
