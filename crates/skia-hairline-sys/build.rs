@@ -1,9 +1,16 @@
 use std::{env, fs, path::PathBuf, process::Command};
 
-const VERSION: &str = "0.1.0";
-const SKIA_REVISION: &str = "61e7ca4e99062cdd0ab69445d5963fb3365778f6";
-const SKIA_ARCHIVE_SHA256: &str =
-    "33ec00123641ce95c53d1f9291c25f34b27fc483b02e7a07441ad582641b2fc9";
+const SKIA_TOML: &str = include_str!("../../skia.toml");
+
+/// Value of `key = "value"` in skia.toml.
+fn skia_fact(key: &str) -> &'static str {
+    SKIA_TOML
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .find(|(name, _)| name.trim() == key)
+        .map(|(_, value)| value.trim().trim_matches('"'))
+        .unwrap_or_else(|| panic!("skia.toml has no `{key}`"))
+}
 
 fn output(command: &mut Command) -> String {
     let result = command.output().expect("run package tool");
@@ -16,6 +23,10 @@ fn output(command: &mut Command) -> String {
 }
 
 fn main() {
+    println!("cargo:rerun-if-changed=../../skia.toml");
+    let version = skia_fact("version");
+    let skia_revision = skia_fact("skia_revision");
+    let skia_archive_sha256 = skia_fact("skia_archive_sha256");
     println!("cargo:rerun-if-env-changed=SKIA_HAIRLINE_BINARIES_URL");
     println!("cargo:rerun-if-env-changed=SKIA_HAIRLINE_PACKAGE_SHA256");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
@@ -31,7 +42,7 @@ fn main() {
     let expected_hash =
         env::var("SKIA_HAIRLINE_PACKAGE_SHA256").expect("set the versioned Skia package SHA-256");
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));
-    let archive = out.join(format!("skia-hairline-{VERSION}.tar.gz"));
+    let archive = out.join(format!("skia-hairline-{version}.tar.gz"));
     let mut curl = Command::new("curl");
     output(
         curl.args([
@@ -67,10 +78,10 @@ fn main() {
     let manifest = fs::read_to_string(out.join("manifest.json")).expect("package manifest");
     for identity in [
         "\"package\":\"skia-hairline-sys\"".into(),
-        format!("\"version\":\"{VERSION}\""),
+        format!("\"version\":\"{version}\""),
         "\"target\":\"aarch64-apple-darwin\"".into(),
-        format!("\"skia_revision\":\"{SKIA_REVISION}\""),
-        format!("\"skia_archive_sha256\":\"{SKIA_ARCHIVE_SHA256}\""),
+        format!("\"skia_revision\":\"{skia_revision}\""),
+        format!("\"skia_archive_sha256\":\"{skia_archive_sha256}\""),
     ] {
         assert!(
             manifest.contains(&identity),

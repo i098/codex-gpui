@@ -28,11 +28,7 @@ impl Root {
         let page = if let Some(page) = &self.pull_requests_page {
             page.clone()
         } else {
-            let clock = self.clock.unwrap_or(crate::Clock {
-                utc_offset: crate::utc_offset(),
-                pinned_now: None,
-                elapsed_since: None,
-            });
+            let clock = self.pull_request_clock();
             let page = cx.new(|cx| Page::new(clock, cx));
             cx.subscribe_in(&page, window, |this, page, event: &Event, window, cx| {
                 this.pull_request_event(page.clone(), event, window, cx);
@@ -67,6 +63,80 @@ impl Root {
             self.load_pull_request_detail(page.clone(), cx);
         }
         screen::shell(page, cx)
+    }
+
+    fn pull_request_clock(&self) -> crate::Clock {
+        self.clock.unwrap_or(crate::Clock {
+            utc_offset: crate::utc_offset(),
+            pinned_now: None,
+            elapsed_since: None,
+        })
+    }
+
+    /// `View PR`: the branch's pull request in the `PR #n` side panel tab, as the original's
+    /// `CodeReviewPluginPullRequestTab`; a URL that is not a GitHub pull request opens in the
+    /// browser.
+    pub(crate) fn open_pull_request_tab(
+        &mut self,
+        url: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(identity) = Identity::from_url(url) else {
+            cx.open_url(url);
+            return;
+        };
+        let shown = self
+            .pull_request_tab
+            .as_ref()
+            .is_some_and(|page| page.read(cx).selected.as_ref() == Some(&identity));
+        if !shown {
+            let clock = self.pull_request_clock();
+            let page = cx.new(|cx| Page::side_panel(clock, identity, cx));
+            cx.subscribe_in(&page, window, |this, page, event: &Event, window, cx| {
+                this.pull_request_event(page.clone(), event, window, cx);
+            })
+            .detach();
+            self.pull_request_tab = Some(page.clone());
+            self.check_pull_request_access(page, cx);
+        }
+        self.set_side(crate::SidePanel::PullRequest, window, cx);
+    }
+
+    /// The tab's `Ready for review`, `Convert to draft` or `Reopen`, then the detail again.
+    fn set_pull_request_state(
+        &self,
+        page: Entity<Page>,
+        action: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(account), Some(identity)) = (
+            page.read(cx).account().cloned(),
+            page.read(cx).selected.clone(),
+        ) else {
+            return;
+        };
+        let service = self.host.clone();
+        let request = host::Request::post(
+            "gh-pr-state",
+            Some(json!({"account": account, "pullRequest": identity, "action": action})),
+        );
+        let run = cx.background_spawn(async move { host::json_body(&service.fetch(&request)?) });
+        cx.spawn(async move |this, cx| {
+            let result = run.await;
+            this.update(cx, |this, cx| {
+                page.update(cx, |page, cx| {
+                    page.state_pending = false;
+                    cx.notify();
+                });
+                match result {
+                    Ok(_) => this.load_pull_request_detail(page, cx),
+                    Err(error) => this.toast(Toast::danger(format!("{error:#}")), cx),
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn pull_request_event(
@@ -132,6 +202,7 @@ impl Root {
             Event::Media { generation, url } => {
                 self.load_pull_request_media(page, *generation, url.clone(), cx)
             }
+            Event::SetState(action) => self.set_pull_request_state(page, action, cx),
         }
     }
 
@@ -318,6 +389,12 @@ impl Root {
             });
             if ready && current {
                 this.update(cx, |this, cx| {
+                    if page.read(cx).panel {
+                        if this.pull_request_tab.as_ref() == Some(&page) {
+                            this.load_pull_request_detail(page, cx);
+                        }
+                        return;
+                    }
                     if this.pull_requests_page.as_ref() != Some(&page) {
                         return;
                     }
@@ -490,6 +567,11 @@ impl Root {
         self.pull_requests_page.as_ref()
     }
 
+    /// The page of the `PR #n` side panel tab.
+    pub fn pull_request_tab(&self) -> Option<&Entity<Page>> {
+        self.pull_request_tab.as_ref()
+    }
+
     pub(crate) fn reset_pull_requests(&mut self, cx: &mut Context<Self>) {
         if matches!(self.state.route, Route::PullRequests(_)) {
             if let Some(page) = self.pull_requests_page.clone() {
@@ -501,6 +583,9 @@ impl Root {
             }
         } else {
             self.pull_requests_page = None;
+        }
+        if let Some(page) = self.pull_request_tab.clone() {
+            self.check_pull_request_access(page, cx);
         }
     }
 }

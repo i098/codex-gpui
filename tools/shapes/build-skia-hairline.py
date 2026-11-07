@@ -7,12 +7,14 @@ import json
 import platform
 import subprocess
 import tarfile
+import tomllib
 import tempfile
 from pathlib import Path
 
-SKIA_REVISION = "61e7ca4e99062cdd0ab69445d5963fb3365778f6"
-ARCHIVE_SHA256 = "33ec00123641ce95c53d1f9291c25f34b27fc483b02e7a07441ad582641b2fc9"
-VERSION = "0.1.0"
+_FACTS = tomllib.loads((Path(__file__).resolve().parents[2] / "skia.toml").read_text())
+SKIA_REVISION = _FACTS["skia_revision"]
+ARCHIVE_SHA256 = _FACTS["skia_archive_sha256"]
+VERSION = _FACTS["version"]
 DEFINES = [
     "SK_CODEC_DECODES_BMP",
     "SK_CODEC_DECODES_WBMP",
