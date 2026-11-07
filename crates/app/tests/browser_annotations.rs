@@ -110,6 +110,28 @@ fn annotation_mode_toolbar_sends_discards_and_exits() -> Result<()> {
     fx.keys("cmd-shift-.")?;
     ensure!(mode(&fx) == (true, 2), "{:?}", mode(&fx));
 
+    let discard = toolbar(&fx, "discard");
+    fx.click(discard)?;
+    let dialog = fx.read(|root, _| root.diff_comment_confirmation().cloned());
+    let dialog = dialog.ok_or_else(|| anyhow::anyhow!("Discard asked nothing"))?;
+    ensure!(
+        mode(&fx) == (true, 2),
+        "the dialog changed the pending list early"
+    );
+    fx.capture_evidence(evidence, "discard-confirm")?;
+    dialog.update(&mut fx.cx, |_, cx| cx.emit(Outcome::Confirm));
+    fx.cx.run_until_parked();
+    ensure!(mode(&fx) == (true, 0), "{:?}", mode(&fx));
+    ensure!(pending_texts(&fx) == ["Keep this check"]);
+
+    set_comments(
+        &mut fx,
+        vec![
+            browser_comment("Make Save bold"),
+            diff,
+            browser_comment("Fix the typo"),
+        ],
+    );
     let send = toolbar(&fx, "send");
     fx.click(send)?;
     fx.wait("annotation turn", |fx| {
@@ -134,22 +156,6 @@ fn annotation_mode_toolbar_sends_discards_and_exits() -> Result<()> {
         "The annotation turn lost its context: {text}"
     );
     ensure!(mode(&fx) == (false, 0), "{:?}", mode(&fx));
-    ensure!(pending_texts(&fx) == ["Keep this check"]);
-
-    set_comments(&mut fx, vec![diff, browser_comment("Darken the header")]);
-    fx.keys("cmd-shift-.")?;
-    let discard = toolbar(&fx, "discard");
-    fx.click(discard)?;
-    let dialog = fx.read(|root, _| root.diff_comment_confirmation().cloned());
-    let dialog = dialog.ok_or_else(|| anyhow::anyhow!("Discard asked nothing"))?;
-    ensure!(
-        mode(&fx) == (true, 1),
-        "the dialog changed the pending list early"
-    );
-    fx.capture_evidence(evidence, "discard-confirm")?;
-    dialog.update(&mut fx.cx, |_, cx| cx.emit(Outcome::Confirm));
-    fx.cx.run_until_parked();
-    ensure!(mode(&fx) == (true, 0), "{:?}", mode(&fx));
     ensure!(pending_texts(&fx) == ["Keep this check"]);
     Ok(())
 }
