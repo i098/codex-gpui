@@ -68,8 +68,8 @@ pub use items::{ImageView, OpenImage};
 pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
 pub use actions::{
-    EditMessage, ForkThread, PatchTurn, RevertTurn, RunEnvironmentAction, SubmitRating,
-    ThreadPressed,
+    EditMessage, ForkThread, PatchTurn, RevertTurn, RunEnvironmentAction, ShareThread,
+    SubmitRating, ThreadPressed,
 };
 
 use actions::{TurnFocus, action_row};
@@ -81,7 +81,10 @@ pub enum GitAction {
     CreateBranch,
     SwitchBranch,
     CreatePr,
+    /// `View PR`: the pull request's side panel tab.
     ViewPr,
+    /// `Open in GitHub`: the pull request in the browser.
+    OpenPrInBrowser,
     CopyPr,
     AddPrToChat,
     CompareBranch,
@@ -126,6 +129,7 @@ pub struct SearchHistory(pub String);
 
 impl gpui::EventEmitter<SearchHistory> for ThreadView {}
 
+pub use items::{OpenPlanSummary, PlanSummary};
 use items::{
     activity, cache_automation_result, diff_card, disclosure, memory_citations, user_bubble,
     wrap_row,
@@ -581,7 +585,7 @@ impl ThreadView {
             7 => GitAction::AddPrToChat,
             8 => GitAction::CompareBranch,
             9 => GitAction::RepairPr,
-            10 => GitAction::ViewPr,
+            10 => GitAction::OpenPrInBrowser,
             _ => GitAction::OpenForm,
         });
     }
@@ -1814,7 +1818,13 @@ impl ThreadView {
                             .rounded(Theme::RADIUS_SM)
                             .hover(move |style| style.bg(row_hover))
                             .aria_label("Open plan")
-                            .on_click(crate::dispatch::<crate::OpenPlanPanel>),
+                            .on_click(|event, window, cx| {
+                                if event.modifiers().secondary() {
+                                    window.dispatch_action(Box::new(OpenPlanSummary), cx);
+                                } else {
+                                    crate::dispatch::<crate::OpenPlanPanel>(event, window, cx);
+                                }
+                            }),
                     ),
             );
         }

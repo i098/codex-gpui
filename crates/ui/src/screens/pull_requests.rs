@@ -276,6 +276,8 @@ pub enum Event {
         remove: bool,
     },
     Links,
+    /// The side panel tab's state action: `ready`, `draft` or `reopen` (see [`state_action`]).
+    SetState(&'static str),
 }
 
 pub struct Page {
@@ -318,6 +320,11 @@ pub struct Page {
     pub linked_threads: Option<Result<std::collections::HashSet<String>, String>>,
     pub link_generation: u64,
     links_open: bool,
+    /// Shown as a thread's `PR #n` side panel tab: only the selected pull request's detail,
+    /// with its state action.
+    pub panel: bool,
+    /// A state action is in flight.
+    pub state_pending: bool,
 }
 
 impl EventEmitter<Event> for Page {}
@@ -425,6 +432,18 @@ impl Page {
             links_open: false,
             linked_threads: None,
             link_generation: 0,
+            panel: false,
+            state_pending: false,
+        }
+    }
+
+    /// The `PR #n` side panel tab of `identity`: its detail at the panel's full width.
+    pub fn side_panel(clock: Clock, identity: Identity, cx: &mut Context<Self>) -> Self {
+        Self {
+            panel: true,
+            detail_fullscreen: true,
+            selected: Some(identity),
+            ..Self::new(clock, cx)
         }
     }
 
@@ -1816,34 +1835,37 @@ impl Page {
                         }
                     })),
             )
-            .child(
-                self.detail_control(
-                    "pull-request-fullscreen",
-                    if self.detail_fullscreen {
-                        "Exit full screen"
-                    } else {
-                        "Enter full screen"
-                    },
-                    false,
-                    cx,
+            // The side panel tab always fills its panel.
+            .when(!self.panel, |d| {
+                d.child(
+                    self.detail_control(
+                        "pull-request-fullscreen",
+                        if self.detail_fullscreen {
+                            "Exit full screen"
+                        } else {
+                            "Enter full screen"
+                        },
+                        false,
+                        cx,
+                    )
+                    .w(px(28.))
+                    .px_0()
+                    .child(review_icon("fullscreen", 16., t.text_tertiary))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.detail_fullscreen = !this.detail_fullscreen;
+                        cx.notify();
+                    }))
+                    .on_key_down(cx.listener(
+                        |this, event: &gpui::KeyDownEvent, _, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                this.detail_fullscreen = !this.detail_fullscreen;
+                                cx.notify();
+                                cx.stop_propagation();
+                            }
+                        },
+                    )),
                 )
-                .w(px(28.))
-                .px_0()
-                .child(review_icon("fullscreen", 16., t.text_tertiary))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.detail_fullscreen = !this.detail_fullscreen;
-                    cx.notify();
-                }))
-                .on_key_down(cx.listener(
-                    |this, event: &gpui::KeyDownEvent, _, cx| {
-                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                            this.detail_fullscreen = !this.detail_fullscreen;
-                            cx.notify();
-                            cx.stop_propagation();
-                        }
-                    },
-                )),
-            )
+            })
     }
 
     fn detail_metadata(&self, detail: &Value, cx: &Context<Self>) -> Div {
@@ -1955,7 +1977,28 @@ impl Page {
             .child(metadata_row(
                 "Status",
                 icon(glyph, 18., color),
-                text(status, 14., 20., 430., t.text),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(text(status, 14., 20., 430., t.text))
+                    .when_some(
+                        state_action(detail).filter(|_| self.panel),
+                        |d, (action, label)| {
+                            d.child(
+                                self.button("pull-request-state", label, cx)
+                                    .h(px(28.))
+                                    .aria_disabled(self.state_pending)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if !this.state_pending {
+                                            this.state_pending = true;
+                                            cx.emit(Event::SetState(action));
+                                            cx.notify();
+                                        }
+                                    })),
+                            )
+                        },
+                    ),
                 t,
             ))
     }
@@ -2152,6 +2195,9 @@ impl Page {
                 .flex_col()
                 .child(self.empty("Select pull request to view", None, None, false, cx));
         }
+        if self.panel && self.account().is_none() {
+            return div().size_full().flex().flex_col().child(self.setup(cx));
+        }
         let value = self.detail.as_ref().and_then(|detail| detail.as_ref().ok());
         let pane = div()
             .size_full()
@@ -2260,6 +2306,17 @@ impl Page {
             ),
             None => pane.child(self.empty("Loading pull request details", None, None, true, cx)),
         }
+    }
+}
+
+/// The side panel tab's action for `detail`'s state, as `gh pr ready`, `gh pr ready --undo` and
+/// `gh pr reopen` take it: `(action, label)`. None for a merged pull request.
+pub fn state_action(detail: &Value) -> Option<(&'static str, &'static str)> {
+    match detail["state"].as_str()? {
+        "OPEN" if detail["isDraft"] == true => Some(("ready", "Ready for review")),
+        "OPEN" => Some(("draft", "Convert to draft")),
+        "CLOSED" => Some(("reopen", "Reopen")),
+        _ => None,
     }
 }
 
@@ -2808,6 +2865,17 @@ mod tests {
         detail["state"] = "MERGED".into();
         assert!(fixable_checks(&detail).is_empty());
         assert!(fixable_checks(&serde_json::json!({"state":"OPEN"})).is_empty());
+    }
+
+    #[test]
+    fn state_action_follows_the_pull_request_state() {
+        let action = |state: &str, draft: bool| {
+            state_action(&serde_json::json!({"state": state, "isDraft": draft}))
+        };
+        assert_eq!(action("OPEN", true), Some(("ready", "Ready for review")));
+        assert_eq!(action("OPEN", false), Some(("draft", "Convert to draft")));
+        assert_eq!(action("CLOSED", false), Some(("reopen", "Reopen")));
+        assert_eq!(action("MERGED", false), None);
     }
 
     #[test]

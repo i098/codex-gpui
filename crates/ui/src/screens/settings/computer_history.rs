@@ -1898,7 +1898,7 @@ fn modal(
         .flex()
         .items_center()
         .justify_center()
-        .bg(rgba(0x0000_0022))
+        .bg(t.dialog_overlay)
         .on_click(cx.listener(|this, _, _, cx| {
             if !matches!(&this.modal, Some(Modal::Permissions(p)) if p.saving) {
                 this.modal = None;

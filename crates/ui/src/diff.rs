@@ -63,6 +63,7 @@ mod pdf;
 
 #[path = "diff/artifact_annotations.rs"]
 mod artifact_annotations;
+use artifact_annotations::Annotate;
 #[path = "diff/comment_view.rs"]
 mod comment_view;
 #[path = "diff/comments.rs"]
@@ -2949,6 +2950,8 @@ pub struct FileView {
     local_controls: bool,
     /// An image or PDF ([`Self::previews`]) shown instead of text lines.
     media: Option<preview::FileMedia>,
+    /// Annotations on an artifact PDF ([`Self::artifact_type`]).
+    artifacts: artifact_annotations::ArtifactAnnotations,
     /// The owner saves edits ([`Self::set_editable`]).
     editable: bool,
     /// The editor that replaced the lines once a line was double-clicked.
@@ -2991,6 +2994,7 @@ impl FileView {
             open_bounds: gpui::Bounds::default(),
             local_controls: true,
             media: None,
+            artifacts: Default::default(),
             editable: false,
             edit: None,
             disk_mtime: None,
@@ -3431,6 +3435,21 @@ impl FileView {
                 .child(edit.editor.clone())
                 .into_any_element();
         }
+        if !Self::artifact_viewable(&self.path) {
+            return div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(text(
+                    "This document type cannot be viewed here yet",
+                    13.,
+                    20.,
+                    430.,
+                    t.text_tertiary,
+                ))
+                .into_any_element();
+        }
         match &self.contents {
             None => div().flex_1().into_any_element(),
             Some(Err(_)) => div()
@@ -3601,6 +3620,14 @@ impl Render for FileView {
             )
             .on_click(cx.listener(|view, _, _, cx| view.pin_preview(cx)))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                // An artifact PDF's Cmd+Enter adds the draft, else sends the annotations.
+                if event.keystroke.modifiers.platform
+                    && event.keystroke.key == "enter"
+                    && this.artifact_modified_enter(window, cx)
+                {
+                    cx.stop_propagation();
+                    return;
+                }
                 if this.edit.is_some() {
                     if this.edit_key(event, cx) {
                         cx.stop_propagation();

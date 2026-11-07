@@ -26,6 +26,8 @@ use ui::{
 pub(crate) struct Session {
     pub page: Entity<CloudTaskPage>,
     pub header: Entity<ui::screens::cloud_task::CloudTaskHeader>,
+    /// The cloud setup thread's terminal target; `None` for a Cloud task page.
+    pub(crate) terminal: Option<crate::terminal::CloudTarget>,
     cancelled: Arc<AtomicBool>,
     _task: Task<()>,
 }
@@ -150,6 +152,7 @@ impl Root {
         self.cloud = Some(Session {
             page,
             header,
+            terminal: None,
             cancelled,
             _task: task,
         });
@@ -287,7 +290,7 @@ impl Root {
         let settings = self.config.clone();
         let entity = page.clone();
         let cancelled = Arc::new(AtomicBool::new(false));
-        let task = cx.spawn_in(window, async move |_, cx| {
+        let task = cx.spawn_in(window, async move |root, cx| {
             let result = async {
                 let source = host.clone();
                 let (bridge, config, identity) = cx.background_executor().spawn(async move {
@@ -307,6 +310,8 @@ impl Root {
                 let thread_id = thread.id.clone();
                 let working = thread.turns.last().is_some_and(|turn| turn.status == TurnStatus::InProgress);
                 let title = format!("Set up {}", config["name"].as_str().unwrap_or("cloud environment"));
+                let mut target = crate::terminal::CloudTarget { bridge: Some(bridge.clone()), ..Default::default() };
+                root.update(cx, |root, cx| root.set_cloud_terminal(&entity, target.clone(), cx))?;
                 connection.set((bridge, identity.clone())).ok();
                 entity.update(cx, |page, cx| page.set_data(CloudTask {
                     id: thread_id.clone(), title, active_turn: Some(thread_id.clone()),
@@ -320,6 +325,12 @@ impl Root {
                     match event {
                         bridge::Event::Notification { method, params }
                             if params["threadId"].as_str() == Some(&thread_id) => {
+                                if method.starts_with("thread/environment/")
+                                    && let Some(environment) = params["environmentId"].as_str()
+                                {
+                                    target.apply(&method, environment);
+                                    root.update(cx, |root, cx| root.set_cloud_terminal(&entity, target.clone(), cx))?;
+                                }
                                 entity.update(cx, |page, cx| page.apply_event(
                                     &thread_id, json!({"item_type":"thread_event","event":{"method":method,"params":params}}), cx,
                                 ));
@@ -342,6 +353,7 @@ impl Root {
         self.cloud = Some(Session {
             page,
             header,
+            terminal: Some(crate::terminal::CloudTarget::default()),
             cancelled,
             _task: task,
         });
@@ -1173,6 +1185,7 @@ pub fn parse_task_response(detail: &Value, turns: &Value) -> Result<CloudTask> {
                 section: None,
                 status: ThreadStatus::Idle,
                 git_info: None,
+                daybreak_enabled: None,
                 forked_from_id: None,
                 turns: vec![turn],
                 older_cursor: None,

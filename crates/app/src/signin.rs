@@ -11,7 +11,9 @@ mod browser {
     #[cfg(target_os = "macos")]
     use std::net::{TcpListener, TcpStream};
     #[cfg(any(target_os = "macos", test))]
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+    #[cfg(target_os = "macos")]
+    use std::time::Instant;
     use ui::screens::signin::BrowserProfile;
 
     #[cfg(any(target_os = "macos", test))]
@@ -61,30 +63,24 @@ mod browser {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()?;
-        let deadline = Instant::now() + timeout;
-        loop {
-            if let Some(status) = child.try_wait()? {
-                ensure!(status.success(), "Browser lookup native helper failed");
-                let mut output = Vec::new();
-                child
-                    .stdout
-                    .take()
-                    .context("Browser helper stdout")?
-                    .take((LIMIT + 1) as u64)
-                    .read_to_end(&mut output)?;
-                ensure!(
-                    output.len() <= LIMIT,
-                    "Browser helper response is too large"
-                );
-                return Ok(Some(output));
-            }
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Ok(None);
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        let Some(status) =
+            crate::process::wait_timeout(&mut child, timeout, Duration::from_millis(10))?
+        else {
+            return Ok(None);
+        };
+        ensure!(status.success(), "Browser lookup native helper failed");
+        let mut output = Vec::new();
+        child
+            .stdout
+            .take()
+            .context("Browser helper stdout")?
+            .take((LIMIT + 1) as u64)
+            .read_to_end(&mut output)?;
+        ensure!(
+            output.len() <= LIMIT,
+            "Browser helper response is too large"
+        );
+        Ok(Some(output))
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -391,15 +387,20 @@ mod browser {
     }
 }
 
-use crate::{Root, host, host_settings};
+use crate::{
+    Root,
+    chatgpt::{self, Gate},
+    host, host_settings,
+};
 use anyhow::{Context as _, Result};
 use gpui::{AppContext as _, Context, Entity};
 use serde_json::{Value, json};
 use ui::screens::signin::bedrock::GovCloud;
-use ui::screens::signin::{Login, LoginEvent, Options, Provider};
+use ui::screens::signin::{
+    Login, LoginEvent, LoginPort, LoginRequest, LoginService, Options, Provider, Reply,
+    RequestError,
+};
 use url::Url;
-
-pub(crate) const ORIGINAL_APP_VERSION: &str = "26.1007.30912";
 
 impl Root {
     pub(crate) fn new_login(
@@ -408,6 +409,9 @@ impl Root {
         cx: &mut Context<Self>,
     ) -> Entity<Login> {
         self.ready = false;
+        if !cx.has_global::<LoginService>() {
+            cx.set_global(LoginService(std::rc::Rc::new(ServerLogin)));
+        }
         let login = cx.new(Login::new);
         cx.subscribe_in(
             &login,
@@ -496,19 +500,8 @@ impl Root {
         };
         let host = self.host.clone();
         let weak = login.downgrade();
-        let request = host::Request::Http(json!({
-            "url": "/wham/statsig/bootstrap", "method": "POST",
-            "body": json!({"app_session_id": host::device_id(), "app_version": ORIGINAL_APP_VERSION, "brand_name": "chatgpt", "build_flavor": "prod", "locale": "en-US", "stable_id": stable_id, "system_name": std::env::consts::OS, "window_type": "electron"}).to_string(),
-            "headers": {"OAI-Language": "en", "X-OpenAI-Attach-Auth": "1", "X-OpenAI-Attach-Integrity-State": "1", "originator": "Codex Desktop"},
-            "retry": false, "returnErrorResponse": true,
-        }));
-        let anonymous = host::Request::Http(json!({
-            "url": "https://ab.chatgpt.com/v1/initialize?k=client-sYWqzCYMRkUg4DqqiZcR5DGTNl2iD7zNJY0HoeDLzxR&st=js-mono&sv=3.34.0",
-            "method": "POST",
-            "body": json!({"user":{"customIDs":{"stableID":stable_id}},"hash":"djb2","deltasResponseRequested":false,"full_checksum":null}).to_string(),
-            "headers":{"Content-Type":"application/json"},
-            "retry":false,"returnErrorResponse":true
-        }));
+        let request = chatgpt::bootstrap_request(&stable_id, None);
+        let anonymous = chatgpt::anonymous_bootstrap_request(&stable_id);
         cx.spawn(async move |_, cx| {
             let result = cx
                 .background_executor()
@@ -597,15 +590,9 @@ impl Root {
 }
 
 fn options(response: &Value) -> Result<Options> {
-    let decoded;
-    let payload = if let Some(raw) = response["statsigPayload"].as_str() {
-        decoded = serde_json::from_str::<Value>(raw)?;
-        &decoded
-    } else {
-        response
-    };
+    let payload = chatgpt::payload(response.clone())?;
     anyhow::ensure!(
-        payload["feature_gates"].is_object() && payload["layer_configs"].is_object(),
+        payload["layer_configs"].is_object(),
         "missing sign-in feature policy"
     );
     let provider = &payload["layer_configs"]["1561420571"]["value"];
@@ -613,8 +600,8 @@ fn options(response: &Value) -> Result<Options> {
     let auth = &payload["layer_configs"]["3446609779"]["value"];
     Ok(Options {
         providers: provider["enabled"] == true,
-        bedrock: payload["feature_gates"]["1934304769"]["value"] == true,
-        browser_help: payload["feature_gates"]["2502927686"]["value"] == true,
+        bedrock: Gate::SigninBedrock.enabled(&payload),
+        browser_help: Gate::SigninBrowserHelp.enabled(&payload),
         api_key_help: matches!(
             api["api_key_help_variant"].as_str(),
             Some("link" | "explanation" | "explanation-with-chatgpt")
@@ -632,15 +619,93 @@ fn options(response: &Value) -> Result<Options> {
     })
 }
 
+/// Performs the sign-in screen's requests on the live app-server connection.
+struct ServerLogin;
+
+impl ServerLogin {
+    fn bridge(cx: &gpui::App) -> Result<std::sync::Arc<bridge::Bridge>, RequestError> {
+        cx.try_global::<ui::screens::settings::AppServer>()
+            .map(|server| server.0.clone())
+            .ok_or_else(|| RequestError {
+                code: None,
+                message: "no app-server connection".into(),
+            })
+    }
+}
+
+fn request_error(error: anyhow::Error) -> RequestError {
+    RequestError {
+        code: error
+            .downcast_ref::<bridge::RpcError>()
+            .map(|error| error.code),
+        message: error.to_string(),
+    }
+}
+
+impl LoginPort for ServerLogin {
+    fn user_agent(&self, cx: &gpui::App) -> Reply<String> {
+        let bridge = Self::bridge(cx);
+        Box::pin(async move {
+            let server = bridge?
+                .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
+                .await
+                .map_err(request_error)?;
+            Ok(server.user_agent)
+        })
+    }
+
+    fn send(&self, request: LoginRequest, cx: &gpui::App) -> Reply<Value> {
+        let bridge = Self::bridge(cx);
+        Box::pin(async move {
+            let bridge = bridge?;
+            match request {
+                LoginRequest::Requirements => bridge.config_requirements().await,
+                LoginRequest::Config => bridge.config_read_merged().await,
+                LoginRequest::GatewayRead => bridge.gateway_oauth_read().await,
+                LoginRequest::GatewayLogin => bridge.gateway_oauth_login().await,
+                LoginRequest::GatewayCancel => bridge.gateway_oauth_cancel().await,
+                LoginRequest::ChatGpt => bridge.login_start_chatgpt().await,
+                LoginRequest::DeviceCode => bridge.login_start_device_code().await,
+                LoginRequest::ApiKey(key) => bridge.login_start_api_key(&key).await,
+                LoginRequest::Cancel { login_id } => bridge.login_cancel(&login_id).await,
+                LoginRequest::BedrockDiscover => bridge.bedrock_discover().await,
+                LoginRequest::BedrockProfile { profile, region } => {
+                    bridge.bedrock_setup_profile(&profile, &region).await
+                }
+                LoginRequest::BedrockEnvironment { region } => {
+                    bridge.bedrock_setup_environment(&region).await
+                }
+                LoginRequest::BedrockAccessKeys {
+                    access_key_id,
+                    secret_access_key,
+                    session_token,
+                    region,
+                } => {
+                    bridge
+                        .login_start_bedrock_access_keys(
+                            &access_key_id,
+                            &secret_access_key,
+                            session_token.as_deref(),
+                            &region,
+                        )
+                        .await
+                }
+                LoginRequest::BedrockApiKey { api_key, region } => {
+                    bridge.login_start_bedrock_api_key(&api_key, &region).await
+                }
+            }
+            .map_err(request_error)
+        })
+    }
+}
+
 async fn check_govcloud(
     bridge: &bridge::Bridge,
     region: &str,
     executor: &gpui::BackgroundExecutor,
 ) -> GovCloud {
     use std::task::Poll;
-    let mut request = std::pin::pin!(
-        bridge.request::<_, Value>("account/bedrock/checkGovCloudRequirements", json!({}))
-    );
+    let mut request = std::pin::pin!(bridge.bedrock_check_govcloud());
     let mut timeout = std::pin::pin!(executor.timer(std::time::Duration::from_secs(10)));
     let result = std::future::poll_fn(|cx| {
         if let Poll::Ready(result) = request.as_mut().poll(cx) {
@@ -699,7 +764,7 @@ fn browser_url(
         url.query_pairs_mut().append_pair("login_hint", email);
     }
     url.query_pairs_mut()
-        .append_pair("codex_app_version", ORIGINAL_APP_VERSION);
+        .append_pair("codex_app_version", chatgpt::ORIGINAL_APP_VERSION);
     if let Some(id) = stable_id {
         url.query_pairs_mut()
             .append_pair("source_surface_stable_id", id)

@@ -157,9 +157,10 @@ impl Root {
     fn load_worktrees(&self, cx: &mut Context<Self>) {
         cx.update_global::<worktrees::State, _>(|state, _| state.worktrees = Load::Loading);
         let host = self.host.clone();
+        let host_id = self.host_id().to_owned();
         let bridge = self.bridge.clone();
         let read = cx.background_spawn(async move {
-            let mut response = host::json_body(&host.fetch(&host::Request::post("codex-worktrees", Some(json!({"hostId": "local"}))))?)?;
+            let mut response = host::json_body(&host.fetch(&host::Request::post("codex-worktrees", Some(json!({"hostId": host_id}))))?)?;
             let default_root = response["defaultRoot"].as_str().unwrap_or_default().to_owned();
             let threads = threads(&bridge).await?;
             let rows = response["worktrees"].as_array_mut().context("Missing worktree list")?;
@@ -197,6 +198,7 @@ impl Root {
             state.pending_delete = Some(path.clone())
         });
         let host = self.host.clone();
+        let host_id = self.host_id().to_owned();
         let bridge = self.bridge.clone();
         let remove = cx.background_spawn(async move {
             let threads = threads(&bridge).await?;
@@ -205,7 +207,7 @@ impl Root {
             for thread in owners {
                 bridge.request::<_, Value>("thread/archive", json!({"threadId": thread["id"]})).await?;
             }
-            host::json_body(&host.fetch(&host::Request::post("worktree-delete", Some(json!({"hostId": "local", "worktree": path, "reason": "settings-delete-targeted"}))))?)?;
+            host::json_body(&host.fetch(&host::Request::post("worktree-delete", Some(json!({"hostId": host_id, "worktree": path, "reason": "settings-delete-targeted"}))))?)?;
             Ok::<_, anyhow::Error>(())
         });
         cx.spawn(async move |this, cx| {

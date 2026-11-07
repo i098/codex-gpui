@@ -7,6 +7,7 @@ mod account;
 mod account_backend;
 mod activity_access;
 mod archived_chats;
+mod chatgpt;
 mod chatgpt_chats;
 mod chronicle;
 mod cloud_task;
@@ -17,6 +18,7 @@ mod cloud_snapshot;
 pub use cloud::{CloudTaskRequest, create_cloud_task};
 pub use cloud_snapshot::create_cloud_task_from_worktree;
 mod automation_notifications;
+pub mod computer_use_browser;
 pub mod computer_use_requests;
 pub mod connections;
 mod context_status;
@@ -32,6 +34,7 @@ mod diff_options;
 mod diff_preview;
 mod diff_repositories;
 mod diff_watch;
+mod env;
 mod features;
 mod goals;
 pub mod host;
@@ -59,6 +62,7 @@ mod tray;
 pub mod user_data;
 pub use routes::Route;
 mod plugins;
+mod process;
 mod project_actions;
 pub mod screenshot;
 mod search;
@@ -250,6 +254,9 @@ pub enum SidePanel {
     Console,
     /// A file link in an answer: the file viewer with this key in [`Root::files`].
     File(usize),
+    /// A file link to an artifact ([`FileView::artifact_type`]): its preview, an artifact PDF
+    /// with annotations, in the file viewer with this key in [`Root::files`].
+    Artifact(usize),
     /// A generated image: the image view ([`Root::image`]).
     Image,
     /// `Open in side chat`: the side chat with this [`SideChat::key`].
@@ -265,6 +272,11 @@ pub enum SidePanel {
     /// `⌘T` and a link's `Open in` ▸ `New tab`: the browser tab with this key
     /// ([`Root::browser_tab`]).
     Browser(usize),
+    /// A thread's task card (`automation_update` proposal or saved task): the task editor
+    /// ([`Root::automation_tab`]).
+    Automation,
+    /// The branch's `View PR`: the pull request's detail ([`Root::pull_request_tab`]).
+    PullRequest,
 }
 
 /// Settings ▸ Appearance ▸ Theme (the original's `appearanceTheme`): follow the system, or
@@ -501,7 +513,8 @@ pub struct Root {
     archived: HashSet<String>,
     diff: Option<Entity<DiffPanel>>,
     diff_watch: Option<diff_watch::Watch>,
-    /// The file viewers of the [`SidePanel::File`] tabs, by key; cleared with the thread.
+    /// The file viewers of the [`SidePanel::File`] and [`SidePanel::Artifact`] tabs, by key;
+    /// cleared with the thread.
     /// At most one is a preview tab, which the next opened file replaces.
     files: Vec<(usize, Entity<FileView>)>,
     next_file: usize,
@@ -511,8 +524,12 @@ pub struct Root {
     new_tab: Option<Entity<ui::screens::new_tab::NewTabPage>>,
     /// The view of [`SidePanel::Subagents`]; cleared with the thread.
     subagents: Option<Entity<ui::screens::subagents::SubagentsView>>,
+    /// The page of [`SidePanel::PullRequest`]; cleared with the thread.
+    pull_request_tab: Option<Entity<ui::screens::pull_requests::Page>>,
     /// The image view of [`SidePanel::Image`]; cleared with the thread.
     image: Option<Entity<ui::screens::thread::view::ImageView>>,
+    /// The tab title and task editor of [`SidePanel::Automation`]; cleared with the thread.
+    automation_tab: Option<(SharedString, Entity<automations::editor::Editor>)>,
     /// The open thread in the main shell, with its side panel if any.
     split: Option<Entity<SplitScreen>>,
     terminal: terminal::Terminals,
@@ -836,6 +853,7 @@ impl Root {
                     ui::composer::SlashCommand::ForkWorktree => this.fork_worktree(window, cx),
                     ui::composer::SlashCommand::Feedback => this.open_feedback(window, cx),
                     ui::composer::SlashCommand::Export => this.export_transcript(window, cx),
+                    ui::composer::SlashCommand::Share => this.share_open_thread(cx),
                     ui::composer::SlashCommand::Recap => this.recap(window, cx),
                     ui::composer::SlashCommand::Goal { .. }
                     | ui::composer::SlashCommand::ReadGoal
@@ -1077,7 +1095,9 @@ impl Root {
             plan: None,
             new_tab: None,
             subagents: None,
+            pull_request_tab: None,
             image: None,
+            automation_tab: None,
             split: None,
             terminal: terminal::Terminals::default(),
             tabs: Vec::new(),
@@ -1308,6 +1328,7 @@ impl Root {
                     supported_reasoning_efforts: Vec::new(),
                     is_default: true,
                     input_modalities: None,
+                    available_access_programs: None,
                 };
                 let data = vec![CatalogModel {
                     model,
@@ -1622,7 +1643,7 @@ impl Root {
     /// The file viewer of the open thread, once a file link was clicked.
     pub fn file_view(&self) -> Option<&Entity<FileView>> {
         match self.side {
-            Some(SidePanel::File(key)) => self.file(key),
+            Some(SidePanel::File(key) | SidePanel::Artifact(key)) => self.file(key),
             _ => self.files.last().map(|(_, file)| file),
         }
     }
@@ -1638,7 +1659,11 @@ impl Root {
     /// The file viewer of the selected tab, when that tab is a file and shows.
     pub(crate) fn visible_file(&self) -> Option<&Entity<FileView>> {
         match self.side {
-            Some(side @ SidePanel::File(key)) if self.side_visible(side) => self.file(key),
+            Some(side @ (SidePanel::File(key) | SidePanel::Artifact(key)))
+                if self.side_visible(side) =>
+            {
+                self.file(key)
+            }
             _ => None,
         }
     }
@@ -2425,6 +2450,7 @@ impl Root {
                                 composer.update(cx, |composer, cx| composer.restore_text(&message, cx));
                                 window.focus(&composer.focus_handle(cx), cx);
                             }
+                            GitAction::ViewPr => this.open_pull_request_tab(url, window, cx),
                             _ => cx.open_url(url),
                         }
                     }
@@ -2556,6 +2582,33 @@ impl Root {
                             cx,
                         );
                     }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// `thread/metadata/update` with `daybreakEnabled`; a failed save restores the old value in
+    /// every composer bound to the thread and shows `Could not save Daybreak preference`.
+    fn save_daybreak(&mut self, thread: String, enabled: bool, cx: &mut Context<Self>) {
+        let bridge = self.bridge.clone();
+        cx.spawn(async move |this, cx| {
+            let params = json!({ "threadId": thread, "daybreakEnabled": enabled });
+            let saved = bridge
+                .request::<_, Value>("thread/metadata/update", params)
+                .await;
+            this.update(cx, |this, cx| {
+                if let Err(error) = saved {
+                    eprintln!("codex-gpui: Daybreak metadata: {error:#}");
+                    for composer in this.thread_composers() {
+                        composer.update(cx, |c, cx| {
+                            if c.thread_id() == thread {
+                                c.set_daybreak(!enabled, cx);
+                            }
+                        });
+                    }
+                    this.toast(Toast::danger("Could not save Daybreak preference"), cx);
                 }
             })
             .ok();
@@ -3481,6 +3534,8 @@ impl Root {
         console: bool,
         new_tab: bool,
         subagents: bool,
+        automation: Option<&SharedString>,
+        pull_request: Option<u64>,
         cx: &App,
     ) -> Option<Tab> {
         match side {
@@ -3502,7 +3557,7 @@ impl Root {
                 label: "Terminal".into(),
                 detail: None,
             }),
-            SidePanel::File(key) => {
+            SidePanel::File(key) | SidePanel::Artifact(key) => {
                 let file = files.iter().find(|(k, _)| *k == key)?.1.read(cx);
                 Some(Tab {
                     icon: file.tab_icon(),
@@ -3556,6 +3611,16 @@ impl Root {
                     detail: None,
                 })
             }
+            SidePanel::Automation => automation.map(|title| Tab {
+                icon: "automation-scheduled",
+                label: title.clone(),
+                detail: None,
+            }),
+            SidePanel::PullRequest => pull_request.map(|number| Tab {
+                icon: "pull-request-status",
+                label: format!("PR #{number}").into(),
+                detail: None,
+            }),
         }
     }
 
@@ -3574,6 +3639,11 @@ impl Root {
         let console = self.terminal_panel().is_some();
         let new_tab = self.new_tab.is_some();
         let subagents = self.subagents.is_some();
+        let automation = self.automation_tab.as_ref().map(|(title, _)| title);
+        let pull_request = self
+            .pull_request_tab
+            .as_ref()
+            .and_then(|page| Some(page.read(cx).selected.as_ref()?.number));
         let tab = |side: &SidePanel| {
             Self::side_tab(
                 *side,
@@ -3586,6 +3656,8 @@ impl Root {
                 console,
                 new_tab,
                 subagents,
+                automation,
+                pull_request,
                 cx,
             )
         };
@@ -3601,7 +3673,7 @@ impl Root {
             SidePanel::Changes => self.diff.as_ref()?.clone().into(),
             SidePanel::Terminal => cx.new(|cx| Xterm::new(view.clone(), cx)).into(),
             SidePanel::Console => self.terminal_panel()?.clone().into(),
-            SidePanel::File(key) => self.file(key)?.clone().into(),
+            SidePanel::File(key) | SidePanel::Artifact(key) => self.file(key)?.clone().into(),
             SidePanel::Image => self.image.as_ref()?.clone().into(),
             SidePanel::SideChat(key) => self.chat(key)?.view.clone().into(),
             SidePanel::Sources => cx
@@ -3611,6 +3683,8 @@ impl Root {
             SidePanel::NewTab => self.new_tab.as_ref()?.clone().into(),
             SidePanel::Subagents => self.subagents.as_ref()?.clone().into(),
             SidePanel::Browser(key) => self.browser_tab(key)?.clone().into(),
+            SidePanel::Automation => self.automation_tab.as_ref()?.1.clone().into(),
+            SidePanel::PullRequest => self.pull_request_tab.as_ref()?.clone().into(),
         };
         Some((view, tabs, active))
     }
@@ -3676,7 +3750,7 @@ impl Root {
             return;
         };
         self.tabs.remove(ix);
-        if let SidePanel::File(key) = side {
+        if let SidePanel::File(key) | SidePanel::Artifact(key) = side {
             self.files.retain(|(k, _)| *k != key);
         }
         if self.side == Some(side) {
@@ -3916,7 +3990,14 @@ impl Root {
             self.set_automation_source("local");
         }
         let editor = cx.new(|cx| automations::editor::Editor::new(item.as_ref(), cx));
+        // A thread's task card opens in the side panel (PANEL-24); the rest are dialogs.
+        let panel = origin
+            .is_some()
+            .then(|| automations::editor::Panel::for_item(item.as_ref().unwrap_or(&Value::Null)));
         editor.update(cx, |editor, cx| {
+            if let Some(panel) = panel {
+                editor.set_panel(panel);
+            }
             editor.set_options(
                 &self.models,
                 &self.threads,
@@ -3926,10 +4007,27 @@ impl Root {
                 cx,
             );
         });
+        let title: SharedString = item
+            .as_ref()
+            .and_then(|item| item["name"].as_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("Scheduled task")
+            .to_owned()
+            .into();
         cx.subscribe_in(
             &editor,
             window,
             move |this, editor, outcome, window, cx| match outcome {
+                automations::editor::Outcome::Dismiss if panel.is_some() => {
+                    if this
+                        .automation_tab
+                        .as_ref()
+                        .is_some_and(|(_, e)| e == editor)
+                    {
+                        this.automation_tab = None;
+                        this.close_side(SidePanel::Automation, window, cx);
+                    }
+                }
                 automations::editor::Outcome::Dismiss => {
                     this.automation_editor = None;
                     window.focus(&this.focus, cx);
@@ -3940,11 +4038,27 @@ impl Root {
                         automation_save_request(item.as_ref(), origin.as_ref(), draft, &this.cwd);
                     this.save_automation(editor, request, origin.clone(), window, cx);
                 }
+                automations::editor::Outcome::OpenSettings => {
+                    if let Some(id) = item.as_ref().and_then(|item| item["id"].as_str()) {
+                        this.navigate(Route::Automation(id.to_owned()), window, cx);
+                    }
+                }
             },
         )
         .detach();
-        window.focus(&editor.focus_handle(cx), cx);
-        self.automation_editor = Some(editor);
+        let editor_focus = editor.focus_handle(cx);
+        if panel.is_some() {
+            self.automation_tab = Some((title, editor));
+            if self.side_visible(SidePanel::Automation) {
+                self.sync(window, cx);
+            } else {
+                self.set_side(SidePanel::Automation, window, cx);
+            }
+        } else {
+            self.automation_editor = Some(editor);
+        }
+        // After the tab opens: opening it moves focus.
+        window.focus(&editor_focus, cx);
         self.load_projects(cx);
         cx.notify();
     }
@@ -3954,7 +4068,8 @@ impl Root {
         projects: Option<&[ui::screens::sidebar::Project]>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(editor) = &self.automation_editor {
+        let tab = self.automation_tab.as_ref().map(|(_, editor)| editor);
+        for editor in self.automation_editor.iter().chain(tab) {
             editor.update(cx, |editor, cx| {
                 editor.set_options(
                     &self.models,
@@ -3990,7 +4105,8 @@ impl Root {
             let result = write.await;
             this.update_in(cx, |this, window, cx| {
                 if this.automation_source != source
-                    || this.automation_editor.as_ref() != Some(&editor)
+                    || (this.automation_editor.as_ref() != Some(&editor)
+                        && this.automation_tab.as_ref().map(|(_, e)| e) != Some(&editor))
                 {
                     return;
                 }
@@ -4007,7 +4123,8 @@ impl Root {
         .detach();
     }
 
-    /// Closes the editor, stores the saved task, and shows it or its originating card.
+    /// Closes the editor, stores the saved task, and shows it or its originating card; a
+    /// card's side panel tab stays open on the saved task.
     fn automation_saved(
         &mut self,
         item: Value,
@@ -4026,6 +4143,7 @@ impl Root {
                 items.push(item.clone());
             }
         }
+        let reopen = origin.clone();
         let route = if let Some((thread, call)) = origin {
             self.automation_card_results
                 .insert((thread.clone(), call.clone()), item.clone());
@@ -4047,6 +4165,16 @@ impl Root {
         }
         self.load_automations(cx);
         self.toast(Toast::success("Successfully saved scheduled task"), cx);
+        if let Some(origin) = reopen {
+            let mut saved = item;
+            saved["mode"] = json!("view");
+            self.show_automation_editor(Some(saved), Some(origin), window, cx);
+        }
+    }
+
+    /// The editor of the [`SidePanel::Automation`] tab.
+    pub fn automation_tab(&self) -> Option<&Entity<automations::editor::Editor>> {
+        self.automation_tab.as_ref().map(|(_, editor)| editor)
     }
 
     pub fn automation_editor(&self) -> Option<&Entity<automations::editor::Editor>> {
@@ -4965,6 +5093,9 @@ impl Root {
             .is_none_or(|view| view.read(cx).id() != thread.id.as_str())
         {
             self.swap_draft(&thread.id, cx);
+            let daybreak = thread.daybreak_enabled.unwrap_or(false);
+            self.thread_composer
+                .update(cx, |c, cx| c.set_daybreak(daybreak, cx));
             if let Some(state) = self.thread_run_settings.get(&thread.id) {
                 self.thread_composer.update(cx, |c, cx| {
                     c.restore_run_settings(&state.collaboration_mode, state.permission.clone(), cx)
@@ -5034,7 +5165,9 @@ impl Root {
                 }
                 DiffRequest::CommentsChanged(comments) => this.change_diff_comments(comments, cx),
                 DiffRequest::SendAnnotations(comments) => {
-                    this.send_artifact_annotations(panel.clone(), comments, window, cx)
+                    if this.send_artifact_annotations(comments, window, cx) {
+                        panel.update(cx, |panel, cx| panel.artifact_annotations_sent(cx));
+                    }
                 }
                 DiffRequest::DismissModelComment(key) => {
                     this.confirm_diff_comment(panel.clone(), key.clone(), window, cx)
@@ -5062,7 +5195,9 @@ impl Root {
         self.plan = None;
         self.new_tab = None;
         self.subagents = None;
+        self.pull_request_tab = None;
         self.image = None;
+        self.automation_tab = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         view.update(cx, |view, cx| {
             view.set_git_phase(self.git_busy, cx);
@@ -5112,6 +5247,7 @@ impl Root {
                 GitAction::SwitchBranch => this.open_git_form(DialogKind::Branches, window, cx),
                 GitAction::CreatePr => this.open_create_pr(window, cx),
                 GitAction::ViewPr
+                | GitAction::OpenPrInBrowser
                 | GitAction::CopyPr
                 | GitAction::AddPrToChat
                 | GitAction::CompareBranch
@@ -5933,6 +6069,7 @@ impl Root {
             composer.bind_connection(self.bridge.clone());
             composer.bind_thread(&thread.id);
             composer.set_models(&self.models, &self.config, cx);
+            composer.set_daybreak(thread.daybreak_enabled.unwrap_or(false), cx);
             composer.set_permission_profiles(&self.permission_profiles, &self.config, cx);
             composer.restore_run_settings(
                 &settings.collaboration_mode,
@@ -6636,10 +6773,18 @@ impl Root {
                 service.get_sound_mode().map_err(|error| error.to_string()),
             ))
         });
+        let settings = cx
+            .try_global::<host_settings::Settings>()
+            .map(|settings| settings.read_all().clone())
+            .unwrap_or_default();
+        let browsers =
+            cx.background_spawn(async move { computer_use_browser::current_controls(&settings) });
         cx.spawn(async move |_, cx| {
             let result = read.await;
+            let browsers = browsers.await;
             cx.update_global::<ComputerUseState, _>(|state, _| {
                 state.pending = false;
+                state.browsers = browsers;
                 match result {
                     Ok((readiness, approvals, sound)) => {
                         state.plugin = match readiness {
@@ -6701,6 +6846,44 @@ impl Root {
             cx.open_url(
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
             );
+            return;
+        }
+        if let ComputerUseAction::SetBrowserEnabled(family, enabled) = action {
+            let result = if cx.has_global::<host_settings::Settings>() {
+                cx.global_mut::<host_settings::Settings>()
+                    .write(family.setting_key(), json!(enabled))
+            } else {
+                Err(anyhow::anyhow!("host settings could not be loaded"))
+            };
+            match result {
+                Ok(()) => self.load_computer_use(cx),
+                Err(error) => cx.update_global::<ComputerUseState, _>(|state, _| {
+                    state.error = Some(format!("Couldn't save your changes: {error}"));
+                }),
+            }
+            return;
+        }
+        if let ComputerUseAction::OpenBrowserUrl(family, url) = action {
+            let open = cx.background_spawn({
+                let url = url.clone();
+                async move { computer_use_browser::open_url(family, &url) }
+            });
+            cx.spawn(async move |_, cx| {
+                if let Err(error) = open.await {
+                    cx.update(|cx| {
+                        // The store pages are plain web URLs; the system browser can open them.
+                        if url.starts_with("https://") {
+                            cx.open_url(&url);
+                        } else {
+                            cx.update_global::<ComputerUseState, _>(|state, _| {
+                                state.error =
+                                    Some(format!("Unable to open the browser page: {error}"));
+                            });
+                        }
+                    });
+                }
+            })
+            .detach();
             return;
         }
         let state = cx.global::<ComputerUseState>();
@@ -6779,7 +6962,10 @@ impl Root {
                 ComputerUseAction::RemoveApproval(bundle) => {
                     host.computer_use_settings()?.remove_app_approval(&bundle)?;
                 }
-                ComputerUseAction::Refresh | ComputerUseAction::OpenPermissions => unreachable!(),
+                ComputerUseAction::Refresh
+                | ComputerUseAction::OpenPermissions
+                | ComputerUseAction::SetBrowserEnabled(..)
+                | ComputerUseAction::OpenBrowserUrl(..) => unreachable!(),
             }
             let config = if reload {
                 bridge.request::<_, Value>("config/mcpServer/reload", json!({})).await?;
@@ -7781,17 +7967,24 @@ impl Root {
                         storage::thread_deleted(self, id, cx);
                     }
                 }
-                // The row's spinner follows the thread status.
+                // The row's spinner and `Awaiting approval` pill follow the thread status.
                 "thread/status/changed" if side_thread.is_none() => {
                     if let Some(id) = params["threadId"].as_str()
                         && let Ok(status) = ThreadStatus::deserialize(&params["status"])
                     {
                         let active = status == ThreadStatus::Active;
+                        let awaiting =
+                            active
+                                && params["status"]["activeFlags"].as_array().is_some_and(
+                                    |flags| flags.iter().any(|f| f == "waitingOnApproval"),
+                                );
                         if let Some(thread) = self.threads.iter_mut().find(|t| t.id == id) {
                             thread.status = status;
                         }
-                        self.sidebar
-                            .update(cx, |s, cx| s.set_running(id, active, cx));
+                        self.sidebar.update(cx, |s, cx| {
+                            s.set_running(id, active, cx);
+                            s.set_awaiting_approval(id, awaiting, cx);
+                        });
                         self.sync_prevent_sleep(cx);
                     }
                 }
@@ -8415,6 +8608,16 @@ fn wire_thread_composer(composer: &mut Composer, this: WeakEntity<Root>, side: O
         });
     });
     composer.enable_shell_commands();
+    let daybreak = this.clone();
+    composer.on_daybreak(move |id, enabled, cx| {
+        let id = id.to_owned();
+        let daybreak = daybreak.clone();
+        cx.defer(move |cx| {
+            daybreak
+                .update(cx, |this, cx| this.save_daybreak(id, enabled, cx))
+                .ok();
+        });
+    });
     let (model, send) = (this.clone(), this.clone());
     composer.on_model(move |pick, cx| {
         model.update(cx, |this, cx| this.write_model(pick, cx)).ok();

@@ -7,6 +7,7 @@ use gpui::{
     StyleRefinement, Styled, Window, canvas, point, px, rgb,
 };
 use std::cell::Cell;
+use theme::ActiveTheme as _;
 
 const RING_WIDTH: Pixels = px(2.);
 
@@ -121,10 +122,10 @@ fn paint_ring(
                             } else {
                                 shapes::Corner::Squircle
                             },
-                            border: (!shadow).then(|| (RING_WIDTH, rgb(0x3a83f7).into())),
+                            border: (!shadow).then(|| (RING_WIDTH, cx.theme().focus_ring)),
                             shadows: if shadow {
                                 vec![shapes::Shadow {
-                                    color: rgb(0x3a83f7).into(),
+                                    color: cx.theme().focus_ring,
                                     offset: gpui::point(px(0.), px(0.)),
                                     blur: px(0.),
                                     spread: RING_WIDTH,
@@ -246,6 +247,7 @@ mod tests {
             gpui_platform::current_headless_renderer,
         );
         let window = cx.open_window(size(px(1280.), px(832.)), |window, cx| {
+            cx.set_global(theme::Theme::dark());
             let focus = cx.new(|cx| ControlFocus {
                 handle: cx.focus_handle(),
                 keyboard: Cell::new(true),
@@ -279,6 +281,7 @@ mod tests {
                 gpui_platform::current_headless_renderer,
             );
             let window = cx.open_window(size(px(1280.), px(832.)), move |window, cx| {
+                cx.set_global(theme::Theme::dark());
                 let focus = cx.new(|cx| ControlFocus {
                     handle: cx.focus_handle(),
                     keyboard: Cell::new(keyboard),

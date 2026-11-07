@@ -653,7 +653,7 @@ impl SettingsPane {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .bg(gpui::rgba(0x00000022))
+                        .bg(t.dialog_overlay)
                         .occlude()
                         .on_mouse_down(
                             gpui::MouseButton::Left,

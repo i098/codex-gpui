@@ -2,7 +2,6 @@ use crate::{Root, Route, host, host_settings};
 use anyhow::{Context as _, Result, ensure};
 use bridge::{Bridge, Event};
 use gpui::{App, AppContext as _, BorrowAppContext as _, Context};
-use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
@@ -344,39 +343,16 @@ fn reconcile_awake(runtime: &Runtime, cx: &mut App) {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ClientsPage {
-    data: Vec<Client>,
-    next_cursor: Option<String>,
-}
-
 async fn clients(bridge: &Bridge, environment: Option<&str>) -> Result<Vec<Client>> {
     let Some(environment) = environment else {
         return Ok(Vec::new());
     };
-    let mut rows = Vec::new();
-    let mut cursor: Option<String> = None;
-    let mut seen = HashSet::new();
-    loop {
-        let page: ClientsPage = bridge
-            .request(
-                "remoteControl/client/list",
-                json!({"environmentId":environment,"cursor":cursor,"limit":100,"order":"desc"}),
-            )
-            .await?;
-        rows.extend(page.data);
-        match page.next_cursor {
-            Some(next) => {
-                ensure!(
-                    seen.insert(next.clone()),
-                    "Remote device list repeated its cursor"
-                );
-                cursor = Some(next);
-            }
-            None => return Ok(rows),
-        }
-    }
+    bridge
+        .paged(
+            "remoteControl/client/list",
+            json!({"environmentId": environment, "limit": 100, "order": "desc"}),
+        )
+        .await
 }
 
 fn environment_path(id: &str) -> Result<String> {

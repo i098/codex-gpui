@@ -251,6 +251,18 @@ pub(super) fn fetch(host: &super::LocalHost, endpoint: &str, params: &Value) -> 
         "gh-pr-detail" => detail(host, params),
         "gh-pr-patch" => patch(host, params),
         "gh-pr-media" => media(host, params),
+        "gh-pr-state" => {
+            let (_, identity) = request_identity(params)?;
+            let args: &[&str] = match params["action"].as_str() {
+                Some("ready") => &["pr", "ready"],
+                Some("draft") => &["pr", "ready", "--undo"],
+                Some("reopen") => &["pr", "reopen"],
+                _ => bail!("Unsupported pull request action"),
+            };
+            let url = identity.url();
+            checked(command(host, &[args, &[url.as_str()]].concat(), 30)?)?;
+            Ok(json!({"success": true}))
+        }
         "pull-request-chat" => {
             let key = chat_key(params)?;
             let state = host.read_global_state()?;
@@ -579,6 +591,48 @@ mod tests {
         let account = account(&params).unwrap();
         assert!(verify_viewer(&json!({"data":{"viewer":{"login":"bob"}}}), &account).is_err());
         assert!(verify_viewer(&json!({"data":{"viewer":{"login":"ALICE"}}}), &account).is_ok());
+    }
+
+    #[test]
+    fn state_actions_run_the_matching_gh_command() -> Result<()> {
+        // The fake app-server fails every spawn with the command line as stderr, which
+        // `checked` reports as the error.
+        const SERVER: &str = r#"
+import json, sys
+for line in sys.stdin:
+    message = json.loads(line)
+    if message.get("method") == "initialize":
+        print(json.dumps({"id": message["id"], "result": {"userAgent":"gh-fixture","codexHome":"/tmp","platformOs":"linux"}}), flush=True)
+    elif message.get("method") == "process/spawn":
+        print(json.dumps({"id": message["id"], "result": {}}), flush=True)
+        print(json.dumps({"method":"process/exited","params":{"processHandle":message["params"]["processHandle"],"exitCode":1,"stdout":"","stderr":" ".join(message["params"]["command"]),"stdoutCapReached":False,"stderrCapReached":False}}), flush=True)
+"#;
+        let home = tempfile::tempdir()?;
+        let mut command = std::process::Command::new("python3");
+        command.args(["-u", "-c", SERVER]);
+        let (bridge, _) = bridge::Bridge::spawn(command)?;
+        let bridge = std::sync::Arc::new(bridge);
+        pollster::block_on(bridge.initialize("codex_gpui", "0.1.0"))?;
+        let host = super::super::LocalHost::new(home.path()).with_bridge(bridge);
+        let params = |action: &str| {
+            json!({
+                "account": {"hostId":"local","hostname":"github.com","login":"alice"},
+                "pullRequest": {"hostname":"github.com","owner":"org","repository":"repo","number":7},
+                "action": action,
+            })
+        };
+        const URL: &str = "https://github.com/org/repo/pull/7";
+        for (action, command) in [
+            ("ready", format!("gh pr ready {URL}")),
+            ("draft", format!("gh pr ready --undo {URL}")),
+            ("reopen", format!("gh pr reopen {URL}")),
+        ] {
+            let error = fetch(&host, "gh-pr-state", &params(action)).unwrap_err();
+            assert_eq!(error.to_string(), command, "{action}");
+        }
+        let error = fetch(&host, "gh-pr-state", &params("merge")).unwrap_err();
+        assert_eq!(error.to_string(), "Unsupported pull request action");
+        Ok(())
     }
 
     #[test]

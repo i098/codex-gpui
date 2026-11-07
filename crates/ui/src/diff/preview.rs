@@ -647,6 +647,37 @@ impl FileView {
         enabled(path, true)
     }
 
+    /// The bundle's `sD`: the artifact type a file link opens in an artifact tab, not a file
+    /// tab.
+    pub fn artifact_type(path: &str) -> Option<&'static str> {
+        let extension = std::path::Path::new(path)
+            .extension()?
+            .to_str()?
+            .to_ascii_lowercase();
+        Some(match extension.as_str() {
+            "csv" | "tsv" | "xlsx" => "spreadsheet",
+            "docx" => "document",
+            "ipynb" => "notebook",
+            "pdf" | "tex" => "pdf",
+            "pptx" => "slides",
+            _ => return None,
+        })
+    }
+
+    /// Whether an artifact tab can show `path`: a PDF's pages or a text file's lines.
+    // shortcut: Office files show `This document type cannot be viewed here yet`, not the
+    // bundle's document, sheet and slide renderers; add one when the app ships it.
+    pub fn artifact_viewable(path: &str) -> bool {
+        !std::path::Path::new(path)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                ["docx", "pptx", "xlsx"]
+                    .iter()
+                    .any(|office| extension.eq_ignore_ascii_case(office))
+            })
+    }
+
     /// The host's `read-file-binary` answer for a [`Self::previews`] path: `(bytes, mime)`.
     /// False when the viewer moved to another file meanwhile.
     pub fn set_file_media(
@@ -768,22 +799,30 @@ impl FileView {
     }
 
     fn turn_media_page(&mut self, step: isize, cx: &mut Context<Self>) {
+        let page = self
+            .media
+            .as_ref()
+            .and_then(|media| media.preview.sides[1].page.checked_add_signed(step));
+        if let Some(page) = page {
+            self.show_media_page(page, cx);
+        }
+    }
+
+    /// Shows PDF page `page` when the document has it.
+    pub(super) fn show_media_page(&mut self, page: usize, cx: &mut Context<Self>) {
         let Some(media) = self.media.as_mut() else {
             return;
         };
         let side = &mut media.preview.sides[1];
         let pages = side.content.as_ref().map_or(0, |content| content.pages);
-        if let Some(page) = side
-            .page
-            .checked_add_signed(step)
-            .filter(|page| (1..=pages).contains(page))
-        {
+        if (1..=pages).contains(&page) && page != side.page {
             side.page = page;
             cx.notify();
         }
     }
 
-    /// The image or PDF page, fitted to the body, with a PDF's page controls.
+    /// The image or PDF page, fitted to the body, with a PDF's page controls. An artifact
+    /// PDF takes annotations and shows their review bar.
     pub(super) fn media_view(
         &self,
         window: &Window,
@@ -809,50 +848,82 @@ impl FileView {
                 .when(enabled, |d| d.cursor_pointer())
                 .on_click(cx.listener(move |view, _, _, cx| view.turn_media_page(step, cx)))
         };
-        Some(
-            div()
-                .id("file-preview")
+        let annotated = preview.pdf && Self::artifact_type(&self.path).is_some();
+        let review = annotated
+            .then(|| self.artifact_review_bar(&self.path, 0, available, cx))
+            .flatten();
+        let pages_view = div()
+            .id("file-preview")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .relative()
+            .flex()
+            .flex_col()
+            .items_center()
+            .p(px(12.))
+            .child(side_body(
+                preview,
+                value,
+                available,
+                "file-preview-image".into(),
+                t,
+                |content, image_width| {
+                    if !annotated {
+                        return Vec::new();
+                    }
+                    let (width, height) = content.pixels.dimensions();
+                    let page = artifact_annotations::Page {
+                        path: self.path.clone(),
+                        title: self.name().to_string(),
+                        kind: "pdf",
+                        number: value.page,
+                        count: content.pages,
+                        size: comments::PageSize {
+                            width: width as f32,
+                            height: height as f32,
+                        },
+                        bounds: Default::default(),
+                    };
+                    self.artifact_layer(page, image_width, cx)
+                },
+            ))
+            .when(preview.pdf && pages > 1, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .right(px(14.))
+                        .top(px(14.))
+                        .flex()
+                        .items_center()
+                        .rounded_full()
+                        .bg(t.surface)
+                        .p(px(2.))
+                        .gap(px(2.))
+                        .child(button(-1, "Previous page", "request-chevron-left"))
+                        .child(text(
+                            format!("{}/{pages}", value.page),
+                            14.,
+                            20.,
+                            400.,
+                            t.text_secondary,
+                        ))
+                        .child(button(1, "Next page", "request-chevron-right")),
+                )
+            });
+        // The review bar floats over the pages, not inside their scroll.
+        Some(match review {
+            Some(review) => div()
+                .relative()
                 .flex_1()
                 .min_h_0()
-                .overflow_y_scroll()
-                .relative()
                 .flex()
                 .flex_col()
-                .items_center()
-                .p(px(12.))
-                .child(side_body(
-                    preview,
-                    value,
-                    available,
-                    "file-preview-image".into(),
-                    t,
-                    |_, _| Vec::new(),
-                ))
-                .when(preview.pdf && pages > 1, |d| {
-                    d.child(
-                        div()
-                            .absolute()
-                            .right(px(14.))
-                            .top(px(14.))
-                            .flex()
-                            .items_center()
-                            .rounded_full()
-                            .bg(t.surface)
-                            .p(px(2.))
-                            .gap(px(2.))
-                            .child(button(-1, "Previous page", "request-chevron-left"))
-                            .child(text(
-                                format!("{}/{pages}", value.page),
-                                14.,
-                                20.,
-                                400.,
-                                t.text_secondary,
-                            ))
-                            .child(button(1, "Next page", "request-chevron-right")),
-                    )
-                })
+                .child(pages_view)
+                .child(review)
                 .into_any_element(),
-        )
+            None => pages_view.into_any_element(),
+        })
     }
 }
 
@@ -943,7 +1014,32 @@ fn frame(fill: Option<Hsla>) -> Decoration {
 
 #[cfg(test)]
 mod tests {
-    use super::{Preview, Side, enabled, px};
+    use super::{FileView, Preview, Side, enabled, px};
+
+    #[test]
+    fn artifact_links_follow_the_bundle_types_and_office_files_have_no_viewer() {
+        for (path, kind) in [
+            ("data.CSV", Some("spreadsheet")),
+            ("data.tsv", Some("spreadsheet")),
+            ("book.xlsx", Some("spreadsheet")),
+            ("memo.docx", Some("document")),
+            ("run.ipynb", Some("notebook")),
+            ("paper.pdf", Some("pdf")),
+            ("paper.tex", Some("pdf")),
+            ("deck.pptx", Some("slides")),
+            ("picture.png", None),
+            ("src/main.rs", None),
+            ("Makefile", None),
+        ] {
+            assert_eq!(FileView::artifact_type(path), kind, "{path}");
+        }
+        assert!(!FileView::artifact_viewable("memo.DOCX"));
+        assert!(!FileView::artifact_viewable("deck.pptx"));
+        assert!(!FileView::artifact_viewable("book.xlsx"));
+        assert!(FileView::artifact_viewable("data.csv"));
+        assert!(FileView::artifact_viewable("paper.pdf"));
+        assert!(FileView::artifact_viewable("src/main.rs"));
+    }
 
     #[test]
     fn raster_images_and_pdf_ignore_the_svg_preview_toggle() {
