@@ -28,10 +28,18 @@ Measured against the original Codex app (26.1029; 26.1103 for size) on the same 
 | Idle CPU, window hidden, no thread link | 0.7 % | 0.2 % |
 | App size, `.app` (`du -sh`) | 1.9 GB (1 964 200 KB) | 107 MB (109 204 KB), arm64 |
 | Download size (`ditto` zip) | 815 MB | 56.2 MB |
+| Download size, macOS `.dmg` | not measured | 60.8 MB |
+
+An earlier table is replaced by this 5-run median check: that one mixed the thread-link state into the memory and CPU rows, and its "about 4.1 s" original start was arithmetic, not a measurement, so it is gone.
 
 Method: amelia Mac mini (Apple M4), release build, same account-free fixture for both apps. Every row is the median of n=5 runs, interleaved between the apps. The "no thread link" rows launch with no thread open; the "with thread link" rows open a `codex://threads` link.
 
 - The original could not open a thread without a signed-in account, so its long-thread memory was not measured.
+
+### Download
+
+- macOS (Apple silicon): [codex-gpui-0.1.1-macos-arm64.dmg](https://github.com/i098/codex-gpui/releases/download/v0.1.1/codex-gpui-0.1.1-macos-arm64.dmg)
+- Linux: [AppImage](https://github.com/i098/codex-gpui/releases/download/v0.1.1/codex-gpui-0.1.1-x86_64.AppImage) and [deb](https://github.com/i098/codex-gpui/releases/download/v0.1.1/codex-gpui-0.1.1-linux-amd64.deb)
 
 ### Reproduce
 
@@ -47,7 +55,7 @@ tools/bench/run.sh plain    # cold and warm start, idle RSS and CPU, no thread l
 tools/bench/run.sh thread   # cold start, idle RSS and CPU, with the thread link
 ```
 
-Size: `tools/bench/size.sh /path/to/ChatGPT.app /path/to/Codex\ GPUI.app` prints `du`, the file-size sum and the `ditto -c -k --keepParent` zip size. The codex-gpui `.app` is arm64 only, built with `CODEX_GPUI_DMG=1 bash tools/bundle.sh --assemble /tmp/cgx-bsize/release normal "$(git rev-parse HEAD)" archive`, ad-hoc signed (commit `ebc3fd8a`, v0.1.1 tree). The `.dmg` is 60.8 MB. A universal build is not measured: the x86_64 build fails in `skia-hairline-sys`.
+Size: `tools/bench/size.sh /path/to/ChatGPT.app /path/to/Codex\ GPUI.app` prints `du`, the file-size sum and the `ditto -c -k --keepParent` zip size. Its raw output on amelia, for the v0.1.1 `.dmg` app and the original, is in `tools/bench/results/size-amelia.txt`. The codex-gpui `.app` is arm64 only, built with `CODEX_GPUI_DMG=1 bash tools/bundle.sh --assemble /tmp/cgx-bsize/release normal "$(git rev-parse HEAD)" archive`, ad-hoc signed (commit `ebc3fd8a`, v0.1.1 tree). The `.dmg` is 60.8 MB. A universal build is not measured: the x86_64 build fails in `skia-hairline-sys`.
 
 `run.sh` needs passwordless `sudo` (for `purge` and `launchctl asuser`), starts the apps in the background, runs 5 interleaved rounds, and prints median (min-max) per metric. `probe.diff` adds the first-frame log and a switch that paints a window the locked console hides. Do not ship it.
 

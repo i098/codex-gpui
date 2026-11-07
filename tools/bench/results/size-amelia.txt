@@ -1,0 +1,12 @@
+# tools/bench/size.sh on amelia (Mac mini M4), 2026-11-07. Original: /tmp/cgx-repin/ChatGPT.app (26.1103.41825).
+# codex-gpui: codex-gpui.app copied from the v0.1.1 macos-arm64 dmg (hdiutil attach -readonly, ditto, detach).
+== /tmp/cgx-repin/ChatGPT.app
+1.9G	/tmp/cgx-repin/ChatGPT.app
+1964200	/tmp/cgx-repin/ChatGPT.app
+filesum_bytes 2000768596
+zip_bytes 815395836
+== ours/codex-gpui.app
+107M	ours/codex-gpui.app
+109204	ours/codex-gpui.app
+filesum_bytes 111817333
+zip_bytes 56181173
