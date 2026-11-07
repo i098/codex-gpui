@@ -930,6 +930,7 @@ pub struct LiveSettingsChange {
 }
 
 type LiveSettingsHandler = Rc<dyn Fn(&str, LiveSettingsChange, &mut App)>;
+type DaybreakHandler = Rc<dyn Fn(&str, bool, &mut App)>;
 
 /// What a queued row's buttons and `Queued message actions` menu ask of the app.
 #[derive(Clone)]
@@ -1127,7 +1128,7 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     /// Saves the Daybreak toggle for the bound thread.
-    on_daybreak: Option<Rc<dyn Fn(&str, bool, &mut App)>>,
+    on_daybreak: Option<DaybreakHandler>,
     /// Some listed model offers a Daybreak access program.
     daybreak_available: bool,
     daybreak: bool,
