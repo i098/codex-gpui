@@ -32,25 +32,9 @@ fn retryable(error: &anyhow::Error) -> bool {
 // Match the original query client's three transient retries.
 async fn retry_read<T: Send + 'static>(
     executor: &gpui::BackgroundExecutor,
-    mut read: impl Fn() -> Result<T> + Send + 'static,
+    read: impl Fn() -> Result<T> + Send + 'static,
 ) -> Result<T> {
-    let mut attempt = 0;
-    loop {
-        let (result, next) = executor
-            .spawn(async move {
-                let result = read();
-                (result, read)
-            })
-            .await;
-        read = next;
-        if attempt == 3 || !result.as_ref().is_err_and(retryable) {
-            return result;
-        }
-        executor
-            .timer(std::time::Duration::from_secs(1 << attempt))
-            .await;
-        attempt += 1;
-    }
+    crate::process::retry(executor, 3, read, retryable).await
 }
 
 fn feature(host: &dyn host::Host, identity: Option<&host::Identity>) -> Result<(bool, Value)> {
