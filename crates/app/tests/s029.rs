@@ -45,6 +45,7 @@ fn port_tabs(fx: &Fx) -> Vec<(String, bool)> {
                     }
                     SidePanel::Console => "Terminal",
                     SidePanel::File(_) => "math.py",
+                    SidePanel::Artifact(_) => unreachable!("s029 opens no artifact"),
                     SidePanel::Image => "Image view",
                     SidePanel::SideChat(_) => "Side chat",
                     SidePanel::Sources => "Sources",

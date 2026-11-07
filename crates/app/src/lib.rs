@@ -250,6 +250,9 @@ pub enum SidePanel {
     Console,
     /// A file link in an answer: the file viewer with this key in [`Root::files`].
     File(usize),
+    /// A file link to an artifact ([`FileView::artifact_type`]): its preview, an artifact PDF
+    /// with annotations, in the file viewer with this key in [`Root::files`].
+    Artifact(usize),
     /// A generated image: the image view ([`Root::image`]).
     Image,
     /// `Open in side chat`: the side chat with this [`SideChat::key`].
@@ -503,7 +506,8 @@ pub struct Root {
     archived: HashSet<String>,
     diff: Option<Entity<DiffPanel>>,
     diff_watch: Option<diff_watch::Watch>,
-    /// The file viewers of the [`SidePanel::File`] tabs, by key; cleared with the thread.
+    /// The file viewers of the [`SidePanel::File`] and [`SidePanel::Artifact`] tabs, by key;
+    /// cleared with the thread.
     /// At most one is a preview tab, which the next opened file replaces.
     files: Vec<(usize, Entity<FileView>)>,
     next_file: usize,
@@ -1627,7 +1631,7 @@ impl Root {
     /// The file viewer of the open thread, once a file link was clicked.
     pub fn file_view(&self) -> Option<&Entity<FileView>> {
         match self.side {
-            Some(SidePanel::File(key)) => self.file(key),
+            Some(SidePanel::File(key) | SidePanel::Artifact(key)) => self.file(key),
             _ => self.files.last().map(|(_, file)| file),
         }
     }
@@ -1643,7 +1647,11 @@ impl Root {
     /// The file viewer of the selected tab, when that tab is a file and shows.
     pub(crate) fn visible_file(&self) -> Option<&Entity<FileView>> {
         match self.side {
-            Some(side @ SidePanel::File(key)) if self.side_visible(side) => self.file(key),
+            Some(side @ (SidePanel::File(key) | SidePanel::Artifact(key)))
+                if self.side_visible(side) =>
+            {
+                self.file(key)
+            }
             _ => None,
         }
     }
@@ -3509,7 +3517,7 @@ impl Root {
                 label: "Terminal".into(),
                 detail: None,
             }),
-            SidePanel::File(key) => {
+            SidePanel::File(key) | SidePanel::Artifact(key) => {
                 let file = files.iter().find(|(k, _)| *k == key)?.1.read(cx);
                 Some(Tab {
                     icon: file.tab_icon(),
@@ -3618,7 +3626,7 @@ impl Root {
             SidePanel::Changes => self.diff.as_ref()?.clone().into(),
             SidePanel::Terminal => cx.new(|cx| Xterm::new(view.clone(), cx)).into(),
             SidePanel::Console => self.terminal_panel()?.clone().into(),
-            SidePanel::File(key) => self.file(key)?.clone().into(),
+            SidePanel::File(key) | SidePanel::Artifact(key) => self.file(key)?.clone().into(),
             SidePanel::Image => self.image.as_ref()?.clone().into(),
             SidePanel::SideChat(key) => self.chat(key)?.view.clone().into(),
             SidePanel::Sources => cx
@@ -3694,7 +3702,7 @@ impl Root {
             return;
         };
         self.tabs.remove(ix);
-        if let SidePanel::File(key) = side {
+        if let SidePanel::File(key) | SidePanel::Artifact(key) = side {
             self.files.retain(|(k, _)| *k != key);
         }
         if self.side == Some(side) {
@@ -5045,7 +5053,9 @@ impl Root {
                 }
                 DiffRequest::CommentsChanged(comments) => this.change_diff_comments(comments, cx),
                 DiffRequest::SendAnnotations(comments) => {
-                    this.send_artifact_annotations(panel.clone(), comments, window, cx)
+                    if this.send_artifact_annotations(comments, window, cx) {
+                        panel.update(cx, |panel, cx| panel.artifact_annotations_sent(cx));
+                    }
                 }
                 DiffRequest::DismissModelComment(key) => {
                     this.confirm_diff_comment(panel.clone(), key.clone(), window, cx)
