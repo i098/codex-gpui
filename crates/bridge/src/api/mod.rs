@@ -1,6 +1,7 @@
 //! One typed home for the app-server protocol: a function per request, one decoded enum per
 //! server message, and the shared pagination loop. Method strings live only in this module.
 
+mod account;
 mod config;
 mod notification;
 mod request;
