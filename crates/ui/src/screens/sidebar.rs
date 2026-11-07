@@ -426,6 +426,8 @@ pub enum ThreadCommand {
     NewSection,
     /// `Fork chat`.
     Fork,
+    /// `Share`: a link to a snapshot of the thread.
+    Share,
     CopyDeeplink,
     CopyMarkdown,
     CopyWorkingDirectory,

@@ -724,6 +724,7 @@ impl HomeSidebar {
             "mark-thread-unread" => return self.toggle_thread_unread(&thread, cx),
             "new-custom-section" => ThreadCommand::NewSection,
             "fork-into-local" => ThreadCommand::Fork,
+            "share-thread" => ThreadCommand::Share,
             "copy-deeplink" => ThreadCommand::CopyDeeplink,
             "copy-conversation-markdown" => ThreadCommand::CopyMarkdown,
             "copy-working-directory" => ThreadCommand::CopyWorkingDirectory,

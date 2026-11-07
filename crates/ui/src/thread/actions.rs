@@ -410,6 +410,11 @@ fn response_html_tag(tag: pulldown_cmark::TagEnd) -> Option<&'static str> {
 #[action(namespace = thread, no_json)]
 pub struct RunEnvironmentAction(pub usize);
 
+/// The header menu's `Share`: a link to a snapshot of the open chat.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = thread, no_json)]
+pub struct ShareThread;
+
 /// `Fork chat from here` under a turn: a new chat with the thread up to that turn (its id).
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = thread, no_json)]
