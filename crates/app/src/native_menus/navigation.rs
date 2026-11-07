@@ -12,7 +12,7 @@ pub(crate) fn available(root: &Root, cx: &App) -> bool {
     super::active_thread(root, cx).is_some()
         && match root.side {
             Some(SidePanel::Changes) => root.diff.is_some(),
-            Some(SidePanel::File(key)) => root.file(key).is_some(),
+            Some(SidePanel::File(key) | SidePanel::Artifact(key)) => root.file(key).is_some(),
             _ => false,
         }
 }
@@ -32,7 +32,7 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
                         panel.update(cx, |panel, cx| panel.toggle_file_tree(cx));
                     }
                 }
-                Some(SidePanel::File(key)) => {
+                Some(SidePanel::File(key) | SidePanel::Artifact(key)) => {
                     if let Some(file) = root.file(key) {
                         file.update(cx, |file, cx| file.toggle_file_tree(window, cx));
                     }
@@ -86,7 +86,8 @@ impl Root {
         } else {
             format!("{cwd}/{}", action.path.trim_start_matches("./"))
         };
-        // The tab already showing `path`, else the preview tab, else a new tab.
+        let artifact = FileView::artifact_type(&path).is_some();
+        // The tab already showing `path`, else the preview tab of the same kind, else a new tab.
         let reuse = self
             .files
             .iter()
@@ -94,7 +95,9 @@ impl Root {
             .or_else(|| {
                 self.files.iter().find(|(_, file)| {
                     let file = file.read(cx);
-                    file.is_preview() && file.workspace_root() == cwd
+                    file.is_preview()
+                        && file.workspace_root() == cwd
+                        && FileView::artifact_type(&file.path).is_some() == artifact
                 })
             })
             .map(|(key, file)| (*key, file.clone()));
@@ -125,6 +128,25 @@ impl Root {
             self.files.push((key, file.clone()));
             (key, file)
         };
+        // A tab keeps its kind; a new one is an artifact tab for an artifact file.
+        let side = self
+            .tabs
+            .iter()
+            .copied()
+            .find(|side| matches!(side, SidePanel::File(k) | SidePanel::Artifact(k) if *k == key))
+            .unwrap_or(if artifact {
+                SidePanel::Artifact(key)
+            } else {
+                SidePanel::File(key)
+            });
+        if self.side == Some(side) {
+            self.sync(window, cx);
+        } else {
+            self.set_side(side, window, cx);
+        }
+        if !FileView::artifact_viewable(&path) {
+            return;
+        }
         let revision = file.read(cx).file_revision();
         self.load_blame(&file, cx);
         let host = self.host.clone();
@@ -190,12 +212,6 @@ impl Root {
             .ok();
         })
         .detach();
-        let side = SidePanel::File(key);
-        if self.side == Some(side) {
-            self.sync(window, cx);
-        } else {
-            self.set_side(side, window, cx);
-        }
     }
 
     /// `git.toggleBlame`: flips the active-line blame and loads it for the open file.
@@ -378,6 +394,11 @@ impl Root {
                 .detach();
             }
             FileTreeRequest::OpenIn(request) => self.launch_diff_target(request, cx),
+            FileTreeRequest::SendAnnotations(comments) => {
+                if self.send_artifact_annotations(comments, window, cx) {
+                    file.update(cx, |file, cx| file.artifact_annotations_sent(cx));
+                }
+            }
             FileTreeRequest::Save { .. } | FileTreeRequest::Close => {}
         }
     }

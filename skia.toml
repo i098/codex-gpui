@@ -1,0 +1,6 @@
+# Single source for the Skia hairline package facts. Read by
+# crates/skia-hairline-sys/build.rs and tools/shapes/build-skia-hairline.py.
+# .cargo/config.toml embeds the version in its package URL; change it there too.
+version = "0.1.0"
+skia_revision = "61e7ca4e99062cdd0ab69445d5963fb3365778f6"
+skia_archive_sha256 = "33ec00123641ce95c53d1f9291c25f34b27fc483b02e7a07441ad582641b2fc9"

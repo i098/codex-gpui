@@ -22,7 +22,7 @@ All sizes below use logical pixels.
 | Global dictation | `showAndStart()` / `confirmStart()`; `/global-dictation` | 720×180; centered on the cursor display; 16 above its work-area bottom | Prewarm hidden; show without activation; keep pointer pass-through until recovery interaction |
 | Browser comment popup | Validated `window.open` frame name from a primary browser view | 294×208; fixed, transparent; attached to its owner | Start hidden; cannot outlive its owner |
 | `/diff` | Renderer route with `unifiedDiff`, `conversationId`, optional `cwd` state | No separate active host sizing call was found | `show-diff` opens the inline panel in this host; `update-diff-if-open` is a no-op |
-| `/plan-summary` | Renderer route with plan content, conversation, and host state | No separate active host sizing call was found | `show-plan-summary` is a no-op in this host |
+| `/plan-summary` | Renderer route with plan content, conversation, and host state | No separate active host sizing call was found | `show-plan-summary` is a no-op in this host; the native app opens it as a `Page` window (see below) |
 | `/extension/panel/new`, `/browser/handoff` | Renderer routes used by the extension integration | Their route does not establish another native appearance | Keep extension pairing and page behavior with the page owner |
 | Quick chat chunks | Bundled renderer chunks | No mount path established by the census | Do not invent a native entry |
 
@@ -80,6 +80,12 @@ The example installs a panic hook before initialization so failures exit with co
 It does not require microphone, accessibility, screen recording, account access, or a live turn.
 No page painting code changes in this slice.
 The separate page owners still owe their original-versus-native appearance checks.
+
+`app::windows::open_plan_summary` is the native `/plan-summary` window.
+Command-click on Thread summary ▸ `Plan` opens the latest finished plan in a `Page` window.
+The window draws the plan with the thread's assistant-message markdown inside a `Plan` card.
+A plain click still opens the `Plan` side panel tab.
+Run `cargo test -p app --test plan_panel` for the window check.
 
 Run `CODEX_GPUI_QA=1 cargo build -p app --example native_lifecycle` on macOS for App shell rows 10–12.
 This check creates visible native windows; do not run it on an occupied desktop.

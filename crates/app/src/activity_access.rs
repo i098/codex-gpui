@@ -1,8 +1,13 @@
-use crate::{Root, host, hotkey::policy, signin::ORIGINAL_APP_VERSION};
+use crate::{
+    Root,
+    chatgpt::{self, Gate},
+    host,
+    hotkey::policy,
+};
 use anyhow::{Context as _, Result, ensure};
 use bridge::types::Account;
 use gpui::{AppContext as _, BorrowAppContext as _, Context, Task};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::sync::Arc;
 
 #[derive(Default)]
@@ -21,77 +26,30 @@ enum Status {
 }
 
 fn retryable(error: &anyhow::Error) -> bool {
-    let message = error.to_string();
-    let status = message
-        .strip_prefix("host HTTP status ")
-        .or_else(|| message.strip_prefix("host error "))
-        .and_then(|value| value.split([' ', ':']).next()?.parse::<u16>().ok());
-    status.is_none_or(|status| matches!(status, 408 | 425 | 429 | 500..=599))
+    chatgpt::status(error).is_none_or(|status| matches!(status, 408 | 425 | 429 | 500..=599))
 }
 
 // Match the original query client's three transient retries.
 async fn retry_read<T: Send + 'static>(
     executor: &gpui::BackgroundExecutor,
-    mut read: impl Fn() -> Result<T> + Send + 'static,
+    read: impl Fn() -> Result<T> + Send + 'static,
 ) -> Result<T> {
-    let mut attempt = 0;
-    loop {
-        let (result, next) = executor
-            .spawn(async move {
-                let result = read();
-                (result, read)
-            })
-            .await;
-        read = next;
-        if attempt == 3 || !result.as_ref().is_err_and(retryable) {
-            return result;
-        }
-        executor
-            .timer(std::time::Duration::from_secs(1 << attempt))
-            .await;
-        attempt += 1;
-    }
+    crate::process::retry(executor, 3, read, retryable).await
 }
 
 fn feature(host: &dyn host::Host, identity: Option<&host::Identity>) -> Result<(bool, Value)> {
-    let response = if let Some(identity) = identity {
-        policy::request(
-            host,
-            identity,
-            "POST",
-            "/wham/statsig/bootstrap",
-            Some(json!({
-                "app_session_id": host::device_id(), "stable_id": identity.device_id,
-                "app_version": ORIGINAL_APP_VERSION, "brand_name": "chatgpt", "build_flavor": "prod",
-                "locale": "en-US", "system_name": if cfg!(target_os = "macos") { "macOS" } else { std::env::consts::OS },
-                "window_type": "electron"
-            })),
-        )?
-    } else {
-        let response = host.fetch(&host::Request::Http(json!({
-            "url": "https://ab.chatgpt.com/v1/initialize?k=client-sYWqzCYMRkUg4DqqiZcR5DGTNl2iD7zNJY0HoeDLzxR&st=js-mono&sv=3.34.0",
-            "method": "POST", "headers": {"Content-Type": "application/json"},
-            "body": json!({"user":{"customIDs":{"stableID":host::device_id()}},"hash":"djb2","deltasResponseRequested":false,"full_checksum":null}).to_string(),
-            "returnErrorResponse": true
-        })))?;
-        ensure!(
-            host.identity().is_none(),
-            "Activity account changed during the request"
-        );
-        host::json_body(&response)?
+    let stable_id = identity.map_or_else(host::device_id, |identity| identity.device_id.clone());
+    let request = match identity {
+        Some(identity) => chatgpt::bootstrap_request(&stable_id, Some(identity)),
+        None => chatgpt::anonymous_bootstrap_request(&stable_id),
     };
-    let payload = match response["statsigPayload"].as_str() {
-        Some(payload) => serde_json::from_str(payload)?,
-        None => response,
-    };
+    let response = host.fetch(&request)?;
     ensure!(
-        payload["feature_gates"].is_object(),
-        "Missing activity feature gates"
+        host.identity().as_ref() == identity,
+        "Activity account changed during the request"
     );
-    Ok((
-        payload["feature_gates"]["4039078146"]["value"] == true,
-        payload,
-    ))
+    let payload = chatgpt::payload(host::json_body(&response)?)?;
+    Ok((Gate::ActivityFeature.enabled(&payload), payload))
 }
 
 fn access(
@@ -267,6 +225,7 @@ impl Root {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn any_allowed_workspace_surface_enables_activity() {

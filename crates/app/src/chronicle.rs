@@ -464,12 +464,8 @@ fn now_ms() -> i64 {
 }
 
 fn resources() -> PathBuf {
-    std::env::var_os("CODEX_HOME")
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".codex")
-        })
+    crate::env::codex_home()
+        .unwrap_or_else(|| PathBuf::from(".codex"))
         .join("memories/extensions/skysight/resources")
 }
 

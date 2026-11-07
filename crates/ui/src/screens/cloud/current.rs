@@ -618,7 +618,7 @@ impl CloudPage {
             .flex()
             .items_center()
             .justify_center()
-            .bg(gpui::rgba(0x00000022))
+            .bg(t.dialog_overlay)
             .child(
                 div()
                     .w(px(480.))
@@ -640,13 +640,7 @@ impl CloudPage {
                             }),
                             shadows: vec![
                                 crate::composer::shadow(t.border, 0., 0., 0.5, false),
-                                crate::composer::shadow(
-                                    gpui::rgba(0x0000001a).into(),
-                                    4.,
-                                    8.,
-                                    -2.,
-                                    false,
-                                ),
+                                crate::composer::shadow(t.shadow_lg, 4., 8., -2., false),
                             ],
                             ..Default::default()
                         },

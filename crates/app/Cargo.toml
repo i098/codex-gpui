@@ -24,6 +24,7 @@ base64 = "0.22"
 bridge = { path = "../bridge" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 chrono-tz = "0.10"
+futures-lite = "2"
 gpui.workspace = true
 glob = "0.3.4"
 gpui_platform.workspace = true

@@ -32,6 +32,26 @@ impl Identity {
             && valid_component(&self.owner)
             && valid_component(&self.repository)
     }
+
+    /// Parses `https://{hostname}/{owner}/{repository}/pull/{number}`, as `gh pr view` reports
+    /// it; a trailing path, query or fragment is ignored.
+    pub fn from_url(url: &str) -> Option<Self> {
+        let mut parts = url.strip_prefix("https://")?.split(['/', '?', '#']);
+        let (hostname, owner, repository, pull, number) = (
+            parts.next()?,
+            parts.next()?,
+            parts.next()?,
+            parts.next()?,
+            parts.next()?,
+        );
+        let identity = Self {
+            hostname: hostname.to_lowercase(),
+            owner: owner.to_owned(),
+            repository: repository.to_owned(),
+            number: number.parse().ok()?,
+        };
+        (pull == "pull" && identity.valid()).then_some(identity)
+    }
 }
 
 pub fn valid_component(value: &str) -> bool {
@@ -423,6 +443,29 @@ mod tests {
         assert!(summary.names.is_empty());
         assert_eq!(summary.comments, 0);
         assert!(!summary.partial);
+    }
+
+    #[test]
+    fn pull_request_urls_parse_and_other_urls_do_not() {
+        let identity = Identity::from_url("https://GitHub.com/i098/codex-gpui/pull/935/files#x");
+        assert_eq!(
+            identity,
+            Some(Identity {
+                hostname: "github.com".into(),
+                owner: "i098".into(),
+                repository: "codex-gpui".into(),
+                number: 935,
+            })
+        );
+        for url in [
+            "https://github.com/i098/codex-gpui/issues/935",
+            "https://github.com/i098/codex-gpui/pull/0",
+            "https://github.com/i098/../pull/3",
+            "http://github.com/i098/codex-gpui/pull/3",
+            "https://github.com/i098/codex-gpui/pull/",
+        ] {
+            assert_eq!(Identity::from_url(url), None, "{url}");
+        }
     }
 
     fn item(id: &str) -> Item {

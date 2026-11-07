@@ -43,14 +43,15 @@ pub fn prepare() -> Result<()> {
     if !ENABLED {
         return Ok(());
     }
-    let home =
-        PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?).canonicalize()?;
+    let home = crate::env::home()
+        .context("HOME is not set")?
+        .canonicalize()?;
     let root = crate::user_data::user_data_dir("codex-gpui-qa").join("profile");
     let smoke = std::env::args()
         .nth(1)
         .is_some_and(|flag| flag == "--qa-smoke-profile");
-    let shared_auth = std::env::var_os("CODEX_HOME")
-        .map_or_else(|| home.join(".codex"), PathBuf::from)
+    let shared_auth = crate::env::codex_home()
+        .unwrap_or_else(|| home.join(".codex"))
         .join("auth.json");
     let root = match std::env::args().skip(1).collect::<Vec<_>>().as_slice() {
         [flag, path] if flag == "--qa-smoke-profile" => {

@@ -6,7 +6,7 @@ use std::{
     io::{Read as _, Seek as _},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 pub(super) fn recommended(home: &Path, params: &Value) -> Value {
@@ -97,22 +97,19 @@ fn git(root: &Path, args: &[&str]) -> Result<()> {
         .stdout(Stdio::from(output.try_clone()?))
         .stderr(Stdio::from(output.try_clone()?))
         .spawn()?;
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Some(status) = child.try_wait()? {
-            output.rewind()?;
-            let mut message = String::new();
-            output.read_to_string(&mut message)?;
-            ensure!(status.success(), "Git: {}", message.trim());
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            bail!("Recommended skill Git request timed out");
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
+    let Some(status) = crate::process::wait_timeout(
+        &mut child,
+        Duration::from_secs(30),
+        Duration::from_millis(25),
+    )?
+    else {
+        bail!("Recommended skill Git request timed out");
+    };
+    output.rewind()?;
+    let mut message = String::new();
+    output.read_to_string(&mut message)?;
+    ensure!(status.success(), "Git: {}", message.trim());
+    Ok(())
 }
 
 fn catalogue(repo: &Path) -> Result<Vec<Value>> {

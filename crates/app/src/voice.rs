@@ -189,9 +189,8 @@ fn apply(
         }
         VoiceAction::DeleteRecording(id) => settings.delete(id)?,
         VoiceAction::DownloadRecording(id) => {
-            let home =
-                std::env::var_os("HOME").context("The Downloads directory is unavailable")?;
-            settings.download(id, &std::path::PathBuf::from(home).join("Downloads"))?;
+            let home = crate::env::home().context("The Downloads directory is unavailable")?;
+            settings.download(id, &home.join("Downloads"))?;
         }
         VoiceAction::TranscribeRecording(id) => {
             ensure!(previous.policy.dictation, "Dictation unavailable");
