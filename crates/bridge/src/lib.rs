@@ -13,6 +13,11 @@
 //! A `Backend` carries the client's messages: `Lines` writes them to `codex app-server` (or
 //! a replay) as they are; `acp::Acp` translates them for an Agent Client Protocol agent.
 
+mod api;
+pub use api::{
+    ConfigEdit, MergeStrategy, ServerNotification, ServerRequest, ThreadListQuery,
+    ThreadStatusChanged, TurnStart,
+};
 mod acp;
 mod automation;
 pub use automation::AutomationTurn;

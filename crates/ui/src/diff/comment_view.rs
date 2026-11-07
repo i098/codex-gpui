@@ -1006,12 +1006,12 @@ fn local_comment(entry: &Entry, file: usize, cx: &Context<DiffPanel>) -> Div {
     div().w_full().max_w(px(768.)).p(px(6.)).child(card)
 }
 
-pub(super) fn comment_button(
+pub(super) fn comment_button<V: 'static>(
     label: &'static str,
     primary: bool,
     t: &Theme,
-    cx: &Context<DiffPanel>,
-    action: impl Fn(&mut DiffPanel, &mut Window, &mut Context<DiffPanel>) + Clone + 'static,
+    cx: &Context<V>,
+    action: impl Fn(&mut V, &mut Window, &mut Context<V>) + Clone + 'static,
 ) -> Stateful<Div> {
     let keyboard = action.clone();
     div()

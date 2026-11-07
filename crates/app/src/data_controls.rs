@@ -3,6 +3,7 @@
 
 use crate::{
     Root,
+    chatgpt::Gate,
     host::{Host, Identity},
     usage,
 };
@@ -55,7 +56,7 @@ fn snapshot(host: &dyn Host) -> Result<(bool, bool, Load<Consents>)> {
     )?;
     let structure = &accounts["accounts"][&identity.account_id]["account"]["structure"];
     let export = structure.is_string() && structure != "workspace";
-    let privacy = usage::statsig(host, &identity)["feature_gates"]["3157804138"]["value"] == true;
+    let privacy = Gate::DataPrivacy.enabled(&usage::statsig(host, &identity));
     let consents = if privacy {
         match usage::http(host, &identity, "GET", "/user_granular_consent", None) {
             Ok(value) => Consents::from_response(&value).map_or_else(
