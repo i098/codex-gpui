@@ -9,6 +9,19 @@ import { openPage, isCaptureRequest } from "./chrome.mjs";
 
 const SERVER = process.env.R1_SERVER || "http://127.0.0.1:4517";
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36";
+// R1_APP_CDP: capture the original desktop app (app.mjs) instead of the route1 server's page.
+const APP = !!process.env.R1_APP_CDP;
+const NOW = Date.UTC(2026, 9, 15, 17, 0, 0);
+// The clock and Math.random of preload-stub.js: relative times must not change between captures.
+const CLOCK = `(() => {
+  const RealDate = Date, t0 = performance.now(), now = () => Math.floor(${NOW} + performance.now() - t0);
+  window.Date = class extends RealDate {
+    constructor(...a) { super(...(a.length ? a : [now()])); }
+    static now() { return now(); }
+  };
+  let seed = 42;
+  Math.random = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 2 ** 32);
+})()`;
 const read = (f) => fs.readFileSync(new URL(f, import.meta.url), "utf8");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -217,8 +230,17 @@ const STATES = {
   },
   terminal: async (d) => {
     await STATES.thread(d);
-    // server.mjs replays the subtract session's python3 check as still running (README).
-    await d.waitFor(`fetch("/__r1/replay-running-command?sid=" + __R1__.sid).then(async (r) => (await r.text(), r.ok))`, "replay");
+    if (APP) {
+      // The mock app-server answers a follow-up turn with the subtract session and never completes its
+      // python3 check (MOCK_HOLD_COMMAND), so the command keeps running while the turn ends.
+      await d.click(`document.querySelector(".ProseMirror")`, "composer");
+      await d.type("Run the check again");
+      await d.key("Enter", "Enter", 13);
+      await d.waitFor(`(document.body.innerText.match(/Worked for \\d+s/g) ?? []).length >= 2 && !document.querySelector('button[aria-label="Stop"]')`, "the follow-up turn to end", 60000);
+    } else {
+      // server.mjs replays the subtract session's python3 check as still running (README).
+      await d.waitFor(`fetch("/__r1/replay-running-command?sid=" + __R1__.sid).then(async (r) => (await r.text(), r.ok))`, "replay");
+    }
     await d.waitFor(`[...document.querySelectorAll("button")].some((b) => b.getAttribute("aria-label") === "Stop all background terminals")`, "background terminal list");
     // The list lives in the thread summary panel (header `Toggle summary`); its row opens the
     // `Background terminal` side tab. The panel slides in, so the row is clicked once it is hit.
@@ -358,24 +380,36 @@ export async function capture(screen, theme, w, h, outDir = new URL("../../refs/
     }
     throw new Error(`page did not settle in 60 s: ${JSON.stringify(state)}`);
   };
+  let clockScript;
   try {
     await p.send("Network.enable");
-    await p.send("Emulation.setUserAgentOverride", {
-      userAgent: UA,
-      platform: "MacIntel",
-      userAgentMetadata: { brands: [{ brand: "Chromium", version: "155" }], fullVersion: "155.0.0.0", platform: "macOS", platformVersion: "26.2.0", architecture: "arm", model: "", mobile: false },
-    });
-    await p.send("Emulation.setTimezoneOverride", { timezoneId: "America/Los_Angeles" });
-    await p.send("Emulation.setLocaleOverride", { locale: "en-US" });
-    await p.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: theme }] });
+    if (!APP) {
+      await p.send("Emulation.setUserAgentOverride", {
+        userAgent: UA,
+        platform: "MacIntel",
+        userAgentMetadata: { brands: [{ brand: "Chromium", version: "155" }], fullVersion: "155.0.0.0", platform: "macOS", platformVersion: "26.2.0", architecture: "arm", model: "", mobile: false },
+      });
+      await p.send("Emulation.setTimezoneOverride", { timezoneId: "America/Los_Angeles" });
+      await p.send("Emulation.setLocaleOverride", { locale: "en-US" });
+      await p.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: theme }] });
+    }
     // Scale 2 comes from the shell's --force-device-scale-factor=2 (layout in device px, as in the
     // app); emulating the scale factor would lay out in CSS px and snap boxes differently.
     await p.send("Emulation.setDeviceMetricsOverride", { width: w, height: h, deviceScaleFactor: 0, mobile: false });
     // macOS overlay scrollbars are invisible at rest.
     await p.send("Emulation.setScrollbarsHidden", { hidden: true });
-    await p.send("Page.navigate", { url: `${SERVER}/index.html?theme=${theme}` });
+    if (APP) {
+      // The app keeps its own locale, zone and theme (app.mjs launches it for one theme); only the
+      // clock is fixed, and the page starts again at Home.
+      await p.send("Page.enable");
+      ({ identifier: clockScript } = await p.send("Page.addScriptToEvaluateOnNewDocument", { source: CLOCK }));
+      const origin = await p.evaluate("performance.timeOrigin");
+      await p.send("Page.reload");
+      for (let i = 0; i < 100 && (await p.evaluate("performance.timeOrigin").catch(() => origin)) === origin; i++) await sleep(100);
+    } else await p.send("Page.navigate", { url: `${SERVER}/index.html?theme=${theme}` });
     const d = driver(p, w, h);
     await d.waitFor(`document.querySelector("nav[aria-label='App navigation']") && document.querySelectorAll("nav [data-thread-title]").length >= 3 && !document.body.innerText.includes("Loading model")`, "home", 90000);
+    if (APP && !(await p.evaluate(`document.documentElement.dataset.theme === ${JSON.stringify(theme)}`))) throw new Error(`the app runs another theme than ${theme}`);
     await settle(1000);
     // Announcement modals and beacon banners are dismissed the way a user would.
     for (const t of ["Continue with current model", "Dismiss ChatGPT beacon banner"])
@@ -391,6 +425,8 @@ export async function capture(screen, theme, w, h, outDir = new URL("../../refs/
     await d.park();
     await settle(1500);
     await p.evaluate(FREEZE);
+    // A menu hands focus back to its button, which draws a focus ring in the app; the browser page does not.
+    if (APP) await p.evaluate(`document.activeElement?.matches("button,a,[role=button]") && document.activeElement.blur()`);
     await p.evaluate(RELOAD_SVG_IMAGES);
     // Tiles and decoded images can keep a raster from while the page was still moving. A critical
     // memory-pressure signal drops them; the shot then rasterizes the still page from scratch.
@@ -408,6 +444,7 @@ export async function capture(screen, theme, w, h, outDir = new URL("../../refs/
     fs.writeFileSync(`${name}.spec.json`, JSON.stringify(spec, null, 1));
     return `${name}.png`;
   } finally {
+    if (clockScript) await p.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: clockScript }).catch(() => {});
     await p.close();
   }
 }

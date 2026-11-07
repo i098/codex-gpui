@@ -1,13 +1,19 @@
-// Opens a page in a fresh isolated context of the renderer at R1_CDP (default 127.0.0.1:19444: the
-// Mac's chrome-headless-shell through an ssh tunnel, see README) and returns {send, evaluate, close};
-// close() disposes the context.
+// Opens a page and returns {send, evaluate, on, close}.
+// Default: a fresh isolated context of the renderer at R1_CDP (default 127.0.0.1:19444: the Mac's
+// chrome-headless-shell through an ssh tunnel, see README); close() disposes the context.
+// R1_APP_CDP=<url>: attach to the page of the original desktop app instead (app.mjs); close() only
+// detaches.
+const APP_CDP = process.env.R1_APP_CDP;
 const CDP = process.env.R1_CDP || "http://127.0.0.1:19444";
 const HIDDEN_RUNNER = /^https:\/\/cdn\.platform\.openai\.com\/deployments\/dil\/v\d+\/runner\.html(?:[?#]|$)/;
 
 export async function openPage() {
-  const { webSocketDebuggerUrl } = await (await fetch(`${CDP}/json/version`)).json();
+  const base = APP_CDP ?? CDP;
   // The browser reports its own port; through a tunnel the local one differs.
-  const ws = new WebSocket(webSocketDebuggerUrl.replace(/^ws:\/\/[^/]+/, CDP.replace(/^http/, "ws")));
+  const local = (url) => url.replace(/^ws:\/\/[^/]+/, base.replace(/^http/, "ws"));
+  const target = APP_CDP && (await (await fetch(`${APP_CDP}/json`)).json()).find((t) => t.type === "page" && t.url === "app://-/index.html");
+  if (APP_CDP && !target) throw new Error("the original app has no page target");
+  const ws = new WebSocket(local(target?.webSocketDebuggerUrl ?? (await (await fetch(`${CDP}/json/version`)).json()).webSocketDebuggerUrl));
   await new Promise((r, e) => ((ws.onopen = r), (ws.onerror = e)));
   let id = 0;
   const pending = new Map();
@@ -19,15 +25,19 @@ export async function openPage() {
       pending.delete(x.id);
     } else listeners.forEach((f) => f(x));
   };
+  let closed = false;
+  ws.onclose = () => {
+    closed = true;
+    pending.forEach((f) => f({ error: { message: "CDP connection closed" } }));
+  };
   const raw = (method, params = {}, sessionId) =>
     new Promise((res, rej) => {
+      if (closed) return rej(new Error(`${method}: CDP connection closed`));
       const i = ++id;
       pending.set(i, (x) => (x.error ? rej(new Error(`${method}: ${x.error.message}`)) : res(x.result)));
       ws.send(JSON.stringify({ id: i, method, params, sessionId }));
     });
-  const { browserContextId } = await raw("Target.createBrowserContext", { disposeOnDetach: true });
-  const { targetId } = await raw("Target.createTarget", { url: "about:blank", browserContextId });
-  const { sessionId } = await raw("Target.attachToTarget", { targetId, flatten: true });
+  let sessionId;
   const send = (method, params) => raw(method, params, sessionId);
   const evaluate = async (expression) => {
     const r = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
@@ -35,6 +45,17 @@ export async function openPage() {
     return r.result.value;
   };
   const on = (f) => (listeners.add(f), () => listeners.delete(f));
+  if (target) {
+    // Attached straight to the app's page: no session, and no context to dispose.
+    const close = async () => {
+      await send("Emulation.clearDeviceMetricsOverride").catch(() => {});
+      ws.close();
+    };
+    return { send, evaluate, on, close, sessionId };
+  }
+  const { browserContextId } = await raw("Target.createBrowserContext", { disposeOnDetach: true });
+  const { targetId } = await raw("Target.createTarget", { url: "about:blank", browserContextId });
+  ({ sessionId } = await raw("Target.attachToTarget", { targetId, flatten: true }));
   const close = async () => {
     await raw("Target.disposeBrowserContext", { browserContextId }).catch(() => {});
     ws.close();
