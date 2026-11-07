@@ -32,10 +32,11 @@ const ROWS: [(&str, &str, &str); 4] = [
     ),
 ];
 
-/// The original's `allowDebugMenu`: internal builds only. Here: debug builds, or a release
-/// build started with `CODEX_GPUI_DEBUG_MENU=1`.
-pub fn allowed() -> bool {
-    cfg!(debug_assertions) || std::env::var_os("CODEX_GPUI_DEBUG_MENU").is_some_and(|v| v == "1")
+/// The nav row (`ga`): the settings nav asks `allowDebugMenu("prod")`, which is false, or the
+/// `2423536643` Statsig gate. Here a build started with `CODEX_GPUI_DEBUG_MENU=1` also shows it.
+pub fn allowed(evaluations: &serde_json::Value) -> bool {
+    std::env::var_os("CODEX_GPUI_DEBUG_MENU").is_some_and(|v| v == "1")
+        || evaluations["feature_gates"]["2423536643"]["value"] == true
 }
 
 /// Applies a Debug switch the page just stored; `reduce_motion` is the Appearance page's
