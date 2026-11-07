@@ -3,6 +3,7 @@
 
 use crate::{
     Root,
+    chatgpt::Gate,
     host::{self, CHANGELOG_FEED, Host, Request},
     usage,
 };
@@ -79,9 +80,8 @@ async fn read(bridge: &Bridge, host: &dyn Host) -> Profile {
             profile.name = Some(name.into());
         }
         let gates = usage::statsig(host, &identity);
-        let gate = |id: &str| gates["feature_gates"][id]["value"] == true;
-        profile.chrome_extension_setup = gate("410065390");
-        profile.privacy_center = gate("3959961672");
+        profile.chrome_extension_setup = Gate::ChromeExtensionSetup.enabled(&gates);
+        profile.privacy_center = Gate::PrivacyCenter.enabled(&gates);
     }
     profile
 }

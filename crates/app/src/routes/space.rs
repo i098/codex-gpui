@@ -1,6 +1,8 @@
 use crate::*;
 use gpui::Div;
-use ui::screens::space::{self, Retry, Space, SpacePage, Spaces};
+use ui::screens::space::{self, Retry, Space, SpacePage, Spaces, library::Action};
+
+mod library;
 
 /// The original's `space-list-v2` query reads at most this many pages (`FDr`).
 const MAX_PAGES: usize = 20;
@@ -15,6 +17,10 @@ pub(super) fn page(root: &mut Root, cx: &mut Context<Root>) -> Entity<Shell> {
     let (shell, page) = space::shell(cx);
     cx.subscribe(&page, |root, page, _: &Retry, cx| load(root, page, cx))
         .detach();
+    cx.subscribe(&page, |root, page, action: &Action, cx| {
+        library::on_action(root, page, action, cx)
+    })
+    .detach();
     load(root, page.clone(), cx);
     root.space_page = Some(page);
     shell
@@ -48,7 +54,7 @@ fn list(host: &dyn host::Host) -> Result<Vec<Space>> {
             query.append_pair("cursor", cursor);
         }
         let url = format!("/spaces/v2?{}", query.append_pair("limit", "100").finish());
-        let body = host::json_body(&host.fetch(&request(&url))?)?;
+        let body = host::json_body(&host.fetch(&request("GET", &url, None))?)?;
         items.extend(body["items"].as_array().cloned().unwrap_or_default());
         cursor = body["next_cursor"].as_str().map(str::to_owned);
         if cursor.is_none() {
@@ -72,10 +78,10 @@ fn list(host: &dyn host::Host) -> Result<Vec<Space>> {
         .collect())
 }
 
-fn request(url: &str) -> host::Request {
-    host::Request::Http(json!({
+fn request(method: &str, url: &str, body: Option<Value>) -> host::Request {
+    let mut request = json!({
         "url": url,
-        "method": "GET",
+        "method": method,
         "headers": {
             "OAI-Language": "en-US",
             "X-OpenAI-Attach-Auth": "1",
@@ -84,5 +90,10 @@ fn request(url: &str) -> host::Request {
             "originator": "Codex Desktop"
         },
         "returnErrorResponse": true
-    }))
+    });
+    if let Some(body) = body {
+        request["body"] = body.to_string().into();
+        request["headers"]["Content-Type"] = "application/json".into();
+    }
+    host::Request::Http(request)
 }

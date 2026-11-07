@@ -323,7 +323,7 @@ impl ConnectionsPage {
                     }),
                     shadows: vec![
                         crate::composer::shadow(t.border, 0., 0., 0.5, false),
-                        crate::composer::shadow(gpui::rgba(0x0000001a).into(), 4., 8., -2., false),
+                        crate::composer::shadow(t.shadow_lg, 4., 8., -2., false),
                     ],
                     ..Default::default()
                 },
@@ -356,7 +356,7 @@ impl ConnectionsPage {
                     .w(viewport.width)
                     .h(viewport.height)
                     .occlude()
-                    .bg(gpui::rgba(0x00000022))
+                    .bg(t.dialog_overlay)
                     .flex()
                     .items_center()
                     .justify_center()
@@ -434,7 +434,7 @@ impl ConnectionsPage {
                                 }),
                                 border: Some((px(1.), t.border_strong)),
                                 shadows: vec![crate::composer::shadow(
-                                    gpui::rgba(0x00000014).into(),
+                                    t.shadow_sm,
                                     1.,
                                     2.,
                                     -1.,
@@ -504,7 +504,7 @@ impl ConnectionsPage {
                 border: Some((px(1.), t.border)),
                 ..Default::default()
             }))
-            .child(text("Add", 14., 18., 430., primary_text(&t)))
+            .child(text("Add", 14., 18., 430., t.text_primary_solid))
             .when(disabled, |button| button.opacity(0.4))
             .on_click(cx.listener(move |this, _, _, cx| {
                 if !disabled {
@@ -864,7 +864,7 @@ impl ConnectionsPage {
                                 18.,
                                 430.,
                                 if save {
-                                    primary_text(&t)
+                                    t.text_primary_solid
                                 } else {
                                     t.text_tertiary
                                 },
@@ -984,13 +984,7 @@ impl ConnectionsPage {
                                 fill: Some(t.menu_background),
                                 shadows: vec![
                                     crate::composer::shadow(t.border, 0., 0., 0.5, false),
-                                    crate::composer::shadow(
-                                        gpui::rgba(0x0000001a).into(),
-                                        4.,
-                                        8.,
-                                        -2.,
-                                        false,
-                                    ),
+                                    crate::composer::shadow(t.shadow_lg, 4., 8., -2., false),
                                 ],
                                 ..Default::default()
                             }))
@@ -1015,14 +1009,6 @@ impl ConnectionsPage {
             .with_priority(11)
             .into_any_element(),
         )
-    }
-}
-
-fn primary_text(t: &Theme) -> Hsla {
-    if t.appearance == Appearance::Dark {
-        gpui::rgb(0x2d2d2d).into()
-    } else {
-        t.text_inverse
     }
 }
 

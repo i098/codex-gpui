@@ -80,6 +80,80 @@ impl SoundMode {
     }
 }
 
+/// A Chromium browser the Codex extension can control; the original's `browserFamily` route param.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BrowserFamily {
+    Chrome,
+    Edge,
+}
+
+impl BrowserFamily {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Chrome => "Google Chrome",
+            Self::Edge => "Microsoft Edge",
+        }
+    }
+
+    /// The `:browserFamily` segment of `computer-use/:browserFamily`.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Chrome => "chrome",
+            Self::Edge => "edge",
+        }
+    }
+
+    /// Host setting that shows or hides the `@browser` composer reference.
+    pub fn setting_key(self) -> &'static str {
+        match self {
+            Self::Chrome => "browser-family-enabled:chrome",
+            Self::Edge => "browser-family-enabled:edge",
+        }
+    }
+
+    pub fn extensions_url(self) -> &'static str {
+        match self {
+            Self::Chrome => "chrome://extensions",
+            Self::Edge => "edge://extensions",
+        }
+    }
+
+    pub fn extension_settings_url(self, id: &str) -> String {
+        format!("{}/?id={id}", self.extensions_url())
+    }
+
+    pub fn mac_bundle_id(self) -> &'static str {
+        match self {
+            Self::Chrome => "com.google.Chrome",
+            Self::Edge => "com.microsoft.edgemac",
+        }
+    }
+
+    pub fn windows_command(self) -> &'static str {
+        match self {
+            Self::Chrome => "chrome",
+            Self::Edge => "msedge",
+        }
+    }
+
+    pub fn linux_command(self) -> &'static str {
+        match self {
+            Self::Chrome => "google-chrome",
+            Self::Edge => "microsoft-edge",
+        }
+    }
+}
+
+/// One browser row: extension install state and the composer-reference toggle.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BrowserControl {
+    pub family: BrowserFamily,
+    pub installed: bool,
+    pub install_url: Option<String>,
+    pub extension_id: Option<String>,
+    pub enabled: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct Plugin {
     pub installed: bool,
@@ -93,6 +167,8 @@ pub enum ComputerUseAction {
     SetEnabled(bool),
     SetSoundMode(SoundMode),
     RemoveApproval(String),
+    SetBrowserEnabled(BrowserFamily, bool),
+    OpenBrowserUrl(BrowserFamily, String),
     OpenPermissions,
 }
 
@@ -104,6 +180,7 @@ pub struct ComputerUseState {
     pub plugin: Load<Option<Plugin>>,
     pub approvals: Load<Vec<AppApproval>>,
     pub sound: Option<SoundMode>,
+    pub browsers: Vec<BrowserControl>,
     pub pending: bool,
     pub error: Option<String>,
     pub permission_guidance: Option<String>,
@@ -123,6 +200,7 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
         ComputerUse {
             sound_open: false,
             removal: None,
+            browser: None,
             layer: Layer::default(),
             modal_focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
@@ -135,6 +213,7 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
 struct ComputerUse {
     sound_open: bool,
     removal: Option<AppApproval>,
+    browser: Option<BrowserFamily>,
     layer: Layer,
     modal_focus: FocusHandle,
     scroll: ScrollHandle,
@@ -288,9 +367,132 @@ impl ComputerUse {
             Load::Ready(_) => Vec::new(),
         };
         if matches!(state.plugin, Load::Ready(_)) {
-            rows.push(chrome_row(&t));
+            for browser in &state.browsers {
+                rows.push(self.browser_control_row(browser, state, window, cx));
+            }
         }
         rows
+    }
+
+    fn browser_control_row(
+        &self,
+        browser: &BrowserControl,
+        state: &ComputerUseState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let t = cx.theme().clone();
+        let family = browser.family;
+        let slug = family.slug();
+        let pending = state.pending;
+        let actions = if !browser.installed {
+            let url = browser.install_url.clone();
+            self.action(
+                format!("install-{slug}-extension"),
+                "Install",
+                ComputerUseAction::OpenBrowserUrl(family, url.clone().unwrap_or_default()),
+                pending || url.is_none(),
+                window,
+                cx,
+            )
+        } else {
+            let id = SharedString::from(format!("manage-{slug}"));
+            let handle = focus::handle(id.clone(), 0, window, cx);
+            let manage = focus::ring(
+                button("Manage", t.text_alpha_5, None, &t).id(id),
+                &handle,
+                px(12.5),
+                px(2.),
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.browser = Some(family);
+                cx.notify();
+            }))
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.browser = Some(family);
+                    cx.notify();
+                    cx.stop_propagation();
+                }
+            }));
+            let enabled = browser.enabled;
+            let toggle_id = SharedString::from(format!("browser-{slug}-enabled"));
+            let handle = focus::handle(toggle_id.clone(), 0, window, cx);
+            let toggle = focus::ring(
+                switch(toggle_id, enabled, pending, &t),
+                &handle,
+                px(10.),
+                px(2.),
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.dispatch(ComputerUseAction::SetBrowserEnabled(family, !enabled), cx);
+            }))
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.dispatch(ComputerUseAction::SetBrowserEnabled(family, !enabled), cx);
+                    cx.stop_propagation();
+                }
+            }));
+            div()
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .child(manage)
+                .child(toggle)
+                .into_any_element()
+        };
+        browser_row(browser, actions, &t)
+    }
+
+    /// The `computer-use/:browserFamily` page: extension status with reinstall and remove.
+    fn browser_detail(
+        &self,
+        browser: &BrowserControl,
+        state: &ComputerUseState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Div> {
+        let t = cx.theme().clone();
+        let family = browser.family;
+        let slug = family.slug();
+        let (title, status) = if browser.installed {
+            ("Installed", "Browser extension installed")
+        } else {
+            ("Not installed", "Browser extension not installed")
+        };
+        let store = browser.install_url.clone();
+        let reinstall = self.action(
+            format!("reinstall-{slug}-extension"),
+            if browser.installed {
+                "Reinstall extension"
+            } else {
+                "Install"
+            },
+            ComputerUseAction::OpenBrowserUrl(family, store.clone().unwrap_or_default()),
+            state.pending || store.is_none(),
+            window,
+            cx,
+        );
+        let remove = browser.extension_id.as_deref().map(|id| {
+            self.action(
+                format!("remove-{slug}-extension"),
+                "Remove extension",
+                ComputerUseAction::OpenBrowserUrl(family, family.extension_settings_url(id)),
+                state.pending,
+                window,
+                cx,
+            )
+        });
+        let actions = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(reinstall)
+            .children(remove)
+            .into_any_element();
+        vec![row(title, Some(status.into()), None, actions, &t)]
     }
 
     fn approvals(
@@ -591,21 +793,64 @@ impl Render for ComputerUse {
         if self.removal.as_ref().is_some_and(|removed| matches!(&state.approvals, Load::Ready(apps) if !apps.iter().any(|app| app.bundle_identifier == removed.bundle_identifier))) {
             self.removal = None;
         }
-        let control = self.control(&state, window, cx);
-        let locked = state
-            .available
+        let detail = self
+            .browser
+            .and_then(|family| state.browsers.iter().find(|b| b.family == family))
+            .cloned();
+        let overview = detail.is_none();
+        let control = match &detail {
+            Some(browser) => self.browser_detail(browser, &state, window, cx),
+            None => self.control(&state, window, cx),
+        };
+        let locked = (state.available && overview)
             .then(|| {
                 crate::screens::computer_use_native::locked_use_row(window, cx).map(|row| {
                     card(vec![row], self.composited.then_some(&self.layer), &t).mt(px(6.))
                 })
             })
             .flatten();
-        let approvals = state.available.then(|| self.approvals(&state, window, cx));
-        let sound = state
-            .available
+        let approvals = (state.available && overview).then(|| self.approvals(&state, window, cx));
+        let sound = (state.available && overview)
             .then_some(state.sound)
             .flatten()
             .map(|mode| self.sound(mode, state.pending, window, cx));
+        let back = (!overview).then(|| {
+            let handle = focus::handle("computer-use-back", 0, window, cx);
+            focus::ring(
+                div().id("computer-use-back").cursor_pointer().child(text(
+                    "Computer use",
+                    13.,
+                    18.571_428,
+                    500.,
+                    t.text_secondary,
+                )),
+                &handle,
+                px(8.),
+                px(2.),
+                cx,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.browser = None;
+                cx.notify();
+            }))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.browser = None;
+                    cx.notify();
+                    cx.stop_propagation();
+                }
+            }))
+        });
+        let (title, subtitle) = match &detail {
+            Some(browser) => (
+                browser.family.title(),
+                "Manage the browser extension ChatGPT uses for added control",
+            ),
+            None => (
+                "Computer use",
+                "Manage how ChatGPT uses other applications on your computer",
+            ),
+        };
         let view = cx.entity().downgrade();
         window.on_next_frame(move |_, cx| {
             let _ = view.update(cx, |this, cx| {
@@ -616,33 +861,103 @@ impl Render for ComputerUse {
                 }
             });
         });
-        div().size_full().relative().flex().flex_col()
+        div()
+            .size_full()
+            .relative()
+            .flex()
+            .flex_col()
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape" {
                     this.sound_open = false;
-                    if !cx.try_global::<ComputerUseState>().is_some_and(|s| s.pending) { this.removal = None; }
+                    if !cx
+                        .try_global::<ComputerUseState>()
+                        .is_some_and(|s| s.pending)
+                    {
+                        this.removal = None;
+                    }
                     cx.notify();
                 }
             }))
             .child(div().h(px(46.)).flex_none())
-            .child(div().id("computer-use-page").flex_1().overflow_y_scroll()
-                .track_scroll(&self.scroll)
-                .when(self.composited, |d| d.layer())
-                .child(probe(&self.layer))
-                .child(div().pt(px(16.)).pb(px(1.))
-                    .child(div().w_full().max_w(px(768.)).mx_auto().px(px(20.))
-                        .child(div().py(px(12.)).flex().flex_col().justify_center().gap(px(4.))
-                            .child(text("Computer use", 28., 33.6, 500., t.text))
-                            .child(text("Manage how ChatGPT uses other applications on your computer", 14., 24., 430., t.text_secondary)))))
-                .child(div().w_full().max_w(px(768.)).mx_auto().p(px(20.))
-                    .flex().flex_col().gap(px(40.))
-                    .child(group("Control", control, self.composited.then_some(&self.layer), &t).children(locked))
-                    .children(state.permission_guidance.as_ref().map(|guidance| row(guidance.clone(), None, None,
-                        self.action("computer-use-permissions", "Open System Settings", ComputerUseAction::OpenPermissions, state.pending, window, cx), &t)))
-                    .children(state.error.as_ref().map(|error| message(error.clone(), &t)))
-                    .children(approvals.map(|rows| group("Always-allowed apps", rows, self.composited.then_some(&self.layer), &t)))
-                    .children(sound.map(|menu| div().flex().child(menu)))))
-            .children(self.removal.as_ref().map(|app| self.confirmation(app, &state, window, cx)))
+            .child(
+                div()
+                    .id("computer-use-page")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .when(self.composited, |d| d.layer())
+                    .child(probe(&self.layer))
+                    .child(
+                        div().pt(px(16.)).pb(px(1.)).child(
+                            div()
+                                .w_full()
+                                .max_w(px(768.))
+                                .mx_auto()
+                                .px(px(20.))
+                                .children(back)
+                                .child(
+                                    div()
+                                        .py(px(12.))
+                                        .flex()
+                                        .flex_col()
+                                        .justify_center()
+                                        .gap(px(4.))
+                                        .child(text(title, 28., 33.6, 500., t.text))
+                                        .child(text(subtitle, 14., 24., 430., t.text_secondary)),
+                                ),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .max_w(px(768.))
+                            .mx_auto()
+                            .p(px(20.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(40.))
+                            .child(
+                                group(
+                                    if overview { "Control" } else { "Extension" },
+                                    control,
+                                    self.composited.then_some(&self.layer),
+                                    &t,
+                                )
+                                .children(locked),
+                            )
+                            .children(state.permission_guidance.as_ref().map(|guidance| {
+                                row(
+                                    guidance.clone(),
+                                    None,
+                                    None,
+                                    self.action(
+                                        "computer-use-permissions",
+                                        "Open System Settings",
+                                        ComputerUseAction::OpenPermissions,
+                                        state.pending,
+                                        window,
+                                        cx,
+                                    ),
+                                    &t,
+                                )
+                            }))
+                            .children(state.error.as_ref().map(|error| message(error.clone(), &t)))
+                            .children(approvals.map(|rows| {
+                                group(
+                                    "Always-allowed apps",
+                                    rows,
+                                    self.composited.then_some(&self.layer),
+                                    &t,
+                                )
+                            }))
+                            .children(sound.map(|menu| div().flex().child(menu))),
+                    ),
+            )
+            .children(
+                self.removal
+                    .as_ref()
+                    .map(|app| self.confirmation(app, &state, window, cx)),
+            )
     }
 }
 
@@ -674,9 +989,24 @@ fn row(
         .child(control)
 }
 
-fn chrome_row(t: &Theme) -> Div {
-    // ponytail: no browser host service yet; retain the original not-installed state.
-    let chrome = icon("computer-use-chrome", 38., t.text);
+fn browser_row(control: &BrowserControl, actions: AnyElement, t: &Theme) -> Div {
+    let family = control.family;
+    let leading = match family {
+        BrowserFamily::Chrome => icon("computer-use-chrome", 38., t.text).into_any_element(),
+        // ponytail: the Edge icon asset is not extracted; a letter stands in.
+        BrowserFamily::Edge => div()
+            .size(px(38.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(text("E", 16., 20., 600., t.text_secondary))
+            .into_any_element(),
+    };
+    let (dot, status) = if control.installed {
+        (t.text_success, "Installed")
+    } else {
+        (t.text_error, "Browser extension not installed")
+    };
     div()
         .min_h(px(60.))
         .px(px(16.))
@@ -705,7 +1035,7 @@ fn chrome_row(t: &Theme) -> Div {
                             },
                             Some(t.border),
                         ))
-                        .child(chrome),
+                        .child(leading),
                 )
                 .child(
                     div()
@@ -714,7 +1044,7 @@ fn chrome_row(t: &Theme) -> Div {
                         .flex()
                         .flex_col()
                         .gap(px(2.))
-                        .child(text("Google Chrome", 13., 18.571_428, 500., t.text))
+                        .child(text(family.title(), 13., 18.571_428, 500., t.text))
                         .child(
                             div().h(px(16.5)).relative().child(
                                 div()
@@ -726,21 +1056,15 @@ fn chrome_row(t: &Theme) -> Div {
                                     .child(div().size(px(8.)).relative().child(on_card(
                                         9999.,
                                         shapes::Corner::Round,
-                                        t.text_error,
+                                        dot,
                                         None,
                                     )))
-                                    .child(text(
-                                        "Browser extension not installed",
-                                        12.,
-                                        16.,
-                                        430.,
-                                        t.text_secondary,
-                                    )),
+                                    .child(text(status, 12., 16., 430., t.text_secondary)),
                             ),
                         ),
                 ),
         )
-        .child(div())
+        .child(actions)
 }
 
 fn message(message: impl Into<SharedString>, t: &Theme) -> Div {
@@ -868,6 +1192,7 @@ mod tests {
             cx.new(|cx| ComputerUse {
                 sound_open: false,
                 removal: None,
+                browser: None,
                 layer: Layer::default(),
                 modal_focus: cx.focus_handle(),
                 scroll: ScrollHandle::new(),

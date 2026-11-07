@@ -1,4 +1,7 @@
-use crate::host::{Identity, Request};
+use crate::{
+    chatgpt,
+    host::{Identity, Request},
+};
 use anyhow::{Context as _, Result};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -6,30 +9,22 @@ use ui::screens::sidebar::{CloudSearchHit, SEARCH_LIMIT};
 use url::Url;
 
 pub(crate) fn request(term: &str, identity: &Identity, query_id: &str) -> Request {
-    Request::Http(json!({
-        "url": "/global/search",
-        "method": "POST",
-        "body": json!({
-            "entrypoint": "global_search",
-            "limit": SEARCH_LIMIT,
-            "query": term,
-            "source_requests": [{"type": "conversation"}, {"type": "dot_messages"}],
-            "cursor": null,
-            "query_id": query_id,
-        }).to_string(),
-        "headers": {
-            "x-openai-web-frontend": "codex_webview",
-            "x-oai-mcp-form-version": "2",
-            "x-openai-codex-window-type": "electron",
-            "OAI-Language": "en-US",
-            "oai-did": identity.device_id,
-            "X-OpenAI-Attach-Auth": "1",
-            "X-OpenAI-Attach-Desktop-Surface": "1",
-            "X-OpenAI-Attach-Integrity-State": "1",
-        },
-        "expectedIdentity": {"accountId": identity.account_id, "userId": identity.user_id},
-        "returnErrorResponse": true,
-    }))
+    chatgpt::web_request(
+        identity,
+        "POST",
+        "/global/search",
+        Some(
+            json!({
+                "entrypoint": "global_search",
+                "limit": SEARCH_LIMIT,
+                "query": term,
+                "source_requests": [{"type": "conversation"}, {"type": "dot_messages"}],
+                "cursor": null,
+                "query_id": query_id,
+            })
+            .to_string(),
+        ),
+    )
 }
 
 #[derive(Deserialize)]

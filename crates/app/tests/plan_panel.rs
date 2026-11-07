@@ -52,5 +52,25 @@ fn summary_plan_row_opens_plan_tab() -> Result<()> {
     if let Some(out) = &shots {
         fx.shot()?.save(format!("{out}/2-plan-tab.png"))?;
     }
+    // Cmd-click on the same row: the plan in its own `/plan-summary` page window.
+    let pages = |fx: &mut Fx| {
+        fx.cx
+            .update(|cx| app::windows::handles(app::windows::Kind::Page, cx).len())
+    };
+    ensure!(pages(&mut fx) == 0, "page window before the action");
+    fx.action(Box::new(ui::screens::thread::view::OpenPlanSummary))?;
+    ensure!(
+        pages(&mut fx) == 1,
+        "plan summary windows: {}",
+        pages(&mut fx)
+    );
+    if let Some(out) = &shots {
+        let page = fx
+            .cx
+            .update(|cx| app::windows::handles(app::windows::Kind::Page, cx)[0]);
+        fx.cx
+            .capture_screenshot(page)?
+            .save(format!("{out}/3-plan-summary.png"))?;
+    }
     Ok(())
 }

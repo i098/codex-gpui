@@ -1,10 +1,13 @@
 //! The ChatGPT and Work sidebars' `Chats`: the original's `chatgpt-conversations` query, the
 //! first page of `GET /conversations` through the same desktop fetch as the cloud search.
 
-use crate::host::{Identity, Request};
+use crate::{
+    chatgpt,
+    host::{Identity, Request},
+};
 use anyhow::{Context as _, Result};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use ui::screens::sidebar::ChatGptChat;
 use url::Url;
 
@@ -12,26 +15,16 @@ use url::Url;
 const PAGE: usize = 20;
 
 pub(crate) fn request(identity: &Identity) -> Request {
-    Request::Http(json!({
-        // `gPr` with the task (`tpp`) conversations excluded; byte-for-byte the original's URL.
-        "url": format!(
+    // `gPr` with the task (`tpp`) conversations excluded; byte-for-byte the original's URL.
+    chatgpt::web_request(
+        identity,
+        "GET",
+        &format!(
             "/conversations?exclude_conversation_origin=tpp&expand=false&hide_snorlax=false\
              &is_archived=false&is_starred=false&limit={PAGE}&order=updated&offset=0"
         ),
-        "method": "GET",
-        "headers": {
-            "x-openai-web-frontend": "codex_webview",
-            "x-oai-mcp-form-version": "2",
-            "x-openai-codex-window-type": "electron",
-            "OAI-Language": "en-US",
-            "oai-did": identity.device_id,
-            "X-OpenAI-Attach-Auth": "1",
-            "X-OpenAI-Attach-Desktop-Surface": "1",
-            "X-OpenAI-Attach-Integrity-State": "1",
-        },
-        "expectedIdentity": {"accountId": identity.account_id, "userId": identity.user_id},
-        "returnErrorResponse": true,
-    }))
+        None,
+    )
 }
 
 #[derive(Deserialize)]
@@ -72,6 +65,7 @@ pub(crate) fn chats(body: Value) -> Result<Vec<ChatGptChat>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn rows_keep_server_order_and_drop_items_without_ids() -> Result<()> {

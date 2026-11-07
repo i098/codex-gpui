@@ -7,10 +7,16 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Show the green `Awaiting approval` pill and the blue dot on a sidebar chat row while its thread waits for an approval (`thread/status/changed` with the `waitingOnApproval` active flag); both go when the flag clears or the thread goes idle.
+- Open a thread's latest plan in its own window (the original's `/plan-summary` page): Command-click Thread summary ▸ `Plan`. The window draws the plan with the thread's markdown in a `Plan` card; a plain click still opens the `Plan` side panel tab.
 - Read `configRequirements/read` and disable the permission options that `requirements.toml` or `config.toml` do not allow, with the original's tooltips, and show `Managed` when no option is allowed.
 - Show the original's `This request requires additional safety checks, which can take extra time.` line under a running turn when the app-server sends `autoApprovalReview/strictReviewRequired`; it goes away when the turn ends.
+- Open a chat's scheduled task card in a side panel tab, as the original's automation tab does: a suggestion shows `Cancel` and `Create scheduled task` (`Apply changes` for an update of an existing task), and a saved task stays in the tab with `Save` and `Open settings`, which opens the task on the Automations page.
+- Open a file link to an artifact (`.pdf`, `.tex`, `.csv`, `.tsv`, `.ipynb`, `.docx`, `.pptx`, `.xlsx`) in its own artifact tab, as the original's `artifact` tab kind does. On a PDF there, drag a region or click a point to annotate the page, then send the annotations with Send or Cmd+Enter as one `artifact-direct-comment` turn. Office files show `This document type cannot be viewed here yet`.
 - Open a thread's pull request in a `PR #n` side panel tab from the branch actions' `View PR` (`Open in GitHub` still opens the browser). The tab shows the GitHub detail: status, branch, reviewers, comments, checks, description and code changes. It also offers `Ready for review`, `Convert to draft` or `Reopen`, which run `gh pr ready`, `gh pr ready --undo` or `gh pr reopen` through app-server `process/spawn`.
 - Edit files in the Files tab: double-click a line to edit at that line. Edits save to disk 3 s after they start or on `⌘S` through the host's `write-file`, which refuses to overwrite a file that changed on disk since it was read (`Could not save file`). Closing a tab saves first; a failed save asks `Discard file changes?` (`Continue viewing` / `Discard changes`). A text file over 10 MiB opens read-only with `Large file opened read-only`.
+- Add the Library to Space: `Files` opens `Space › Library` with the `All`, `Folders` and `Favorites` tabs from `/files/library/nodes` and `/files/library/favorites`. Folder rows open the folder, and the breadcrumbs go back. `Add to Favorites` / `Remove from Favorites` and `Delete` (to Trash) act on file rows. `Trash` lists the trashed files with `Restore` and `Empty file trash` (after `Delete forever?`).
+- Open a terminal on a cloud environment setup page: it runs a login shell in the thread's environment on the durable app-server (`command/exec` with a pseudo-terminal, `command/exec/write`, `command/exec/terminate`), in the directory `environment/info` reports. It shows the original's `Waiting for environment…`, `Opening terminal…`, `Connecting…`, `Input may be incomplete` and `Environment changed` (`New terminal`) states. A lost connection opens a fresh shell after 1, 2 and 4 s (`Reconnecting…`), then shows `Couldn’t reconnect`; that state and `Shell exited` offer `Retry`.
 
 ## [0.1.1] - 2026-11-06
 
@@ -189,6 +195,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add `Group by` (`Project` or `None`) to the Archived chats filter menu; `None` shows every archived chat in one list without project headers.
 
 ### Fixed
+- List the Settings nav rows as the original does: `Ads controls` only with Statsig gate `665873859`, `Debug` only with gate `2423536643` or `CODEX_GPUI_DEBUG_MENU=1` (debug builds no longer show it), and `File type handlers` only while a plugin file viewer exists or its page is open. Paint a disabled settings switch at 60% as one Skia layer, as Settings ▸ General's `Default permissions` shows.
 - Match the original profile menu: the account name and plan header, `Usage` with the percent left, `Show Pet`, `Settings` with their shortcuts, a `Help` flyout with What's new posts, setup, guide and privacy links, and `Log out`.
 - Draw the Help ▸ What's new timeline as the original does: one segment per post, through the dot centers, from 8 px below each dot to 8 px above the next.
 - Hide the whole Home sidebar, including the header, `New chat` and `Your dot` rows, with the panel when it collapses, and fit project and Recents titles to a resized panel instead of a fixed 264 px width.
