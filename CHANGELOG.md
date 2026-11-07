@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Publish the macOS arm64 zip and a `.dmg` with each release, built on the self-hosted Apple-silicon runner (replaces the universal zip).
 - Add a Performance section to the README with measured start time, memory, CPU, size and scroll figures against the original Codex app.
 - Show the green `Awaiting approval` pill and the blue dot on a sidebar chat row while its thread waits for an approval (`thread/status/changed` with the `waitingOnApproval` active flag); both go when the flag clears or the thread goes idle.
 - Open a thread's latest plan in its own window (the original's `/plan-summary` page): Command-click Thread summary ▸ `Plan`. The window draws the plan with the thread's markdown in a `Plan` card; a plain click still opens the `Plan` side panel tab.

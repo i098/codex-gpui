@@ -1,5 +1,5 @@
 name: release
-# A `vMAJOR.MINOR.PATCH` tag on a merged `tools/version.sh` bump publishes the universal (arm64 + x86_64) macOS zip, the Linux .deb and the Windows MSIX.
+# A `vMAJOR.MINOR.PATCH` tag on a merged `tools/version.sh` bump publishes the macOS arm64 zip and .dmg, the Linux .deb and the Windows MSIX.
 on:
   push:
     tags: ['v*']
@@ -24,9 +24,10 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --title "Codex GPUI $version" --notes-file notes.md --verify-tag
   macos:
     needs: release
-    runs-on: macos-14
+    # Self-hosted Apple-silicon runner; GitHub-hosted macOS runners are not available to this repository.
+    runs-on: [self-hosted, macOS, ARM64, macmini-arm64]
     env:
-      CODEX_GPUI_UNIVERSAL: "1"
+      RELEASE_DIR: /tmp/codex-gpui-release-${{ github.run_id }}
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       GH_TOKEN: ${{ github.token }}
       # With SPARKLE_ED_PRIVATE_KEY and SPARKLE_ED_PUBLIC_KEY set, the zip
@@ -49,8 +50,10 @@ jobs:
           version=$(tools/version.sh)
           [[ $GITHUB_REF_NAME == "v$version" ]] || { echo "tag $GITHUB_REF_NAME is not v$version" >&2; exit 1; }
           echo "VERSION=$version" >>"$GITHUB_ENV"
-      - name: Add the Intel Rust target
-        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+      - name: Find the Rust toolchain
+        run: |
+          echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
+          PATH=$HOME/.cargo/bin:$PATH rustup target add aarch64-apple-darwin
       - name: Fetch Sparkle
         if: ${{ env.SPARKLE_ED_PRIVATE_KEY != '' }}
         run: |
@@ -73,24 +76,28 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
           security list-keychains -d user -s "$keychain" login.keychain-db
           rm "$RUNNER_TEMP/certificate.p12"
+      # tools/bundle.sh signs ad hoc without CODEX_GPUI_SIGN_IDENTITY, and signs with the hardened
+      # runtime and notarizes only when the Developer ID and notary secrets exist.
       - name: Build, sign and verify the bundle
-        run: bash tools/bundle.sh --assemble /tmp/codex-gpui-release normal "$GITHUB_SHA" archive
+        run: bash tools/bundle.sh --assemble "$RELEASE_DIR" normal "$GITHUB_SHA" archive
       - name: Publish the release
         run: |
-          zip=codex-gpui-$VERSION-macos-universal.zip
-          mv /tmp/codex-gpui-release/bundle.zip "$zip"
-          assets=("$zip")
-          if [[ -f /tmp/codex-gpui-release/bundle.dmg ]]; then
-              dmg=codex-gpui-$VERSION-macos.dmg
-              mv /tmp/codex-gpui-release/bundle.dmg "$dmg"
-              assets+=("$dmg")
-          fi
+          zip=codex-gpui-$VERSION-macos-arm64.zip
+          dmg=codex-gpui-$VERSION-macos-arm64.dmg
+          mv "$RELEASE_DIR/bundle.zip" "$zip"
+          mv "$RELEASE_DIR/bundle.dmg" "$dmg"
+          assets=("$zip" "$dmg")
           if [[ -n $SPARKLE_ED_PRIVATE_KEY ]]; then
               python3 tools/appcast.py "$zip" --tag "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --sign-update /tmp/sparkle/bin/sign_update --out feed
               (cd feed && ln -s "../$zip" . && shasum -a 256 -c "$zip.sha256" && rm "$zip")
               assets+=(feed/appcast.xml "feed/$zip.sha256")
           fi
           gh release upload "$GITHUB_REF_NAME" "${assets[@]}"
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf -- "$RELEASE_DIR" /tmp/sparkle /tmp/sparkle.tar.xz "$RUNNER_TEMP/release.keychain-db"
+          security delete-keychain "$RUNNER_TEMP/release.keychain-db" 2>/dev/null || true
   windows:
     needs: release
     runs-on: windows-latest
