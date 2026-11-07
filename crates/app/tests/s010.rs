@@ -51,10 +51,7 @@ fn menu(fx: &Fx) -> Vec<(String, String, bool)> {
 
 #[test]
 fn selected_text_menu_preserves_selection_and_clipboard() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        println!("s010: the Metal replay requires macOS");
-        return Ok(());
-    }
+    common::skip_unless_macos!("s010");
     let recording: Value =
         serde_json::from_str(include_str!("../../../refs/interactions/s010.json"))?;
     let result = &recording["result"];

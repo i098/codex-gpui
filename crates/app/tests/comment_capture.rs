@@ -112,7 +112,7 @@ fn output(name: &str) -> Result<PathBuf> {
 }
 
 #[test]
-#[ignore]
+#[ignore = "requires CGX_COMMENT_EVIDENCE and the retained original comment screenshots"]
 fn capture_original_comment_states() -> Result<()> {
     common::install_panic_hook();
     let recorded = common::recorded_thread(common::SUBTRACT)?;

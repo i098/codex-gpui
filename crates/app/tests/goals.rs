@@ -11,9 +11,7 @@ fn proxy() {
 
 #[test]
 fn goal_commands_preserve_drafts_and_show_server_state() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("goals");
     let mut lines = script(None, |line| {
         if let Some(goal) = line.pointer_mut("/msg/result/goal") {
             *goal = json!({"threadId": common::GREETING, "objective": "Ship the native app", "status": "paused"});
@@ -105,9 +103,7 @@ fn goal_commands_preserve_drafts_and_show_server_state() -> Result<()> {
 
 #[test]
 fn thread_memory_commands_do_not_change_global_memory_settings() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("goals");
     let mut lines = script(None, |_| {})?;
     lines.extend(exchange("thread/memoryMode/set", json!({})));
     lines.extend(exchange("thread/memoryMode/set", json!({})));

@@ -17,9 +17,7 @@ fn proxy() {
 
 #[test]
 fn text_only_model_blocks_image_send() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("image_models");
     // SAFETY: set before the app and its threads start.
     unsafe { std::env::set_var("CODEX_HOME", "/tmp/cgx-mac/home") };
     let mut lines = script(None, |line| {

@@ -100,10 +100,7 @@ fn step(fx: &mut Fx, step: &Value) -> Result<()> {
 
 #[test]
 fn shell_tab_boundaries_match_original() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        println!("f1c: requires the macOS headless renderer");
-        return Ok(());
-    }
+    common::skip_unless_macos!("f1c");
     let recording: Value =
         serde_json::from_slice(&fs::read(format!("{ROOT}/refs/interactions/f1c.json"))?)?;
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
