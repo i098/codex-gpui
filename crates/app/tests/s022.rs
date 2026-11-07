@@ -84,10 +84,7 @@ fn notify(fx: &mut Fx, step: &Value) -> Result<()> {
 
 #[test]
 fn composer_editing_matches_original() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        println!("s022: the Metal replay requires macOS");
-        return Ok(());
-    }
+    common::skip_unless_macos!("s022");
     let rec: Value =
         serde_json::from_slice(&fs::read(format!("{ROOT}/refs/interactions/s022.json"))?)?;
     let steps = rec["steps"].as_array().context("steps")?;

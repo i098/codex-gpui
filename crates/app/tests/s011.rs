@@ -47,10 +47,7 @@ fn drag(fx: &mut Fx, step: &Value) -> Result<()> {
 
 #[test]
 fn selection_and_copy_match_the_original() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        println!("s011: the Metal renderer requires macOS");
-        return Ok(());
-    }
+    common::skip_unless_macos!("s011");
     let rec: Value =
         serde_json::from_slice(&fs::read(format!("{ROOT}/refs/interactions/s011.json"))?)?;
     let (steps, result) = (&rec["steps"], &rec["result"]);

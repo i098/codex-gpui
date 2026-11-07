@@ -28,7 +28,7 @@ fn wait_prompt(fx: &mut Fx) -> Result<()> {
 }
 
 #[test]
-#[ignore]
+#[ignore = "requires CGX_TERMINAL_EVIDENCE and a live shell"]
 fn capture_live_terminal() -> Result<()> {
     common::install_panic_hook();
     let out = std::path::PathBuf::from(

@@ -96,9 +96,7 @@ fn sent(fx: &mut Fx, method: &str) -> Result<Vec<Value>> {
 
 #[test]
 fn resume_starts_the_paused_queue() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("queue_paused");
     let mut fx = paused()?;
     fx.capture_evidence("CGX_QUEUE_PAUSED_EVIDENCE", "queue-paused")?;
     // The banner's `Resume` button emits this action.
@@ -116,9 +114,7 @@ fn resume_starts_the_paused_queue() -> Result<()> {
 
 #[test]
 fn send_while_paused_asks_to_clear_the_queue() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("queue_paused");
     let mut fx = paused()?;
     fx.type_text("New request")?;
     fx.keys("enter")?;

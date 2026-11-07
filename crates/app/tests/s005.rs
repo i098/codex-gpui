@@ -13,10 +13,7 @@ fn proxy() {
 
 #[test]
 fn user_message_hover_and_copy() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        println!("s005: macOS renderer required");
-        return Ok(());
-    }
+    common::skip_unless_macos!("s005");
     let rec: Value = serde_json::from_str(include_str!("../../../refs/interactions/s005.json"))?;
     let steps = rec["steps"].as_array().unwrap();
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
