@@ -1037,10 +1037,6 @@ impl Personalization {
     /// The open editor's mode switch, Cancel and Save.
     fn editor_actions(&self, document: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let t = cx.theme().clone();
-        let button_text = match t.appearance {
-            theme::Appearance::Dark => gpui::rgb(0x2d2d2d).into(),
-            theme::Appearance::Light => t.text_inverse,
-        };
         let save = self.editor.is_some() && !self.loading && !self.saving && self.dirty(cx);
         div()
             .flex()
@@ -1072,7 +1068,7 @@ impl Personalization {
                     control(
                         ("instructions-save", "Save"),
                         t.button_primary_solid,
-                        button_text,
+                        t.text_primary_solid,
                         save,
                         window,
                         cx,
@@ -1089,10 +1085,6 @@ impl Personalization {
         if !self.has_override {
             return None;
         }
-        let warning_surface: Hsla = match t.appearance {
-            theme::Appearance::Dark => gpui::rgb(0x281105).into(),
-            theme::Appearance::Light => gpui::rgb(0xfff5f0).into(),
-        };
         Some(
             div()
                 .id("instructions-override")
@@ -1117,7 +1109,7 @@ impl Personalization {
                 .child(shapes::decoration(shapes::Decoration {
                     radius: gpui::Corners::all(px(25.)),
                     corner: shapes::Corner::Squircle,
-                    fill: Some(warning_surface.opacity(0.3)),
+                    fill: Some(t.warning_surface.opacity(0.3)),
                     ..Default::default()
                 }))
                 .child(
@@ -1339,7 +1331,7 @@ impl Render for Personalization {
                 .tab_index(0)
                 .role(gpui::Role::Link)
                 .hover(|style| style.underline())
-                .focus_visible(|style| style.border_2().border_color(gpui::rgb(0x3a83f7)))
+                .focus_visible(|style| style.border_2().border_color(t.focus_ring))
                 .on_click(|_, _, cx| {
                     cx.stop_propagation();
                     cx.open_url("https://developers.openai.com/codex/guides/agents-md/#create-global-guidance");
