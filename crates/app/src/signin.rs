@@ -387,7 +387,11 @@ mod browser {
     }
 }
 
-use crate::{Root, host, host_settings};
+use crate::{
+    Root,
+    chatgpt::{self, Gate},
+    host, host_settings,
+};
 use anyhow::{Context as _, Result};
 use gpui::{AppContext as _, Context, Entity};
 use serde_json::{Value, json};
@@ -397,8 +401,6 @@ use ui::screens::signin::{
     RequestError,
 };
 use url::Url;
-
-pub(crate) const ORIGINAL_APP_VERSION: &str = "26.1007.30912";
 
 impl Root {
     pub(crate) fn new_login(
@@ -498,19 +500,8 @@ impl Root {
         };
         let host = self.host.clone();
         let weak = login.downgrade();
-        let request = host::Request::Http(json!({
-            "url": "/wham/statsig/bootstrap", "method": "POST",
-            "body": json!({"app_session_id": host::device_id(), "app_version": ORIGINAL_APP_VERSION, "brand_name": "chatgpt", "build_flavor": "prod", "locale": "en-US", "stable_id": stable_id, "system_name": std::env::consts::OS, "window_type": "electron"}).to_string(),
-            "headers": {"OAI-Language": "en", "X-OpenAI-Attach-Auth": "1", "X-OpenAI-Attach-Integrity-State": "1", "originator": "Codex Desktop"},
-            "retry": false, "returnErrorResponse": true,
-        }));
-        let anonymous = host::Request::Http(json!({
-            "url": "https://ab.chatgpt.com/v1/initialize?k=client-sYWqzCYMRkUg4DqqiZcR5DGTNl2iD7zNJY0HoeDLzxR&st=js-mono&sv=3.34.0",
-            "method": "POST",
-            "body": json!({"user":{"customIDs":{"stableID":stable_id}},"hash":"djb2","deltasResponseRequested":false,"full_checksum":null}).to_string(),
-            "headers":{"Content-Type":"application/json"},
-            "retry":false,"returnErrorResponse":true
-        }));
+        let request = chatgpt::bootstrap_request(&stable_id, None);
+        let anonymous = chatgpt::anonymous_bootstrap_request(&stable_id);
         cx.spawn(async move |_, cx| {
             let result = cx
                 .background_executor()
@@ -599,15 +590,9 @@ impl Root {
 }
 
 fn options(response: &Value) -> Result<Options> {
-    let decoded;
-    let payload = if let Some(raw) = response["statsigPayload"].as_str() {
-        decoded = serde_json::from_str::<Value>(raw)?;
-        &decoded
-    } else {
-        response
-    };
+    let payload = chatgpt::payload(response.clone())?;
     anyhow::ensure!(
-        payload["feature_gates"].is_object() && payload["layer_configs"].is_object(),
+        payload["layer_configs"].is_object(),
         "missing sign-in feature policy"
     );
     let provider = &payload["layer_configs"]["1561420571"]["value"];
@@ -615,8 +600,8 @@ fn options(response: &Value) -> Result<Options> {
     let auth = &payload["layer_configs"]["3446609779"]["value"];
     Ok(Options {
         providers: provider["enabled"] == true,
-        bedrock: payload["feature_gates"]["1934304769"]["value"] == true,
-        browser_help: payload["feature_gates"]["2502927686"]["value"] == true,
+        bedrock: Gate::SigninBedrock.enabled(&payload),
+        browser_help: Gate::SigninBrowserHelp.enabled(&payload),
         api_key_help: matches!(
             api["api_key_help_variant"].as_str(),
             Some("link" | "explanation" | "explanation-with-chatgpt")
@@ -779,7 +764,7 @@ fn browser_url(
         url.query_pairs_mut().append_pair("login_hint", email);
     }
     url.query_pairs_mut()
-        .append_pair("codex_app_version", ORIGINAL_APP_VERSION);
+        .append_pair("codex_app_version", chatgpt::ORIGINAL_APP_VERSION);
     if let Some(id) = stable_id {
         url.query_pairs_mut()
             .append_pair("source_surface_stable_id", id)

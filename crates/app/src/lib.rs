@@ -7,6 +7,7 @@ mod account;
 mod account_backend;
 mod activity_access;
 mod archived_chats;
+mod chatgpt;
 mod chatgpt_chats;
 mod chronicle;
 mod cloud_task;

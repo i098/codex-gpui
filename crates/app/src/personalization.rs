@@ -1,5 +1,6 @@
 use crate::{
     Root, SettingsLeave,
+    chatgpt::{self, Gate},
     host::{self, Host, Identity, Request},
 };
 use anyhow::{Context as _, Result, bail, ensure};
@@ -31,38 +32,12 @@ fn read_unified_instructions(host: &dyn Host) -> Result<bool> {
     let Some(identity) = host.identity() else {
         return Ok(false);
     };
-    let response = host.fetch(&Request::Http(json!({
-        "url": "/wham/statsig/bootstrap",
-        "method": "POST",
-        "body": json!({
-            "app_session_id": crate::uuid_v4(),
-            "app_version": env!("CARGO_PKG_VERSION"),
-            "brand_name": "chatgpt",
-            "build_flavor": "prod",
-            "locale": "en-US",
-            "stable_id": identity.device_id,
-            "system_name": if cfg!(target_os = "macos") { "macOS" } else { std::env::consts::OS },
-            "window_type": "electron"
-        }).to_string(),
-        "headers": {
-            "OAI-Language": "en",
-            "X-OpenAI-Attach-Auth": "1",
-            "X-OpenAI-Attach-Integrity-State": "1",
-            "originator": "Codex Desktop"
-        },
-        "expectedIdentity": {"accountId": identity.account_id, "userId": identity.user_id},
-        "retry": false,
-        "returnErrorResponse": true
-    })))?;
-    let response = host::json_body(&response)?;
-    let payload: Value = serde_json::from_str(
-        response["statsigPayload"]
-            .as_str()
-            .context("missing personalization feature gates")?,
-    )?;
-    Ok(payload["feature_gates"]["2826489636"]["value"]
-        .as_bool()
-        .unwrap_or(false))
+    let response = host.fetch(&chatgpt::bootstrap_request(
+        &identity.device_id,
+        Some(&identity),
+    ))?;
+    let payload = chatgpt::payload(host::json_body(&response)?)?;
+    Ok(Gate::UnifiedInstructions.enabled(&payload))
 }
 
 /// `settings.response_presentation.mode`; anything but `standard` is the `rich` default.
@@ -79,7 +54,7 @@ fn read_layout(host: &dyn Host) -> Result<Option<&'static str>> {
     let identity = host
         .identity()
         .context("Layout and visuals require a ChatGPT account")?;
-    if crate::usage::statsig(host, &identity)["feature_gates"]["890187595"]["value"] != true {
+    if !Gate::PersonalizationLayout.enabled(&crate::usage::statsig(host, &identity)) {
         return Ok(None);
     }
     let settings = crate::usage::http(host, &identity, "GET", "/settings/user", None)?;
