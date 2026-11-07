@@ -12,6 +12,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Show the original's `This request requires additional safety checks, which can take extra time.` line under a running turn when the app-server sends `autoApprovalReview/strictReviewRequired`; it goes away when the turn ends.
 - Open a thread's pull request in a `PR #n` side panel tab from the branch actions' `View PR` (`Open in GitHub` still opens the browser). The tab shows the GitHub detail: status, branch, reviewers, comments, checks, description and code changes. It also offers `Ready for review`, `Convert to draft` or `Reopen`, which run `gh pr ready`, `gh pr ready --undo` or `gh pr reopen` through app-server `process/spawn`.
 - Edit files in the Files tab: double-click a line to edit at that line. Edits save to disk 3 s after they start or on `⌘S` through the host's `write-file`, which refuses to overwrite a file that changed on disk since it was read (`Could not save file`). Closing a tab saves first; a failed save asks `Discard file changes?` (`Continue viewing` / `Discard changes`). A text file over 10 MiB opens read-only with `Large file opened read-only`.
+- Open the `Your dot` page from the sidebar: the app reads `/accounts/check` and opens an available dot on ChatGPT. Otherwise the page shows `Couldn't load your dot` with `Try again`, as the desktop original does. The sidebar hides `Your dot` when the account check reports no dot.
 
 ## [0.1.1] - 2026-11-06
 

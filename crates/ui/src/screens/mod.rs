@@ -9,6 +9,7 @@ pub mod connections;
 pub use settings::computer_use;
 pub mod dictation;
 pub mod diff;
+pub mod dots;
 pub mod gpts;
 pub mod home;
 pub mod hotkey;

@@ -456,14 +456,13 @@ fn new_chat_row() -> Result<String> {
     Ok(String::new())
 }
 
+/// Without a ChatGPT identity the dot home cannot read the account (`tests/dots.rs` covers
+/// the available and unavailable dot).
 fn your_dot_row() -> Result<String> {
     let mut fx = Fx::new()?;
     fx.click(fx.at("home", "Your dot")?)?;
-    ensure!(
-        fx.cx.take_opened_url().as_deref() == Some("https://chatgpt.com/dots/home"),
-        "Your dot did not open the dot home page"
-    );
-    ensure!(fx.route() == Route::Home, "route {:?}", fx.route());
+    ensure!(fx.route() == Route::Dots, "route {:?}", fx.route());
+    ensure!(fx.cx.take_opened_url().is_none(), "Your dot opened a URL");
     Ok(String::new())
 }
 
