@@ -18,6 +18,7 @@ mod cloud_snapshot;
 pub use cloud::{CloudTaskRequest, create_cloud_task};
 pub use cloud_snapshot::create_cloud_task_from_worktree;
 mod automation_notifications;
+pub mod computer_use_browser;
 pub mod computer_use_requests;
 pub mod connections;
 mod context_status;
@@ -6732,10 +6733,18 @@ impl Root {
                 service.get_sound_mode().map_err(|error| error.to_string()),
             ))
         });
+        let settings = cx
+            .try_global::<host_settings::Settings>()
+            .map(|settings| settings.read_all().clone())
+            .unwrap_or_default();
+        let browsers =
+            cx.background_spawn(async move { computer_use_browser::current_controls(&settings) });
         cx.spawn(async move |_, cx| {
             let result = read.await;
+            let browsers = browsers.await;
             cx.update_global::<ComputerUseState, _>(|state, _| {
                 state.pending = false;
+                state.browsers = browsers;
                 match result {
                     Ok((readiness, approvals, sound)) => {
                         state.plugin = match readiness {
@@ -6797,6 +6806,44 @@ impl Root {
             cx.open_url(
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
             );
+            return;
+        }
+        if let ComputerUseAction::SetBrowserEnabled(family, enabled) = action {
+            let result = if cx.has_global::<host_settings::Settings>() {
+                cx.global_mut::<host_settings::Settings>()
+                    .write(family.setting_key(), json!(enabled))
+            } else {
+                Err(anyhow::anyhow!("host settings could not be loaded"))
+            };
+            match result {
+                Ok(()) => self.load_computer_use(cx),
+                Err(error) => cx.update_global::<ComputerUseState, _>(|state, _| {
+                    state.error = Some(format!("Couldn't save your changes: {error}"));
+                }),
+            }
+            return;
+        }
+        if let ComputerUseAction::OpenBrowserUrl(family, url) = action {
+            let open = cx.background_spawn({
+                let url = url.clone();
+                async move { computer_use_browser::open_url(family, &url) }
+            });
+            cx.spawn(async move |_, cx| {
+                if let Err(error) = open.await {
+                    cx.update(|cx| {
+                        // The store pages are plain web URLs; the system browser can open them.
+                        if url.starts_with("https://") {
+                            cx.open_url(&url);
+                        } else {
+                            cx.update_global::<ComputerUseState, _>(|state, _| {
+                                state.error =
+                                    Some(format!("Unable to open the browser page: {error}"));
+                            });
+                        }
+                    });
+                }
+            })
+            .detach();
             return;
         }
         let state = cx.global::<ComputerUseState>();
@@ -6875,7 +6922,10 @@ impl Root {
                 ComputerUseAction::RemoveApproval(bundle) => {
                     host.computer_use_settings()?.remove_app_approval(&bundle)?;
                 }
-                ComputerUseAction::Refresh | ComputerUseAction::OpenPermissions => unreachable!(),
+                ComputerUseAction::Refresh
+                | ComputerUseAction::OpenPermissions
+                | ComputerUseAction::SetBrowserEnabled(..)
+                | ComputerUseAction::OpenBrowserUrl(..) => unreachable!(),
             }
             let config = if reload {
                 bridge.request::<_, Value>("config/mcpServer/reload", json!({})).await?;
