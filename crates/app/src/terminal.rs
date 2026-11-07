@@ -1,10 +1,11 @@
 use crate::features::shortcuts::ToggleBottomPanel;
 use crate::{Root, Route, SidePanel, host_settings};
-use anyhow::Result;
+use anyhow::{Context as _, Result};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, Focusable as _, InteractiveElement,
-    IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, Window, canvas, div,
-    prelude::FluentBuilder as _, px,
+    App, AppContext as _, BackgroundExecutor, Context, Entity, EventEmitter, Focusable as _,
+    InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
+    Window, canvas, div, prelude::FluentBuilder as _, px,
 };
 use portable_pty::{CommandBuilder, MasterPty, PtySize};
 use serde_json::{Value, json};
@@ -12,9 +13,11 @@ use std::{
     collections::HashMap,
     io::{Read, Write},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
+    time::{Duration, Instant},
 };
 use theme::ActiveTheme as _;
 use ui::{
@@ -225,7 +228,33 @@ pub(crate) fn source_directories(state: Option<&Value>, thread: &str, cwd: &str)
 enum Output {
     Bytes(Vec<u8>),
     Error(String),
+    /// A cloud shell's input status: why typed input may not have reached it, or `None`.
+    Input(Option<String>),
     Finished,
+}
+
+/// A tab's running shell.
+enum Process {
+    Local(Pty),
+    Cloud(CloudShell),
+}
+
+impl Process {
+    fn send(&self, bytes: Vec<u8>) -> Result<()> {
+        match self {
+            Process::Local(pty) => pty.input.send(bytes)?,
+            Process::Cloud(shell) => shell.input.try_send(bytes)?,
+        }
+        Ok(())
+    }
+
+    fn resize(&self, rows: u16, cols: u16) -> Result<()> {
+        match self {
+            Process::Local(pty) => pty.resize(rows, cols),
+            // The original sizes a cloud shell once, when it starts.
+            Process::Cloud(_) => Ok(()),
+        }
+    }
 }
 
 /// A shell on a local pseudo-terminal; dropping it kills the shell.
@@ -315,14 +344,439 @@ impl Drop for Pty {
     }
 }
 
+/// Runs before the login shell of a cloud terminal: sizes the pseudo-terminal and marks each
+/// prompt (OSC 133), word for word as the original sends it.
+const CLOUD_PROLOGUE: &str = r#"stty cols "$1" rows "$2"; printf "\033[0m"; shift 2
+PROMPT_COMMAND='__codex_prompt_status=$?; __codex_prompt_start() { printf "\033]133;A\007"; return "$__codex_prompt_status"; }; __codex_prompt_start'"${PROMPT_COMMAND:+
+$PROMPT_COMMAND}"
+export PROMPT_COMMAND; exec "$@""#;
+
+/// The environment user's login shell, else `/bin/bash`.
+const CLOUD_LOGIN_SHELL: &str = r#"login_shell="${SHELL:-}"
+if [ -z "$login_shell" ] && command -v getent >/dev/null 2>&1; then
+  login_shell="$(getent passwd "$(id -un)" | cut -d: -f7 || true)"
+fi
+if [ -z "$login_shell" ] || [ ! -x "$login_shell" ]; then
+  login_shell="/bin/bash"
+fi
+exec "$login_shell" -il"#;
+
+/// The server ends a cloud shell after this much output.
+const CLOUD_OUTPUT_CAP: u64 = 1024 * 1024;
+
+/// A shell in a cloud task's environment: a `command/exec` process with a pseudo-terminal on
+/// the durable app-server, as the original's Cloud terminal runs it. Dropping it ends the
+/// process.
+struct CloudShell {
+    bridge: Arc<bridge::Bridge>,
+    process: String,
+    input: async_channel::Sender<Vec<u8>>,
+    executor: BackgroundExecutor,
+    /// The server answered `command/exec`: the process has ended.
+    done: Arc<AtomicBool>,
+    _tasks: [gpui::Task<()>; 2],
+}
+
+impl CloudShell {
+    /// Resolves the environment's working directory, then starts the shell there.
+    async fn spawn(
+        bridge: Arc<bridge::Bridge>,
+        environment: String,
+        (rows, cols): (u16, u16),
+        executor: BackgroundExecutor,
+    ) -> Result<(Self, async_channel::Receiver<Output>, String)> {
+        let cwd = cloud_cwd(&bridge, &environment, &executor).await?;
+        let process = format!(
+            "gpui-cloud-terminal-{}-{}",
+            std::process::id(),
+            NEXT_PROCESS.fetch_add(1, Ordering::Relaxed)
+        );
+        let params = json!({
+            "environmentId": environment,
+            "processId": process,
+            "command": [
+                "sh", "-c", CLOUD_PROLOGUE, "sh", cols.to_string(), rows.to_string(),
+                "sh", "-c", CLOUD_LOGIN_SHELL,
+            ],
+            "cwd": cwd,
+            "env": {"TERM": "xterm-256color", "TERMINFO": null, "TERMINFO_DIRS": null},
+            "tty": true,
+            "streamStdin": true,
+            "streamStdoutStderr": true,
+            "disableTimeout": true,
+            "outputBytesCap": CLOUD_OUTPUT_CAP,
+        });
+        let events = bridge.subscribe_async();
+        let (output, receive) = async_channel::unbounded();
+        let (input, pending) = async_channel::unbounded::<Vec<u8>>();
+        // Closed at the shell's first output: the original holds input until then.
+        let (ready, started) = async_channel::bounded::<()>(1);
+        let done = Arc::new(AtomicBool::new(false));
+        let run = executor.spawn(run_cloud_shell(
+            bridge.clone(),
+            params,
+            events,
+            output.clone(),
+            ready,
+            done.clone(),
+        ));
+        let write = executor.spawn({
+            let (bridge, process, done) = (bridge.clone(), process.clone(), done.clone());
+            async move {
+                let _ = started.recv().await;
+                let mut status = None;
+                while let Ok(bytes) = pending.recv().await {
+                    if done.load(Ordering::Acquire) {
+                        continue;
+                    }
+                    let sent = bridge
+                        .request::<_, Value>(
+                            "command/exec/write",
+                            json!({"processId": process, "deltaBase64": BASE64.encode(bytes)}),
+                        )
+                        .await
+                        .err()
+                        .map(|error| error.to_string());
+                    if sent != status {
+                        status = sent.clone();
+                        if output.send(Output::Input(sent)).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        let shell = Self {
+            bridge,
+            process,
+            input,
+            executor,
+            done,
+            _tasks: [run, write],
+        };
+        Ok((shell, receive, cwd))
+    }
+}
+
+impl Drop for CloudShell {
+    fn drop(&mut self) {
+        if !self.done.load(Ordering::Acquire) {
+            let (bridge, process) = (self.bridge.clone(), self.process.clone());
+            self.executor
+                .spawn(async move {
+                    let _ = bridge
+                        .request::<_, Value>(
+                            "command/exec/terminate",
+                            json!({ "processId": process }),
+                        )
+                        .await;
+                })
+                .detach();
+        }
+    }
+}
+
+/// Forwards the process's output until `command/exec` answers; ends with `Finished` for an
+/// exited shell, else `Error` with why the connection to it was lost.
+async fn run_cloud_shell(
+    bridge: Arc<bridge::Bridge>,
+    params: Value,
+    events: async_channel::Receiver<bridge::Event>,
+    output: async_channel::Sender<Output>,
+    ready: async_channel::Sender<()>,
+    done: Arc<AtomicBool>,
+) {
+    let process = params["processId"].clone();
+    let mut ready = Some(ready);
+    let mut exec = std::pin::pin!(bridge.request::<_, Value>("command/exec", params));
+    let error = loop {
+        // Events first: the server sends a process's last output before its answer.
+        let next = futures_lite::future::or(async { Ok(events.recv().await) }, async {
+            Err(exec.as_mut().await)
+        })
+        .await;
+        let answer = match next {
+            Ok(Ok(bridge::Event::Notification { method, params }))
+                if method == "command/exec/outputDelta" && params["processId"] == process =>
+            {
+                ready = None;
+                let Some(bytes) = params["deltaBase64"]
+                    .as_str()
+                    .and_then(|delta| BASE64.decode(delta).ok())
+                else {
+                    break Some("Cloud terminal received invalid output".to_owned());
+                };
+                let _ = output.send(Output::Bytes(bytes)).await;
+                if params["capReached"] == true {
+                    break Some("Cloud terminal reached the server's 1 MiB output limit".into());
+                }
+                continue;
+            }
+            Ok(Ok(bridge::Event::Notification { .. } | bridge::Event::Request { .. })) => continue,
+            // A closed connection fails its unanswered requests, so the answer is ready.
+            Ok(Ok(bridge::Event::Closed) | Err(_)) => exec.as_mut().await,
+            Err(answer) => answer,
+        };
+        done.store(true, Ordering::Release);
+        break match answer {
+            Ok(exit) if exit["exitCode"].is_i64() => None,
+            Ok(_) => Some("Cloud terminal received an invalid exit".into()),
+            Err(error) => Some(error.to_string()),
+        };
+    };
+    drop(ready);
+    let _ = output
+        .send(error.map_or(Output::Finished, Output::Error))
+        .await;
+}
+
+/// The environment's working directory, as `environment/info` reports it, once the server
+/// confirms it is a directory. An offline environment is asked again for up to five minutes.
+async fn cloud_cwd(
+    bridge: &bridge::Bridge,
+    environment: &str,
+    executor: &BackgroundExecutor,
+) -> Result<String> {
+    const RETRY: Duration = Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(300);
+    loop {
+        match environment_cwd(bridge, environment).await {
+            // shortcut: polls every 5 s; the original also wakes on `thread/environment/connected`.
+            Err(error) if environment_offline(&error) && Instant::now() + RETRY <= deadline => {
+                executor.timer(RETRY).await;
+            }
+            result => {
+                return result?
+                    .context("The terminal environment did not report a valid working directory");
+            }
+        }
+    }
+}
+
+async fn environment_cwd(bridge: &bridge::Bridge, environment: &str) -> Result<Option<String>> {
+    let info: Value = bridge
+        .request("environment/info", json!({ "environmentId": environment }))
+        .await?;
+    let Some(cwd) = info["cwd"].as_str() else {
+        return Ok(None);
+    };
+    let cwd = if cwd.starts_with("file:") {
+        match url::Url::parse(cwd)
+            .ok()
+            .and_then(|url| url.to_file_path().ok())
+        {
+            Some(path) => path.to_string_lossy().into_owned(),
+            None => return Ok(None),
+        }
+    } else {
+        cwd.to_owned()
+    };
+    if !cwd.starts_with('/') {
+        return Ok(None);
+    }
+    let metadata = bridge
+        .request::<_, Value>(
+            "fs/getMetadata",
+            json!({ "environmentId": environment, "path": cwd }),
+        )
+        .await;
+    let directory = match metadata {
+        Ok(metadata) => metadata["isDirectory"] == true,
+        Err(error)
+            if error
+                .downcast_ref::<bridge::RpcError>()
+                .is_some_and(|error| {
+                    matches!(
+                        error.message.as_str(),
+                        "No such file or directory (os error 2)" | "Not a directory (os error 20)"
+                    )
+                }) =>
+        {
+            false
+        }
+        Err(error) => return Err(error),
+    };
+    Ok(directory.then_some(cwd))
+}
+
+/// The environment registry's answer for an environment that is not running yet.
+fn environment_offline(error: &anyhow::Error) -> bool {
+    let Some(error) = error.downcast_ref::<bridge::RpcError>() else {
+        return false;
+    };
+    ["404 Not Found", "409 Conflict"].iter().any(|status| {
+        error
+            .message
+            .strip_prefix("environment registry connect returned ")
+            .and_then(|rest| rest.strip_prefix(status))
+            .and_then(|rest| rest.strip_prefix(": environment_offline"))
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'))
+    })
+}
+
+/// The durable app-server a cloud thread runs on and the environments it reported
+/// (`thread/environment/connected`), which a cloud terminal panel runs its shells in.
+#[derive(Clone, Default)]
+pub struct CloudTarget {
+    pub bridge: Option<Arc<bridge::Bridge>>,
+    /// The thread's environment, kept after it disconnects.
+    pub environment: Option<String>,
+    /// The environments connected now.
+    pub connected: Vec<String>,
+}
+
+impl CloudTarget {
+    /// Applies a `thread/environment/connected` or `…/disconnected` notification.
+    pub fn apply(&mut self, method: &str, environment: &str) {
+        // The original ignores the managed placeholder environment.
+        if environment == "managed" {
+            return;
+        }
+        match method {
+            "thread/environment/connected" => {
+                self.environment = Some(environment.to_owned());
+                if !self.connected.iter().any(|id| id == environment) {
+                    self.connected.push(environment.to_owned());
+                }
+            }
+            "thread/environment/disconnected" => self.connected.retain(|id| id != environment),
+            _ => {}
+        }
+    }
+}
+
+/// The quiet status row under a cloud terminal, as the original words it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CloudStatus {
+    Connecting,
+    Reconnecting,
+    EnvironmentChanged,
+    InputInterrupted,
+    ShellExited,
+    ConnectionFailed,
+}
+
+impl CloudStatus {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Connecting => "Connecting…",
+            Self::Reconnecting => "Reconnecting…",
+            Self::EnvironmentChanged => "Environment changed",
+            Self::InputInterrupted => "Input may be incomplete",
+            Self::ShellExited => "Shell exited",
+            Self::ConnectionFailed => "Couldn’t reconnect",
+        }
+    }
+}
+
+/// The cloud facts of one terminal tab.
+#[derive(Default)]
+struct CloudState {
+    /// The environment the tab's shell runs in, fixed when it first starts.
+    environment: Option<String>,
+    has_output: bool,
+    reconnecting: bool,
+    /// Why the connection to the shell was lost.
+    error: Option<String>,
+    input_error: Option<String>,
+    reconnect: Reconnect,
+}
+
+impl CloudState {
+    fn attached(&mut self, now: Instant) {
+        self.reconnect.connected_at = Some(now);
+        self.reconnecting = false;
+        self.error = None;
+        self.input_error = None;
+    }
+
+    /// `None` while the tab waits for an environment; else whether `Opening terminal…` covers
+    /// the terminal, and the status row under it.
+    fn view(
+        &self,
+        target: &CloudTarget,
+        attached: bool,
+        exited: bool,
+    ) -> Option<(bool, Option<CloudStatus>)> {
+        let environment = self
+            .environment
+            .as_deref()
+            .or(target.environment.as_deref())?;
+        let stopped = exited || self.error.is_some();
+        let changed = self.environment.is_some()
+            && target.environment.is_some()
+            && self.environment != target.environment;
+        let status = if changed {
+            Some(CloudStatus::EnvironmentChanged)
+        } else if self.reconnecting {
+            Some(CloudStatus::Reconnecting)
+        } else if stopped {
+            Some(if self.error.is_some() {
+                CloudStatus::ConnectionFailed
+            } else {
+                CloudStatus::ShellExited
+            })
+        } else if self.input_error.is_some() {
+            Some(CloudStatus::InputInterrupted)
+        } else if !attached
+            && (self.has_output || !target.connected.iter().any(|id| id == environment))
+        {
+            Some(CloudStatus::Connecting)
+        } else {
+            None
+        };
+        let overlay = !stopped && !self.reconnecting && !attached && !self.has_output;
+        Some((overlay, status))
+    }
+}
+
+/// The original's automatic recovery of a cloud shell: three attempts, 1 s, 2 s and 4 s after
+/// a loss, counted again once a shell stayed connected for 30 s.
+#[derive(Default)]
+struct Reconnect {
+    attempts: usize,
+    connected_at: Option<Instant>,
+}
+
+impl Reconnect {
+    const DELAYS: [Duration; 3] = [
+        Duration::from_secs(1),
+        Duration::from_secs(2),
+        Duration::from_secs(4),
+    ];
+
+    /// The delay before the next attempt, or `None` once they ran out.
+    fn schedule(&mut self, now: Instant) -> Option<Duration> {
+        if self
+            .connected_at
+            .take()
+            .is_some_and(|at| now.duration_since(at) >= Duration::from_secs(30))
+        {
+            self.attempts = 0;
+        }
+        let delay = *Self::DELAYS.get(self.attempts)?;
+        self.attempts += 1;
+        Some(delay)
+    }
+}
+
 impl Root {
     pub fn terminal_panel(&self) -> Option<&Entity<TerminalPanel>> {
         let id = match &self.state.route {
             Route::Home => HOME_TERMINAL,
             Route::Thread(id) => id,
+            Route::CloudSetup { config_id, .. } => config_id,
             _ => return None,
         };
         self.terminal.panels.get(id)
+    }
+
+    /// The durable thread of a cloud setup route, whose terminal runs in its environment.
+    fn cloud_terminal(&self) -> Option<&CloudTarget> {
+        match &self.state.route {
+            Route::CloudSetup { .. } => self.cloud.as_ref()?.terminal.as_ref(),
+            _ => None,
+        }
     }
 
     fn terminal_target(&self, cx: &App) -> Option<(String, String)> {
@@ -339,7 +793,26 @@ impl Root {
                 .as_ref()
                 .filter(|thread| thread.read(cx).id() == id)
                 .map(|thread| (id.clone(), thread.read(cx).cwd().to_owned())),
+            Route::CloudSetup { config_id, .. } => self
+                .cloud_terminal()
+                .map(|_| (config_id.clone(), String::new())),
             _ => None,
+        }
+    }
+
+    /// Gives the open cloud setup route's terminal the durable thread's latest target.
+    pub fn set_cloud_terminal(
+        &mut self,
+        page: &Entity<ui::screens::cloud_task::CloudTaskPage>,
+        target: CloudTarget,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.cloud.as_mut().filter(|session| session.page == *page) else {
+            return;
+        };
+        session.terminal = Some(target.clone());
+        if let Some(panel) = self.terminal_panel().cloned() {
+            panel.update(cx, |panel, cx| panel.set_cloud(target, cx));
         }
     }
 
@@ -354,8 +827,9 @@ impl Root {
         let Some((id, cwd)) = self.terminal_target(cx) else {
             return;
         };
+        let cloud = self.cloud_terminal().cloned();
         if let std::collections::hash_map::Entry::Vacant(slot) = self.terminal.panels.entry(id) {
-            let panel = cx.new(|cx| TerminalPanel::new(cwd, cx));
+            let panel = cx.new(|cx| TerminalPanel::new(cwd, cloud, cx));
             cx.subscribe_in(&panel, window, |root, _, _: &PanelChanged, window, cx| {
                 if root.side == Some(SidePanel::Console)
                     && root
@@ -585,6 +1059,7 @@ impl Root {
         let panel = self.terminal_panel().cloned();
         if let Some(panel) = &panel
             && let Some((id, cwd)) = self.terminal_target(cx)
+            && panel.read(cx).cloud.is_none()
             && (panel.read(cx).cwd != cwd || !panel.read(cx).workspaces_loaded)
         {
             panel.update(cx, |panel, cx| {
@@ -649,11 +1124,15 @@ struct Session {
     error: Option<String>,
     exited: bool,
     warning_dismissed: bool,
-    /// `None` until the shell has started.
-    pty: Option<Pty>,
-    /// Input and size the surface sent before the shell started.
+    /// `None` until the shell has started, and while a cloud shell reconnects.
+    shell: Option<Process>,
+    /// Input the surface sent before the shell started.
     pending_input: Vec<Vec<u8>>,
-    pending_size: Option<(u16, u16)>,
+    /// The surface's last size: a shell that starts later, a reconnected one too, takes it.
+    size: Option<(u16, u16)>,
+    /// Counts the shell's starts, so a replaced shell's output and timers are dropped.
+    generation: u64,
+    cloud: CloudState,
 }
 
 /// The Settings shell when it still exists, else the platform default.
@@ -677,10 +1156,12 @@ pub struct TerminalPanel {
     roots: Vec<String>,
     workspaces_loaded: bool,
     focus_pending: bool,
+    /// Set for a cloud thread's panel: its tabs run in the thread's environment.
+    cloud: Option<CloudTarget>,
 }
 
 impl TerminalPanel {
-    fn new(cwd: String, cx: &mut Context<Self>) -> Self {
+    fn new(cwd: String, cloud: Option<CloudTarget>, cx: &mut Context<Self>) -> Self {
         let mut panel = Self {
             sessions: Vec::new(),
             active: 0,
@@ -691,9 +1172,36 @@ impl TerminalPanel {
             roots: vec![cwd],
             workspaces_loaded: false,
             focus_pending: false,
+            cloud,
         };
         panel.open(cx);
         panel
+    }
+
+    /// The active cloud tab's view: `None` while it waits for an environment, else whether
+    /// `Opening terminal…` covers it and its status row.
+    fn cloud_view(&self) -> Option<Option<(bool, Option<CloudStatus>)>> {
+        let target = self.cloud.as_ref()?;
+        let session = self.sessions.get(self.active)?;
+        Some(
+            session
+                .cloud
+                .view(target, session.shell.is_some(), session.exited),
+        )
+    }
+
+    /// What the active cloud tab says about its shell: the waiting or opening title, and the
+    /// status row; empty for a local panel or a running cloud shell.
+    pub fn cloud_status(&self) -> Vec<&'static str> {
+        match self.cloud_view() {
+            None => Vec::new(),
+            Some(None) => vec!["Waiting for environment…"],
+            Some(Some((overlay, status))) => overlay
+                .then_some("Opening terminal…")
+                .into_iter()
+                .chain(status.map(CloudStatus::label))
+                .collect(),
+        }
     }
 
     pub fn set_workspace(&mut self, cwd: String, roots: Vec<String>, cx: &mut Context<Self>) {
@@ -725,6 +1233,9 @@ impl TerminalPanel {
     }
 
     pub fn workspace_warning(&self) -> bool {
+        if self.cloud.is_some() {
+            return false;
+        }
         self.sessions.get(self.active).is_some_and(|session| {
             !session.warning_dismissed
                 && session.cwd != self.cwd
@@ -766,47 +1277,97 @@ impl TerminalPanel {
             }
         })
         .detach();
-        // Read per tab so a changed setting applies to the next new terminal.
-        let mut command = CommandBuilder::new(configured_shell(cx));
-        command.arg("-l");
-        command.cwd(&self.cwd);
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
         self.active = self.sessions.len();
         self.sessions.push(Session {
             id: id.clone(),
-            cwd: self.cwd.clone(),
+            cwd: if self.cloud.is_some() {
+                String::new()
+            } else {
+                self.cwd.clone()
+            },
             surface,
             error: None,
             exited: false,
             warning_dismissed: false,
-            pty: None,
+            shell: None,
             pending_input: Vec::new(),
-            pending_size: None,
+            size: None,
+            generation: 0,
+            cloud: CloudState::default(),
         });
+        self.start(&id, cx);
+        self.focus_pending = true;
+        cx.emit(PanelChanged);
+        cx.notify();
+    }
+
+    /// Starts the shell of tab `id`: a local login shell, or for a cloud panel a shell in the
+    /// environment the tab is bound to (the target's current one for a new tab). A cloud tab
+    /// without an environment waits; `set_cloud` starts it once the thread reports one.
+    fn start(&mut self, id: &str, cx: &mut Context<Self>) {
+        let (cloud, cwd) = (self.cloud.clone(), self.cwd.clone());
+        let Some(session) = self.sessions.iter_mut().find(|s| s.id == id) else {
+            return;
+        };
+        let started = match cloud {
+            None => {
+                // Read per tab so a changed setting applies to the next new terminal.
+                let mut command = CommandBuilder::new(configured_shell(cx));
+                command.arg("-l");
+                command.cwd(cwd);
+                command.env("TERM", "xterm-256color");
+                command.env("COLORTERM", "truecolor");
+                cx.background_executor().spawn(async move {
+                    Pty::spawn(command).map(|(pty, receive)| (Process::Local(pty), receive, None))
+                })
+            }
+            Some(target) => {
+                let (Some(bridge), Some(environment)) = (
+                    target.bridge,
+                    session.cloud.environment.clone().or(target.environment),
+                ) else {
+                    return;
+                };
+                session.cloud.environment = Some(environment.clone());
+                let size = session.size.unwrap_or((24, 80));
+                let executor = cx.background_executor().clone();
+                cx.background_executor().spawn(async move {
+                    let (shell, receive, cwd) =
+                        CloudShell::spawn(bridge, environment, size, executor).await?;
+                    Ok::<_, anyhow::Error>((Process::Cloud(shell), receive, Some(cwd)))
+                })
+            }
+        };
+        session.generation += 1;
+        let generation = session.generation;
+        let id = id.to_owned();
         cx.spawn(async move |panel, cx| {
-            let started = cx
-                .background_executor()
-                .spawn(async move { Pty::spawn(command) })
-                .await;
-            let receive = match started {
-                Ok((pty, receive)) => {
+            let receive = match started.await {
+                Ok((shell, receive, cwd)) => {
                     let ready = panel.update(cx, |panel, cx| {
-                        let Some(session) = panel.sessions.iter_mut().find(|s| s.id == id) else {
+                        let Some(session) = panel.session(&id, generation) else {
                             return false;
                         };
-                        if let Some((rows, cols)) = session.pending_size.take()
-                            && let Err(error) = pty.resize(rows, cols)
+                        if let Some((rows, cols)) = session.size
+                            && let Err(error) = shell.resize(rows, cols)
                         {
                             session.error = Some(error.to_string());
                         }
                         for bytes in session.pending_input.drain(..) {
-                            if let Err(error) = pty.input.send(bytes) {
+                            if let Err(error) = shell.send(bytes) {
                                 session.error = Some(error.to_string());
                                 break;
                             }
                         }
-                        session.pty = Some(pty);
+                        if let Some(cwd) = cwd {
+                            session.cwd = cwd;
+                            session.cloud.attached(std::time::Instant::now());
+                            session.exited = false;
+                            session
+                                .surface
+                                .update(cx, |surface, _| surface.writable = true);
+                        }
+                        session.shell = Some(shell);
                         cx.notify();
                         true
                     });
@@ -818,7 +1379,7 @@ impl TerminalPanel {
                 Err(error) => {
                     panel
                         .update(cx, |panel, cx| {
-                            panel.finish(&id, Some(error.to_string()), cx)
+                            panel.finish(&id, generation, Some(error.to_string()), cx)
                         })
                         .ok();
                     return;
@@ -826,25 +1387,29 @@ impl TerminalPanel {
             };
             while let Ok(output) = receive.recv().await {
                 let alive = panel.update(cx, |panel, cx| {
-                    let Some(session) = panel.sessions.iter_mut().find(|s| s.id == id) else {
+                    let cloud = panel.cloud.is_some();
+                    let Some(session) = panel.session(&id, generation) else {
                         return false;
                     };
                     match output {
                         Output::Bytes(bytes) => {
+                            session.cloud.has_output = true;
                             session
                                 .surface
                                 .update(cx, |surface, cx| surface.append(&bytes, cx));
-                            cx.notify();
                         }
-                        Output::Error(error) => {
-                            session.error = Some(error);
-                            cx.notify();
+                        Output::Error(error) if cloud => {
+                            panel.finish(&id, generation, Some(error), cx);
+                            return false;
                         }
+                        Output::Error(error) => session.error = Some(error),
+                        Output::Input(error) => session.cloud.input_error = error,
                         Output::Finished => {
-                            panel.finish(&id, None, cx);
+                            panel.finish(&id, generation, None, cx);
                             return false;
                         }
                     }
+                    cx.notify();
                     true
                 });
                 if !alive.unwrap_or(false) {
@@ -853,34 +1418,97 @@ impl TerminalPanel {
             }
         })
         .detach();
-        self.focus_pending = true;
-        cx.emit(PanelChanged);
-        cx.notify();
     }
 
-    /// Marks the shell of tab `id` as ended: its surface stops taking input.
-    fn finish(&mut self, id: &str, error: Option<String>, cx: &mut Context<Self>) {
-        if let Some(session) = self.sessions.iter_mut().find(|s| s.id == id) {
-            session.exited = true;
-            session.pty = None;
-            session.surface.update(cx, |surface, cx| {
-                surface.writable = false;
-                cx.notify();
-            });
-            if error.is_some() {
-                session.error = error;
+    /// Tab `id`, unless its shell was restarted since `generation` started.
+    fn session(&mut self, id: &str, generation: u64) -> Option<&mut Session> {
+        self.sessions
+            .iter_mut()
+            .find(|s| s.id == id && s.generation == generation)
+    }
+
+    /// Marks the shell of tab `id` as ended: its surface stops taking input. A cloud shell that
+    /// lost its connection (`error`) opens again after the reconnect delay while attempts remain.
+    fn finish(&mut self, id: &str, generation: u64, error: Option<String>, cx: &mut Context<Self>) {
+        let cloud = self.cloud.is_some();
+        let Some(session) = self.session(id, generation) else {
+            return;
+        };
+        session.shell = None;
+        cx.notify();
+        if cloud {
+            session.cloud.input_error = None;
+            session.cloud.reconnecting = false;
+            match &error {
+                None => session.cloud.reconnect = Reconnect::default(),
+                Some(_) => {
+                    if let Some(delay) = session.cloud.reconnect.schedule(std::time::Instant::now())
+                    {
+                        session.cloud.reconnecting = true;
+                        session.cloud.error = error;
+                        let id = id.to_owned();
+                        cx.spawn(async move |panel, cx| {
+                            cx.background_executor().timer(delay).await;
+                            panel
+                                .update(cx, |panel, cx| {
+                                    if panel.session(&id, generation).is_some() {
+                                        panel.start(&id, cx);
+                                    }
+                                })
+                                .ok();
+                        })
+                        .detach();
+                        return;
+                    }
+                }
             }
-            cx.notify();
+            session.cloud.error = error;
+        } else if error.is_some() {
+            session.error = error;
         }
+        session.exited = true;
+        session.surface.update(cx, |surface, cx| {
+            surface.writable = false;
+            cx.notify();
+        });
+    }
+
+    /// `Retry`: a fresh shell in the same cloud tab, in the environment it is bound to.
+    fn restart(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(session) = self.sessions.get_mut(index).filter(|s| s.exited) else {
+            return;
+        };
+        session.exited = false;
+        session.cloud.error = None;
+        session.cloud.reconnecting = true;
+        let id = session.id.clone();
+        self.start(&id, cx);
+    }
+
+    /// The durable thread's current target; tabs that waited for an environment start now.
+    pub fn set_cloud(&mut self, target: CloudTarget, cx: &mut Context<Self>) {
+        self.cloud = Some(target);
+        let waiting: Vec<String> = self
+            .sessions
+            .iter()
+            .filter(|s| s.shell.is_none() && !s.exited && s.cloud.environment.is_none())
+            .map(|s| s.id.clone())
+            .collect();
+        for id in waiting {
+            self.start(&id, cx);
+            // The waiting notice replaced the terminal, so it lost focus.
+            self.focus_pending = true;
+        }
+        cx.notify();
     }
 
     fn write(&mut self, index: usize, bytes: Vec<u8>) {
         let Some(session) = self.sessions.get_mut(index).filter(|s| !s.exited) else {
             return;
         };
-        match &session.pty {
-            Some(pty) => {
-                if let Err(error) = pty.input.send(bytes) {
+        match &session.shell {
+            Some(shell) => {
+                if let Err(error) = shell.send(bytes) {
                     session.error = Some(error.to_string());
                 }
             }
@@ -892,13 +1520,11 @@ impl TerminalPanel {
         let Some(session) = self.sessions.get_mut(index).filter(|s| !s.exited) else {
             return;
         };
-        match &session.pty {
-            Some(pty) => {
-                if let Err(error) = pty.resize(rows, cols) {
-                    session.error = Some(error.to_string());
-                }
-            }
-            None => session.pending_size = Some((rows, cols)),
+        session.size = Some((rows, cols));
+        if let Some(shell) = &session.shell
+            && let Err(error) = shell.resize(rows, cols)
+        {
+            session.error = Some(error.to_string());
         }
     }
 
@@ -945,6 +1571,8 @@ enum PanelAction {
     Hide,
     Dismiss,
     Reload,
+    /// A fresh shell in the same cloud tab.
+    Retry,
     Directory(usize),
 }
 
@@ -964,6 +1592,7 @@ impl TerminalPanel {
                 }
             }
             PanelAction::Directory(index) => self.change_directory(index, cx),
+            PanelAction::Retry => self.restart(self.active, cx),
             PanelAction::Reload => {
                 if self
                     .sessions
@@ -1080,8 +1709,7 @@ impl Render for TerminalPanel {
             let hovered = self.hovered == Some(index);
             let name = std::path::Path::new(&session.cwd)
                 .file_name()
-                .unwrap_or_default()
-                .to_string_lossy();
+                .map_or("Terminal".into(), |name| name.to_string_lossy());
             let label = if self.sessions.len() == 1 {
                 name.into_owned()
             } else {
@@ -1261,7 +1889,19 @@ impl Render for TerminalPanel {
                 cx,
             ));
         }
-        if session.error.is_some() {
+        let cloud = self.cloud_view();
+        if let Some(None) = cloud {
+            return panel.child(
+                notice(
+                    "Waiting for environment…",
+                    Some("The terminal will start when the task has an environment"),
+                    &theme,
+                )
+                .flex_1()
+                .justify_center(),
+            );
+        }
+        if cloud.is_none() && session.error.is_some() {
             return panel.child(
                 div()
                     .flex_1()
@@ -1270,27 +1910,11 @@ impl Render for TerminalPanel {
                     .items_center()
                     .justify_center()
                     .gap(px(12.))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(text(
-                                "The terminal encountered an error",
-                                16.,
-                                24.,
-                                500.,
-                                theme.text,
-                            ))
-                            .child(text(
-                                "Try reloading the terminal to continue",
-                                13.,
-                                18.5714,
-                                430.,
-                                theme.text_secondary,
-                            )),
-                    )
+                    .child(notice(
+                        "The terminal encountered an error",
+                        Some("Try reloading the terminal to continue"),
+                        &theme,
+                    ))
                     .child(
                         control("reload-terminal", "", PanelAction::Reload, window, cx)
                             .aria_label("Reload")
@@ -1379,19 +2003,303 @@ impl Render for TerminalPanel {
                 color,
             )));
         }
+        let status = match cloud {
+            Some(Some((overlay, status))) => {
+                if overlay {
+                    body = body.child(
+                        notice("Opening terminal…", None, &theme)
+                            .absolute()
+                            .inset_0()
+                            .justify_center()
+                            .bg(theme.surface),
+                    );
+                }
+                status
+            }
+            _ => session.exited.then_some(CloudStatus::ShellExited),
+        };
         panel = panel.child(body);
-        if session.exited {
-            panel =
-                panel.child(text("Shell exited", 12., 24., 400., theme.text_secondary).px(px(8.)));
+        if let Some(status) = status {
+            let action = match status {
+                CloudStatus::EnvironmentChanged => Some(("New terminal", PanelAction::New)),
+                CloudStatus::ShellExited | CloudStatus::ConnectionFailed if cloud.is_some() => {
+                    Some(("Retry", PanelAction::Retry))
+                }
+                _ => None,
+            };
+            let mut row = div()
+                .id("terminal-status")
+                .role(gpui::Role::Status)
+                .h(px(24.))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .px(px(8.))
+                .child(text(status.label(), 12., 24., 400., theme.text_secondary));
+            if let Some((label, action)) = action {
+                row = row.child(
+                    control("terminal-status-action", label, action, window, cx)
+                        .aria_label(label)
+                        .debug_selector(|| "terminal-status-action".into())
+                        .h(px(20.))
+                        .px(px(6.)),
+                );
+            }
+            panel = panel.child(row);
         }
         panel
     }
 }
 
+/// A centered title over an optional description, as the terminal's empty states show them.
+fn notice(
+    title: &'static str,
+    description: Option<&'static str>,
+    theme: &theme::Theme,
+) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(8.))
+        .child(text(title, 16., 24., 500., theme.text))
+        .when_some(description, |d, description| {
+            d.child(text(description, 13., 18.5714, 430., theme.text_secondary))
+        })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::source_directories;
-    use serde_json::json;
+    use super::*;
+    use std::io::{BufRead as _, BufReader, LineWriter};
+
+    /// A durable app-server on a pipe: `serve` gets each request the bridge writes and the
+    /// writer for the server's lines.
+    fn durable(
+        serve: impl FnOnce(&mut dyn FnMut() -> Value, &mut dyn FnMut(Value)) + Send + 'static,
+    ) -> Arc<bridge::Bridge> {
+        let (client_input, server_output) = std::io::pipe().unwrap();
+        let (server_input, client_output) = std::io::pipe().unwrap();
+        let (bridge, _) = bridge::Bridge::from_io(client_input, client_output, None);
+        std::thread::spawn(move || {
+            let mut lines = BufReader::new(server_input).lines();
+            let mut output = LineWriter::new(server_output);
+            serve(
+                &mut || serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap(),
+                &mut |line| writeln!(output, "{line}").unwrap(),
+            );
+        });
+        Arc::new(bridge)
+    }
+
+    /// Runs a cloud shell's `command/exec` until it ends; returns what the panel received.
+    fn run(bridge: Arc<bridge::Bridge>) -> (Vec<Output>, bool) {
+        let events = bridge.subscribe_async();
+        let (output, receive) = async_channel::unbounded();
+        let (ready, started) = async_channel::bounded(1);
+        let done = Arc::new(AtomicBool::new(false));
+        futures_lite::future::block_on(run_cloud_shell(
+            bridge,
+            json!({"environmentId": "env-1", "processId": "process-1"}),
+            events,
+            output,
+            ready,
+            done.clone(),
+        ));
+        assert!(
+            started.is_closed(),
+            "input stays held after the shell ended"
+        );
+        (
+            std::iter::from_fn(|| receive.try_recv().ok()).collect(),
+            done.load(Ordering::Acquire),
+        )
+    }
+
+    fn delta(bytes: &[u8], cap: bool) -> Value {
+        json!({"method": "command/exec/outputDelta", "params": {
+            "processId": "process-1", "stream": "stdout",
+            "deltaBase64": BASE64.encode(bytes), "capReached": cap,
+        }})
+    }
+
+    #[test]
+    fn cloud_cwd_is_the_environment_directory() {
+        let bridge = durable(|read, write| {
+            let info = read();
+            assert_eq!(info["method"], "environment/info");
+            assert_eq!(info["params"], json!({"environmentId": "env-1"}));
+            write(json!({"id": info["id"], "result": {"cwd": "file:///workspace/my%20repo"}}));
+            let metadata = read();
+            assert_eq!(metadata["method"], "fs/getMetadata");
+            assert_eq!(
+                metadata["params"],
+                json!({"environmentId": "env-1", "path": "/workspace/my repo"})
+            );
+            write(json!({"id": metadata["id"], "result": {"isDirectory": true}}));
+            let info = read();
+            write(json!({"id": info["id"], "result": {"cwd": "/gone"}}));
+            let metadata = read();
+            write(json!({"id": metadata["id"], "error": {
+                "code": -32000, "message": "No such file or directory (os error 2)",
+            }}));
+        });
+        let cwd = |bridge| futures_lite::future::block_on(environment_cwd(bridge, "env-1"));
+        assert_eq!(cwd(&bridge).unwrap().as_deref(), Some("/workspace/my repo"));
+        assert_eq!(cwd(&bridge).unwrap(), None);
+    }
+
+    #[test]
+    fn cloud_shell_streams_output_until_it_exits() {
+        let bridge = durable(|read, write| {
+            let exec = read();
+            assert_eq!(exec["method"], "command/exec");
+            // Another process's output on the same connection is not this shell's.
+            let mut other = delta(b"other", false);
+            other["params"]["processId"] = "process-2".into();
+            write(other);
+            write(delta(b"$ ", false));
+            write(json!({"id": exec["id"], "result": {"exitCode": 0, "stdout": "", "stderr": ""}}));
+        });
+        let (output, done) = run(bridge);
+        assert!(done);
+        assert!(matches!(&output[..], [Output::Bytes(b), Output::Finished] if b == b"$ "));
+    }
+
+    #[test]
+    fn cloud_shell_reports_a_lost_connection() {
+        let capped = durable(|read, write| {
+            assert_eq!(read()["method"], "command/exec");
+            // The process keeps running until the panel drops the shell, which terminates it.
+            write(delta(b"x", true));
+        });
+        let (output, done) = run(capped);
+        assert!(!done);
+        assert!(
+            matches!(&output[..], [Output::Bytes(_), Output::Error(error)]
+            if error == "Cloud terminal reached the server's 1 MiB output limit")
+        );
+
+        let refused = durable(|read, write| {
+            let exec = read();
+            write(json!({"id": exec["id"], "error": {"code": -32000, "message": "executor gone"}}));
+        });
+        let (output, done) = run(refused);
+        assert!(done);
+        assert!(matches!(&output[..], [Output::Error(error)] if error.contains("executor gone")));
+    }
+
+    #[test]
+    fn cloud_view_follows_the_original_states() {
+        let target = CloudTarget {
+            bridge: None,
+            environment: Some("env-1".into()),
+            connected: vec!["env-1".into()],
+        };
+        let view = |state: &CloudState, target: &CloudTarget, attached, exited| {
+            state.view(target, attached, exited)
+        };
+        let mut state = CloudState::default();
+        assert_eq!(view(&state, &CloudTarget::default(), false, false), None);
+        assert_eq!(view(&state, &target, false, false), Some((true, None)));
+        let offline = CloudTarget {
+            connected: Vec::new(),
+            ..target.clone()
+        };
+        assert_eq!(
+            view(&state, &offline, false, false),
+            Some((true, Some(CloudStatus::Connecting)))
+        );
+        state.environment = Some("env-1".into());
+        assert_eq!(view(&state, &target, true, false), Some((false, None)));
+        state.input_error = Some("write failed".into());
+        assert_eq!(
+            view(&state, &target, true, false),
+            Some((false, Some(CloudStatus::InputInterrupted)))
+        );
+        state.input_error = None;
+        state.has_output = true;
+        state.error = Some("lost".into());
+        state.reconnecting = true;
+        assert_eq!(
+            view(&state, &target, false, false),
+            Some((false, Some(CloudStatus::Reconnecting)))
+        );
+        state.reconnecting = false;
+        assert_eq!(
+            view(&state, &target, false, true),
+            Some((false, Some(CloudStatus::ConnectionFailed)))
+        );
+        state.error = None;
+        assert_eq!(
+            view(&state, &target, false, true),
+            Some((false, Some(CloudStatus::ShellExited)))
+        );
+        let moved = CloudTarget {
+            environment: Some("env-2".into()),
+            ..target
+        };
+        assert_eq!(
+            view(&state, &moved, true, false),
+            Some((false, Some(CloudStatus::EnvironmentChanged)))
+        );
+    }
+
+    #[test]
+    fn environment_notifications_update_the_target() {
+        let mut target = CloudTarget::default();
+        target.apply("thread/environment/connected", "managed");
+        assert_eq!(target.environment, None);
+        target.apply("thread/environment/connected", "env-1");
+        target.apply("thread/environment/connected", "env-1");
+        assert_eq!(target.connected, ["env-1"]);
+        target.apply("thread/environment/disconnected", "env-1");
+        assert!(target.connected.is_empty());
+        assert_eq!(target.environment.as_deref(), Some("env-1"));
+    }
+
+    #[test]
+    fn reconnect_backs_off_then_gives_up() {
+        let start = Instant::now();
+        let mut reconnect = Reconnect::default();
+        let delays: Vec<_> = std::iter::from_fn(|| reconnect.schedule(start)).collect();
+        assert_eq!(delays, Reconnect::DELAYS);
+        // A shell that stayed up 30 s earns the attempts back; a shorter one does not.
+        reconnect.connected_at = Some(start);
+        assert_eq!(reconnect.schedule(start + Duration::from_secs(29)), None);
+        reconnect.connected_at = Some(start);
+        assert_eq!(
+            reconnect.schedule(start + Duration::from_secs(30)),
+            Some(Duration::from_secs(1))
+        );
+    }
+
+    #[test]
+    fn only_an_offline_environment_is_asked_again() {
+        let rpc = |message: &str| {
+            anyhow::Error::new(bridge::RpcError {
+                code: -32000,
+                message: message.into(),
+                data: Value::Null,
+            })
+        };
+        for message in [
+            "environment registry connect returned 404 Not Found: environment_offline",
+            "environment registry connect returned 409 Conflict: environment_offline: starting",
+        ] {
+            assert!(environment_offline(&rpc(message)), "{message}");
+        }
+        for message in [
+            "environment registry connect returned 500 Internal: environment_offline",
+            "environment registry connect returned 404 Not Found: environment_offline_forever",
+        ] {
+            assert!(!environment_offline(&rpc(message)), "{message}");
+        }
+        assert!(!environment_offline(&anyhow::anyhow!(
+            "environment registry connect returned 404 Not Found: environment_offline"
+        )));
+    }
 
     #[test]
     fn terminal_directories_stay_with_the_assigned_project() {

@@ -1,6 +1,7 @@
 //! Artifact annotations on a PDF or image preview (bundle `artifact-annotation-batch-controls`):
 //! drag a region or click a point on the current page, comment on it, and send the batch with
-//! Send or Cmd+Enter (`artifact.sendAnnotations`) as one `artifact-direct-comment` turn.
+//! Send or Cmd+Enter (`artifact.sendAnnotations`) as one `artifact-direct-comment` turn. The
+//! Changes panel's previews and an artifact tab's PDF ([`Annotate`]) take them.
 
 use super::comment_view::comment_button;
 use super::comments::{ArtifactContext, ArtifactTarget, Comment, PagePoint, PageSize};
@@ -67,7 +68,7 @@ struct Drag {
     end: PagePoint,
 }
 
-struct Draft {
+pub(super) struct Draft {
     context: ArtifactContext,
     target: ArtifactTarget,
     /// The draft edits a pending annotation (Save and Delete) rather than adds one.
@@ -85,6 +86,16 @@ pub(super) struct ArtifactAnnotations {
     active: Option<String>,
     /// The annotation the review bar navigation selected.
     current: Option<String>,
+}
+
+impl ArtifactAnnotations {
+    pub(super) fn pending(&self) -> &[Comment] {
+        &self.pending
+    }
+
+    pub(super) fn draft_editor(&self) -> Option<&Entity<Composer>> {
+        self.draft.as_ref().map(|draft| &draft.editor)
+    }
 }
 
 fn annotation_id(comment: &Comment) -> Option<String> {
@@ -106,26 +117,124 @@ fn scale(target: &ArtifactTarget, displayed: Pixels) -> f32 {
 
 impl DiffPanel {
     pub fn artifact_annotations(&self) -> &[Comment] {
-        &self.artifacts.pending
+        self.artifacts.pending()
     }
 
     pub fn artifact_annotation_draft(&self) -> Option<&Entity<Composer>> {
-        self.artifacts.draft.as_ref().map(|draft| &draft.editor)
+        self.artifacts.draft_editor()
     }
 
     /// The open chat accepted the batch of the active artifact.
     pub fn artifact_annotations_sent(&mut self, cx: &mut Context<Self>) {
-        if let Some(path) = self.artifacts.active.clone() {
-            self.artifacts
+        self.annotations_sent(cx);
+    }
+}
+
+impl Annotate for DiffPanel {
+    fn annotations(&self) -> &ArtifactAnnotations {
+        &self.artifacts
+    }
+
+    fn annotations_mut(&mut self) -> &mut ArtifactAnnotations {
+        &mut self.artifacts
+    }
+
+    fn annotation_focus(&self) -> Option<FocusHandle> {
+        self.focus.clone()
+    }
+
+    fn show_annotation_page(
+        &mut self,
+        index: usize,
+        page: usize,
+        width: Pixels,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_preview_page(index, 1, page, width, window, cx);
+    }
+
+    fn send_annotation_batch(&mut self, batch: Vec<Comment>, cx: &mut Context<Self>) {
+        cx.emit(DiffRequest::SendAnnotations(batch));
+    }
+}
+
+impl FileView {
+    pub fn artifact_annotations(&self) -> &[Comment] {
+        self.artifacts.pending()
+    }
+
+    pub fn artifact_annotation_draft(&self) -> Option<&Entity<Composer>> {
+        self.artifacts.draft_editor()
+    }
+
+    /// The open chat accepted the artifact tab's batch.
+    pub fn artifact_annotations_sent(&mut self, cx: &mut Context<Self>) {
+        self.annotations_sent(cx);
+    }
+}
+
+impl Annotate for FileView {
+    fn annotations(&self) -> &ArtifactAnnotations {
+        &self.artifacts
+    }
+
+    fn annotations_mut(&mut self) -> &mut ArtifactAnnotations {
+        &mut self.artifacts
+    }
+
+    fn annotation_focus(&self) -> Option<FocusHandle> {
+        self.focus.clone()
+    }
+
+    fn show_annotation_page(
+        &mut self,
+        _index: usize,
+        page: usize,
+        _width: Pixels,
+        _window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_media_page(page, cx);
+    }
+
+    fn send_annotation_batch(&mut self, batch: Vec<Comment>, cx: &mut Context<Self>) {
+        cx.emit(FileTreeRequest::SendAnnotations(batch));
+    }
+}
+
+/// A view whose artifact preview takes annotations: the Changes panel and an artifact tab.
+pub(super) trait Annotate: Sized + 'static {
+    fn annotations(&self) -> &ArtifactAnnotations;
+    fn annotations_mut(&mut self) -> &mut ArtifactAnnotations;
+    /// The view's focus, which a drag and a closed draft return to.
+    fn annotation_focus(&self) -> Option<FocusHandle>;
+    /// Shows `page` of preview `index`, where a selected annotation sits.
+    fn show_annotation_page(
+        &mut self,
+        index: usize,
+        page: usize,
+        width: Pixels,
+        window: &Window,
+        cx: &mut Context<Self>,
+    );
+    /// Asks the open chat to send `batch` as one turn; it answers with [`Self::annotations_sent`].
+    fn send_annotation_batch(&mut self, batch: Vec<Comment>, cx: &mut Context<Self>);
+
+    /// The open chat accepted the batch of the active artifact.
+    fn annotations_sent(&mut self, cx: &mut Context<Self>) {
+        let artifacts = self.annotations_mut();
+        if let Some(path) = artifacts.active.clone() {
+            artifacts
                 .pending
                 .retain(|comment| on_path(comment, &path).is_none());
-            self.artifacts.current = None;
+            artifacts.current = None;
             cx.notify();
         }
     }
 
     fn batch(&self, path: &str) -> Vec<Comment> {
-        self.artifacts
+        self.annotations()
             .pending
             .iter()
             .filter(|comment| on_path(comment, path).is_some())
@@ -135,12 +244,8 @@ impl DiffPanel {
 
     /// Cmd+Enter: add the open draft, else `artifact.sendAnnotations`. False when there is
     /// nothing to add or send.
-    pub(super) fn artifact_modified_enter(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if self.artifacts.draft.is_some() {
+    fn artifact_modified_enter(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.annotations().draft.is_some() {
             self.save_artifact_draft(window, cx);
             return true;
         }
@@ -149,22 +254,23 @@ impl DiffPanel {
 
     /// `artifact.sendAnnotations`: the batch of the artifact last annotated.
     fn send_artifact_annotations(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(path) = self.artifacts.active.clone() else {
+        let Some(path) = self.annotations().active.clone() else {
             return false;
         };
         let batch = self.batch(&path);
         if batch.is_empty() {
             return false;
         }
-        cx.emit(DiffRequest::SendAnnotations(batch));
+        self.send_annotation_batch(batch, cx);
         true
     }
 
     fn cancel_artifact_batch(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.artifacts
+        let artifacts = self.annotations_mut();
+        artifacts
             .pending
             .retain(|comment| on_path(comment, path).is_none());
-        self.artifacts.current = None;
+        artifacts.current = None;
         self.close_artifact_draft(window, cx);
     }
 
@@ -176,22 +282,23 @@ impl DiffPanel {
         cx: &mut Context<Self>,
     ) {
         let at = page.to_page(position);
-        self.artifacts.draft = None;
-        self.artifacts.drag = Some(Drag {
+        let artifacts = self.annotations_mut();
+        artifacts.draft = None;
+        artifacts.drag = Some(Drag {
             path: page.path.clone(),
             start: at,
             end: at,
         });
-        self.artifacts.active = Some(page.path.clone());
-        if let Some(focus) = &self.focus {
-            window.focus(focus, cx);
+        artifacts.active = Some(page.path.clone());
+        if let Some(focus) = self.annotation_focus() {
+            window.focus(&focus, cx);
         }
         cx.stop_propagation();
         cx.notify();
     }
 
     fn move_artifact_drag(&mut self, page: &Page, position: Point<Pixels>, cx: &mut Context<Self>) {
-        if let Some(drag) = &mut self.artifacts.drag
+        if let Some(drag) = &mut self.annotations_mut().drag
             && drag.path == page.path
         {
             drag.end = page.to_page(position);
@@ -200,7 +307,11 @@ impl DiffPanel {
     }
 
     fn finish_artifact_drag(&mut self, page: &Page, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(drag) = self.artifacts.drag.take_if(|drag| drag.path == page.path) else {
+        let Some(drag) = self
+            .annotations_mut()
+            .drag
+            .take_if(|drag| drag.path == page.path)
+        else {
             return;
         };
         let target = ArtifactTarget::new(
@@ -242,9 +353,10 @@ impl DiffPanel {
             )
         });
         let observe = cx.observe(&editor, |_, _, cx| cx.notify());
-        self.artifacts.active = Some(context.path.clone());
-        self.artifacts.current = editing.then(|| context.annotation_id.clone());
-        self.artifacts.draft = Some(Draft {
+        let artifacts = self.annotations_mut();
+        artifacts.active = Some(context.path.clone());
+        artifacts.current = editing.then(|| context.annotation_id.clone());
+        artifacts.draft = Some(Draft {
             context,
             target,
             editing,
@@ -255,16 +367,16 @@ impl DiffPanel {
     }
 
     fn close_artifact_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.artifacts.draft = None;
-        if let Some(focus) = &self.focus {
-            window.focus(focus, cx);
+        self.annotations_mut().draft = None;
+        if let Some(focus) = self.annotation_focus() {
+            window.focus(&focus, cx);
         }
         cx.notify();
     }
 
     fn save_artifact_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(draft) = self
-            .artifacts
+            .annotations_mut()
             .draft
             .take_if(|draft| !draft.editor.read(cx).field_text().trim().is_empty())
         else {
@@ -272,16 +384,14 @@ impl DiffPanel {
         };
         let text = draft.editor.read(cx).field_text().trim().to_owned();
         let id = draft.context.annotation_id.clone();
-        let existing = self
-            .artifacts
-            .pending
+        let pending = &mut self.annotations_mut().pending;
+        let existing = pending
             .iter()
             .position(|comment| annotation_id(comment).as_ref() == Some(&id));
         let line = match existing {
-            Some(index) => self.artifacts.pending[index].position.line.get(),
+            Some(index) => pending[index].position.line.get(),
             None => {
-                self.artifacts
-                    .pending
+                pending
                     .iter()
                     .map(|comment| comment.position.line.get())
                     .max()
@@ -296,10 +406,10 @@ impl DiffPanel {
             text,
         );
         match existing {
-            Some(index) => self.artifacts.pending[index] = comment,
-            None => self.artifacts.pending.push(comment),
+            Some(index) => pending[index] = comment,
+            None => pending.push(comment),
         }
-        self.artifacts.current = None;
+        self.annotations_mut().current = None;
         self.close_artifact_draft(window, cx);
     }
 
@@ -309,16 +419,17 @@ impl DiffPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.artifacts
+        let artifacts = self.annotations_mut();
+        artifacts
             .pending
             .retain(|comment| annotation_id(comment).as_deref() != Some(id));
-        self.artifacts.current = None;
+        artifacts.current = None;
         self.close_artifact_draft(window, cx);
     }
 
     fn edit_artifact_annotation(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(comment) = self
-            .artifacts
+            .annotations()
             .pending
             .iter()
             .find(|comment| annotation_id(comment).as_deref() == Some(id))
@@ -347,7 +458,7 @@ impl DiffPanel {
         if batch.is_empty() {
             return;
         }
-        let at = self.artifacts.current.as_ref().and_then(|id| {
+        let at = self.annotations().current.as_ref().and_then(|id| {
             batch
                 .iter()
                 .position(|comment| annotation_id(comment).as_ref() == Some(id))
@@ -357,21 +468,17 @@ impl DiffPanel {
             None if step < 0 => batch.len() - 1,
             None => 0,
         };
-        self.artifacts.current = annotation_id(&batch[next]);
-        self.artifacts.active = Some(path.to_owned());
+        let artifacts = self.annotations_mut();
+        artifacts.current = annotation_id(&batch[next]);
+        artifacts.active = Some(path.to_owned());
         if let Some(target) = batch[next].artifact_target() {
-            self.show_preview_page(index, 1, target.page_number(), width, window, cx);
+            self.show_annotation_page(index, target.page_number(), width, window, cx);
         }
         cx.notify();
     }
 
     /// The annotation layer over `page`, displayed `displayed` px wide.
-    pub(super) fn artifact_layer(
-        &self,
-        page: Page,
-        displayed: Pixels,
-        cx: &Context<Self>,
-    ) -> Vec<AnyElement> {
+    fn artifact_layer(&self, page: Page, displayed: Pixels, cx: &Context<Self>) -> Vec<AnyElement> {
         let mut layer = Vec::new();
         let recorder = page.bounds.clone();
         layer.push(
@@ -437,7 +544,7 @@ impl DiffPanel {
             )
         };
         let draft = self
-            .artifacts
+            .annotations()
             .draft
             .as_ref()
             .filter(|draft| draft.context.path == page.path);
@@ -445,7 +552,7 @@ impl DiffPanel {
             .filter(|draft| draft.editing)
             .map(|draft| draft.context.annotation_id.clone());
         let mut number = 0;
-        for comment in &self.artifacts.pending {
+        for comment in &self.annotations().pending {
             let Some((context, target)) = on_path(comment, &page.path) else {
                 continue;
             };
@@ -453,7 +560,7 @@ impl DiffPanel {
             if target.page_number() != page.number {
                 continue;
             }
-            let selected = self.artifacts.current.as_ref() == Some(&context.annotation_id);
+            let selected = self.annotations().current.as_ref() == Some(&context.annotation_id);
             layer.extend(region(&target, selected));
             if editing.as_ref() == Some(&context.annotation_id) {
                 continue;
@@ -496,7 +603,7 @@ impl DiffPanel {
                     .into_any_element(),
             );
         }
-        if let Some(drag) = &self.artifacts.drag
+        if let Some(drag) = &self.annotations().drag
             && drag.path == page.path
         {
             let target = ArtifactTarget::new(
@@ -550,7 +657,7 @@ impl DiffPanel {
     }
 
     /// `annotation-comment-editor-card`: Cancel, Add (Save when editing), Delete.
-    fn artifact_card(&self, draft: &Draft, cx: &Context<Self>) -> impl IntoElement {
+    fn artifact_card(&self, draft: &Draft, cx: &Context<Self>) -> Stateful<Div> {
         let t = cx.theme();
         let enabled = !draft.editor.read(cx).field_text().trim().is_empty();
         let id = draft.context.annotation_id.clone();
@@ -622,7 +729,7 @@ impl DiffPanel {
     }
 
     /// The batch review bar of `path`'s preview (`popcorn-annotation-batch`, `data-variant=batch`).
-    pub(super) fn artifact_review_bar(
+    fn artifact_review_bar(
         &self,
         path: &str,
         index: usize,
@@ -631,12 +738,12 @@ impl DiffPanel {
     ) -> Option<AnyElement> {
         let count = self.batch(path).len();
         let drafting = self
-            .artifacts
+            .annotations()
             .draft
             .as_ref()
             .is_some_and(|draft| draft.context.path == path)
             || self
-                .artifacts
+                .annotations()
                 .drag
                 .as_ref()
                 .is_some_and(|drag| drag.path == path);
@@ -760,7 +867,7 @@ impl DiffPanel {
                     .bg(accent())
                     .hover(|s| s.bg(accent().opacity(0.9)))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.artifacts.active = Some(send_path.clone());
+                        this.annotations_mut().active = Some(send_path.clone());
                         this.send_artifact_annotations(cx);
                     }))
                     .child("Send"),

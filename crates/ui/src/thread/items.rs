@@ -39,6 +39,79 @@ impl Render for ImageView {
     }
 }
 
+/// Thread summary ▸ Cmd-click `Plan`: the latest plan in its own window (`/plan-summary`).
+#[derive(Clone, Default, PartialEq, Action)]
+#[action(namespace = shell, no_json)]
+pub struct OpenPlanSummary;
+
+/// `/plan-summary` (`PlanSummaryPage`): one plan's text in its own window, drawn by the
+/// thread's assistant-message markdown inside the `Plan` card.
+pub struct PlanSummary {
+    plan: String,
+}
+
+impl PlanSummary {
+    pub fn new(plan: &str) -> Self {
+        Self {
+            plan: plan.to_owned(),
+        }
+    }
+}
+
+impl Render for PlanSummary {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
+        // `p-[var(--padding-panel)]` around the card and `px-4 py-4` inside it.
+        let pad = px(16.);
+        // The markdown wraps to its own column, then the thread's width comes back.
+        let thread_width = markdown::line_width();
+        markdown::set_line_width(window.viewport_size().width - pad * 4.);
+        let body = markdown(&self.plan, window, &t, &[]);
+        markdown::set_line_width(px(thread_width));
+        let card = div()
+            .rounded(Theme::RADIUS_2XL)
+            .border_1()
+            .border_color(t.border)
+            .child(
+                div()
+                    .h(px(40.))
+                    .px(px(12.))
+                    .flex()
+                    .items_center()
+                    .child(text("Plan", 14., 20., 530., t.text)),
+            )
+            .child(div().px(pad).pb(pad).child(body));
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(t.surface)
+            .child(
+                // The page window's transparent titlebar: drag to move, double-click to zoom.
+                div().flex_none().h(Theme::TITLEBAR_HEIGHT).on_mouse_down(
+                    gpui::MouseButton::Left,
+                    |e, window, _| {
+                        if e.click_count == 2 {
+                            window.titlebar_double_click();
+                        } else {
+                            window.start_window_move();
+                        }
+                    },
+                ),
+            )
+            .child(
+                div()
+                    .id("plan-summary")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px(pad)
+                    .pb(pad)
+                    .child(card),
+            )
+    }
+}
+
 /// The image of an `imageGeneration` item: its `savedPath` file, else its base64 `result`.
 fn generated_image(saved_path: Option<&str>, result: Option<&str>) -> Option<Arc<Image>> {
     // shortcut: reads the saved PNG on the UI thread once (then cached), async load if it lags.

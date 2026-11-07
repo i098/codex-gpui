@@ -115,6 +115,64 @@ fn one_list_hides_projects_and_show_projects_toggles() -> Result<()> {
 }
 
 #[test]
+fn waiting_on_approval_shows_the_pill_and_dot_until_the_thread_goes_idle() -> Result<()> {
+    let mut fx = Fx::open("dark", (1280., 832.), script(None, |_| {})?)?;
+    fx.wait("three chats", |fx| ids(fx).len() == 3)?;
+    let status = |fx: &mut Fx, status: serde_json::Value| {
+        fx.root.update(&mut fx.cx, |root, cx| {
+            root.on_event(
+                bridge::Event::Notification {
+                    method: "thread/status/changed".into(),
+                    params: serde_json::json!({"threadId": SUBTRACT, "status": status}),
+                },
+                cx,
+            )
+        });
+        fx.advance(std::time::Duration::from_millis(16))
+    };
+    status(
+        &mut fx,
+        serde_json::json!({"type": "active", "activeFlags": ["waitingOnApproval"]}),
+    )?;
+    fx.capture_evidence("CGX_APPROVAL_SHOTS", "awaiting-approval")?;
+    let pill = fx
+        .cx
+        .debug_bounds(fx.window, "awaiting-approval")?
+        .context("Awaiting approval pill")?;
+    // `max-w-[50%]` of the 236 px title track truncates the label like the original.
+    ensure!(
+        pill.size.width > gpui::px(24.) && pill.size.width <= gpui::px(118.),
+        "{pill:?}"
+    );
+    ensure!(
+        fx.read(|root, cx| root.sidebar().read(cx).is_running(SUBTRACT)),
+        "The waiting thread stays active"
+    );
+    status(
+        &mut fx,
+        serde_json::json!({"type": "active", "activeFlags": []}),
+    )?;
+    ensure!(
+        fx.cx
+            .debug_bounds(fx.window, "awaiting-approval")?
+            .is_none(),
+        "An approved thread keeps the pill"
+    );
+    status(
+        &mut fx,
+        serde_json::json!({"type": "active", "activeFlags": ["waitingOnApproval"]}),
+    )?;
+    status(&mut fx, serde_json::json!({"type": "idle"}))?;
+    ensure!(
+        fx.cx
+            .debug_bounds(fx.window, "awaiting-approval")?
+            .is_none(),
+        "An idle thread keeps the pill"
+    );
+    Ok(())
+}
+
+#[test]
 fn cloud_group_lists_current_tasks_and_opens_one() -> Result<()> {
     // The recording has no `oai-did` header, so `ReplayHost` reports no account.
     struct SignedIn(app::host::ReplayHost);

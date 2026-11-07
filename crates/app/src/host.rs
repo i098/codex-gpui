@@ -2200,6 +2200,7 @@ impl Host for LocalHost {
             | "gh-pr-detail"
             | "gh-pr-patch"
             | "gh-pr-media"
+            | "gh-pr-state"
             | "gh-create-pr"
             | "gh-thread-pr"
             | "gh-thread-compare"

@@ -85,7 +85,7 @@ jobs:
         uses: taiki-e/install-action@nextest
       # nextest does not run doctests; --retries 1 absorbs a timing flake once.
       - if: hashFiles('Cargo.toml') != ''
-        run: cargo nextest run --workspace --retries 1
+        run: cargo nextest run --workspace --features app/test-support --retries 1
       - if: hashFiles('Cargo.toml') != ''
         run: cargo test --workspace --doc
       # The primary window must open on the X11 backend: timeout (124) means it stayed up.
