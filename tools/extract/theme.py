@@ -108,6 +108,12 @@ COLORS = [
     ("scrollbar_hover", "var(--color-token-scrollbar-slider-hover-background)", ""),
     ("switch_track", "var(--switch-track-color)", ""),
     ("switch_track_checked", "var(--switch-track-color-checked)", ""),
+    # Charts
+    ("chart_empty", "var(--color-chart-empty)", "Profile token activity: day without usage."),
+    ("chart_sequential_1", "var(--color-chart-sequential-1)", "Profile token activity: level 1."),
+    ("chart_sequential_2", "var(--color-chart-sequential-2)", "Profile token activity: level 2."),
+    ("chart_sequential_3", "var(--color-chart-sequential-3)", "Profile token activity: level 3, week bars."),
+    ("chart_sequential_4", "var(--color-chart-sequential-4)", "Profile token activity: level 4."),
 ]
 
 PAGE_JS = """

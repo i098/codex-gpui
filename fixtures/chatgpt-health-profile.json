@@ -1,7 +1,7 @@
 {
   "provenance": {
     "appVersion": "26.1007.30912",
-    "source": "Contracts read from the extracted webview: page-81bbc8bec72a.js (health chats), app-initial-6350d04672d0.js and account-settings-b6b8255e8212.js (profile reads).",
+    "source": "Contracts read from the extracted webview: page-81bbc8bec72a.js (health chats), app-initial-6350d04672d0.js and account-settings-b6b8255e8212.js (profile reads), profile-d4ec050a2b68.js (profile v2 page: the `rea` mapping of /profiles/me/page).",
     "values": "Synthetic and scrubbed. No live account call was made; the repository holds no recording of these routes.",
     "requestEncoding": "Same headers and body encoding as app::cloud requests; /aip/ adds OAI-Product-Sku.",
     "mutations": "Not recorded. ReplayHost refuses every request without an exact recorded match."
@@ -165,7 +165,7 @@
                   "application/json"
                 ]
               ],
-              "body": "{\"username\":\"demo-user\",\"display_name\":\"Demo User\",\"description\":null,\"profile_visibility\":\"private\",\"pins\":[]}"
+              "body": "{\"is_self\":true,\"can_edit\":true,\"profile_details\":{\"username\":\"demo-user\",\"display_name\":\"Demo User\",\"profile_picture_url\":null,\"description\":null,\"photo_frame_style\":\"circle\"},\"page\":{\"workspace_id\":null,\"workspace_name\":null,\"visibility\":{\"value\":\"private\"},\"display_settings\":{\"show_usage_stats_section\":true,\"show_activity_graph_section\":true,\"show_insights_section\":true,\"show_top_plugins_section\":true},\"stats\":{\"current_streak_days\":3,\"longest_streak_days\":5,\"agentic\":{\"lifetime_tokens\":5000,\"peak_daily_tokens\":1000,\"longest_running_turn_sec\":120}},\"insights\":{\"agentic\":{\"fast_mode_usage_percentage\":0,\"most_used_reasoning_effort\":\"low\",\"most_used_reasoning_effort_percentage\":100,\"total_threads\":4},\"total_skills_used\":2,\"unique_skills_used\":2},\"top_plugins\":[],\"activity_graph\":{\"daily_usage_buckets\":[{\"start_date\":\"2026-10-14\",\"tokens\":400,\"chat_turns\":2},{\"start_date\":\"2026-10-15\",\"tokens\":600,\"chat_turns\":3}],\"weekly_usage_buckets\":[{\"start_date\":\"2026-10-11\",\"tokens\":1000,\"chat_turns\":5}],\"cumulative_daily_usage_buckets\":[{\"start_date\":\"2026-10-11\",\"tokens\":1000,\"chat_turns\":5}]},\"pins\":[]}}"
             }
           }
         }
