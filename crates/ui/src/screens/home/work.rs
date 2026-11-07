@@ -590,7 +590,7 @@ impl HomeMain {
             "Can't access local files unless attached",
             false,
         );
-        let popup = crate::composer::popover(t, 220., |d| {
+        let popup = crate::composer::popover(t, 300., |d| {
             d.child(div().px(px(8.)).py(px(4.)).child(text(
                 "Where should this chat run?",
                 ROW_TEXT.0,
