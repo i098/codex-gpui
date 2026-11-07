@@ -4,9 +4,6 @@
 
 | Crate | Role |
 |---|---|
-| `bridge` | Client for `codex app-server`: newline-delimited JSON-RPC over stdio, hand-written protocol types, replay of recorded sessions, and the ACP backend. |
-| `ui` | The window shell (titlebar, navigation rail, sidebar, main panel), the page modules in `screens/`, the composer, the thread view, the diff view and the icons. |
-| `shapes` | Box decorations that land on Chromium's pixels: rounded and squircle corners, borders, `box-shadow`, backdrop blur, SVG icon paths. It links Skia. |
 | `bridge` | JSON-RPC client for `codex app-server` over stdio or durable cloud WebSocket, protocol types, recorded sessions, and the ACP backend. |
 | `ui` | The window shell (titlebar, navigation rail, sidebar, main panel), the page modules in `screens/`, the composer, the thread view, the diff view and the icons. |
 | `shapes` | Box decorations that land on Chromium's pixels: rounded and squircle corners, borders, `box-shadow`, backdrop blur, SVG icon paths and circles. It links Skia. |
@@ -148,7 +145,7 @@ An extra layer changes glyph edge bytes even when its opacity is one.
 `shapes` links Skia binaries built with Chromium's `SkUserConfig.h` legacy defines.
 `.cargo/config.toml` points `SKIA_BINARIES_URL` to these binaries.
 The rasterizer reuses identical inverse-blend probe results across icon positions without changing their pixels.
-`skia-hairline-sys` links a narrow C scanner wrapper for Skia revision `61e7ca4e99062cdd0ab69445d5963fb3365778f6`.
+`skia-hairline-sys` links a narrow C scanner wrapper for the Skia revision in `skia.toml`.
 It records the ordered legacy hairline operations that the sprite renderer replays.
 `.cargo/config.toml` points `SKIA_HAIRLINE_BINARIES_URL` and `SKIA_HAIRLINE_PACKAGE_SHA256` to its versioned package.
 

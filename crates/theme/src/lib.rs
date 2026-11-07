@@ -139,8 +139,9 @@ mod tests {
         [c.r, c.g, c.b, c.a].map(|v| (v * 255.).round() as u8)
     }
 
-    /// Computed styles from refs/home/dark@1280x832.spec.json and
-    /// refs/settings/light@1280x832.spec.json, as Chromium paints them.
+    /// Computed styles from refs/home/dark@1280x832.spec.json,
+    /// refs/settings/light@1280x832.spec.json and refs/automations/*@1280x832.spec.json,
+    /// as Chromium paints them.
     #[test]
     fn reproduces_reference_colors() {
         let dark = Theme::dark();
@@ -154,6 +155,8 @@ mod tests {
         assert_eq!(bytes(dark.text_default_nav), [255, 255, 255, 217]);
         // `_PageSurfaceLayout` color(srgb 0.156863 0.156863 0.156863 / 0.8)
         assert_eq!(bytes(dark.page_surface_layout), [40, 40, 40, 204]);
+        // automations `.text-primary-solid` button label rgb(45, 45, 45)
+        assert_eq!(bytes(dark.text_primary_solid), [45, 45, 45, 255]);
 
         let light = Theme::light();
         // body color rgb(26, 28, 31)
@@ -162,6 +165,8 @@ mod tests {
         assert_eq!(bytes(light.page_surface_layout), [246, 246, 246, 217]);
         // muted labels rgba(26, 28, 31, 0.494)
         assert_eq!(bytes(light.text_tertiary), [26, 28, 31, 126]);
+        // automations `.text-primary-solid` button label rgb(255, 255, 255)
+        assert_eq!(bytes(light.text_primary_solid), [255, 255, 255, 255]);
     }
 
     #[test]

@@ -86,6 +86,21 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = gpts::actions(root, cx);
     root = projects::actions(root, cx);
     root = profile::actions(root, cx);
+    root = root.on_action(cx.listener(
+        |this, _: &ui::screens::thread::view::OpenPlanSummary, window, cx| {
+            let Some(thread) = &this.thread else { return };
+            let Some((_, plan)) = ui::screens::plan::latest_plan(thread.read(cx).turns()) else {
+                return;
+            };
+            let (owner, plan) = (window.window_handle(), plan.to_owned());
+            // The owner window is mid-update here; `open` reads its bounds afterwards.
+            cx.defer(move |cx| {
+                if let Err(error) = crate::windows::open_plan_summary(owner, &plan, cx) {
+                    eprintln!("codex-gpui: cannot open plan summary window: {error:#}");
+                }
+            });
+        },
+    ));
     root
 }
 

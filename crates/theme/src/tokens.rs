@@ -73,6 +73,10 @@ pub struct Theme {
     pub text_selection: Hsla,
     /// `var(--modal-backdrop-background)`
     pub dialog_backdrop: Hsla,
+    /// `var(--color-dialog-overlay)` Scrim behind settings and page sub-dialogs.
+    pub dialog_overlay: Hsla,
+    /// `var(--color-background-warning-surface)` Warning callout fill.
+    pub warning_surface: Hsla,
     /// `var(--color-text)` Primary text.
     pub text: Hsla,
     /// `color-mix(in oklab, var(--color-text) 85%, transparent)` Sidebar nav rows and header title.
@@ -87,6 +91,8 @@ pub struct Theme {
     pub text_disabled: Hsla,
     /// `var(--color-text-inverse)` Text on primary solid buttons.
     pub text_inverse: Hsla,
+    /// `var(--color-text-primary-solid)` Label on primary solid buttons (`text-primary-solid`).
+    pub text_primary_solid: Hsla,
     /// `var(--app-color-text-accent)`
     pub text_accent: Hsla,
     /// `var(--link-primary-text-color)`
@@ -121,6 +127,8 @@ pub struct Theme {
     pub shadow_card: Hsla,
     /// `#00000014` `--shadow-sm` color (0 1px 2px -1px), switch thumb.
     pub shadow_sm: Hsla,
+    /// `#0000001a` `--shadow-lg` color (0 4px 8px -2px), dialog cards.
+    pub shadow_lg: Hsla,
     /// `var(--color-control-thumb-on-accent)` Switch thumb.
     pub control_thumb: Hsla,
     /// `var(--codex-base-accent)`
@@ -232,6 +240,8 @@ impl Theme {
             code_block_background: rgba(0x101010ff).into(),
             text_selection: rgba(0x78787866).into(),
             dialog_backdrop: rgba(0x00000080).into(),
+            dialog_overlay: rgba(0x00000022).into(),
+            warning_surface: rgba(0x281105ff).into(),
             text: rgba(0xffffffff).into(),
             text_default_nav: white_mix(0.85),
             text_secondary: rgba(0xffffffa6).into(),
@@ -239,6 +249,7 @@ impl Theme {
             text_tertiary: rgba(0xffffff7f).into(),
             text_disabled: rgba(0xffffff7f).into(),
             text_inverse: rgba(0x0d0d0dff).into(),
+            text_primary_solid: rgba(0x2d2d2dff).into(),
             text_accent: rgba(0x2c67c5ff).into(),
             text_link: rgba(0x339cffff).into(),
             text_error: rgba(0xff6764ff).into(),
@@ -256,6 +267,7 @@ impl Theme {
             page_surface_stroke: rgba(0xffffff0f).into(),
             shadow_card: rgba(0x0000000d).into(),
             shadow_sm: rgba(0x00000014).into(),
+            shadow_lg: rgba(0x0000001a).into(),
             control_thumb: rgba(0xffffffff).into(),
             accent: rgba(0x3a83f7ff).into(),
             info_solid: rgba(0x3a83f7ff).into(),
@@ -324,6 +336,8 @@ impl Theme {
             code_block_background: rgba(0xfcfcfcff).into(),
             text_selection: rgba(0xafafaf66).into(),
             dialog_backdrop: rgba(0x0000004c).into(),
+            dialog_overlay: rgba(0x00000022).into(),
+            warning_surface: rgba(0xfff5f0ff).into(),
             text: rgba(0x1a1c1fff).into(),
             text_default_nav: rgba(0x1a1c1fd9).into(),
             text_secondary: rgba(0x1a1c1fa6).into(),
@@ -331,6 +345,7 @@ impl Theme {
             text_tertiary: rgba(0x1a1c1f7e).into(),
             text_disabled: rgba(0x1a1c1f7e).into(),
             text_inverse: rgba(0xffffffff).into(),
+            text_primary_solid: rgba(0xffffffff).into(),
             text_accent: rgba(0x2c67c5ff).into(),
             text_link: rgba(0x0169ccff).into(),
             text_error: rgba(0xe02e2aff).into(),
@@ -348,6 +363,7 @@ impl Theme {
             page_surface_stroke: rgba(0x1a1c1f0a).into(),
             shadow_card: rgba(0x0000000d).into(),
             shadow_sm: rgba(0x00000014).into(),
+            shadow_lg: rgba(0x0000001a).into(),
             control_thumb: rgba(0xffffffff).into(),
             accent: rgba(0x3a83f7ff).into(),
             info_solid: rgba(0x3a83f7ff).into(),

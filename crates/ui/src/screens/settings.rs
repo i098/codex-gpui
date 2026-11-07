@@ -353,9 +353,18 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     }
     let config: ConfigReadResponse = fixture::response("readback.jsonl", "config/read", 0);
     let skills: Value = fixture::response("readback.jsonl", "skills/list", 0);
-    let integrations = cx.new(|_| integrations::State::default());
+    // The reference's Statsig values: Computer history on; Ads controls and Debug off.
+    let integrations = cx.new(|_| integrations::State {
+        evaluations: Arc::new(json!({"feature_gates": {"3488289778": {"value": true}}})),
+        gates_loaded: true,
+        ..Default::default()
+    });
     let (shell, _) = shell(&config.config, &skills, None, integrations, cx);
-    shell.update(cx, |shell, _| shell.can_go_back = true);
+    shell.update(cx, |shell, _| {
+        shell.can_go_back = true;
+        // The reference has an unseen Explore destination: the rail's `…` carries the dot.
+        shell.unread_destinations = Some(["unseen".into()].into());
+    });
     shell.into()
 }
 
@@ -1040,6 +1049,14 @@ impl Render for SettingsNav {
         let integrations = page.integrations.read(cx);
         let history_visible =
             computer_history::visible(&integrations.evaluations, integrations.gates_loaded);
+        let debug_visible = debug::allowed(&integrations.evaluations);
+        // shortcut: the gate only; the original also needs a matching ChatGPT account and no ads
+        // holdout (`availability-*.js`), add them when the app reads those.
+        let ads_visible = integrations.evaluations["feature_gates"]["665873859"]["value"] == true;
+        // The original lists it while a viewer exists or its own page is open (`fa`).
+        let handlers_visible = section == "File type handlers"
+            || matches!(&integrations.servers, computer_use::Load::Ready(servers)
+                if !file_type_handlers::viewers(servers).is_empty());
         let visible = |label: &str| match label {
             "Import" => import_visible,
             "Cloud computer" => false,
@@ -1048,7 +1065,9 @@ impl Render for SettingsNav {
             "Computer history" => history_visible,
             // The original lists Code Review for its cloud review surface (`sx`).
             "Code Review" => cloud_access.legacy,
-            "Debug" => debug::allowed(),
+            "Debug" => debug_visible,
+            "Ads controls" => ads_visible,
+            "File type handlers" => handlers_visible,
             _ => true,
         };
         let mut sections = Vec::new();
@@ -2101,7 +2120,7 @@ fn switch_sized(
                     shapes::paint(&thumb, None, at, window, cx);
                 };
                 if disabled {
-                    shapes::with_composited_opacity(153, b, window, cx, paint)
+                    shapes::with_layer(153, b, window, paint)
                 } else {
                     paint(window)
                 }

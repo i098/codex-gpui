@@ -514,7 +514,7 @@ struct Discovery {
 
 impl Discovery {
     fn new() -> Self {
-        let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+        let home = crate::env::home().unwrap_or_default();
         let apps = if cfg!(target_os = "macos") {
             [PathBuf::from("/Applications"), home.join("Applications")]
                 .iter()
