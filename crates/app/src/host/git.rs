@@ -302,7 +302,8 @@ mod review_patch;
 #[path = "worktrees.rs"]
 mod worktrees;
 pub(super) use worktrees::{
-    managed_worktrees, move_thread, remove_managed_worktree, rollback_move, thread_worktree_info,
+    managed_worktrees, move_thread, remove_managed_worktree, restore_thread_worktree,
+    rollback_move, thread_worktree_info,
 };
 
 pub(super) fn refresh_upstream(root: &Path) -> Result<()> {
