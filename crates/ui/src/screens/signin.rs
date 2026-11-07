@@ -397,14 +397,76 @@ mod snake {
 }
 
 use self::policy::Policy;
-use super::settings::AppServer;
+use std::{future::Future, pin::Pin, rc::Rc};
+
+/// A request the sign-in screen needs the app to perform on the server.
+pub enum LoginRequest {
+    Requirements,
+    Config,
+    GatewayRead,
+    GatewayLogin,
+    GatewayCancel,
+    ChatGpt,
+    DeviceCode,
+    ApiKey(String),
+    Cancel {
+        login_id: String,
+    },
+    BedrockDiscover,
+    BedrockProfile {
+        profile: String,
+        region: String,
+    },
+    BedrockEnvironment {
+        region: String,
+    },
+    BedrockAccessKeys {
+        access_key_id: String,
+        secret_access_key: String,
+        session_token: Option<String>,
+        region: String,
+    },
+    BedrockApiKey {
+        api_key: String,
+        region: String,
+    },
+}
+
+/// A failed request; `code` is the server's JSON-RPC error code when it sent one.
+#[derive(Debug)]
+pub struct RequestError {
+    pub code: Option<i64>,
+    pub message: String,
+}
+
+impl std::fmt::Display for RequestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+pub type Reply<T> = Pin<Box<dyn Future<Output = Result<T, RequestError>>>>;
+
+/// What the app provides to the sign-in screen. Implementations resolve the live server
+/// connection when called, so a restarted server is picked up.
+pub trait LoginPort {
+    /// Starts the server and returns its `userAgent`.
+    fn user_agent(&self, cx: &App) -> Reply<String>;
+    fn send(&self, request: LoginRequest, cx: &App) -> Reply<Value>;
+}
+
+/// The app's [`LoginPort`]; the parity fixture runs without one.
+#[derive(Clone)]
+pub struct LoginService(pub Rc<dyn LoginPort>);
+
+impl gpui::Global for LoginService {}
 use crate::{SANS, composer::Composer, focus, icon::icon, text};
 use gpui::{
     App, AppContext as _, Context, Div, Entity, EventEmitter, Focusable, InteractiveElement,
     IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Stateful,
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 use theme::{ActiveTheme as _, Theme};
 
 fn login_theme(cx: &App) -> Theme {
@@ -412,7 +474,7 @@ fn login_theme(cx: &App) -> Theme {
     if theme.appearance == theme::Appearance::Dark {
         theme.text = gpui::rgb(0xdfdfdf).into();
         theme.button_primary_solid = theme.text;
-        theme.text_inverse = gpui::rgb(0x2d2d2d).into();
+        theme.text_inverse = theme.text_primary_solid;
         let white = gpui::Hsla::from(gpui::rgb(0xffffff));
         theme.text_description = white.opacity(0.498);
         theme.border = white.opacity(0.084);
@@ -507,7 +569,7 @@ enum Style {
 }
 
 pub struct Login {
-    bridge: Option<std::sync::Arc<bridge::Bridge>>,
+    port: Option<Rc<dyn LoginPort>>,
     stage: Stage,
     policy: Policy,
     policy_generation: u64,
@@ -533,9 +595,9 @@ pub struct Login {
 impl EventEmitter<LoginEvent> for Login {}
 
 async fn gateway_oauth_request<R>(
-    request: impl Future<Output = anyhow::Result<R>>,
+    request: impl Future<Output = Result<R, RequestError>>,
     timeout: impl Future<Output = ()>,
-) -> (anyhow::Result<R>, bool) {
+) -> (Result<R, RequestError>, bool) {
     let mut request = std::pin::pin!(request);
     let mut timeout = std::pin::pin!(timeout);
     std::future::poll_fn(|cx| {
@@ -544,7 +606,10 @@ async fn gateway_oauth_request<R>(
         }
         if timeout.as_mut().poll(cx).is_ready() {
             return std::task::Poll::Ready((
-                Err(anyhow::anyhow!("Gateway sign-in timed out")),
+                Err(RequestError {
+                    code: None,
+                    message: "Gateway sign-in timed out".into(),
+                }),
                 true,
             ));
         }
@@ -564,7 +629,9 @@ impl Login {
         });
         cx.observe(&api_key, |_, _, cx| cx.notify()).detach();
         let mut this = Self {
-            bridge: cx.try_global::<AppServer>().map(|server| server.0.clone()),
+            port: cx
+                .try_global::<LoginService>()
+                .map(|service| service.0.clone()),
             stage: Stage::Welcome,
             policy: Policy::Loading,
             policy_generation: 0,
@@ -631,29 +698,19 @@ impl Login {
         self.policy = Policy::Loading;
         self.policy_generation += 1;
         let generation = self.policy_generation;
-        let Some(bridge) = self.bridge.clone() else {
+        let Some(port) = self.port.clone() else {
             self.policy = Policy::Error;
             return;
         };
         cx.spawn(async move |this, cx| {
-            let supports_access_keys = bridge
-                .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
-                .await
-                .is_ok_and(|server| policy::supports_access_keys(&server.user_agent));
-            let policy = match bridge
-                .request::<_, Value>("configRequirements/read", json!({}))
-                .await
-            {
+            let user_agent = cx.update(|cx| port.user_agent(cx)).await;
+            let supports_access_keys =
+                user_agent.is_ok_and(|user_agent| policy::supports_access_keys(&user_agent));
+            let policy = match ask(&port, LoginRequest::Requirements, cx).await {
                 Ok(value) => {
                     let policy = Policy::requirements(&value);
                     if policy == Policy::Loading {
-                        match bridge
-                            .request::<_, Value>(
-                                "config/read",
-                                json!({"includeLayers": false, "cwd": null}),
-                            )
-                            .await
-                        {
+                        match ask(&port, LoginRequest::Config, cx).await {
                             Ok(config) => Policy::config(&config),
                             Err(_) => Policy::Error,
                         }
@@ -663,8 +720,7 @@ impl Login {
                 }
                 Err(_) => Policy::Error,
             };
-            let gateway_provider = bridge
-                .request::<_, Value>("account/gatewayOAuth/read", Option::<()>::None)
+            let gateway_provider = ask(&port, LoginRequest::GatewayRead, cx)
                 .await
                 .ok()
                 .and_then(|value| policy::gateway_provider(&value));
@@ -743,7 +799,7 @@ impl Login {
         if self.pending || !self.policy.permits_chatgpt() || self.gateway_provider.is_none() {
             return;
         }
-        let Some(bridge) = self.bridge.clone() else {
+        let Some(port) = self.port.clone() else {
             return;
         };
         self.gateway_pending = true;
@@ -752,17 +808,16 @@ impl Login {
         self.restart_blocked = true;
         self.attempt += 1;
         let attempt = self.attempt;
+        let login = port.send(LoginRequest::GatewayLogin, cx);
         cx.spawn(async move |this, cx| {
             let (result, timed_out) = gateway_oauth_request(
-                bridge.request::<_, Value>("account/gatewayOAuth/login", Option::<()>::None),
+                login,
                 cx.background_executor()
                     .timer(std::time::Duration::from_secs(240)),
             )
             .await;
             if timed_out {
-                let _ = bridge
-                    .request::<_, Value>("account/gatewayOAuth/cancel", Option::<()>::None)
-                    .await;
+                let _ = ask(&port, LoginRequest::GatewayCancel, cx).await;
             }
             this.update(cx, |this, cx| {
                 if this.attempt != attempt {
@@ -786,7 +841,7 @@ impl Login {
         if self.pending || !self.policy.permits_chatgpt() {
             return;
         }
-        let Some(bridge) = self.bridge.clone() else {
+        let Some(port) = self.port.clone() else {
             return;
         };
         self.pending = true;
@@ -796,12 +851,15 @@ impl Login {
         self.error = None;
         self.attempt += 1;
         let attempt = self.attempt;
+        let reply = port.send(LoginRequest::ChatGpt, cx);
         cx.spawn(async move |this, cx| {
-            let result = bridge.request::<_, Value>("account/login/start", json!({"type": "chatgpt", "appBrand": "chatgpt", "useHostedLoginSuccessPage": true})).await;
+            let result = reply.await;
             this.update(cx, |this, cx| {
                 if this.attempt != attempt {
-                    if let Ok(value) = result && let Some(id) = value["loginId"].as_str() {
-                        cancel(bridge.clone(), id.to_owned(), cx);
+                    if let Ok(value) = result
+                        && let Some(id) = value["loginId"].as_str()
+                    {
+                        cancel(&port, id.to_owned(), cx);
                     }
                     return;
                 }
@@ -809,42 +867,53 @@ impl Login {
                     Ok(value) => match (value["loginId"].as_str(), value["authUrl"].as_str()) {
                         (Some(id), Some(url)) => {
                             this.login_id = Some(id.to_owned());
-                            cx.emit(LoginEvent::OpenBrowser { url: url.to_owned(), provider, email });
+                            cx.emit(LoginEvent::OpenBrowser {
+                                url: url.to_owned(),
+                                provider,
+                                email,
+                            });
                         }
-                        _ => { this.pending = false; this.error = Some("Sign-in failed: invalid sign-in response".into()); }
+                        _ => {
+                            this.pending = false;
+                            this.error = Some("Sign-in failed: invalid sign-in response".into());
+                        }
                     },
-                    Err(error) => { this.pending = false; this.error = Some(format!("Sign-in failed: {error}")); }
+                    Err(error) => {
+                        this.pending = false;
+                        this.error = Some(format!("Sign-in failed: {error}"));
+                    }
                 }
                 cx.notify();
-            }).ok();
-        }).detach();
+            })
+            .ok();
+        })
+        .detach();
         cx.notify();
     }
 
     /// Sign in with a one-time code typed on a web page, for browsers that cannot reach the
     /// loopback callback of the browser flow.
     pub fn start_device_code(&mut self, cx: &mut Context<Self>) {
-        let Some(bridge) = self.bridge.clone() else {
+        let Some(port) = self.port.clone() else {
             return;
         };
         if let Some(id) = self.login_id.take() {
-            cancel(bridge.clone(), id, cx);
+            cancel(&port, id, cx);
         }
         self.attempt += 1;
         let attempt = self.attempt;
         self.login_url = None;
         self.device_code = None;
         self.error = None;
+        let reply = port.send(LoginRequest::DeviceCode, cx);
         cx.spawn(async move |this, cx| {
-            let result = bridge
-                .request::<_, Value>("account/login/start", json!({"type": "chatgptDeviceCode"}))
-                .await;
+            let result = reply.await;
             this.update(cx, |this, cx| {
                 if this.attempt != attempt {
                     if let Ok(value) = result
                         && let Some(id) = value["loginId"].as_str()
                     {
-                        cancel(bridge.clone(), id.to_owned(), cx);
+                        cancel(&port, id.to_owned(), cx);
                     }
                     return;
                 }
@@ -887,8 +956,8 @@ impl Login {
         if key.is_empty() {
             return;
         }
-        let params = json!({"type": "apiKey", "apiKey": key});
-        let Some(bridge) = self.bridge.clone() else {
+        let request = LoginRequest::ApiKey(key.to_owned());
+        let Some(port) = self.port.clone() else {
             return;
         };
         self.pending = true;
@@ -896,10 +965,9 @@ impl Login {
         self.restart_blocked = true;
         self.attempt += 1;
         let attempt = self.attempt;
+        let reply = port.send(request, cx);
         cx.spawn(async move |this, cx| {
-            let result = bridge
-                .request::<_, Value>("account/login/start", params)
-                .await;
+            let result = reply.await;
             this.update(cx, |this, cx| {
                 if attempt != this.attempt {
                     return;
@@ -922,11 +990,10 @@ impl Login {
         self.attempt += 1;
         if self.gateway_pending {
             self.gateway_pending = false;
-            if let Some(bridge) = self.bridge.clone() {
+            if let Some(port) = self.port.clone() {
+                let reply = port.send(LoginRequest::GatewayCancel, cx);
                 cx.spawn(async move |_, _| {
-                    let _ = bridge
-                        .request::<_, Value>("account/gatewayOAuth/cancel", Option::<()>::None)
-                        .await;
+                    let _ = reply.await;
                 })
                 .detach();
             }
@@ -935,9 +1002,9 @@ impl Login {
         self.login_url = None;
         self.device_code = None;
         if let Some(id) = self.login_id.take()
-            && let Some(bridge) = self.bridge.clone()
+            && let Some(port) = self.port.clone()
         {
-            cancel(bridge, id, cx);
+            cancel(&port, id, cx);
         }
     }
 
@@ -1104,17 +1171,22 @@ fn underline(text: SharedString) -> impl IntoElement {
     .inset_0()
 }
 
-fn cancel(bridge: std::sync::Arc<bridge::Bridge>, id: String, cx: &App) {
-    cx.background_executor()
-        .spawn(async move {
-            if let Err(error) = bridge
-                .request::<_, Value>("account/login/cancel", json!({"loginId": id}))
-                .await
-            {
-                eprintln!("account/login/cancel: {error}");
-            }
-        })
-        .detach();
+fn cancel(port: &Rc<dyn LoginPort>, login_id: String, cx: &App) {
+    let reply = port.send(LoginRequest::Cancel { login_id }, cx);
+    cx.spawn(async move |_| {
+        if let Err(error) = reply.await {
+            eprintln!("account/login/cancel: {error}");
+        }
+    })
+    .detach();
+}
+
+async fn ask(
+    port: &Rc<dyn LoginPort>,
+    request: LoginRequest,
+    cx: &mut gpui::AsyncApp,
+) -> Result<Value, RequestError> {
+    cx.update(|cx| port.send(request, cx)).await
 }
 
 impl Render for Login {
@@ -1750,7 +1822,7 @@ mod gateway_oauth_tests {
     #[test]
     fn gateway_oauth_request_races_completion_and_timeout() {
         let mut completed = std::pin::pin!(gateway_oauth_request(
-            async { Ok::<_, anyhow::Error>(()) },
+            async { Ok::<_, RequestError>(()) },
             async {},
         ));
         assert!(matches!(
@@ -1761,7 +1833,7 @@ mod gateway_oauth_tests {
         ));
 
         let mut timed_out = std::pin::pin!(gateway_oauth_request(
-            std::future::pending::<anyhow::Result<()>>(),
+            std::future::pending::<Result<(), RequestError>>(),
             async {},
         ));
         assert!(matches!(

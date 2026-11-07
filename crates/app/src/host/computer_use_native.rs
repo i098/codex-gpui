@@ -460,7 +460,7 @@ fn run(command: &mut std::process::Command) -> Result<String> {
     use std::{
         io::{Read as _, Seek as _},
         process::Stdio,
-        time::{Duration, Instant},
+        time::Duration,
     };
     let mut stdout = tempfile::tempfile()?;
     let mut stderr = tempfile::tempfile()?;
@@ -469,17 +469,13 @@ fn run(command: &mut std::process::Command) -> Result<String> {
         .stdout(stdout.try_clone()?)
         .stderr(stderr.try_clone()?)
         .spawn()?;
-    let started = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
-        }
-        if started.elapsed() >= Duration::from_secs(120) {
-            child.kill()?;
-            child.wait()?;
-            bail!("native setup command timed out after 120 seconds");
-        }
-        std::thread::sleep(Duration::from_millis(20));
+    let Some(status) = crate::process::wait_timeout(
+        &mut child,
+        Duration::from_secs(120),
+        Duration::from_millis(20),
+    )?
+    else {
+        bail!("native setup command timed out after 120 seconds");
     };
     let mut text = String::new();
     if !status.success() {

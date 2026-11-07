@@ -575,7 +575,7 @@ impl Root {
         {
             self.load_import_policy(cx);
         }
-        if method == "mcpServer/oauth/login/completed"
+        if method == "mcpServer/oauthLogin/completed"
             && let Some(name) = params["name"].as_str()
         {
             cx.update_global::<ImportState, _>(|state, _| {

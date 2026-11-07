@@ -312,6 +312,15 @@ pub fn open<V: Render + 'static>(
     Ok(handle)
 }
 
+/// `/plan-summary`: `plan` in its own page window, placed on `owner`'s display.
+pub fn open_plan_summary(owner: AnyWindowHandle, plan: &str, cx: &mut App) -> Result<()> {
+    let mut spec = Spec::new(Kind::Page, ui::screens::plan::plan_title(plan));
+    spec.owner = Some(owner);
+    let page = ui::screens::thread::view::PlanSummary::new(plan);
+    open(spec, cx, move |_, cx| cx.new(|_| page))?;
+    Ok(())
+}
+
 /// The original's macOS backdrop (`applyWindowBackdrop`): `vibrancy: 'menu'` under the page
 /// while focused; an opaque surface when blurred or at 3840x2160 device px or more.
 fn apply_backdrop(window: &mut Window) {

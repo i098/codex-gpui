@@ -1862,6 +1862,20 @@ mod app_tools {
                 line["msg"]["result"]["thread"] = thread.clone();
             }
         }
+        // The app reads a chat's turns from `thread/turns/list`, not from `thread/read`.
+        let pages: Vec<Value> = lines
+            .iter()
+            .filter(|line| {
+                line["msg"]["method"] == "thread/turns/list"
+                    && line["msg"]["params"]["threadId"] == SOURCE
+            })
+            .map(|line| line["msg"]["id"].clone())
+            .collect();
+        for line in &mut lines {
+            if line["dir"] == "recv" && pages.contains(&line["msg"]["id"]) {
+                line["msg"]["result"]["data"] = thread["turns"].clone();
+            }
+        }
         let mut fx = Fx::scripted(lines)?;
         fx.root
             .update(&mut fx.cx, |root, cx| root.set_host(local.clone(), cx));
@@ -1870,13 +1884,13 @@ mod app_tools {
             cx.emit(ui::screens::sidebar::OpenThread(SOURCE.into()))
         });
         fx.wait_thread(SOURCE)?;
-        ensure!(fx.read(|root, cx| {
+        let labels = fx.read(|root, cx| {
             root.thread()
                 .unwrap()
                 .read(cx)
                 .activity_labels("proposal-turn", cx)
-                .is_some_and(|labels| labels.is_empty())
-        }));
+        });
+        ensure!(labels.as_ref().is_some_and(Vec::is_empty), "{labels:?}");
         if let Ok(out) = std::env::var("CGX_APP_TOOLS_PROOF") {
             fs::create_dir_all(&out)?;
             fs::write(
@@ -1886,12 +1900,21 @@ mod app_tools {
             fx.reference_shot()?
                 .save(Path::new(&out).join("native-card.png"))?;
         }
+        use app::SidePanel;
+        use ui::screens::automations::editor::Panel;
+        let tab_open = |fx: &Fx, panel: Panel| {
+            fx.read(|root, cx| {
+                root.side_panel() == Some(SidePanel::Automation)
+                    && root.automation_editor().is_none()
+                    && root
+                        .automation_tab()
+                        .is_some_and(|editor| editor.read(cx).panel() == Some(panel))
+            })
+        };
         fx.keys("shift-tab enter")?;
-        fx.wait("proposal editor", |fx| {
-            fx.read(|root, _| root.automation_editor().is_some())
-        })?;
+        fx.wait("proposal tab", |fx| tab_open(fx, Panel::Create))?;
         ensure!(fx.read(|root, cx| {
-            root.automation_editor()
+            root.automation_tab()
                 .unwrap()
                 .read(cx)
                 .draft(cx)
@@ -1905,9 +1928,14 @@ mod app_tools {
             fx.reference_shot()?
                 .save(Path::new(&out).join("native-card-editor.png"))?;
         }
+        // Escape keeps the tab; its `Cancel` (before `Create scheduled task`) closes it.
         fx.keys("escape")?;
+        ensure!(tab_open(&fx, Panel::Create));
+        fx.keys("shift-tab shift-tab enter")?;
         fx.wait("proposal cancelled", |fx| {
-            fx.read(|root, _| root.automation_editor().is_none())
+            fx.read(|root, _| {
+                root.automation_tab().is_none() && root.side_panel() != Some(SidePanel::Automation)
+            })
         })?;
         ensure!(list()?["items"].as_array().unwrap().is_empty());
 
@@ -1919,10 +1947,10 @@ mod app_tools {
                 call_id: "proposal-call".into(),
             })
         });
+        fx.wait("proposal tab again", |fx| tab_open(fx, Panel::Create))?;
         fx.keys("cmd-enter")?;
-        fx.wait("reviewed task saved", |fx| {
-            fx.read(|root, _| root.automation_editor().is_none())
-        })?;
+        // The saved task stays in the tab, now with `Open settings`.
+        fx.wait("reviewed task saved", |fx| tab_open(fx, Panel::Saved))?;
         let listed = list()?;
         let tasks = listed["items"].as_array().unwrap();
         ensure!(
@@ -1930,6 +1958,10 @@ mod app_tools {
                 && tasks[0]["name"] == "Accepted proposal"
                 && tasks[0]["prompt"] == "Save only after native user approval"
         );
+        if let Ok(out) = std::env::var("CGX_APP_TOOLS_PROOF") {
+            fx.reference_shot()?
+                .save(Path::new(&out).join("native-card-saved.png"))?;
+        }
         let accepted = fx
             .read(|root, cx| {
                 root.thread()
@@ -1955,11 +1987,23 @@ mod app_tools {
                 call_id: "proposal-call".into(),
             })
         });
+        fx.wait("saved task tab", |fx| tab_open(fx, Panel::Saved))?;
+        let before = fx.read(|root, _| root.automation_tab().unwrap().entity_id());
         fx.keys("cmd-enter")?;
+        // A saved update reopens the tab on the stored task.
         fx.wait("accepted task updated", |fx| {
-            fx.read(|root, _| root.automation_editor().is_none())
+            fx.read(|root, _| {
+                root.automation_tab()
+                    .is_some_and(|editor| editor.entity_id() != before)
+            })
         })?;
         ensure!(list()?["items"].as_array().unwrap().len() == 1);
+        // `Open settings` (the last button) shows the task on the Automations page.
+        fx.keys("shift-tab enter")?;
+        let id = tasks[0]["id"].as_str().unwrap().to_owned();
+        fx.wait("settings opened", |fx| {
+            fx.route() == app::Route::Automation(id.clone())
+        })?;
         Ok(())
     }
 }
