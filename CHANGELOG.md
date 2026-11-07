@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Show the green `Awaiting approval` pill and the blue dot on a sidebar chat row while its thread waits for an approval (`thread/status/changed` with the `waitingOnApproval` active flag); both go when the flag clears or the thread goes idle.
+- Open a thread's latest plan in its own window (the original's `/plan-summary` page): Command-click Thread summary ▸ `Plan`. The window draws the plan with the thread's markdown in a `Plan` card; a plain click still opens the `Plan` side panel tab.
 - Read `configRequirements/read` and disable the permission options that `requirements.toml` or `config.toml` do not allow, with the original's tooltips, and show `Managed` when no option is allowed.
 - Show the original's `This request requires additional safety checks, which can take extra time.` line under a running turn when the app-server sends `autoApprovalReview/strictReviewRequired`; it goes away when the turn ends.
 - Open a thread's pull request in a `PR #n` side panel tab from the branch actions' `View PR` (`Open in GitHub` still opens the browser). The tab shows the GitHub detail: status, branch, reviewers, comments, checks, description and code changes. It also offers `Ready for review`, `Convert to draft` or `Reopen`, which run `gh pr ready`, `gh pr ready --undo` or `gh pr reopen` through app-server `process/spawn`.
