@@ -478,6 +478,10 @@ impl Shell {
         self.main_content_inline_inset
     }
 
+    pub fn main(&self) -> &AnyView {
+        &self.main
+    }
+
     pub fn set_main(&mut self, main: AnyView, cx: &mut Context<Self>) {
         self.main = main;
         cx.notify();

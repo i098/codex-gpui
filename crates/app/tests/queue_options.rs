@@ -139,9 +139,7 @@ fn retry_keeps_edited_images_skills_and_queue_position() -> Result<()> {
 }
 
 fn edit_and_resubmit(retry: bool) -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("queue_options");
     let image = json!({ "type": "localImage", "path": "/tmp/cgx-mac/proj/shot.png" });
     let skill = json!({ "type": "skill", "name": "review", "path": "/tmp/cgx-mac/proj/SKILL.md" });
     let draft = "second draft ";
@@ -231,9 +229,7 @@ fn edit_and_resubmit(retry: bool) -> Result<()> {
 /// the first page alone would drop the rows of the later pages.
 #[test]
 fn edit_restores_the_place_in_a_queue_of_several_pages() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("queue_options");
     let first = submission("a", json!([text("first")]));
     let second = submission("b", json!([text("second")]));
     let third = submission("c", json!([text("third")]));
@@ -283,9 +279,7 @@ fn edit_restores_the_place_in_a_queue_of_several_pages() -> Result<()> {
 
 #[test]
 fn edit_keeps_the_current_draft_and_a_submission_the_server_already_took() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("queue_options");
     let only = submission("a", json!([text("queued")]));
     let mut lines = script(None, queue_mode)?;
     lines.extend(exchange("thread/resume", json!({})));
@@ -308,9 +302,7 @@ fn edit_keeps_the_current_draft_and_a_submission_the_server_already_took() -> Re
 
 #[test]
 fn queueing_switch_decides_what_the_next_submit_does() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("queue_options");
     let only = submission("a", json!([text("queued")]));
     let mut lines = script(None, queue_mode)?;
     lines.extend(exchange("thread/resume", json!({})));
@@ -346,9 +338,7 @@ fn queueing_switch_decides_what_the_next_submit_does() -> Result<()> {
 
 #[test]
 fn a_refused_queueing_switch_leaves_the_behavior_that_applies() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("queue_options");
     let only = submission("a", json!([text("queued")]));
     let mut lines = script(None, queue_mode)?;
     lines.extend(exchange("thread/resume", json!({})));
@@ -443,9 +433,7 @@ fn open_side_chat(fx: &mut Fx, rows: &[&str], index: usize, draft: &str) -> Resu
 
 #[test]
 fn open_in_side_chat_runs_the_queued_message_in_its_own_conversation() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("queue_options");
     let first = submission("a", json!([text("first")]));
     let second = submission("b", json!([text("What does subtract return?")]));
     let third = submission("c", json!([text("third")]));
@@ -640,9 +628,7 @@ fn open_in_side_chat_runs_the_queued_message_in_its_own_conversation() -> Result
 
 #[test]
 fn a_side_chat_that_fails_to_open_puts_the_message_back_in_place() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("queue_options");
     let first = submission("a", json!([text("first")]));
     let second = submission("b", json!([text("second")]));
     let third = submission("c", json!([text("third")]));
@@ -691,9 +677,7 @@ fn a_side_chat_that_fails_to_open_puts_the_message_back_in_place() -> Result<()>
 
 #[test]
 fn failed_follow_up_can_open_a_side_chat_without_deleting_a_server_row() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("queue_options");
     for fail_fork in [false, true] {
         let mut fork = recorded_thread(SUBTRACT)?;
         fork["id"] = SIDE.into();

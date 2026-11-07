@@ -19,6 +19,7 @@ pub use cloud::{CloudTaskRequest, create_cloud_task};
 pub use cloud_snapshot::create_cloud_task_from_worktree;
 mod automation_notifications;
 pub mod computer_use_browser;
+pub mod computer_use_office;
 pub mod computer_use_requests;
 pub mod connections;
 mod context_status;
@@ -853,6 +854,7 @@ impl Root {
                     ui::composer::SlashCommand::ForkWorktree => this.fork_worktree(window, cx),
                     ui::composer::SlashCommand::Feedback => this.open_feedback(window, cx),
                     ui::composer::SlashCommand::Export => this.export_transcript(window, cx),
+                    ui::composer::SlashCommand::Share => this.share_open_thread(cx),
                     ui::composer::SlashCommand::Recap => this.recap(window, cx),
                     ui::composer::SlashCommand::Goal { .. }
                     | ui::composer::SlashCommand::ReadGoal
@@ -4770,6 +4772,9 @@ impl Root {
                 "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 "Log out" => window.dispatch_action(Box::new(LogOut), cx),
+                "Profile" => {
+                    window.dispatch_action(Box::new(ui::screens::profile::OpenProfile), cx)
+                }
                 label => {
                     if let Some(section) = settings::section(label) {
                         self.open_settings_section(section, window, cx);
@@ -6766,6 +6771,17 @@ impl Root {
                 service.get_sound_mode().map_err(|error| error.to_string()),
             ))
         });
+        let bridge = self.bridge.clone();
+        let office = cx.background_spawn(async move {
+            let plugins: Value = bridge.request("plugin/list", json!({"cwds":[]})).await?;
+            let apps: Value = bridge
+                .request("app/list", json!({"limit":1000,"forceRefetch":false}))
+                .await?;
+            Ok::<_, anyhow::Error>(computer_use_office::controls(
+                &plugins["marketplaces"],
+                apps["data"].as_array().map_or(&[][..], Vec::as_slice),
+            ))
+        });
         let settings = cx
             .try_global::<host_settings::Settings>()
             .map(|settings| settings.read_all().clone())
@@ -6774,9 +6790,11 @@ impl Root {
             cx.background_spawn(async move { computer_use_browser::current_controls(&settings) });
         cx.spawn(async move |_, cx| {
             let result = read.await;
+            let office = office.await.unwrap_or_default();
             let browsers = browsers.await;
             cx.update_global::<ComputerUseState, _>(|state, _| {
                 state.pending = false;
+                state.office = office;
                 state.browsers = browsers;
                 match result {
                     Ok((readiness, approvals, sound)) => {
@@ -6951,6 +6969,13 @@ impl Root {
                         ComputerUseSoundMode::Off => host::computer_use::SoundMode::Off,
                     };
                     host.computer_use_settings()?.set_sound_mode(mode)?;
+                }
+                ComputerUseAction::SetOfficeEnabled(enabled) => {
+                    bridge.request::<_, Value>("config/value/write", json!({
+                        "keyPath": format!("apps.{}.enabled", computer_use_office::DOCUMENT_CONTROL_APP_ID),
+                        "value": enabled, "mergeStrategy": "upsert", "reloadUserConfig": true,
+                    })).await?;
+                    bridge.request::<_, Value>("config/mcpServer/reload", json!({})).await?;
                 }
                 ComputerUseAction::RemoveApproval(bundle) => {
                     host.computer_use_settings()?.remove_app_approval(&bundle)?;

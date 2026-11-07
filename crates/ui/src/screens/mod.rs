@@ -23,6 +23,7 @@ pub mod oauth;
 pub mod onboarding;
 pub mod plan;
 pub mod plugins;
+pub mod profile;
 pub mod projects;
 pub mod pull_requests;
 pub mod recovery;

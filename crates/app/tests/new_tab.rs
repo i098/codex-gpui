@@ -14,10 +14,7 @@ fn proxy() {
 
 #[test]
 fn new_tab_page_opens_a_picked_tab() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        println!("new_tab: the Metal replay requires macOS");
-        return Ok(());
-    }
+    common::skip_unless_macos!("new_tab");
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
     fx.click(fx.at("home", "Add a subtract")?)?;
     fx.wait_thread(SUBTRACT)?;

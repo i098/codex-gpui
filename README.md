@@ -13,24 +13,34 @@ The app runs on macOS (Apple silicon and Intel). The workspace also builds on Li
 
 ## Performance
 
-Measured against the original Codex app (26.1029) on the same account-free fixture:
+Measured against the original Codex app (26.1029; 26.1103 for size) on the same account-free fixture:
 
 | Metric | Original | codex-gpui |
 | --- | --- | --- |
-| Cold start to sidebar rows painted (median) | 11 164 ms | 1 675 ms |
-| Warm start to sidebar rows painted (median) | 9 197 ms | 400 ms |
-| Idle memory, RSS at +30 s (all processes) | 2 133 MB | 163 MB |
-| Idle memory, `phys_footprint` at +90 s | 893–895 MB | 109–123 MB |
-| Idle CPU, window visible | 31.7 % of one core | 0.63 % |
-| Idle CPU, window hidden | 3.7 % | 0.22 % |
-| App size | 1 889 MiB | 105.8 MiB |
-| Scroll a long thread, frame interval p50 / p95 | not measurable | 16.67 / 18.66 ms |
+| Cold start to sidebar rows painted (median) | 11 079 ms | 1 378 ms |
+| Warm start to sidebar rows painted (median) | 9 295 ms | 204 ms |
+| Idle memory, RSS at +30 s (all processes), no thread link | 2 034 MB | 155 MB |
+| Idle memory, RSS at +30 s, with thread link | 2 118 MB | 181 MB |
+| Idle memory, `phys_footprint` at +90 s, no thread link | 798 MB | 93 MB |
+| Idle memory, `phys_footprint` at +90 s, with thread link | 892 MB | 123 MB |
+| Idle CPU, window visible, no thread link | 2.2 % of one core | 0.7 % |
+| Idle CPU, window visible, with thread link | 31.9 % | 0.7 % |
+| Idle CPU, window hidden, no thread link | 0.7 % | 0.2 % |
+| App size, `.app` (`du -sh`) | 1.9 GB (1 964 200 KB) | 107 MB (109 204 KB), arm64 |
+| Download size (`ditto` zip) | 815 MB | 56.2 MB |
+| Download size, macOS `.dmg` | not measured | 60.8 MB |
 
-Method: amelia Mac mini (Apple M4), release build, 5 to 10 runs per row, same account-free fixture for both apps.
+How to reproduce: [docs/BENCHMARKS.md](docs/BENCHMARKS.md)
 
-- The original could not open a thread without a signed-in account, so its long-thread memory and scroll were not measured.
-- The original's start includes about 7 s of fixture auth retry; without it, cold start is about 4.1 s.
-- The original's visible idle CPU is an upper bound: it comes from loading animations in the account-free state.
+An earlier table is replaced by this 5-run median check: that one mixed the thread-link state into the memory and CPU rows, and its "about 4.1 s" original start was arithmetic, not a measurement, so it is gone.
+
+Method: amelia Mac mini (Apple M4), release build, same account-free fixture for both apps. Every row is the median of n=5 runs, interleaved between the apps. The "no thread link" rows launch with no thread open; the "with thread link" rows open a `codex://threads` link.
+
+- The original could not open a thread without a signed-in account, so its long-thread memory was not measured.
+
+### Download
+
+- Latest release, with the macOS Apple silicon `.dmg`, Linux `AppImage` and Linux `deb`: [github.com/i098/codex-gpui/releases/latest](https://github.com/i098/codex-gpui/releases/latest)
 
 ## Quick start
 

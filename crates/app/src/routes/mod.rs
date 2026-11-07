@@ -10,6 +10,7 @@ mod images;
 mod maps;
 mod mobile;
 mod plugins;
+mod profile;
 mod projects;
 mod security_cloud;
 mod settings;
@@ -66,6 +67,8 @@ pub enum Route {
     Projects,
     /// Sidebar `Your dot` (`/dots/home`): the dots eligibility landing.
     Dots,
+    /// Settings ▸ `Profile` (`/profile`): the signed-in user's profile page.
+    Profile,
 }
 
 pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
@@ -86,6 +89,7 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = gpts::actions(root, cx);
     root = projects::actions(root, cx);
     root = dots::actions(root, cx);
+    root = profile::actions(root, cx);
     root = root.on_action(cx.listener(
         |this, _: &ui::screens::thread::view::OpenPlanSummary, window, cx| {
             let Some(thread) = &this.thread else { return };
@@ -265,6 +269,7 @@ impl Root {
             Route::Gpts(id) => Some(gpts::page(self, id, window, cx)),
             Route::Projects => Some(projects::page(self, window, cx)),
             Route::Dots => Some(dots::page(self, window, cx)),
+            Route::Profile => Some(profile::page(self, window, cx)),
             Route::Onboarding(page) => {
                 self.open_onboarding(page, window, cx);
                 None

@@ -68,8 +68,8 @@ pub use items::{ImageView, OpenImage};
 pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
 pub use actions::{
-    EditMessage, ForkThread, PatchTurn, RevertTurn, RunEnvironmentAction, SubmitRating,
-    ThreadPressed,
+    EditMessage, ForkThread, PatchTurn, RevertTurn, RunEnvironmentAction, ShareThread,
+    SubmitRating, ThreadPressed,
 };
 
 use actions::{TurnFocus, action_row};

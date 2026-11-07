@@ -13,9 +13,7 @@ fn ready(fx: &mut Fx) -> Result<bool> {
 
 #[test]
 fn drafts_and_running_turns_defer_restart() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("qa");
     let mut fx = Fx::new()?;
     assert!(
         ready(&mut fx)?,
@@ -53,9 +51,7 @@ fn drafts_and_running_turns_defer_restart() -> Result<()> {
 
 #[test]
 fn an_active_window_defers_restart() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("qa");
     let mut fx = Fx::new()?;
     assert!(ready(&mut fx)?);
     fx.cx

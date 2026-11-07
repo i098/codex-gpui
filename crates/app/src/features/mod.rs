@@ -20,6 +20,7 @@ pub(crate) mod feedback;
 mod keymap;
 pub(crate) mod memories;
 mod new_tab;
+mod share_snapshot;
 pub(crate) mod shortcuts;
 mod slash_commands;
 mod thread_menu;

@@ -14,10 +14,7 @@ fn proxy() {
 
 #[test]
 fn image_and_pdf_links_open_a_preview() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        println!("file_preview: the Metal replay requires macOS");
-        return Ok(());
-    }
+    common::skip_unless_macos!("file_preview");
     let assets = Path::new(CWD).join("preview");
     std::fs::create_dir_all(&assets)?;
     std::fs::write(

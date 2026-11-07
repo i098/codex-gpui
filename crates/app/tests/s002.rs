@@ -119,10 +119,7 @@ fn recorded_params(requests: &Value) -> Vec<Value> {
 
 #[test]
 fn row_menu_and_rename_dialog_match_original() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        println!("s002: the Metal replay requires macOS");
-        return Ok(());
-    }
+    common::skip_unless_macos!("s002");
     let rec: Value =
         serde_json::from_slice(&fs::read(format!("{ROOT}/refs/interactions/s002.json"))?)?;
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
