@@ -87,6 +87,8 @@ actions!(
         OpenImages,
         /// Explore ▸ `GPTs` (`/gpts`).
         OpenGpts,
+        /// Sidebar `Your dot` (`/dots/home`).
+        OpenDots,
         /// Explore ▸ `Projects` (`/projects`).
         OpenProjects,
         /// Home beacon `Start Voice` and the composer's `Start new voice chat`.
@@ -994,6 +996,7 @@ pub fn home_sidebar_header(
         let hover_bg = t.list_hover;
         div()
             .id(id)
+            .debug_selector(move || id.into())
             .tab_index(0)
             .focus_visible(keyboard_ring(true))
             .h(px(30.))
@@ -1168,22 +1171,27 @@ pub fn home_sidebar_header(
                     )
                     .on_click(dispatch::<NewChat>),
                 ))
-                .child(rounded_clip(
-                    RADIUS_BUTTON_XL,
-                    shapes::Corner::Squircle,
-                    row(
-                        "your-dot",
-                        // An `<img>`: its svg (with its own fill) draws into the overlap layer.
-                        icon::icon("your-dot", 16., gpui::rgb(0xbac1d3).into())
-                            .image()
-                            .own_layer(Some(overlap))
-                            .into_any_element(),
-                        "Your dot",
-                    )
-                    // The original navigates in-app to its `/dots/home` route; the port has no
-                    // dot screen, so it opens the same ChatGPT page, like dot search results.
-                    .on_click(|_, _, cx| cx.open_url("https://chatgpt.com/dots/home")),
-                )),
+                // The original lists the row only for an account whose dot is available.
+                .when(
+                    cx.try_global::<screens::dots::Capable>()
+                        .is_none_or(|capable| capable.0),
+                    |rows| {
+                        rows.child(rounded_clip(
+                            RADIUS_BUTTON_XL,
+                            shapes::Corner::Squircle,
+                            row(
+                                "your-dot",
+                                // An `<img>`: its svg (with its own fill) draws into the overlap layer.
+                                icon::icon("your-dot", 16., gpui::rgb(0xbac1d3).into())
+                                    .image()
+                                    .own_layer(Some(overlap))
+                                    .into_any_element(),
+                                "Your dot",
+                            )
+                            .on_click(dispatch::<OpenDots>),
+                        ))
+                    },
+                ),
         )
 }
 

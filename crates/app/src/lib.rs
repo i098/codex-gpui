@@ -1456,6 +1456,7 @@ impl Root {
                 if this.ready && !failed && !bridge.is_acp() {
                     this.refresh_home_banner(cx);
                     this.load_task_suggestions(cx);
+                    this.load_dots_capability(cx);
                 }
                 hotkey::policy::refresh(this, cx);
                 connections::startup(this, cx);
