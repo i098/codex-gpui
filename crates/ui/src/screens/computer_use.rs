@@ -110,7 +110,9 @@ impl OfficeApp {
     fn description(self) -> &'static str {
         match self {
             Self::Excel => "Let ChatGPT use Microsoft Excel add-in for additional control",
-            Self::PowerPoint => "Let ChatGPT use Microsoft PowerPoint add-in for additional control",
+            Self::PowerPoint => {
+                "Let ChatGPT use Microsoft PowerPoint add-in for additional control"
+            }
             Self::Word => "Let ChatGPT use Microsoft Word add-in for additional control",
         }
     }
