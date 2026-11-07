@@ -39,6 +39,7 @@ pub const SUBTRACT: &str = "01a13de9-6fff-78e1-84fc-ebb3a2dc873f";
 pub const EXPLAIN: &str = "01a13de9-35ed-7c72-a36a-68eeb2f4e1ee";
 pub const GREETING_PROMPT: &str = "Change the greeting in hello.py to \"Hello, Codex\".";
 /// Ends a `Result<()>` test early on a host without the macOS Metal replay, and says so.
+#[allow(unused_macros)] // each test target includes this module; only some use the macro
 macro_rules! skip_unless_macos {
     ($test:expr) => {
         if !cfg!(target_os = "macos") {
