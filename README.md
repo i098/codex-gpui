@@ -13,7 +13,7 @@ The app runs on macOS (Apple silicon and Intel). The workspace also builds on Li
 
 ## Performance
 
-Measured against the original Codex app (26.1029) on the same account-free fixture:
+Measured against the original Codex app (26.1029; 26.1103 for size) on the same account-free fixture:
 
 | Metric | Original | codex-gpui |
 | --- | --- | --- |
@@ -26,7 +26,8 @@ Measured against the original Codex app (26.1029) on the same account-free fixtu
 | Idle CPU, window visible, no thread link | 2.2 % of one core | 0.7 % |
 | Idle CPU, window visible, with thread link | 31.9 % | 0.7 % |
 | Idle CPU, window hidden, no thread link | 0.7 % | 0.2 % |
-| App size (`du`) | 1 918 MiB | pending: release `.app` not measured yet |
+| App size, `.app` (`du -sh`) | 1.9 GB (1 964 200 KB) | 107 MB (109 204 KB), arm64 |
+| Download size (`ditto` zip) | 815 MB | 56.2 MB |
 
 Method: amelia Mac mini (Apple M4), release build, same account-free fixture for both apps. Every row is the median of n=5 runs, interleaved between the apps. The "no thread link" rows launch with no thread open; the "with thread link" rows open a `codex://threads` link.
 
@@ -34,7 +35,7 @@ Method: amelia Mac mini (Apple M4), release build, same account-free fixture for
 
 ### Reproduce
 
-Hardware and software of the run above: Mac mini M4 (10 cores), macOS 26.6.2, console locked. The original is ChatGPT/Codex 26.1029.61003. codex-gpui is commit `9e6ef934` (release build with `CODEX_GPUI_QA=1`, plus `tools/bench/probe.diff`).
+Hardware and software of the run above: Mac mini M4 (10 cores), macOS 26.6.2, console locked. The original is ChatGPT/Codex 26.1029.61003 for start, memory and CPU; the app on that host now reports 26.1103.41825, the version of the size rows. codex-gpui is commit `9e6ef934` (release build with `CODEX_GPUI_QA=1`, plus `tools/bench/probe.diff`).
 
 The two states are `plain` (no thread open) and `thread` (the app opens `codex://threads/<id>` of the `explain` fixture). Both apps use the same recorded-fixture app-server (`tools/route1/linux/mock-app-server.mjs`).
 
@@ -45,6 +46,8 @@ export BENCH_ORIG=/path/to/ChatGPT.app BENCH_BIN=$PWD/target/release/codex-gpui
 tools/bench/run.sh plain    # cold and warm start, idle RSS and CPU, no thread link
 tools/bench/run.sh thread   # cold start, idle RSS and CPU, with the thread link
 ```
+
+Size: `tools/bench/size.sh /path/to/ChatGPT.app /path/to/Codex\ GPUI.app` prints `du`, the file-size sum and the `ditto -c -k --keepParent` zip size. The codex-gpui `.app` is arm64 only, built with `CODEX_GPUI_DMG=1 bash tools/bundle.sh --assemble /tmp/cgx-bsize/release normal "$(git rev-parse HEAD)" archive`, ad-hoc signed (commit `ebc3fd8a`, v0.1.1 tree). The `.dmg` is 60.8 MB. A universal build is not measured: the x86_64 build fails in `skia-hairline-sys`.
 
 `run.sh` needs passwordless `sudo` (for `purge` and `launchctl asuser`), starts the apps in the background, runs 5 interleaved rounds, and prints median (min-max) per metric. `probe.diff` adds the first-frame log and a switch that paints a window the locked console hides. Do not ship it.
 
