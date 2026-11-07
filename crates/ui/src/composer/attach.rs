@@ -396,6 +396,57 @@ impl Composer {
         cx.notify();
     }
 
+    /// A downloaded Library file (the original's `createFileAttachment`): written to a new
+    /// directory under the attachments root and attached there. Returns that path.
+    pub fn attach_download(
+        &mut self,
+        name: &str,
+        bytes: Vec<u8>,
+        cx: &mut Context<Self>,
+    ) -> Result<PathBuf> {
+        // The name comes from the server: only its last component is kept.
+        let name = Path::new(name)
+            .file_name()
+            .context("the file has no name")?
+            .to_owned();
+        let directory = attachments_root()?.join(uuid::Uuid::new_v4().to_string());
+        let path = directory.join(name);
+        let bridge = self.bridge.clone();
+        let target = path.clone();
+        let save: Task<Result<Attachment>> = cx.foreground_executor().spawn(async move {
+            match &bridge {
+                Some(bridge) => {
+                    let params = json!({ "path": directory, "recursive": true });
+                    request(bridge, "fs/createDirectory", params).await?;
+                    let params = json!({ "path": target, "dataBase64": BASE64.encode(&bytes) });
+                    request(bridge, "fs/writeFile", params).await?;
+                }
+                None => {
+                    fs::create_dir_all(&directory)?;
+                    fs::write(&target, &bytes)?;
+                }
+            }
+            let mut attachment = Attachment::dropped(target, bridge).await?;
+            attachment.persisted = true;
+            Ok(attachment)
+        });
+        self.queue_attachment("Library file", save, cx);
+        Ok(path)
+    }
+
+    /// Whether an attachment sits at `path`.
+    pub fn has_attachment(&self, path: &Path) -> bool {
+        self.attachments.iter().any(|a| a.path == path)
+    }
+
+    /// Removes the attachment at `path`, as its chip's remove button does.
+    pub fn remove_attachment_at(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if let Some(index) = self.attachments.iter().position(|a| a.path == path) {
+            self.remove_attachment(index, cx);
+            cx.notify();
+        }
+    }
+
     fn remove_attachment(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.attachments.len() {
             self.remove_paste(index, cx);
@@ -732,7 +783,7 @@ impl Composer {
                         .detach();
                 }
             }
-            (Content::Image(_), true) => {
+            (Content::Image(_) | Content::File, true) => {
                 let path = attachment.path.clone();
                 if let Some(bridge) = self.bridge.clone() {
                     cx.foreground_executor()

@@ -1233,6 +1233,15 @@ impl Root {
             },
         )
         .detach();
+        let home = root.home.clone();
+        cx.subscribe_in(
+            &home,
+            window,
+            |this, _, event: &ui::screens::home::WorkEvent, window, cx| {
+                this.work_event(event, window, cx)
+            },
+        )
+        .detach();
         connections::install(cx);
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
