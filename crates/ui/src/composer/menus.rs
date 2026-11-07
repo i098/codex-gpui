@@ -11,6 +11,10 @@ const PICKER_ENTER: Duration = Duration::from_millis(320);
 const PICKER_MOVE: Duration = Duration::from_millis(320);
 /// The simple view's box: 4 px panel padding, the 48 px top row, the 40 px slider row.
 const SIMPLE_VIEW_HEIGHT: f32 = 96.;
+/// The Daybreak row under the model list (a 4 px gap and the 28 px row), and the two-line
+/// safety notice under it while Daybreak is on.
+const DAYBREAK_ROW: f32 = 4. + 28.;
+const DAYBREAK_NOTICE: f32 = 32. + 4.;
 /// `_ThumbSpring` grows to `scale(32 / 28)` while hovered or pressed (spring `jt`) and
 /// shrinks back with spring `Mt`.
 const THUMB_GROWN: f32 = 32. / 28.;
@@ -234,7 +238,14 @@ impl Composer {
         });
         let list = shown(f.views[2], advanced)
             .then(|| track(view(f.views[2], 10., self.models_view(t, advanced, cx))));
-        let list_height = 8. + 28. + 32. * self.models.len() as f32;
+        let list_height = 8.
+            + 28.
+            + 32. * self.models.len() as f32
+            + match (self.daybreak_row(), self.daybreak) {
+                (false, _) => 0.,
+                (true, false) => DAYBREAK_ROW,
+                (true, true) => DAYBREAK_ROW + DAYBREAK_NOTICE,
+            };
         let height = SIMPLE_VIEW_HEIGHT + (list_height - SIMPLE_VIEW_HEIGHT) * f.height;
         popover(t, 254., |d| {
             d.p(px(0.)).child(
@@ -625,6 +636,61 @@ impl Composer {
                             }))
                     })
             }))
+            .when(self.daybreak_row(), |d| {
+                d.child(self.daybreak_toggle(t, cx))
+            })
+    }
+
+    /// `composer.modelPicker.daybreak.*`: the thread's Daybreak switch and, while it is on,
+    /// the safety notice.
+    fn daybreak_toggle(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
+        let hover = t.menu_item_hover;
+        let (enabled, locked) = (self.daybreak, self.running);
+        div()
+            .mt(px(4.))
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .id("daybreak")
+                    .role(gpui::Role::Switch)
+                    .aria_label(if enabled {
+                        "Turn off Daybreak"
+                    } else {
+                        "Turn on Daybreak"
+                    })
+                    .h(px(28.))
+                    .px(px(8.))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .rounded(px(15.))
+                    .when(locked, |d| d.opacity(0.5))
+                    .when(!locked, |d| {
+                        d.hover(move |s| s.bg(hover))
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_daybreak(cx)))
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(text("Daybreak", 13., 18.5714, 430., t.text)),
+                    )
+                    .when(enabled, |d| {
+                        d.child(icon("menu-check", 16., t.text).opacity(0.75))
+                    }),
+            )
+            .when(enabled, |d| {
+                d.child(div().px(px(8.)).pb(px(4.)).child(
+                    text(
+                        "Some cybersecurity requests are still limited, even when Daybreak is on.",
+                        12.,
+                        16.,
+                        400.,
+                        t.text_tertiary,
+                    )
+                    .whitespace_normal(),
+                ))
+            })
     }
 
     /// `How should ChatGPT actions be approved?` with `Learn more`, then one row per mode: its
