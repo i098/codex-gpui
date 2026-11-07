@@ -1,5 +1,8 @@
+use crate::host::{Host, Request};
 use crate::*;
+use base64::Engine as _;
 use gpui::Div;
+use ui::screens::home::{LibraryFile, WorkEvent};
 
 pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     root.on_action(cx.listener(|this, _: &NewChat, window, cx| this.new_chat(window, cx)))
@@ -198,6 +201,125 @@ impl Root {
             }
         })
         .detach();
+    }
+}
+
+/// `Files` menu reads: `POST /files/library` with the `ftn` body for native files, at most
+/// `We` (10) of them; `q` narrows by name.
+fn library_files(host: &dyn Host, query: &str) -> Result<Vec<LibraryFile>> {
+    let identity = host.identity().context("No ChatGPT account")?;
+    let q = (!query.is_empty()).then_some(query);
+    let body = json!({"limit": 10, "cursor": null, "state": "ready", "q": q});
+    let response = crate::usage::http(host, &identity, "POST", "/files/library", Some(body))?;
+    Ok(response["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            Some(LibraryFile {
+                id: item["id"].as_str()?.to_owned(),
+                file_id: item["file_id"].as_str()?.to_owned(),
+                name: item["file_name"].as_str()?.to_owned(),
+                size: item["file_size_bytes"].as_u64(),
+            })
+        })
+        .collect())
+}
+
+/// A Library file's content (`Rxc` through `vtn`): its inline URL, then the bytes there.
+fn library_file_bytes(host: &dyn Host, file: &LibraryFile) -> Result<Vec<u8>> {
+    let identity = host.identity().context("No ChatGPT account")?;
+    let http = |path: &str| crate::usage::http(host, &identity, "GET", path, None);
+    // [INFERENCE] `vg` matches Library ids; other file ids download through `/files/download`.
+    let url = if file.file_id.starts_with("libfile") {
+        let path = format!("/files/library/files/{}/content_url", file.file_id);
+        http(&path)?["content_url"].clone()
+    } else {
+        let path = format!(
+            "/files/download/{}?inline=true",
+            file.file_id.replace('#', "*")
+        );
+        let body = http(&path)?;
+        // shortcut: no `retry` polling (`atn`); a file still processing fails the attach.
+        ensure!(
+            body["status"] == "success",
+            "download status {}",
+            body["status"]
+        );
+        body["download_url"].clone()
+    };
+    let url = url.as_str().context("no download URL")?;
+    // ChatGPT's own paths take the account's credentials; other origins get none.
+    let response = if url.starts_with('/') || url.starts_with("https://chatgpt.com/") {
+        crate::usage::fetch(host, &identity, "GET", url, None)?
+    } else {
+        host.fetch(&Request::Http(
+            json!({"url": url, "method": "GET", "headers": {}, "retry": "never"}),
+        ))?
+    };
+    let wire = host::response_wire(&response);
+    let status = wire["status"].as_u64().context("missing download status")?;
+    ensure!(
+        (200..300).contains(&status),
+        "download HTTP status {status}"
+    );
+    match (wire["base64"].as_str(), wire["body"].as_str()) {
+        (Some(data), _) => Ok(base64::engine::general_purpose::STANDARD.decode(data)?),
+        (None, Some(body)) => Ok(body.as_bytes().to_vec()),
+        (None, None) => anyhow::bail!("empty download"),
+    }
+}
+
+impl Root {
+    /// Answers the Work rail's requests.
+    pub(crate) fn work_event(
+        &mut self,
+        event: &WorkEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            WorkEvent::LibraryFiles(query) => {
+                let host = self.host.clone();
+                let query = query.clone();
+                let read = cx.background_spawn({
+                    let query = query.clone();
+                    async move { library_files(&*host, &query) }
+                });
+                let home = self.home.clone();
+                cx.spawn(async move |_, cx| {
+                    let files = read
+                        .await
+                        .inspect_err(|e| eprintln!("library files: {e:#}"));
+                    home.update(cx, |home, cx| {
+                        home.set_library_files(&query, files.ok(), cx)
+                    })
+                })
+                .detach();
+            }
+            WorkEvent::AttachLibraryFile(file) => {
+                let host = self.host.clone();
+                let read = cx.background_spawn({
+                    let file = file.clone();
+                    async move { library_file_bytes(&*host, &file) }
+                });
+                let file = file.clone();
+                cx.spawn(async move |this, cx| {
+                    let bytes = read.await.inspect_err(|e| eprintln!("library file: {e:#}"));
+                    this.update(cx, |this, cx| {
+                        if bytes.is_err() {
+                            this.toast(Toast::danger("Couldn't attach this Library file"), cx);
+                        }
+                        this.home
+                            .update(cx, |home, cx| home.library_file_done(&file, bytes.ok(), cx));
+                    })
+                })
+                .detach();
+            }
+            WorkEvent::BrowsePlugins => {
+                self.open_plugins("/plugins", window, cx);
+            }
+        }
     }
 }
 

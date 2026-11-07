@@ -242,7 +242,7 @@ pub(crate) mod menu {
     }
 }
 mod mention;
-pub use mention::ChatDrag;
+pub use mention::{ChatDrag, ConnectedPlugin};
 mod menus;
 mod sketch;
 mod slash;

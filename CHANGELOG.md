@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Add `Files`, `Plugins` and the run-location button to the Work home rail. `Files` lists the recent Library files (`POST /files/library`), searches them by name after a 300 ms debounce, and attaches a picked file (45 MiB at most) to the composer. `Plugins` lists the connected plugins (`plugin/list`), inserts or removes their mention chips, and opens the plugin directory from `Connect plugins` ▸ `Browse all plugins`. The run-location menu (`Where should this chat run?`) keeps Work on this computer; `In the cloud` is disabled.
 - Read `configRequirements/read` and disable the permission options that `requirements.toml` or `config.toml` do not allow, with the original's tooltips, and show `Managed` when no option is allowed.
 - Show the original's `This request requires additional safety checks, which can take extra time.` line under a running turn when the app-server sends `autoApprovalReview/strictReviewRequired`; it goes away when the turn ends.
 - Edit files in the Files tab: double-click a line to edit at that line. Edits save to disk 3 s after they start or on `⌘S` through the host's `write-file`, which refuses to overwrite a file that changed on disk since it was read (`Could not save file`). Closing a tab saves first; a failed save asks `Discard file changes?` (`Continue viewing` / `Discard changes`). A text file over 10 MiB opens read-only with `Large file opened read-only`.
