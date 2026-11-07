@@ -203,6 +203,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "ed25519-dalek",
+ "futures-lite",
  "glob",
  "gpui",
  "gpui_platform",
