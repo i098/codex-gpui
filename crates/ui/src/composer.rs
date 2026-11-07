@@ -930,6 +930,7 @@ pub struct LiveSettingsChange {
 }
 
 type LiveSettingsHandler = Rc<dyn Fn(&str, LiveSettingsChange, &mut App)>;
+type DaybreakHandler = Rc<dyn Fn(&str, bool, &mut App)>;
 
 /// What a queued row's buttons and `Queued message actions` menu ask of the app.
 #[derive(Clone)]
@@ -1126,6 +1127,11 @@ pub struct Composer {
     edit_pending: bool,
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
+    /// Saves the Daybreak toggle for the bound thread.
+    on_daybreak: Option<DaybreakHandler>,
+    /// Some listed model offers a Daybreak access program.
+    daybreak_available: bool,
+    daybreak: bool,
     on_live_settings: Option<LiveSettingsHandler>,
     thread_id: String,
     plain_field: Option<bool>,
@@ -1262,6 +1268,9 @@ impl Composer {
             edit_pending: false,
             on_approval: None,
             on_model: None,
+            on_daybreak: None,
+            daybreak_available: false,
+            daybreak: false,
             on_live_settings: None,
             thread_id: String::new(),
             plain_field: None,
@@ -1599,6 +1608,7 @@ impl Composer {
         // `Reset to default`: the recommended model, as with no `model` override.
         self.default_selection = (recommended, default_effort(recommended));
         self.permission = Permission::from_config(config);
+        self.daybreak_available = models.iter().any(|m| !m.hidden && m.daybreak_available());
         self.queue_mode = config["desktop"]["followUpQueueMode"] == "queue";
         self.speed = match config["service_tier"].as_str() {
             Some("priority" | "fast") => 1,
@@ -1657,8 +1667,39 @@ impl Composer {
         self.on_model = Some(Rc::new(f));
     }
 
+    /// Called with the bound thread's id and the new state when the user flips Daybreak.
+    pub fn on_daybreak(&mut self, f: impl Fn(&str, bool, &mut App) + 'static) {
+        self.on_daybreak = Some(Rc::new(f));
+    }
+
+    /// Sets the Daybreak toggle to the server value, or restores it after a failed save.
+    pub fn set_daybreak(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.daybreak = enabled;
+        cx.notify();
+    }
+
+    /// The picker shows the Daybreak row for a bound thread whose account has access.
+    fn daybreak_row(&self) -> bool {
+        self.daybreak_available && self.on_daybreak.is_some() && !self.thread_id.is_empty()
+    }
+
+    fn toggle_daybreak(&mut self, cx: &mut Context<Self>) {
+        if self.running {
+            return;
+        }
+        self.daybreak = !self.daybreak;
+        if let Some(f) = self.on_daybreak.clone() {
+            f(&self.thread_id, self.daybreak, cx);
+        }
+        cx.notify();
+    }
+
     pub fn on_live_settings(&mut self, f: impl Fn(&str, LiveSettingsChange, &mut App) + 'static) {
         self.on_live_settings = Some(Rc::new(f));
+    }
+
+    pub fn thread_id(&self) -> &str {
+        &self.thread_id
     }
 
     pub fn bind_thread(&mut self, id: &str) {
