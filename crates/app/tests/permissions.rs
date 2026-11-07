@@ -19,6 +19,7 @@ fn named_profile_selection_reaches_the_submission() -> Result<()> {
                     {"id": "research", "allowed": true, "description": "Read project files"},
                     {"id": "restricted", "allowed": false},
                 ]}),
+                &serde_json::Value::Null,
                 cx,
             );
             composer

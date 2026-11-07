@@ -18,10 +18,21 @@ pub enum FileTreeRequest {
     },
     Open(String),
     PinPreview,
+    /// Write the edited text; answer with [`FileView::saved`]. `mtime` is the read's
+    /// `mtimeMs`, which the file must still have.
+    Save {
+        contents: String,
+        mtime: Option<u64>,
+    },
+    /// The tab saved or discarded its changes after [`FileView::request_close`]: close it.
+    Close,
     /// The header `Open` button: load the open-in targets for [`FileView::show_open_targets`].
     OpenTargets,
     /// A picked `Open` menu target.
     OpenIn(OpenTargetRequest),
+    /// An artifact tab's `artifact.sendAnnotations` batch (`artifact-direct-comment`); answer
+    /// with [`FileView::artifact_annotations_sent`].
+    SendAnnotations(Vec<comments::Comment>),
 }
 
 impl gpui::EventEmitter<FileTreeRequest> for FileView {}
@@ -224,6 +235,8 @@ impl FileView {
         self.show_source = line.is_some();
         self.contents = None;
         self.media = None;
+        self.edit = None;
+        self.disk_mtime = None;
         self.blame.clear();
         self.go_to_line = None;
         self.line_count = 0;

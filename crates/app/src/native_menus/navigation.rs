@@ -3,7 +3,8 @@ use ui::screens::diff::panel::{FileTreeRequest, GitBlame, OpenTargets};
 
 /// A Files tab read: text lines, or an image or PDF's bytes and MIME type.
 enum FileRead {
-    Text(String),
+    /// The text and its `mtimeMs`, which a save expects.
+    Text(String, Option<u64>),
     Media(std::sync::Arc<Vec<u8>>, Option<String>),
 }
 
@@ -11,7 +12,7 @@ pub(crate) fn available(root: &Root, cx: &App) -> bool {
     super::active_thread(root, cx).is_some()
         && match root.side {
             Some(SidePanel::Changes) => root.diff.is_some(),
-            Some(SidePanel::File(key)) => root.file(key).is_some(),
+            Some(SidePanel::File(key) | SidePanel::Artifact(key)) => root.file(key).is_some(),
             _ => false,
         }
 }
@@ -31,7 +32,7 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
                         panel.update(cx, |panel, cx| panel.toggle_file_tree(cx));
                     }
                 }
-                Some(SidePanel::File(key)) => {
+                Some(SidePanel::File(key) | SidePanel::Artifact(key)) => {
                     if let Some(file) = root.file(key) {
                         file.update(cx, |file, cx| file.toggle_file_tree(window, cx));
                     }
@@ -85,7 +86,8 @@ impl Root {
         } else {
             format!("{cwd}/{}", action.path.trim_start_matches("./"))
         };
-        // The tab already showing `path`, else the preview tab, else a new tab.
+        let artifact = FileView::artifact_type(&path).is_some();
+        // The tab already showing `path`, else the preview tab of the same kind, else a new tab.
         let reuse = self
             .files
             .iter()
@@ -93,17 +95,30 @@ impl Root {
             .or_else(|| {
                 self.files.iter().find(|(_, file)| {
                     let file = file.read(cx);
-                    file.is_preview() && file.workspace_root() == cwd
+                    file.is_preview()
+                        && file.workspace_root() == cwd
+                        && FileView::artifact_type(&file.path).is_some() == artifact
                 })
             })
             .map(|(key, file)| (*key, file.clone()));
+        // Unsaved edits stay on screen: a link to the same file only selects its tab.
+        if let Some((key, file)) = &reuse
+            && file.read(cx).has_unsaved_changes(cx)
+        {
+            self.set_side(SidePanel::File(*key), window, cx);
+            return;
+        }
         let (key, file) = if let Some((key, file)) = reuse {
             file.update(cx, |file, cx| {
                 file.navigate_file(path.clone(), action.line, cx)
             });
             (key, file)
         } else {
-            let file = cx.new(|_| FileView::new(&cwd, path.clone(), action.line));
+            let file = cx.new(|_| {
+                let mut file = FileView::new(&cwd, path.clone(), action.line);
+                file.set_editable(true);
+                file
+            });
             cx.subscribe_in(&file, window, |root, file, request, window, cx| {
                 root.navigate_file_tree(file, request, window, cx);
             })
@@ -113,6 +128,25 @@ impl Root {
             self.files.push((key, file.clone()));
             (key, file)
         };
+        // A tab keeps its kind; a new one is an artifact tab for an artifact file.
+        let side = self
+            .tabs
+            .iter()
+            .copied()
+            .find(|side| matches!(side, SidePanel::File(k) | SidePanel::Artifact(k) if *k == key))
+            .unwrap_or(if artifact {
+                SidePanel::Artifact(key)
+            } else {
+                SidePanel::File(key)
+            });
+        if self.side == Some(side) {
+            self.sync(window, cx);
+        } else {
+            self.set_side(side, window, cx);
+        }
+        if !FileView::artifact_viewable(&path) {
+            return;
+        }
         let revision = file.read(cx).file_revision();
         self.load_blame(&file, cx);
         let host = self.host.clone();
@@ -140,7 +174,7 @@ impl Root {
                     }
                     body["contents"]
                         .as_str()
-                        .map(|text| FileRead::Text(text.to_owned()))
+                        .map(|text| FileRead::Text(text.to_owned(), body["mtimeMs"].as_u64()))
                         .context("file response has no text contents")
                 })
                 .map_err(|error| format!("{error:#}"))
@@ -154,7 +188,13 @@ impl Root {
                     Ok(FileRead::Media(bytes, mime)) => {
                         file.set_file_media(revision, Ok((bytes, mime)), cx)
                     }
-                    Ok(FileRead::Text(text)) => file.set_file_contents(revision, Ok(text), cx),
+                    Ok(FileRead::Text(text, mtime)) => {
+                        let current = file.set_file_contents(revision, Ok(text), cx);
+                        if current {
+                            file.set_disk_mtime(mtime);
+                        }
+                        current
+                    }
                     Err(error) => file.set_file_contents(revision, Err(error), cx),
                 })
                 .ok()
@@ -172,12 +212,6 @@ impl Root {
             .ok();
         })
         .detach();
-        let side = SidePanel::File(key);
-        if self.side == Some(side) {
-            self.sync(window, cx);
-        } else {
-            self.set_side(side, window, cx);
-        }
     }
 
     /// `git.toggleBlame`: flips the active-line blame and loads it for the open file.
@@ -227,6 +261,20 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A save or close must not be lost to a thread switch.
+        match request {
+            FileTreeRequest::Save { contents, mtime } => {
+                self.save_file(file, contents, *mtime, window, cx);
+                return;
+            }
+            FileTreeRequest::Close => {
+                if let Some(key) = self.files.iter().find(|(_, f)| f == file).map(|(k, _)| *k) {
+                    self.close_side(SidePanel::File(key), window, cx);
+                }
+                return;
+            }
+            _ => {}
+        }
         if super::active_thread(self, cx).is_none() || !self.files.iter().any(|(_, f)| f == file) {
             if let FileTreeRequest::Directory(directory) = request {
                 file.update(cx, |file, cx| {
@@ -346,7 +394,55 @@ impl Root {
                 .detach();
             }
             FileTreeRequest::OpenIn(request) => self.launch_diff_target(request, cx),
+            FileTreeRequest::SendAnnotations(comments) => {
+                if self.send_artifact_annotations(comments, window, cx) {
+                    file.update(cx, |file, cx| file.artifact_annotations_sent(cx));
+                }
+            }
+            FileTreeRequest::Save { .. } | FileTreeRequest::Close => {}
         }
+    }
+
+    /// The host's `write-file` for an edited Files tab; a conflict or failure keeps the edit
+    /// and shows `Could not save file`.
+    fn save_file(
+        &mut self,
+        file: &Entity<FileView>,
+        contents: &str,
+        mtime: Option<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = file.read(cx);
+        let params = json!({
+            "cwd": view.workspace_root(), "path": view.path,
+            "content": contents, "expectedMtimeMs": mtime,
+        });
+        let host = self.host.clone();
+        let write = cx.background_spawn(async move {
+            let body = host
+                .fetch(&host::Request::post("write-file", Some(params)))
+                .and_then(|response| host::json_body(&response))
+                .map_err(|error| format!("{error:#}"))?;
+            match body["outcome"].as_str() {
+                Some("saved") => Ok(body["mtimeMs"].as_u64()),
+                _ => Err("the file changed on disk".to_owned()),
+            }
+        });
+        let file = file.downgrade();
+        cx.spawn_in(window, async move |root, cx| {
+            let result = write.await;
+            let failed = result.is_err();
+            file.update_in(cx, |file, window, cx| file.saved(result, window, cx))
+                .ok();
+            if failed {
+                root.update(cx, |root, cx| {
+                    root.toast(Toast::danger("Could not save file"), cx)
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 }
 

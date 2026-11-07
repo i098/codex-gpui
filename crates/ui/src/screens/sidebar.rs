@@ -345,6 +345,9 @@ pub struct HomeSidebar {
     /// Threads with an active turn (`thread/status/changed`), by the clock reading when their
     /// spinner started.
     running: HashMap<String, Instant>,
+    /// Threads whose active status carries `waitingOnApproval`: their rows show the green
+    /// `Awaiting approval` pill and the blue dot in place of the spinner.
+    awaiting_approval: HashSet<String>,
     /// Recents rows shown: grows by [`PAGE`] while the list's end is in view.
     limit: usize,
     /// The owner holds a `thread/list` cursor: the end sentinel stays and asks for the page.
@@ -492,6 +495,7 @@ impl HomeSidebar {
             emojis: HashMap::new(),
             grouped_rows: HashSet::new(),
             unread: Vec::new(),
+            awaiting_approval: HashSet::new(),
             running: threads
                 .iter()
                 .filter(|t| t.status == ThreadStatus::Active)
@@ -982,6 +986,22 @@ impl HomeSidebar {
         cx.notify();
     }
 
+    /// Thread `id` waits for an approval (`thread/status/changed` `activeFlags`).
+    pub fn set_awaiting_approval(&mut self, id: &str, awaiting: bool, cx: &mut Context<Self>) {
+        let changed = if awaiting {
+            self.awaiting_approval.insert(id.to_owned())
+        } else {
+            self.awaiting_approval.remove(id)
+        };
+        if changed {
+            cx.notify();
+        }
+    }
+
+    pub fn is_awaiting_approval(&self, id: &str) -> bool {
+        self.awaiting_approval.contains(id)
+    }
+
     pub fn any_running(&self) -> bool {
         !self.running.is_empty()
     }
@@ -1246,19 +1266,25 @@ impl HomeSidebar {
         );
         let focused = row_focus.read(cx).handle.contains_focused(window, cx);
         let now = cx.background_executor().now();
-        let end = self
-            .running
-            .get(id)
-            .map(|started| {
-                window.request_animation_frame();
-                RowEnd::Spinner((now.saturating_duration_since(*started).as_secs_f32() % 1.) * 360.)
-            })
-            .or_else(|| {
-                self.unread
-                    .iter()
-                    .any(|unread| unread == id)
-                    .then_some(RowEnd::Dot)
-            });
+        let awaiting = self.awaiting_approval.contains(id);
+        let end = if awaiting {
+            Some(RowEnd::Dot)
+        } else {
+            self.running
+                .get(id)
+                .map(|started| {
+                    window.request_animation_frame();
+                    RowEnd::Spinner(
+                        (now.saturating_duration_since(*started).as_secs_f32() % 1.) * 360.,
+                    )
+                })
+                .or_else(|| {
+                    self.unread
+                        .iter()
+                        .any(|unread| unread == id)
+                        .then_some(RowEnd::Dot)
+                })
+        };
         let drag = ChatDrag {
             id: id.to_owned(),
             title: label.clone(),
@@ -1267,7 +1293,7 @@ impl HomeSidebar {
             id,
             (label, indent),
             self.selected.as_deref() == Some(id),
-            end,
+            (end, awaiting),
             cx,
             (
                 focused,
@@ -1627,7 +1653,7 @@ fn load_error<A: Action + Default>(
 }
 
 /// What a Recents row ends in: the `Working` spinner at `animate-spin` angle (degrees) while a
-/// turn runs, else the unread dot.
+/// turn runs, else the unread dot. A thread awaiting approval ends in the dot.
 #[derive(Clone, Copy)]
 enum RowEnd {
     Spinner(f32),
@@ -1638,12 +1664,13 @@ enum RowEnd {
 /// clipped at the row's end with the marquee's 16 px right fade (`_overflowingViewport`).
 /// Hover or focus within the row shows `Pin chat` and `Archive chat`.
 /// A running row ends in the 16 px `Working` spinner, an unread one in a blue dot
-/// ([`RowEnd`]); either takes 28 px off the label and hides on hover.
+/// ([`RowEnd`]); either takes 28 px off the label and hides on hover. A row awaiting approval
+/// shows the green `Awaiting approval` pill (`localTaskRow` chip) after its title.
 fn thread_row(
     id: &str,
     (label, indent): (SharedString, f32),
     selected: bool,
-    end: Option<RowEnd>,
+    (end, awaiting): (Option<RowEnd>, bool),
     cx: &App,
     (focused, pinned, activity, in_section): (bool, bool, bool, bool),
     handles: [&gpui::Entity<focus::ControlFocus>; 3],
@@ -1704,10 +1731,7 @@ fn thread_row(
                     .group_hover(group.clone(), |s| s.opacity(1.))
             })
             .child(
-                // `_clipViewport _overflowingViewport`: the marquee's CSS mask (8 px left fade over
-                // the track's padding, 16 px right fade), a masked layer in the sidebar's layer.
                 div()
-                    .id(SharedString::from(format!("thread-title-{id}")))
                     .absolute()
                     .left_0()
                     .top(px(if activity { 6. } else { 5. }))
@@ -1723,12 +1747,32 @@ fn thread_row(
                         s.right(px(if activity { 85. } else { 56. }))
                     })
                     .h(px(20.))
-                    .pl(px(8. + indent))
-                    .overflow_hidden()
-                    .when(activity, |d| d.saved_layer())
-                    .when(!activity, |d| d.layer())
-                    .child(text(label, 14., 20., 430., t.text_default_nav))
-                    .child(shapes::x_fade(px(8.), px(16.))),
+                    .flex()
+                    .items_center()
+                    .child(
+                        // `_clipViewport _overflowingViewport`: the marquee's CSS mask (8 px left
+                        // fade over the track's padding, 16 px right fade), a masked layer in the
+                        // sidebar's layer.
+                        div()
+                            .id(SharedString::from(format!("thread-title-{id}")))
+                            .relative()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .pl(px(8. + indent))
+                            .overflow_hidden()
+                            .when(activity, |d| d.saved_layer())
+                            .when(!activity, |d| d.layer())
+                            .child(text(label, 14., 20., 430., t.text_default_nav))
+                            .child(shapes::x_fade(px(8.), px(16.))),
+                    )
+                    .when(awaiting, |d| {
+                        d.child(
+                            awaiting_approval_pill(t)
+                                .when(focused, |d| d.hidden())
+                                .group_hover(group.clone(), |s| s.hidden()),
+                        )
+                    }),
             )
             .when_some(end, |d, end| match end {
                 // `size-5` box at `pe-2`, `text-text/70`, hidden on hover like the dot.
@@ -1829,6 +1873,47 @@ fn thread_row(
         px(0.),
         cx,
     )
+}
+
+/// The `localTaskRow` chip box (`flex min-w-[24px] max-w-[50%] justify-end overflow-hidden`)
+/// holding the `approval` tone chip: `rounded-full py-0.5 pe-2.5 ps-2 text-sm max-w-[150px]`,
+/// `bg-chart-green/20 text-chart-green`, its label truncated.
+fn awaiting_approval_pill(t: &Theme) -> Div {
+    div()
+        .debug_selector(|| "awaiting-approval".into())
+        .flex()
+        .flex_none()
+        .justify_end()
+        .min_w(px(24.))
+        .max_w(gpui::relative(0.5))
+        .overflow_hidden()
+        .child(
+            div()
+                .relative()
+                .flex()
+                .items_center()
+                .min_w_0()
+                .max_w(px(150.))
+                .overflow_hidden()
+                .py(px(2.))
+                .pl(px(8.))
+                .pr(px(10.))
+                .child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .child(shapes::decoration(shapes::Decoration {
+                            radius: Corners::all(Theme::RADIUS_FULL),
+                            fill: Some(t.text_success.opacity(0.2)),
+                            ..Default::default()
+                        })),
+                )
+                .child(
+                    text("Awaiting approval", 13., 18.571_428, 430., t.text_success)
+                        .min_w_0()
+                        .truncate(),
+                ),
+        )
 }
 
 enum ItemKey {

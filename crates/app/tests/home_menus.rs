@@ -142,3 +142,25 @@ fn choose_project_menu_searches_picks_and_clears() -> Result<()> {
     assert_eq!(project(&app), None);
     Ok(())
 }
+
+#[test]
+fn work_home_choose_project_opens_the_project_menu() -> Result<()> {
+    let mut app = Fx::new()?;
+    let composer = app.read(|root, cx| root.home().read(cx).composer.clone());
+    app.cx.update(|cx| {
+        composer.update(cx, |composer, _| {
+            composer.set_slash_projects(vec![("beta".into(), "/tmp/beta".into())])
+        })
+    });
+    app.keys("ctrl-2")?;
+    app.capture_evidence("CGX_WORK_HOME_SHOTS", "work-home")?;
+    // The original's `Choose project` pill: the rail under the card starts at
+    // (501.25, 489.44), its first 28 px pill 6 px in.
+    app.click((560., 511.))?;
+    assert!(project_menu(&app));
+    app.type_text("bet")?;
+    app.keys("enter")?;
+    assert!(!project_menu(&app));
+    assert_eq!(project(&app).as_deref(), Some("beta"));
+    Ok(())
+}

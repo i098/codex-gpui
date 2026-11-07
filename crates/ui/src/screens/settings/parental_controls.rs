@@ -20,7 +20,7 @@ use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Focusable as _, FontWeight, HighlightStyle,
     InteractiveElement, InteractiveText, IntoElement, MouseButton, ParentElement, Render,
     SharedString, StatefulInteractiveElement, Styled, StyledText, Window, deferred, div,
-    prelude::FluentBuilder as _, px, rgba,
+    prelude::FluentBuilder as _, px,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -1630,7 +1630,7 @@ impl Render for ParentalControls {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .bg(rgba(0x00000022))
+                                .bg(t.dialog_overlay)
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|this, _, _, cx| {

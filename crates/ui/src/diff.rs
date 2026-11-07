@@ -63,6 +63,7 @@ mod pdf;
 
 #[path = "diff/artifact_annotations.rs"]
 mod artifact_annotations;
+use artifact_annotations::Annotate;
 #[path = "diff/comment_view.rs"]
 mod comment_view;
 #[path = "diff/comments.rs"]
@@ -93,8 +94,11 @@ pub mod word;
 
 #[path = "diff/blame.rs"]
 mod blame;
+#[path = "diff/edit.rs"]
+mod edit;
 #[path = "diff/file_tree.rs"]
 mod file_tree;
+pub use edit::SaveResult;
 #[path = "diff/patch.rs"]
 pub mod patch;
 pub use blame::{BlameLine, GitBlame};
@@ -2946,6 +2950,14 @@ pub struct FileView {
     local_controls: bool,
     /// An image or PDF ([`Self::previews`]) shown instead of text lines.
     media: Option<preview::FileMedia>,
+    /// Annotations on an artifact PDF ([`Self::artifact_type`]).
+    artifacts: artifact_annotations::ArtifactAnnotations,
+    /// The owner saves edits ([`Self::set_editable`]).
+    editable: bool,
+    /// The editor that replaced the lines once a line was double-clicked.
+    edit: Option<edit::FileEdit>,
+    disk_mtime: Option<u64>,
+    discard: Option<Entity<crate::confirmation::Confirmation>>,
 }
 
 impl FileView {
@@ -2982,6 +2994,11 @@ impl FileView {
             open_bounds: gpui::Bounds::default(),
             local_controls: true,
             media: None,
+            artifacts: Default::default(),
+            editable: false,
+            edit: None,
+            disk_mtime: None,
+            discard: None,
         }
     }
 
@@ -3406,6 +3423,33 @@ impl FileView {
         blame: Option<String>,
         cx: &Context<Self>,
     ) -> gpui::AnyElement {
+        if let Some(edit) = &self.edit {
+            return div()
+                .id("file-editor")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .track_scroll(&self.scroll)
+                .px(px(16.))
+                .pb(px(64.))
+                .child(edit.editor.clone())
+                .into_any_element();
+        }
+        if !Self::artifact_viewable(&self.path) {
+            return div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(text(
+                    "This document type cannot be viewed here yet",
+                    13.,
+                    20.,
+                    430.,
+                    t.text_tertiary,
+                ))
+                .into_any_element();
+        }
         match &self.contents {
             None => div().flex_1().into_any_element(),
             Some(Err(_)) => div()
@@ -3472,6 +3516,7 @@ impl FileView {
                 let cited = over(t.info_solid.opacity(0.12), t.surface);
                 div()
                     .id("file-lines")
+                    .debug_selector(|| "file-lines".into())
                     .flex_1()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
@@ -3501,11 +3546,17 @@ impl FileView {
                             .h(px(FILE_LINE_HEIGHT))
                             .flex()
                             .bg(bg)
-                            // The clicked line becomes the active line that blame describes.
+                            // The clicked line becomes the active line that blame describes;
+                            // a double click opens the editor there.
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(move |view, _, _, cx| {
+                                cx.listener(move |view, event: &MouseDownEvent, window, cx| {
                                     view.line = Some(number);
+                                    if event.click_count == 2 && view.editable {
+                                        view.edit_at(number, window, cx);
+                                        // The tab's own focus would take the caret back.
+                                        cx.stop_propagation();
+                                    }
                                     cx.notify();
                                 }),
                             )
@@ -3560,10 +3611,29 @@ impl Render for FileView {
             .key_context("SideTabs")
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |_, _, window, cx| window.focus(&focus, cx)),
+                cx.listener(move |view, _, window, cx| {
+                    // A click in the editor keeps its caret.
+                    if view.edit.is_none() {
+                        window.focus(&focus, cx)
+                    }
+                }),
             )
             .on_click(cx.listener(|view, _, _, cx| view.pin_preview(cx)))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                // An artifact PDF's Cmd+Enter adds the draft, else sends the annotations.
+                if event.keystroke.modifiers.platform
+                    && event.keystroke.key == "enter"
+                    && this.artifact_modified_enter(window, cx)
+                {
+                    cx.stop_propagation();
+                    return;
+                }
+                if this.edit.is_some() {
+                    if this.edit_key(event, cx) {
+                        cx.stop_propagation();
+                    }
+                    return;
+                }
                 if this.find_key(event, cx) {
                     cx.stop_propagation();
                     return;
@@ -3614,6 +3684,9 @@ impl Render for FileView {
                             .min_h_0()
                             .flex()
                             .flex_col()
+                            .when(self.editable && self.large_file(), |d| {
+                                d.child(self.large_file_banner(&t))
+                            })
                             .child(body),
                     )
                     .when(self.tree.open, |row| row.child(self.file_tree_view(cx))),
@@ -3638,6 +3711,7 @@ impl Render for FileView {
                     cx,
                 )
             }))
+            .children(self.discard.clone())
     }
 }
 

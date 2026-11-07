@@ -1007,7 +1007,7 @@ impl StoragePage {
                 fill: Some(gpui::Hsla { a: 0.9, ..t.menu_background }),
                 shadows: vec![
                     crate::composer::shadow(t.border, 0., 0., 0.5, false),
-                    crate::composer::shadow(gpui::rgba(0x0000001a).into(), 4., 8., -2., false),
+                    crate::composer::shadow(t.shadow_lg, 4., 8., -2., false),
                 ],
                 ..Default::default()
             }))
@@ -1030,7 +1030,7 @@ impl StoragePage {
             .flex()
             .items_center()
             .justify_center()
-            .bg(gpui::rgba(0x00000022))
+            .bg(t.dialog_overlay)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| this.close(window, cx)),

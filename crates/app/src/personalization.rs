@@ -1,9 +1,10 @@
 use crate::{
     Root, SettingsLeave,
+    chatgpt::{self, Gate},
     host::{self, Host, Identity, Request},
 };
 use anyhow::{Context as _, Result, bail, ensure};
-use bridge::Bridge;
+use bridge::{Bridge, ConfigEdit};
 use gpui::{AppContext as _, Context, Focusable as _};
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
@@ -31,38 +32,12 @@ fn read_unified_instructions(host: &dyn Host) -> Result<bool> {
     let Some(identity) = host.identity() else {
         return Ok(false);
     };
-    let response = host.fetch(&Request::Http(json!({
-        "url": "/wham/statsig/bootstrap",
-        "method": "POST",
-        "body": json!({
-            "app_session_id": crate::uuid_v4(),
-            "app_version": env!("CARGO_PKG_VERSION"),
-            "brand_name": "chatgpt",
-            "build_flavor": "prod",
-            "locale": "en-US",
-            "stable_id": identity.device_id,
-            "system_name": if cfg!(target_os = "macos") { "macOS" } else { std::env::consts::OS },
-            "window_type": "electron"
-        }).to_string(),
-        "headers": {
-            "OAI-Language": "en",
-            "X-OpenAI-Attach-Auth": "1",
-            "X-OpenAI-Attach-Integrity-State": "1",
-            "originator": "Codex Desktop"
-        },
-        "expectedIdentity": {"accountId": identity.account_id, "userId": identity.user_id},
-        "retry": false,
-        "returnErrorResponse": true
-    })))?;
-    let response = host::json_body(&response)?;
-    let payload: Value = serde_json::from_str(
-        response["statsigPayload"]
-            .as_str()
-            .context("missing personalization feature gates")?,
-    )?;
-    Ok(payload["feature_gates"]["2826489636"]["value"]
-        .as_bool()
-        .unwrap_or(false))
+    let response = host.fetch(&chatgpt::bootstrap_request(
+        &identity.device_id,
+        Some(&identity),
+    ))?;
+    let payload = chatgpt::payload(host::json_body(&response)?)?;
+    Ok(Gate::UnifiedInstructions.enabled(&payload))
 }
 
 /// `settings.response_presentation.mode`; anything but `standard` is the `rich` default.
@@ -79,7 +54,7 @@ fn read_layout(host: &dyn Host) -> Result<Option<&'static str>> {
     let identity = host
         .identity()
         .context("Layout and visuals require a ChatGPT account")?;
-    if crate::usage::statsig(host, &identity)["feature_gates"]["890187595"]["value"] != true {
+    if !Gate::PersonalizationLayout.enabled(&crate::usage::statsig(host, &identity)) {
         return Ok(None);
     }
     let settings = crate::usage::http(host, &identity, "GET", "/settings/user", None)?;
@@ -120,32 +95,16 @@ pub fn read_memory(bridge: &Bridge) -> Result<MemoryRead> {
         .filter(|value| value.is_object())
         .map(Value::take)
         .context("missing memory configuration")?;
-    let mut cursor = Value::Null;
-    let mut feature = None;
-    loop {
-        let page = request(
-            bridge,
-            "experimentalFeature/list",
-            json!({"cursor": cursor, "limit": 100}),
-        )?;
-        let features = page["data"]
-            .as_array()
-            .context("missing experimental features")?;
-        if let Some(memory) = features
-            .iter()
-            .find(|feature| feature["name"] == "memories")
-        {
-            feature = Some(
-                memory["enabled"]
-                    .as_bool()
-                    .context("invalid memory feature state")?,
-            );
-        }
-        cursor = page["nextCursor"].clone();
-        if cursor.is_null() {
-            break;
-        }
-    }
+    let features = pollster::block_on(bridge.experimental_features())?;
+    let feature = features
+        .iter()
+        .find(|feature| feature["name"] == "memories")
+        .map(|memory| {
+            memory["enabled"]
+                .as_bool()
+                .context("invalid memory feature state")
+        })
+        .transpose()?;
     let memory = &config["memories"];
     let settings = MemorySettings {
         available: feature.is_some(),
@@ -168,14 +127,9 @@ pub fn write_memory(
 ) -> MemoryWrite {
     let results = match change {
         MemoryChange::Enabled(enabled) => [
-            Some(request(
-                bridge,
-                "config/batchWrite",
-                json!({
-                    "edits": [{"keyPath": "features.memories", "value": enabled, "mergeStrategy": "upsert"}],
-                    "filePath": null, "expectedVersion": null
-                }),
-            )),
+            Some(pollster::block_on(bridge.config_write(&[
+                ConfigEdit::upsert("features.memories", enabled),
+            ]))),
             Some(write_memory_config(
                 bridge,
                 previous,
@@ -712,29 +666,7 @@ fn same_app(left: &str, right: &str) -> bool {
 }
 
 fn available_apps(bridge: &Bridge) -> Result<Vec<Value>> {
-    let mut cursor = Value::Null;
-    let mut apps = Vec::new();
-    loop {
-        let mut page = request(
-            bridge,
-            "app/list",
-            json!({
-                "cursor": cursor, "limit": 100, "forceRefetch": true
-            }),
-        )?;
-        cursor = page["nextCursor"].clone();
-        let data = page
-            .get_mut("data")
-            .context("missing available apps")?
-            .take();
-        let Value::Array(mut data) = data else {
-            bail!("invalid available apps");
-        };
-        apps.append(&mut data);
-        if cursor.is_null() {
-            return Ok(apps);
-        }
-    }
+    pollster::block_on(bridge.paged("app/list", json!({"limit": 100, "forceRefetch": true})))
 }
 
 fn source_plugin(host: &dyn Host, identity: &Identity, id: &str) -> Result<Option<Value>> {
@@ -881,23 +813,12 @@ pub fn connect_writing_app(
                     "url": plugin_path(app.plugin_id, Some("enable"))?, "method": "POST"
                 }),
             )?;
-            let edits: Vec<Value> = app
+            let edits: Vec<_> = app
                 .app_ids
                 .iter()
-                .map(|id| {
-                    json!({
-                        "keyPath": format!("apps.{}.enabled", json!(id)),
-                        "value": true, "mergeStrategy": "upsert"
-                    })
-                })
+                .map(|id| ConfigEdit::upsert(format!("apps.{}.enabled", json!(id)), true))
                 .collect();
-            request(
-                bridge,
-                "config/batchWrite",
-                json!({
-                    "edits": edits, "filePath": null, "expectedVersion": null, "reloadUserConfig": true
-                }),
-            )?;
+            pollster::block_on(bridge.config_write(&edits))?;
         }
         WritingConnection::Connect | WritingConnection::Reconnect => {}
         WritingConnection::Connected | WritingConnection::Refresh => return Ok(None),

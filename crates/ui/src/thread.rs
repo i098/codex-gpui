@@ -81,7 +81,10 @@ pub enum GitAction {
     CreateBranch,
     SwitchBranch,
     CreatePr,
+    /// `View PR`: the pull request's side panel tab.
     ViewPr,
+    /// `Open in GitHub`: the pull request in the browser.
+    OpenPrInBrowser,
     CopyPr,
     AddPrToChat,
     CompareBranch,
@@ -126,6 +129,7 @@ pub struct SearchHistory(pub String);
 
 impl gpui::EventEmitter<SearchHistory> for ThreadView {}
 
+pub use items::{OpenPlanSummary, PlanSummary};
 use items::{
     activity, cache_automation_result, diff_card, disclosure, memory_citations, user_bubble,
     wrap_row,
@@ -237,9 +241,10 @@ pub struct ThreadView {
     render_errors: RefCell<HashMap<String, String>>,
     stream_errors: HashMap<String, Vec<(bridge::types::TurnError, bool)>>,
     /// Inline notices of each turn (model reroute, verification) and the turns whose safety
-    /// buffering banner shows (`context.rs`).
+    /// buffering or strict review line shows (`context.rs`).
     notices: HashMap<String, Vec<String>>,
     safety_buffering: HashSet<String>,
+    strict_review: HashSet<String>,
     usage_limit_notice: UsageLimitNotice,
     clock: Clock,
     composer: AnyView,
@@ -580,7 +585,7 @@ impl ThreadView {
             7 => GitAction::AddPrToChat,
             8 => GitAction::CompareBranch,
             9 => GitAction::RepairPr,
-            10 => GitAction::ViewPr,
+            10 => GitAction::OpenPrInBrowser,
             _ => GitAction::OpenForm,
         });
     }
@@ -812,6 +817,7 @@ impl ThreadView {
             stream_errors: HashMap::new(),
             notices: HashMap::new(),
             safety_buffering: HashSet::new(),
+            strict_review: HashSet::new(),
             usage_limit_notice: UsageLimitNotice::RetryLater,
             clock,
             composer,
@@ -1812,7 +1818,13 @@ impl ThreadView {
                             .rounded(Theme::RADIUS_SM)
                             .hover(move |style| style.bg(row_hover))
                             .aria_label("Open plan")
-                            .on_click(crate::dispatch::<crate::OpenPlanPanel>),
+                            .on_click(|event, window, cx| {
+                                if event.modifiers().secondary() {
+                                    window.dispatch_action(Box::new(OpenPlanSummary), cx);
+                                } else {
+                                    crate::dispatch::<crate::OpenPlanPanel>(event, window, cx);
+                                }
+                            }),
                     ),
             );
         }
@@ -4239,6 +4251,51 @@ mod tests {
         view.read_with(cx, |view, _| {
             assert!(!view.running_since.contains_key("turn"));
             assert!(!view.answer_secs.contains_key("turn"));
+        });
+    }
+
+    #[gpui::test]
+    fn strict_review_notice_shows_until_its_turn_ends(cx: &mut gpui::TestAppContext) {
+        let thread: Thread = serde_json::from_value(serde_json::json!({
+            "id": "strict", "preview": "", "modelProvider": "test",
+            "cwd": "/tmp/strict", "createdAt": 0, "updatedAt": 0,
+            "status": {"type": "idle"}, "turns": [],
+        }))
+        .unwrap();
+        cx.update(|cx| cx.set_global(theme::Theme::dark()));
+        let composer = cx.new(|_| gpui::EmptyView).into();
+        let clock = Clock {
+            utc_offset: 0,
+            pinned_now: Some(100),
+            elapsed_since: None,
+        };
+        let view = cx.new(|_| ThreadView::new(thread, clock, composer));
+        let event = |method: &str, params: serde_json::Value| Event::Notification {
+            method: method.into(),
+            params,
+        };
+        let turn = |status: &str| {
+            serde_json::json!({"threadId": "strict",
+                "turn": {"id": "turn", "items": [], "status": status, "error": null}})
+        };
+        let strict = serde_json::json!({"threadId": "strict", "turnId": "turn",
+            "startedAtMs": 1});
+        let notices = |view: &mut ThreadView, cx: &mut Context<ThreadView>| {
+            view.turn_notices(&view.turns[0], cx).len()
+        };
+        view.update(cx, |view, cx| {
+            view.apply(&event("turn/started", turn("inProgress")), cx);
+            assert_eq!(notices(view, cx), 0);
+            // A second notice in the same turn keeps one line, as the original folds them.
+            for _ in 0..2 {
+                view.apply(
+                    &event("autoApprovalReview/strictReviewRequired", strict.clone()),
+                    cx,
+                );
+            }
+            assert_eq!(notices(view, cx), 1);
+            view.apply(&event("turn/completed", turn("completed")), cx);
+            assert_eq!(notices(view, cx), 0);
         });
     }
 
