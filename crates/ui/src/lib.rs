@@ -373,9 +373,10 @@ const AVATAR_PNG: &[u8] = include_bytes!("../assets/avatar-decoded-64.png");
 /// Chromium draws it in the profile button's layer: the JPEG decoded to scale, drawn bilinear
 /// into the snapped box under its anti-aliased circular clip, and composited over `under`.
 ///
-/// `avatar-decoded-64.png` is the capture's 256 px JPEG data URL (sha256 6e76408f…dd2375)
-/// decoded by libjpeg-turbo at scale 2/8, as Blink decodes a JPEG to the smallest supported
-/// size at least the drawn size (Pillow: `Image.draft("RGB", (64, 64))`).
+/// `avatar-decoded-64.png` is the neutral placeholder the recorder stores in place of the
+/// account avatar (`tools/route1/oracle.json`, sha256 8cbfbffc…db2142), decoded by libjpeg-turbo
+/// at scale 2/8, as Blink decodes a JPEG to the smallest supported size at least the drawn size
+/// (Pillow: `Image.draft("RGB", (64, 64))`).
 // ponytail: one decode size, valid while the avatar is at most 64 device px (scale 2.66);
 // add the 3/8 and larger decodes when a larger zoom matters.
 fn avatar(under: Hsla) -> AnyElement {

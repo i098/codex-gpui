@@ -470,13 +470,17 @@ function indexHtml(url) {
   const sid = crypto.randomUUID();
   let html = fs.readFileSync(path.join(WEBVIEW, "index.html"), "utf8");
   html = html.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, "");
+  // Vite builds (26.1007) name the host-message module; rspack builds (26.1029) have none.
+  const shared = /assets\/app-shared-[0-9a-f]+\.js/.exec(html)?.[0];
   const cfg = {
     sid,
     theme: url.searchParams.get("theme") === "dark" ? "dark" : "light",
     now: +(url.searchParams.get("now") || NOW),
     sentry: oracle.sentry,
     flavor: "prod",
-    appShared: `/${html.match(/assets\/app-shared-[0-9a-f]+\.js/)[0]}`,
+    appShared: shared ? `/${shared}` : null,
+    // The rspack entry is the last module script; it exports `__webpack_require__`.
+    entry: [...html.matchAll(/<script type="module"[^>]* src="([^"]+)"/g)].at(-1)?.[1] ?? null,
   };
   session(sid).theme = cfg.theme;
   return html.replace(
