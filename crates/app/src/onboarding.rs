@@ -1,4 +1,4 @@
-use crate::{Root, Route, host, host_settings};
+use crate::{Root, Route, chatgpt, host, host_settings};
 use anyhow::{Context as _, Result, ensure};
 use gpui::{AppContext as _, Context, Entity, PathPromptOptions, Window};
 use serde_json::{Value, json};
@@ -22,9 +22,11 @@ pub(crate) struct ContextData {
 }
 
 fn context_request() -> host::Request {
-    host::Request::Http(
-        json!({"url":"/wham/onboarding/context","method":"GET","headers":{"OAI-Language":"en-US","X-OpenAI-Attach-Auth":"1","X-OpenAI-Attach-Integrity-State":"1","originator":"Codex Desktop"},"returnErrorResponse":true}),
-    )
+    host::Request::Http(chatgpt::desktop_request(
+        "GET",
+        "/wham/onboarding/context",
+        None,
+    ))
 }
 
 fn projects(host: &dyn host::Host) -> Result<Vec<Project>> {
@@ -261,7 +263,7 @@ impl Root {
         cx.spawn_in(window,async move |this,cx| {
             let result=cx.background_spawn(async move {
                 if chatgpt {
-                    let request=host::Request::Http(json!({"url":"/wham/onboarding/desktop/complete","method":"POST","body":payload.to_string(),"headers":{"OAI-Language":"en-US","X-OpenAI-Attach-Auth":"1","X-OpenAI-Attach-Integrity-State":"1","originator":"Codex Desktop"},"returnErrorResponse":true}));
+                    let request=host::Request::Http(chatgpt::desktop_request("POST","/wham/onboarding/desktop/complete",Some(payload)));
                     successful_response(&host.fetch(&request)?)?;
                 }
                 for root in &completion.roots {host.add_project(Path::new(root))?;}
