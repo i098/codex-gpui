@@ -81,7 +81,10 @@ pub enum GitAction {
     CreateBranch,
     SwitchBranch,
     CreatePr,
+    /// `View PR`: the pull request's side panel tab.
     ViewPr,
+    /// `Open in GitHub`: the pull request in the browser.
+    OpenPrInBrowser,
     CopyPr,
     AddPrToChat,
     CompareBranch,
@@ -581,7 +584,7 @@ impl ThreadView {
             7 => GitAction::AddPrToChat,
             8 => GitAction::CompareBranch,
             9 => GitAction::RepairPr,
-            10 => GitAction::ViewPr,
+            10 => GitAction::OpenPrInBrowser,
             _ => GitAction::OpenForm,
         });
     }

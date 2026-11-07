@@ -7,8 +7,11 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Show the green `Awaiting approval` pill and the blue dot on a sidebar chat row while its thread waits for an approval (`thread/status/changed` with the `waitingOnApproval` active flag); both go when the flag clears or the thread goes idle.
+- Read `configRequirements/read` and disable the permission options that `requirements.toml` or `config.toml` do not allow, with the original's tooltips, and show `Managed` when no option is allowed.
 - Show the original's `This request requires additional safety checks, which can take extra time.` line under a running turn when the app-server sends `autoApprovalReview/strictReviewRequired`; it goes away when the turn ends.
 - Open a file link to an artifact (`.pdf`, `.tex`, `.csv`, `.tsv`, `.ipynb`, `.docx`, `.pptx`, `.xlsx`) in its own artifact tab, as the original's `artifact` tab kind does. On a PDF there, drag a region or click a point to annotate the page, then send the annotations with Send or Cmd+Enter as one `artifact-direct-comment` turn. Office files show `This document type cannot be viewed here yet`.
+- Open a thread's pull request in a `PR #n` side panel tab from the branch actions' `View PR` (`Open in GitHub` still opens the browser). The tab shows the GitHub detail: status, branch, reviewers, comments, checks, description and code changes. It also offers `Ready for review`, `Convert to draft` or `Reopen`, which run `gh pr ready`, `gh pr ready --undo` or `gh pr reopen` through app-server `process/spawn`.
 - Edit files in the Files tab: double-click a line to edit at that line. Edits save to disk 3 s after they start or on `⌘S` through the host's `write-file`, which refuses to overwrite a file that changed on disk since it was read (`Could not save file`). Closing a tab saves first; a failed save asks `Discard file changes?` (`Continue viewing` / `Discard changes`). A text file over 10 MiB opens read-only with `Large file opened read-only`.
 
 ## [0.1.1] - 2026-11-06

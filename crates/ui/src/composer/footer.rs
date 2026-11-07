@@ -383,7 +383,12 @@ impl Composer {
                             } else {
                                 crate::tooltip::tooltip(
                                     trigger,
-                                    "Change permissions",
+                                    // `composer.permissionsDropdown.managed.tooltip`
+                                    if self.permission == Permission::Managed {
+                                        "Managed by enterprise policy"
+                                    } else {
+                                        "Change permissions"
+                                    },
                                     None,
                                     crate::tooltip::Side::Top,
                                 )
