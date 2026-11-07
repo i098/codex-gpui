@@ -1,0 +1,138 @@
+diff --git a/crates/app/src/lib.rs b/crates/app/src/lib.rs
+index df98690a..7419f29b 100644
+--- a/crates/app/src/lib.rs
++++ b/crates/app/src/lib.rs
+@@ -9094,6 +9094,88 @@ fn generation_instructions(context: &str) -> String {
+ 
+ impl Render for Root {
+     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
++        // Scratch perf probe (cgx-perf): log the epoch ms of the first frame with sidebar rows.
++        static PERF_MARKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++        static PERF_FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++        if std::env::var_os("CGX_PERF").is_some()
++            && !PERF_FIRST.swap(true, std::sync::atomic::Ordering::Relaxed)
++        {
++            window.on_next_frame(|_, _| {
++                let ms = std::time::SystemTime::now()
++                    .duration_since(std::time::UNIX_EPOCH)
++                    .unwrap()
++                    .as_millis();
++                eprintln!("CGX_PERF first_frame {ms}");
++            });
++        }
++        if self.threads_loaded
++            && !self.threads.is_empty()
++            && std::env::var_os("CGX_PERF").is_some()
++            && !PERF_MARKED.swap(true, std::sync::atomic::Ordering::Relaxed)
++        {
++            window.on_next_frame(|_, _| {
++                let ms = std::time::SystemTime::now()
++                    .duration_since(std::time::UNIX_EPOCH)
++                    .unwrap()
++                    .as_millis();
++                eprintln!("CGX_PERF sidebar_frame {ms}");
++            });
++            if std::env::var_os("CGX_PERF_SCROLL").is_some() {
++                // 3 s settle, then 10 s of wheel events at 60 Hz (12 px down for 5 s, then up),
++                // with a redraw every frame; prints the frame intervals.
++                type Frames = std::rc::Rc<std::cell::RefCell<(bool, Vec<std::time::Instant>)>>;
++                fn tick(frames: Frames, window: &mut Window) {
++                    let mut f = frames.borrow_mut();
++                    f.1.push(std::time::Instant::now());
++                    if f.0 {
++                        drop(f);
++                        window.refresh();
++                        window.on_next_frame(move |window, _| tick(frames, window));
++                    }
++                }
++                let frames: Frames = Default::default();
++                let executor = cx.background_executor().clone();
++                cx.spawn_in(window, async move |_, cx| {
++                    let timer = |us: u64| executor.timer(std::time::Duration::from_micros(us));
++                    timer(3_000_000).await;
++                    let f = frames.clone();
++                    let _ = cx.update(|window, _| {
++                        f.borrow_mut().0 = true;
++                        tick(f, window);
++                    });
++                    let start = std::time::Instant::now();
++                    for n in 0..600u32 {
++                        let due = std::time::Duration::from_micros(16_667 * u64::from(n));
++                        if let Some(wait) = due.checked_sub(start.elapsed()) {
++                            timer(wait.as_micros() as u64).await;
++                        }
++                        let dy = if n < 300 { -12. } else { 12. };
++                        let _ = cx.update(|window, cx| {
++                            let size = window.viewport_size();
++                            window.dispatch_event(
++                                gpui::PlatformInput::ScrollWheel(gpui::ScrollWheelEvent {
++                                    position: gpui::point(size.width * 0.6, size.height * 0.5),
++                                    delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(dy))),
++                                    modifiers: gpui::Modifiers::default(),
++                                    touch_phase: gpui::TouchPhase::Moved,
++                                }),
++                                cx,
++                            );
++                        });
++                    }
++                    frames.borrow_mut().0 = false;
++                    let f = frames.borrow();
++                    let mut d: Vec<f64> = f.1.windows(2).map(|w| (w[1] - w[0]).as_secs_f64() * 1000.).collect();
++                    d.sort_by(f64::total_cmp);
++                    let q = |p: usize| d[(d.len() * p / 100).min(d.len() - 1)];
++                    eprintln!(
++                        "CGX_PERF scroll frames={} p50={:.2} p95={:.2} p99={:.2} max={:.2} over20={}",
++                        d.len(), q(50), q(95), q(99), d[d.len() - 1], d.iter().filter(|x| **x > 20.).count()
++                    );
++                })
++                .detach();
++            }
++        }
+         if self.crashed {
+             return native_menus::actions(
+                 div()
+diff --git a/vendor/gpui_macos/src/window.rs b/vendor/gpui_macos/src/window.rs
+index b8cb5ff1..8f4f4f6d 100644
+--- a/vendor/gpui_macos/src/window.rs
++++ b/vendor/gpui_macos/src/window.rs
+@@ -834,10 +834,11 @@ impl MacWindowState {
+     fn start_display_link(&mut self) {
+         self.stop_display_link();
+         unsafe {
+-            if !self
+-                .native_window
+-                .occlusionState()
+-                .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
++            if std::env::var_os("CGX_PERF_VISIBLE").is_none()
++                && !self
++                    .native_window
++                    .occlusionState()
++                    .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+             {
+                 return;
+             }
+@@ -2959,7 +2960,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
+ }
+ 
+ fn visibility(state: &MacWindowState) -> WindowVisibility {
+-    let is_visible = unsafe {
++    let is_visible = std::env::var_os("CGX_PERF_VISIBLE").is_some() || unsafe {
+         state
+             .native_window
+             .occlusionState()
+@@ -3008,10 +3009,11 @@ extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
+     let window_state = unsafe { get_window_state(this) };
+     let mut lock = window_state.lock();
+     unsafe {
+-        if lock
+-            .native_window
+-            .occlusionState()
+-            .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
++        if std::env::var_os("CGX_PERF_VISIBLE").is_some()
++            || lock
++                .native_window
++                .occlusionState()
++                .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+         {
+             lock.move_traffic_light();
+             lock.start_display_link();

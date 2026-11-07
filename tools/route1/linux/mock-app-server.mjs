@@ -3,7 +3,7 @@
 // A request matches a recorded request by method; among those, exact params win, then the one
 // with the same threadId, then the most equal top-level params. The recorded result is re-keyed to
 // the live id and the recorded notifications that followed it are emitted. Unknown methods answer
-// a JSON-RPC error. Log: $MOCK_LOG (default /tmp/inv-r1/mock-app-server.log).
+// a JSON-RPC error. Log: $MOCK_LOG (default /tmp/inv-r1/mock-app-server.log); MOCK_LOG_EPOCH=1 stamps lines with epoch ms (tools/bench).
 // MOCK_SIGNED_OUT=1: the account reads report no account (the renderer shows the login route)
 // until account/login/start, which answers a ChatGPT login; the recorder pushes account/updated
 // and account/login/completed itself. One login per mock start.
@@ -13,7 +13,8 @@ import { createInterface } from "node:readline";
 
 const ROOT = process.env.MOCK_FIXTURES || path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../../fixtures");
 const LOG = process.env.MOCK_LOG || "/tmp/inv-r1/mock-app-server.log";
-const log = (...a) => fs.appendFileSync(LOG, `${new Date().toISOString().slice(11, 23)} ${a.join(" ")}\n`);
+const stamp = () => (process.env.MOCK_LOG_EPOCH ? Date.now() : new Date().toISOString().slice(11, 23));
+const log = (...a) => fs.appendFileSync(LOG, `${stamp()} ${a.join(" ")}\n`);
 const files = [path.join(ROOT, "readback.jsonl"), ...fs.readdirSync(path.join(ROOT, "sessions")).map((f) => path.join(ROOT, "sessions", f))];
 
 // Recorded exchanges: {method, params, reply, notes[]}.

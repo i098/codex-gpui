@@ -35,6 +35,22 @@ Method: amelia Mac mini (Apple M4), release build, same account-free fixture for
 - The original could not open a thread without a signed-in account, so its long-thread memory and scroll were not measured.
 - Scroll is the frame interval of a forced 60 Hz redraw, not frame work.
 
+### Reproduce
+
+Hardware and software of the run above: Mac mini M4 (10 cores), macOS 26.6.2, console locked. The original is ChatGPT/Codex 26.1029.61003. codex-gpui is commit `9e6ef934` (release build with `CODEX_GPUI_QA=1`, plus `tools/bench/probe.diff`).
+
+The two states are `plain` (no thread open) and `thread` (the app opens `codex://threads/<id>` of the `explain` fixture). Both apps use the same recorded-fixture app-server (`tools/route1/linux/mock-app-server.mjs`).
+
+```sh
+git apply tools/bench/probe.diff
+CODEX_GPUI_QA=1 cargo build --locked --release -p app --bin codex-gpui
+export BENCH_ORIG=/path/to/ChatGPT.app BENCH_BIN=$PWD/target/release/codex-gpui
+tools/bench/run.sh plain    # cold and warm start, idle RSS and CPU, no thread link
+tools/bench/run.sh thread   # cold start, idle RSS and CPU, with the thread link
+```
+
+`run.sh` needs passwordless `sudo` (for `purge` and `launchctl asuser`), starts the apps in the background, runs 5 interleaved rounds, and prints median (min-max) per metric. `probe.diff` adds the first-frame log and a switch that paints a window the locked console hides. Do not ship it.
+
 ## Quick start
 
 1. Install Rust 1.98.1 (`rust-toolchain.toml` pins it, so `rustup` does it on the first build).
