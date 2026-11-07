@@ -7,8 +7,10 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Read `configRequirements/read` and disable the permission options that `requirements.toml` or `config.toml` do not allow, with the original's tooltips, and show `Managed` when no option is allowed.
 - Show the original's `This request requires additional safety checks, which can take extra time.` line under a running turn when the app-server sends `autoApprovalReview/strictReviewRequired`; it goes away when the turn ends.
 - Open a chat's scheduled task card in a side panel tab, as the original's automation tab does: a suggestion shows `Cancel` and `Create scheduled task` (`Apply changes` for an update of an existing task), and a saved task stays in the tab with `Save` and `Open settings`, which opens the task on the Automations page.
+- Open a thread's pull request in a `PR #n` side panel tab from the branch actions' `View PR` (`Open in GitHub` still opens the browser). The tab shows the GitHub detail: status, branch, reviewers, comments, checks, description and code changes. It also offers `Ready for review`, `Convert to draft` or `Reopen`, which run `gh pr ready`, `gh pr ready --undo` or `gh pr reopen` through app-server `process/spawn`.
 - Edit files in the Files tab: double-click a line to edit at that line. Edits save to disk 3 s after they start or on `⌘S` through the host's `write-file`, which refuses to overwrite a file that changed on disk since it was read (`Could not save file`). Closing a tab saves first; a failed save asks `Discard file changes?` (`Continue viewing` / `Discard changes`). A text file over 10 MiB opens read-only with `Large file opened read-only`.
 
 ## [0.1.1] - 2026-11-06

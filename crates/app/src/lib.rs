@@ -37,6 +37,7 @@ mod goals;
 pub mod host;
 pub mod host_settings;
 pub mod hotkey;
+mod ide_context;
 mod logging;
 pub mod native_menus;
 mod new_project;
@@ -267,6 +268,8 @@ pub enum SidePanel {
     /// A thread's task card (`automation_update` proposal or saved task): the task editor
     /// ([`Root::automation_tab`]).
     Automation,
+    /// The branch's `View PR`: the pull request's detail ([`Root::pull_request_tab`]).
+    PullRequest,
 }
 
 /// Settings ▸ Appearance ▸ Theme (the original's `appearanceTheme`): follow the system, or
@@ -513,6 +516,8 @@ pub struct Root {
     new_tab: Option<Entity<ui::screens::new_tab::NewTabPage>>,
     /// The view of [`SidePanel::Subagents`]; cleared with the thread.
     subagents: Option<Entity<ui::screens::subagents::SubagentsView>>,
+    /// The page of [`SidePanel::PullRequest`]; cleared with the thread.
+    pull_request_tab: Option<Entity<ui::screens::pull_requests::Page>>,
     /// The image view of [`SidePanel::Image`]; cleared with the thread.
     image: Option<Entity<ui::screens::thread::view::ImageView>>,
     /// The tab title and task editor of [`SidePanel::Automation`]; cleared with the thread.
@@ -1081,6 +1086,7 @@ impl Root {
             plan: None,
             new_tab: None,
             subagents: None,
+            pull_request_tab: None,
             image: None,
             automation_tab: None,
             split: None,
@@ -1337,7 +1343,8 @@ impl Root {
             let profiles = if acp {
                 Value::Null
             } else {
-                permissions::list_profiles(&bridge, &cwd)
+                let signed_in = matches!(&account, Some(Ok(a)) if a.account.is_some());
+                permissions::list_profiles(&bridge, &cwd, signed_in)
                     .await
                     .unwrap_or_else(|error| {
                         eprintln!("codex-gpui: permission profiles: {error:#}");
@@ -1438,7 +1445,7 @@ impl Root {
                         c.set_models(&models, &config.config, cx);
                         c.set_slash_skills(&skills, cx);
                         c.set_collaboration_modes(&modes, cx);
-                        c.set_permission_profiles(&profiles, cx);
+                        c.set_permission_profiles(&profiles, &config.config, cx);
                     });
                 }
                 this.config = config.config;
@@ -2429,6 +2436,7 @@ impl Root {
                                 composer.update(cx, |composer, cx| composer.restore_text(&message, cx));
                                 window.focus(&composer.focus_handle(cx), cx);
                             }
+                            GitAction::ViewPr => this.open_pull_request_tab(url, window, cx),
                             _ => cx.open_url(url),
                         }
                     }
@@ -3486,6 +3494,7 @@ impl Root {
         new_tab: bool,
         subagents: bool,
         automation: Option<&SharedString>,
+        pull_request: Option<u64>,
         cx: &App,
     ) -> Option<Tab> {
         match side {
@@ -3566,6 +3575,11 @@ impl Root {
                 label: title.clone(),
                 detail: None,
             }),
+            SidePanel::PullRequest => pull_request.map(|number| Tab {
+                icon: "pull-request-status",
+                label: format!("PR #{number}").into(),
+                detail: None,
+            }),
         }
     }
 
@@ -3585,6 +3599,10 @@ impl Root {
         let new_tab = self.new_tab.is_some();
         let subagents = self.subagents.is_some();
         let automation = self.automation_tab.as_ref().map(|(title, _)| title);
+        let pull_request = self
+            .pull_request_tab
+            .as_ref()
+            .and_then(|page| Some(page.read(cx).selected.as_ref()?.number));
         let tab = |side: &SidePanel| {
             Self::side_tab(
                 *side,
@@ -3598,6 +3616,7 @@ impl Root {
                 new_tab,
                 subagents,
                 automation,
+                pull_request,
                 cx,
             )
         };
@@ -3624,6 +3643,7 @@ impl Root {
             SidePanel::Subagents => self.subagents.as_ref()?.clone().into(),
             SidePanel::Browser(key) => self.browser_tab(key)?.clone().into(),
             SidePanel::Automation => self.automation_tab.as_ref()?.1.clone().into(),
+            SidePanel::PullRequest => self.pull_request_tab.as_ref()?.clone().into(),
         };
         Some((view, tabs, active))
     }
@@ -5122,6 +5142,7 @@ impl Root {
         self.plan = None;
         self.new_tab = None;
         self.subagents = None;
+        self.pull_request_tab = None;
         self.image = None;
         self.automation_tab = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
@@ -5173,6 +5194,7 @@ impl Root {
                 GitAction::SwitchBranch => this.open_git_form(DialogKind::Branches, window, cx),
                 GitAction::CreatePr => this.open_create_pr(window, cx),
                 GitAction::ViewPr
+                | GitAction::OpenPrInBrowser
                 | GitAction::CopyPr
                 | GitAction::AddPrToChat
                 | GitAction::CompareBranch
@@ -5213,6 +5235,37 @@ impl Root {
             self.send_shell(side, s, window, cx);
             return;
         }
+        if s.ide_context
+            && retry.is_none()
+            && let Some((view, _)) = self.conversation(side)
+        {
+            // `/ide-context`: ask the IDE off the UI thread, then send with its context.
+            let root = view.read(cx).cwd().to_owned();
+            cx.spawn_in(window, async move |this, cx| {
+                let context = cx
+                    .background_executor()
+                    .spawn(async move { ide_context::fetch(&root) })
+                    .await;
+                this.update_in(cx, |this, window, cx| {
+                    this.send_inner(side, s, None, context, window, cx)
+                })
+            })
+            .detach();
+            return;
+        }
+        self.send_inner(side, s, retry, None, window, cx);
+    }
+
+    /// [`Self::send`] once the IDE's context (`ide`) is known.
+    fn send_inner(
+        &mut self,
+        side: Option<usize>,
+        s: Submission,
+        retry: Option<FailedQueuedMessage>,
+        ide: Option<ide_context::IdeContext>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some((view, _)) = self.conversation(side) else {
             return;
         };
@@ -5239,6 +5292,10 @@ impl Root {
                 .queue_edit(side)
                 .and_then(|edit| edit.take_if(|edit| edit.thread_id == id));
             let mut input = user_input(&s);
+            if let Some(context) = &ide {
+                let text = input[0]["text"].as_str().unwrap_or_default().to_owned();
+                input[0]["text"] = ide_context::prompt(text, context).into();
+            }
             input.extend(place.iter().flat_map(|edit| edit.extra.clone()));
             let client_id = uuid_v4();
             FailedQueuedMessage {
@@ -5959,7 +6016,7 @@ impl Root {
             composer.bind_connection(self.bridge.clone());
             composer.bind_thread(&thread.id);
             composer.set_models(&self.models, &self.config, cx);
-            composer.set_permission_profiles(&self.permission_profiles, cx);
+            composer.set_permission_profiles(&self.permission_profiles, &self.config, cx);
             composer.restore_run_settings(
                 &settings.collaboration_mode,
                 settings.permission.clone(),
@@ -8338,7 +8395,7 @@ fn apply_permissions(params: &mut Value, permission: &Permission) {
         Permission::Ask => ("on-request", ":workspace", "user"),
         Permission::ApproveForMe => ("on-request", ":workspace", "guardian_subagent"),
         Permission::FullAccess => ("never", ":danger-full-access", "user"),
-        Permission::Custom => return,
+        Permission::Custom | Permission::Managed => return,
         Permission::Named(profile) => {
             params["permissions"] = profile.as_ref().into();
             return;

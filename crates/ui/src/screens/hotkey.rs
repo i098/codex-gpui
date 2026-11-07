@@ -303,6 +303,7 @@ impl Controls {
                     .collect()
             }
             Menu::Permission => {
+                let composer = self.composer.upgrade();
                 let mut entries: Vec<_> = [
                     ("Ask for approval", Permission::Ask),
                     ("Approve for me", Permission::ApproveForMe),
@@ -316,6 +317,12 @@ impl Controls {
                             .try_global::<crate::composer::FullAccessHidden>()
                             .is_some_and(|hidden| hidden.0)
                 })
+                // Requirements can disable or remove a preset; the composer owns those rows.
+                .filter(|(label, _)| {
+                    composer
+                        .as_ref()
+                        .is_none_or(|c| c.read(cx).permission_disabled(label) == Some(None))
+                })
                 .map(|(label, permission)| {
                     (
                         label.into(),
@@ -325,7 +332,7 @@ impl Controls {
                     )
                 })
                 .collect();
-                if let Some(composer) = self.composer.upgrade() {
+                if let Some(composer) = composer {
                     entries.extend(composer.read(cx).named_permissions().map(|permission| {
                         (
                             permission.option_label().to_owned(),
