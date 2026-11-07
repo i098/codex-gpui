@@ -345,7 +345,7 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         let host = self.host.clone();
-        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let home = crate::env::home();
         cx.spawn_in(window, async move |this, cx| {
             let result = cx
                 .background_spawn(async move {

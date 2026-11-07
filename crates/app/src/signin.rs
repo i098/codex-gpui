@@ -11,7 +11,9 @@ mod browser {
     #[cfg(target_os = "macos")]
     use std::net::{TcpListener, TcpStream};
     #[cfg(any(target_os = "macos", test))]
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+    #[cfg(target_os = "macos")]
+    use std::time::Instant;
     use ui::screens::signin::BrowserProfile;
 
     #[cfg(any(target_os = "macos", test))]
@@ -61,30 +63,24 @@ mod browser {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()?;
-        let deadline = Instant::now() + timeout;
-        loop {
-            if let Some(status) = child.try_wait()? {
-                ensure!(status.success(), "Browser lookup native helper failed");
-                let mut output = Vec::new();
-                child
-                    .stdout
-                    .take()
-                    .context("Browser helper stdout")?
-                    .take((LIMIT + 1) as u64)
-                    .read_to_end(&mut output)?;
-                ensure!(
-                    output.len() <= LIMIT,
-                    "Browser helper response is too large"
-                );
-                return Ok(Some(output));
-            }
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Ok(None);
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        let Some(status) =
+            crate::process::wait_timeout(&mut child, timeout, Duration::from_millis(10))?
+        else {
+            return Ok(None);
+        };
+        ensure!(status.success(), "Browser lookup native helper failed");
+        let mut output = Vec::new();
+        child
+            .stdout
+            .take()
+            .context("Browser helper stdout")?
+            .take((LIMIT + 1) as u64)
+            .read_to_end(&mut output)?;
+        ensure!(
+            output.len() <= LIMIT,
+            "Browser helper response is too large"
+        );
+        Ok(Some(output))
     }
 
     #[cfg(not(target_os = "macos"))]
