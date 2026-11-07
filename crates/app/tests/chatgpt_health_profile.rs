@@ -71,6 +71,36 @@ fn health_chats_page_by_offset_until_the_total() -> Result<()> {
 }
 
 #[test]
+fn profile_page_maps_as_the_original_rea() -> Result<()> {
+    use ui::screens::profile::{self, Period};
+    let host = ReplayHost::from_recording(RECORDING)?;
+    let page = body(&host.fetch(&request("GET", "/profiles/me/page", None))?);
+    let profile = profile::parse(&page).map_err(anyhow::Error::msg)?;
+    assert_eq!(profile.name(), "Demo User");
+    assert_eq!(profile.initials(), "DU");
+    let summary = profile.summary.clone().expect("stats");
+    assert_eq!(
+        summary.lifetime_tokens.map(profile::compact).as_deref(),
+        Some("5K")
+    );
+    assert_eq!(
+        summary.longest_task_secs.map(profile::duration).as_deref(),
+        Some("2m")
+    );
+    let insights = profile.insights.clone().expect("insights");
+    // A zero Fast Mode share and an empty plugin list still show their rows as unused.
+    assert_eq!(insights.fast_mode_percent, Some(Some(0.)));
+    assert_eq!(insights.reasoning, Some((Some("low".into()), Some(100.))));
+    assert_eq!(profile.plugins, Some(Vec::new()));
+    let daily = profile.activity[0].as_deref().expect("daily buckets");
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 15).unwrap();
+    let levels = profile::levels(daily, today, Period::Daily);
+    // Wed 14 and Thu 15 Oct sit in the last column: 600 tokens tops the scale, 400 is level 3.
+    assert_eq!(levels[levels.len() - 4..levels.len() - 2], [3, 4]);
+    Ok(())
+}
+
+#[test]
 fn unknown_mutations_and_reads_are_refused() -> Result<()> {
     let host = ReplayHost::from_recording(RECORDING)?;
     for refused in [

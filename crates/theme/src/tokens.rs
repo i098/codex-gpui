@@ -159,6 +159,16 @@ pub struct Theme {
     pub switch_track: Hsla,
     /// `var(--switch-track-color-checked)`
     pub switch_track_checked: Hsla,
+    /// `var(--color-chart-empty)` Profile token activity: day without usage.
+    pub chart_empty: Hsla,
+    /// `var(--color-chart-sequential-1)` Profile token activity: level 1.
+    pub chart_sequential_1: Hsla,
+    /// `var(--color-chart-sequential-2)` Profile token activity: level 2.
+    pub chart_sequential_2: Hsla,
+    /// `var(--color-chart-sequential-3)` Profile token activity: level 3, week bars.
+    pub chart_sequential_3: Hsla,
+    /// `var(--color-chart-sequential-4)` Profile token activity: level 4.
+    pub chart_sequential_4: Hsla,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -273,6 +283,11 @@ impl Theme {
             scrollbar_hover: rgba(0xffffff28).into(),
             switch_track: white_mix(0.1),
             switch_track_checked: rgba(0x3a83f7ff).into(),
+            chart_empty: rgba(0x303030ff).into(),
+            chart_sequential_1: rgba(0x013566ff).into(),
+            chart_sequential_2: rgba(0x004f99ff).into(),
+            chart_sequential_3: rgba(0x0285ffff).into(),
+            chart_sequential_4: rgba(0x66b5ffff).into(),
         }
     }
 
@@ -364,6 +379,11 @@ impl Theme {
             scrollbar_hover: rgba(0x1a1c1f1e).into(),
             switch_track: rgba(0x1a1c1f1a).into(),
             switch_track_checked: rgba(0x3a83f7ff).into(),
+            chart_empty: rgba(0xf3f3f3ff).into(),
+            chart_sequential_1: rgba(0xcce6ffff).into(),
+            chart_sequential_2: rgba(0x66b5ffff).into(),
+            chart_sequential_3: rgba(0x0285ffff).into(),
+            chart_sequential_4: rgba(0x004f99ff).into(),
         }
     }
 }
