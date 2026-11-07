@@ -1185,6 +1185,7 @@ pub fn parse_task_response(detail: &Value, turns: &Value) -> Result<CloudTask> {
                 section: None,
                 status: ThreadStatus::Idle,
                 git_info: None,
+                daybreak_enabled: None,
                 forked_from_id: None,
                 turns: vec![turn],
                 older_cursor: None,
