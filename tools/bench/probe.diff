@@ -1,0 +1,83 @@
+diff --git a/crates/app/src/lib.rs b/crates/app/src/lib.rs
+index df98690a..7419f29b 100644
+--- a/crates/app/src/lib.rs
++++ b/crates/app/src/lib.rs
+@@ -9094,6 +9094,33 @@ fn generation_instructions(context: &str) -> String {
+ 
+ impl Render for Root {
+     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
++        // Scratch perf probe (cgx-perf): log the epoch ms of the first frame with sidebar rows.
++        static PERF_MARKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++        static PERF_FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++        if std::env::var_os("CGX_PERF").is_some()
++            && !PERF_FIRST.swap(true, std::sync::atomic::Ordering::Relaxed)
++        {
++            window.on_next_frame(|_, _| {
++                let ms = std::time::SystemTime::now()
++                    .duration_since(std::time::UNIX_EPOCH)
++                    .unwrap()
++                    .as_millis();
++                eprintln!("CGX_PERF first_frame {ms}");
++            });
++        }
++        if self.threads_loaded
++            && !self.threads.is_empty()
++            && std::env::var_os("CGX_PERF").is_some()
++            && !PERF_MARKED.swap(true, std::sync::atomic::Ordering::Relaxed)
++        {
++            window.on_next_frame(|_, _| {
++                let ms = std::time::SystemTime::now()
++                    .duration_since(std::time::UNIX_EPOCH)
++                    .unwrap()
++                    .as_millis();
++                eprintln!("CGX_PERF sidebar_frame {ms}");
++            });
++        }
+         if self.crashed {
+             return native_menus::actions(
+                 div()
+diff --git a/vendor/gpui_macos/src/window.rs b/vendor/gpui_macos/src/window.rs
+index b8cb5ff1..8f4f4f6d 100644
+--- a/vendor/gpui_macos/src/window.rs
++++ b/vendor/gpui_macos/src/window.rs
+@@ -834,10 +834,11 @@ impl MacWindowState {
+     fn start_display_link(&mut self) {
+         self.stop_display_link();
+         unsafe {
+-            if !self
+-                .native_window
+-                .occlusionState()
+-                .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
++            if std::env::var_os("CGX_PERF_VISIBLE").is_none()
++                && !self
++                    .native_window
++                    .occlusionState()
++                    .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+             {
+                 return;
+             }
+@@ -2959,7 +2960,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
+ }
+ 
+ fn visibility(state: &MacWindowState) -> WindowVisibility {
+-    let is_visible = unsafe {
++    let is_visible = std::env::var_os("CGX_PERF_VISIBLE").is_some() || unsafe {
+         state
+             .native_window
+             .occlusionState()
+@@ -3008,10 +3009,11 @@ extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
+     let window_state = unsafe { get_window_state(this) };
+     let mut lock = window_state.lock();
+     unsafe {
+-        if lock
+-            .native_window
+-            .occlusionState()
+-            .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
++        if std::env::var_os("CGX_PERF_VISIBLE").is_some()
++            || lock
++                .native_window
++                .occlusionState()
++                .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+         {
+             lock.move_traffic_light();
+             lock.start_display_link();
