@@ -225,6 +225,11 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             on_active_browser(this, cx, |tab, cx| tab.reload(true, cx));
         }),
     )
+    .on_action(
+        cx.listener(|this, _: &ui::browser::ToggleAnnotationMode, _, cx| {
+            on_active_browser(this, cx, |tab, cx| tab.toggle_annotation_mode(cx));
+        }),
+    )
     .on_action(cx.listener(
         |this, _: &ui::browser::FocusBrowserAddressBar, window, cx| match this.active_browser_tab()
         {

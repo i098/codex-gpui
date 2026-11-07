@@ -3715,20 +3715,27 @@ impl Root {
         self.next_browser_tab += 1;
         let blank = url.is_none();
         let tab = cx.new(|cx| BrowserTab::new(url, window, cx));
-        cx.subscribe(&tab, move |this, tab, event: &BrowserEvent, cx| {
-            if !matches!(
-                event,
-                BrowserEvent::TitleChanged | BrowserEvent::Navigated { .. }
-            ) {
-                return;
-            }
-            let index = this.tabs.iter().position(|t| *t == SidePanel::Browser(key));
-            if let (Some(index), Some(split)) = (index, &this.split) {
-                let label = tab.read(cx).title();
-                split.update(cx, |split, cx| split.set_tab_label(index, label, cx));
-            }
-        })
+        cx.subscribe_in(
+            &tab,
+            window,
+            move |this, tab, event: &BrowserEvent, window, cx| match event {
+                BrowserEvent::TitleChanged | BrowserEvent::Navigated { .. } => {
+                    let index = this.tabs.iter().position(|t| *t == SidePanel::Browser(key));
+                    if let (Some(index), Some(split)) = (index, &this.split) {
+                        let label = tab.read(cx).title();
+                        split.update(cx, |split, cx| split.set_tab_label(index, label, cx));
+                    }
+                }
+                BrowserEvent::SendAnnotations => this.send_browser_annotations(window, cx),
+                BrowserEvent::DiscardAnnotations => {
+                    this.confirm_discard_browser_annotations(window, cx)
+                }
+                BrowserEvent::LoadStarted { .. } | BrowserEvent::LoadFinished => {}
+            },
+        )
         .detach();
+        let pending = self.pending_browser_annotations(cx);
+        tab.update(cx, |tab, cx| tab.set_pending_annotations(pending, cx));
         self.browser_tabs.push((key, tab.clone()));
         self.set_side(SidePanel::Browser(key), window, cx);
         if blank {

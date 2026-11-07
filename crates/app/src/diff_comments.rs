@@ -94,6 +94,7 @@ impl Root {
         });
         self.thread_composer
             .update(cx, |composer, cx| composer.set_diff_comments(user, cx));
+        self.sync_browser_annotations(cx);
     }
 
     pub(super) fn change_diff_comments(&mut self, comments: &[Comment], cx: &mut Context<Self>) {
@@ -131,6 +132,7 @@ impl Root {
                 panel.set_user_comments(comments.to_vec(), cx)
             });
         }
+        self.sync_browser_annotations(cx);
     }
 
     pub(super) fn dismiss_diff_comment(&mut self, key: &str, cx: &mut Context<Self>) {
@@ -171,5 +173,92 @@ impl Root {
         } else {
             self.toast(Toast::danger("Could not send requests. Try again."), cx);
         }
+    }
+
+    /// The open chat's browser annotations that no turn has sent yet.
+    pub(super) fn pending_browser_annotations(&self, cx: &App) -> usize {
+        self.thread_composer
+            .read(cx)
+            .diff_comments()
+            .iter()
+            .filter(|comment| comment.is_browser())
+            .count()
+    }
+
+    /// Every browser tab's annotation toolbar counts the chat's pending annotations.
+    fn sync_browser_annotations(&self, cx: &mut App) {
+        let pending = self.pending_browser_annotations(cx);
+        for (_, tab) in &self.browser_tabs {
+            tab.update(cx, |tab, cx| tab.set_pending_annotations(pending, cx));
+        }
+    }
+
+    /// The annotation toolbar's Send: the pending browser annotations go out as their own
+    /// turn and leave the pending list; diff comments stay for the next message.
+    pub(super) fn send_browser_annotations(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (browser, rest): (Vec<Comment>, Vec<Comment>) = self
+            .thread_composer
+            .read(cx)
+            .diff_comments()
+            .iter()
+            .cloned()
+            .partition(Comment::is_browser);
+        let submission = self
+            .thread
+            .is_some()
+            .then(|| self.thread_composer.read(cx).comments_submission(&browser))
+            .flatten();
+        let Some(submission) = submission else {
+            self.toast(Toast::danger("Could not send requests. Try again."), cx);
+            return;
+        };
+        let edit = self.queue_edit.take();
+        self.send(None, submission, None, window, cx);
+        self.queue_edit = edit;
+        self.change_diff_comments(&rest, cx);
+    }
+
+    /// `thread.browser.tweaks.cancelConfirm*`: Discard drops every pending browser annotation.
+    pub(super) fn confirm_discard_browser_annotations(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.has_dialog() {
+            return;
+        }
+        let dialog = cx.new(|cx| {
+            Confirmation::new(
+                "Discard all pending annotations?",
+                "All edits will be removed from the page",
+                "Discard",
+                window,
+                cx,
+            )
+            .destructive()
+        });
+        cx.subscribe(&dialog, |this, _, outcome, cx| {
+            if *outcome == Outcome::Confirm {
+                let rest: Vec<Comment> = this
+                    .thread_composer
+                    .read(cx)
+                    .diff_comments()
+                    .iter()
+                    .filter(|comment| !comment.is_browser())
+                    .cloned()
+                    .collect();
+                this.change_diff_comments(&rest, cx);
+            }
+            this.diff_confirmation = None;
+            this.sync_browser_pages(cx);
+            cx.notify();
+        })
+        .detach();
+        // The native page draws over every gpui element, the dialog included.
+        for (_, tab) in &self.browser_tabs {
+            tab.update(cx, |tab, cx| tab.set_page_hidden(true, cx));
+        }
+        self.diff_confirmation = Some(dialog);
+        cx.notify();
     }
 }
