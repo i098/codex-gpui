@@ -129,6 +129,7 @@ pub struct SearchHistory(pub String);
 
 impl gpui::EventEmitter<SearchHistory> for ThreadView {}
 
+pub use items::{OpenPlanSummary, PlanSummary};
 use items::{
     activity, cache_automation_result, diff_card, disclosure, memory_citations, user_bubble,
     wrap_row,
@@ -1817,7 +1818,13 @@ impl ThreadView {
                             .rounded(Theme::RADIUS_SM)
                             .hover(move |style| style.bg(row_hover))
                             .aria_label("Open plan")
-                            .on_click(crate::dispatch::<crate::OpenPlanPanel>),
+                            .on_click(|event, window, cx| {
+                                if event.modifiers().secondary() {
+                                    window.dispatch_action(Box::new(OpenPlanSummary), cx);
+                                } else {
+                                    crate::dispatch::<crate::OpenPlanPanel>(event, window, cx);
+                                }
+                            }),
                     ),
             );
         }
