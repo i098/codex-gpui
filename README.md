@@ -17,20 +17,23 @@ Measured against the original Codex app (26.1029) on the same account-free fixtu
 
 | Metric | Original | codex-gpui |
 | --- | --- | --- |
-| Cold start to sidebar rows painted (median) | 11 164 ms | 1 675 ms |
-| Warm start to sidebar rows painted (median) | 9 197 ms | 400 ms |
-| Idle memory, RSS at +30 s (all processes) | 2 133 MB | 163 MB |
-| Idle memory, `phys_footprint` at +90 s | 893–895 MB | 109–123 MB |
-| Idle CPU, window visible | 31.7 % of one core | 0.63 % |
-| Idle CPU, window hidden | 3.7 % | 0.22 % |
-| App size | 1 889 MiB | 105.8 MiB |
-| Scroll a long thread, frame interval p50 / p95 | not measurable | 16.67 / 18.66 ms |
+| Cold start to sidebar rows painted (median) | 11 079 ms | 1 378 ms |
+| Warm start to sidebar rows painted (median) | 9 295 ms | 204 ms |
+| Idle memory, RSS at +30 s (all processes), no thread link | 2 034 MB | 155 MB |
+| Idle memory, RSS at +30 s, with thread link | 2 118 MB | 181 MB |
+| Idle memory, `phys_footprint` at +90 s, no thread link | 798 MB | 93 MB |
+| Idle memory, `phys_footprint` at +90 s, with thread link | 892 MB | 123 MB |
+| Idle CPU, window visible, no thread link | 2.2 % of one core | 0.7 % |
+| Idle CPU, window visible, with thread link | 31.9 % | 0.7 % |
+| Idle CPU, window hidden, no thread link | 0.7 % | 0.2 % |
+| Size: original app (`du`) / codex-gpui release binary | 1 918 MiB | 100.5 MiB |
+| Scroll a long thread, frame interval p50 / p95 | not measurable | 16.67 / 18.6 ms |
 
-Method: amelia Mac mini (Apple M4), release build, 5 to 10 runs per row, same account-free fixture for both apps.
+Method: amelia Mac mini (Apple M4), release build, same account-free fixture for both apps. Every row is the median of n=5 runs, interleaved between the apps. The "no thread link" rows launch with no thread open; the "with thread link" rows open a `codex://threads` link.
 
+- The codex-gpui size is the binary only; the app bundle is not assembled yet.
 - The original could not open a thread without a signed-in account, so its long-thread memory and scroll were not measured.
-- The original's start includes about 7 s of fixture auth retry; without it, cold start is about 4.1 s.
-- The original's visible idle CPU is an upper bound: it comes from loading animations in the account-free state.
+- Scroll is the frame interval of a forced 60 Hz redraw, not frame work.
 
 ## Quick start
 
