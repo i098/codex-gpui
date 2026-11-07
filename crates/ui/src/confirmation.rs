@@ -2,7 +2,7 @@ use crate::{composer::shadow, text};
 use gpui::{
     App, Context, Corners, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
     KeyDownEvent, MouseButton, ParentElement, Render, SharedString, StatefulInteractiveElement,
-    Styled, Window, div, prelude::FluentBuilder as _, px, rgba,
+    Styled, Window, div, prelude::FluentBuilder as _, px,
 };
 use theme::{ActiveTheme as _, Theme};
 
@@ -397,7 +397,7 @@ impl Render for Confirmation {
             .flex()
             .items_center()
             .justify_center()
-            .bg(rgba(0x00000022))
+            .bg(t.dialog_overlay)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| this.finish(Outcome::Cancel, window, cx)),
@@ -428,7 +428,7 @@ impl Render for Confirmation {
                             }),
                             shadows: vec![
                                 shadow(t.border, 0., 0., 0.5, false),
-                                shadow(rgba(0x0000001a).into(), 4., 8., -2., false),
+                                shadow(t.shadow_lg, 4., 8., -2., false),
                             ],
                             ..Default::default()
                         },

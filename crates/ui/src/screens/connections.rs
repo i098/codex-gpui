@@ -739,11 +739,6 @@ impl ConnectionsPage {
                 61. * 24. / 23.,
             )
         };
-        let foreground = if t.appearance == theme::Appearance::Dark {
-            gpui::rgb(0x2d2d2d).into()
-        } else {
-            t.text_inverse
-        };
         let add = div()
             .id("connections-empty-add")
             .role(gpui::Role::Button)
@@ -762,7 +757,7 @@ impl ConnectionsPage {
                 border: Some((px(1.), t.border)),
                 ..Default::default()
             }))
-            .child(text("Add", 13., 18., 430., foreground))
+            .child(text("Add", 13., 18., 430., t.text_primary_solid))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if ssh {
                     this.open_ssh_discovery(window, cx);
@@ -927,13 +922,7 @@ impl Render for ConnectionsPage {
                         }),
                         shadows: vec![
                             crate::composer::shadow(t.border, 0., 0., 0.5, false),
-                            crate::composer::shadow(
-                                gpui::rgba(0x0000001a).into(),
-                                4.,
-                                8.,
-                                -2.,
-                                false,
-                            ),
+                            crate::composer::shadow(t.shadow_lg, 4., 8., -2., false),
                         ],
                         ..Default::default()
                     },
@@ -951,7 +940,7 @@ impl Render for ConnectionsPage {
                             .w(viewport.width)
                             .h(viewport.height)
                             .occlude()
-                            .bg(gpui::rgba(0x00000022))
+                            .bg(t.dialog_overlay)
                             .flex()
                             .items_center()
                             .justify_center()

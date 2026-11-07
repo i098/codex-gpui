@@ -412,7 +412,7 @@ fn login_theme(cx: &App) -> Theme {
     if theme.appearance == theme::Appearance::Dark {
         theme.text = gpui::rgb(0xdfdfdf).into();
         theme.button_primary_solid = theme.text;
-        theme.text_inverse = gpui::rgb(0x2d2d2d).into();
+        theme.text_inverse = theme.text_primary_solid;
         let white = gpui::Hsla::from(gpui::rgb(0xffffff));
         theme.text_description = white.opacity(0.498);
         theme.border = white.opacity(0.084);

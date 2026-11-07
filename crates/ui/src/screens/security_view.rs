@@ -2132,11 +2132,7 @@ impl SecurityPage {
 
 fn button_colors(primary: bool, kind: ButtonKind, t: &Theme) -> (gpui::Hsla, Option<gpui::Hsla>) {
     let color = if primary {
-        if t.appearance == theme::Appearance::Dark {
-            gpui::rgb(0x2d2d2d).into()
-        } else {
-            t.text_inverse
-        }
+        t.text_primary_solid
     } else if matches!(kind, ButtonKind::Tab(false)) {
         t.text_tertiary
     } else {
