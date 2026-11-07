@@ -17,6 +17,7 @@ mod cloud_snapshot;
 pub use cloud::{CloudTaskRequest, create_cloud_task};
 pub use cloud_snapshot::create_cloud_task_from_worktree;
 mod automation_notifications;
+pub mod computer_use_office;
 pub mod computer_use_requests;
 pub mod connections;
 mod context_status;
@@ -6731,10 +6732,23 @@ impl Root {
                 service.get_sound_mode().map_err(|error| error.to_string()),
             ))
         });
+        let bridge = self.bridge.clone();
+        let office = cx.background_spawn(async move {
+            let plugins: Value = bridge.request("plugin/list", json!({"cwds":[]})).await?;
+            let apps: Value = bridge
+                .request("app/list", json!({"limit":1000,"forceRefetch":false}))
+                .await?;
+            Ok::<_, anyhow::Error>(computer_use_office::controls(
+                &plugins["marketplaces"],
+                apps["data"].as_array().map_or(&[][..], Vec::as_slice),
+            ))
+        });
         cx.spawn(async move |_, cx| {
             let result = read.await;
+            let office = office.await.unwrap_or_default();
             cx.update_global::<ComputerUseState, _>(|state, _| {
                 state.pending = false;
+                state.office = office;
                 match result {
                     Ok((readiness, approvals, sound)) => {
                         state.plugin = match readiness {
@@ -6870,6 +6884,13 @@ impl Root {
                         ComputerUseSoundMode::Off => host::computer_use::SoundMode::Off,
                     };
                     host.computer_use_settings()?.set_sound_mode(mode)?;
+                }
+                ComputerUseAction::SetOfficeEnabled(enabled) => {
+                    bridge.request::<_, Value>("config/value/write", json!({
+                        "keyPath": format!("apps.{}.enabled", computer_use_office::DOCUMENT_CONTROL_APP_ID),
+                        "value": enabled, "mergeStrategy": "upsert", "reloadUserConfig": true,
+                    })).await?;
+                    bridge.request::<_, Value>("config/mcpServer/reload", json!({})).await?;
                 }
                 ComputerUseAction::RemoveApproval(bundle) => {
                     host.computer_use_settings()?.remove_app_approval(&bundle)?;

@@ -80,6 +80,49 @@ impl SoundMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OfficeApp {
+    Excel,
+    PowerPoint,
+    Word,
+}
+
+impl OfficeApp {
+    pub const ALL: [Self; 3] = [Self::Excel, Self::PowerPoint, Self::Word];
+
+    /// Lowercase stem of the add-in plugin name the host matches on.
+    pub fn plugin_name(self) -> &'static str {
+        match self {
+            Self::Excel => "excel",
+            Self::PowerPoint => "powerpoint",
+            Self::Word => "word",
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Excel => "Microsoft Excel",
+            Self::PowerPoint => "Microsoft PowerPoint",
+            Self::Word => "Microsoft Word",
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::Excel => "Let ChatGPT use Microsoft Excel add-in for additional control",
+            Self::PowerPoint => "Let ChatGPT use Microsoft PowerPoint add-in for additional control",
+            Self::Word => "Let ChatGPT use Microsoft Word add-in for additional control",
+        }
+    }
+}
+
+/// An installed Office add-in plugin; `enabled` is the shared document-control connector flag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OfficeControl {
+    pub app: OfficeApp,
+    pub enabled: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct Plugin {
     pub installed: bool,
@@ -92,6 +135,7 @@ pub enum ComputerUseAction {
     Install,
     SetEnabled(bool),
     SetSoundMode(SoundMode),
+    SetOfficeEnabled(bool),
     RemoveApproval(String),
     OpenPermissions,
 }
@@ -104,6 +148,7 @@ pub struct ComputerUseState {
     pub plugin: Load<Option<Plugin>>,
     pub approvals: Load<Vec<AppApproval>>,
     pub sound: Option<SoundMode>,
+    pub office: Vec<OfficeControl>,
     pub pending: bool,
     pub error: Option<String>,
     pub permission_guidance: Option<String>,
@@ -290,7 +335,71 @@ impl ComputerUse {
         if matches!(state.plugin, Load::Ready(_)) {
             rows.push(chrome_row(&t));
         }
+        if state.available {
+            rows.extend(
+                state
+                    .office
+                    .iter()
+                    .map(|control| self.office_row(*control, state.pending, window, cx)),
+            );
+        }
         rows
+    }
+
+    fn office_row(
+        &self,
+        control: OfficeControl,
+        pending: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let t = cx.theme().clone();
+        let id = SharedString::from(format!("office-{}", control.app.plugin_name()));
+        let enabled = control.enabled;
+        let handle = focus::handle(id.clone(), 0, window, cx);
+        let toggle = focus::ring(
+            switch(id, enabled, pending, &t),
+            &handle,
+            px(10.),
+            px(2.),
+            cx,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if !pending {
+                this.dispatch(ComputerUseAction::SetOfficeEnabled(!enabled), cx);
+            }
+        }))
+        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+            if !pending && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                this.dispatch(ComputerUseAction::SetOfficeEnabled(!enabled), cx);
+                cx.stop_propagation();
+            }
+        }))
+        .into_any_element();
+        // ponytail: the original's app icons are not extracted; a letter badge stands in.
+        let badge = div()
+            .size(px(40.))
+            .rounded(px(12.5))
+            .border_1()
+            .border_color(t.border)
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(text(
+                control.app.title()[10..11].to_owned(),
+                16.,
+                20.,
+                600.,
+                t.text_secondary,
+            ))
+            .into_any_element();
+        row(
+            control.app.title(),
+            Some(control.app.description().into()),
+            Some(badge),
+            toggle,
+            &t,
+        )
     }
 
     fn approvals(
