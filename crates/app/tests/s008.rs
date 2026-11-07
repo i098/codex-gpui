@@ -21,10 +21,7 @@ fn proxy() {
 
 #[test]
 fn fenced_code_copy_and_urls_match_original() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        println!("s008: the Metal replay requires macOS");
-        return Ok(());
-    }
+    common::skip_unless_macos!("s008");
     let rec: Value = serde_json::from_str(include_str!("../../../refs/interactions/s008.json"))?;
     let mut lines = script(None, |_| {})?;
     for line in &mut lines {

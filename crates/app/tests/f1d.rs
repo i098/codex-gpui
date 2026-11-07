@@ -60,9 +60,7 @@ fn full_label_tooltip_requires_overflow() -> Result<()> {
 
 #[test]
 fn skip_link_keyboard_and_pointer_paths_reach_same_content() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("f1d");
     let recording: Value =
         serde_json::from_slice(&fs::read(format!("{ROOT}/refs/interactions/f1d.json"))?)?;
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
@@ -129,10 +127,7 @@ fn skip_link_keyboard_and_pointer_paths_reach_same_content() -> Result<()> {
 }
 
 fn replay(steps: Range<usize>) -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        println!("f1d: requires the macOS headless renderer");
-        return Ok(());
-    }
+    common::skip_unless_macos!("f1d");
     let recording: Value =
         serde_json::from_slice(&fs::read(format!("{ROOT}/refs/interactions/f1d.json"))?)?;
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;

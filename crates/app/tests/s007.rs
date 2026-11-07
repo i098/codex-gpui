@@ -68,10 +68,7 @@ fn proxy() {
 
 #[test]
 fn markdown_blocks_match_original() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        println!("s007: the Metal renderer requires macOS");
-        return Ok(());
-    }
+    common::skip_unless_macos!("s007");
     let rec: Value = serde_json::from_str(include_str!("../../../refs/interactions/s007.json"))?;
     let ink: Ink = serde_json::from_value(rec["result"]["ink"].clone())?;
     let mut lines = script(None, |_| {})?;

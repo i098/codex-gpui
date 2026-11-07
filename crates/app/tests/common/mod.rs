@@ -3,7 +3,7 @@
 
 #![allow(dead_code)]
 
-use anyhow::{Context as _, Result, ensure};
+use anyhow::{Context as _, Result, anyhow, ensure};
 use app::{Root, Route, SidePanel, State, ThemeSetting};
 use bridge::{Bridge, Event, RpcError};
 use gpui::{
@@ -38,6 +38,18 @@ pub const GREETING: &str = "01a13de9-c48a-7b20-8382-db900881cb99";
 pub const SUBTRACT: &str = "01a13de9-6fff-78e1-84fc-ebb3a2dc873f";
 pub const EXPLAIN: &str = "01a13de9-35ed-7c72-a36a-68eeb2f4e1ee";
 pub const GREETING_PROMPT: &str = "Change the greeting in hello.py to \"Hello, Codex\".";
+/// Ends a `Result<()>` test early on a host without the macOS Metal replay, and says so.
+macro_rules! skip_unless_macos {
+    ($test:expr) => {
+        if !cfg!(target_os = "macos") {
+            eprintln!("skipped {}: the Metal replay requires macOS", $test);
+            return Ok(());
+        }
+    };
+}
+#[allow(unused_imports)]
+pub(crate) use skip_unless_macos;
+
 pub const TIMEOUT: Duration = Duration::from_secs(30);
 /// The original capture clock's base, not its unrecorded historical screenshot instant.
 pub const CAPTURE_CLOCK: ui::screens::thread::view::Clock = ui::screens::thread::view::Clock {
@@ -372,13 +384,13 @@ impl Fx {
 
     pub fn composer_text(&mut self) -> Result<String> {
         let composer = self.composer();
-        self.cx.update_window(self.window, |_, window, cx| {
-            composer
-                .update(cx, |c, cx| {
+        self.cx
+            .update_window(self.window, |_, window, cx| {
+                composer.update(cx, |c, cx| {
                     c.text_for_range(0..usize::MAX, &mut None, window, cx)
                 })
-                .unwrap_or_default()
-        })
+            })?
+            .ok_or_else(|| anyhow!("the composer returned no text"))
     }
 
     pub fn composer_focused(&mut self) -> Result<bool> {

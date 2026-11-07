@@ -61,10 +61,7 @@ fn check(fx: &mut Fx, sample: &Value) -> Result<()> {
 
 #[test]
 fn sidebar_resize_and_toggle_match_original() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        println!("s004: the Metal renderer requires macOS");
-        return Ok(());
-    }
+    common::skip_unless_macos!("s004");
     let rec: Value = serde_json::from_str(include_str!("../../../refs/interactions/s004.json"))?;
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
     let samples = rec["result"]["dom"].as_array().context("DOM samples")?;

@@ -22,9 +22,7 @@ fn centre(step: &Value) -> (f32, f32) {
 
 #[test]
 fn model_picker_matches_original_focus() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("f2c");
     let recording: Value =
         serde_json::from_str(include_str!("../../../refs/interactions/f2c.json"))?;
     let mut fx = Fx::captured("dark", (1280., 832.), common::script(None, |_| {})?)?;

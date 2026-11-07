@@ -12,9 +12,7 @@ fn proxy() {
 
 #[test]
 fn message_actions_match_original() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("s006");
     let rec: Value = serde_json::from_str(include_str!("../../../refs/interactions/s006.json"))?;
     let steps = rec["steps"].as_array().unwrap();
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
@@ -137,9 +135,7 @@ fn message_actions_match_original() -> Result<()> {
 
 #[test]
 fn edit_reverts_before_resending() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("s006");
     let rec: Value = serde_json::from_str(include_str!("../../../refs/interactions/s006.json"))?;
     let steps = rec["steps"].as_array().unwrap();
     let mut thread = recorded_thread(SUBTRACT)?;
@@ -198,9 +194,7 @@ fn edit_reverts_before_resending() -> Result<()> {
 
 #[test]
 fn failed_resend_preserves_both_drafts() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
+    common::skip_unless_macos!("s006");
     let rec: Value = serde_json::from_str(include_str!("../../../refs/interactions/s006.json"))?;
     let steps = rec["steps"].as_array().unwrap();
     let mut thread = recorded_thread(SUBTRACT)?;
