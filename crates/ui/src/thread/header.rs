@@ -14,6 +14,8 @@ const ACTIONS: [(&str, Option<&str>, bool); 9] = [
     ("Archive", Some("⇧⌘A"), false),
 ];
 
+const SHARE: usize = 4;
+
 impl ThreadView {
     pub fn header_title(&self) -> SharedString {
         if self.title.is_empty() {
@@ -175,6 +177,12 @@ impl ThreadView {
                         .items_center()
                         .gap(px(6.))
                         .hover(move |s| s.bg(hover))
+                        .when(index == SHARE, |d| {
+                            d.on_click(cx.listener(|view, _, window, cx| {
+                                view.close_chat_actions(window, cx);
+                                window.dispatch_action(Box::new(ShareThread), cx);
+                            }))
+                        })
                         .child(
                             div()
                                 .relative()

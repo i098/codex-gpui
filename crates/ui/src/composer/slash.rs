@@ -26,6 +26,8 @@ pub enum SlashCommand {
     ForkWorktree,
     Feedback,
     Export,
+    /// `/share`: a link to a snapshot of the open chat.
+    Share,
     Recap,
     Goal {
         objective: Option<String>,
@@ -665,6 +667,7 @@ impl Composer {
             "mcp" => SlashCommand::Mcp,
             "feedback" => SlashCommand::Feedback,
             "export" => SlashCommand::Export,
+            "share" => SlashCommand::Share,
             "recap" => SlashCommand::Recap,
             "memories" => SlashCommand::Memories,
             "hotkey-window-new" => SlashCommand::HotkeyNew,
