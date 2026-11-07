@@ -9,6 +9,7 @@ mod images;
 mod maps;
 mod mobile;
 mod plugins;
+mod profile;
 mod projects;
 mod security_cloud;
 mod settings;
@@ -63,6 +64,8 @@ pub enum Route {
     Gpts(Option<String>),
     /// Explore ▸ `Projects` (`/projects`).
     Projects,
+    /// Settings ▸ `Profile` (`/profile`): the signed-in user's profile page.
+    Profile,
 }
 
 pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
@@ -82,6 +85,7 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = images::actions(root, cx);
     root = gpts::actions(root, cx);
     root = projects::actions(root, cx);
+    root = profile::actions(root, cx);
     root
 }
 
@@ -245,6 +249,7 @@ impl Root {
             Route::Images => Some(images::page(self, cx)),
             Route::Gpts(id) => Some(gpts::page(self, id, window, cx)),
             Route::Projects => Some(projects::page(self, window, cx)),
+            Route::Profile => Some(profile::page(self, window, cx)),
             Route::Onboarding(page) => {
                 self.open_onboarding(page, window, cx);
                 None

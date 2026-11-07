@@ -4660,6 +4660,9 @@ impl Root {
                 "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 "Log out" => window.dispatch_action(Box::new(LogOut), cx),
+                "Profile" => {
+                    window.dispatch_action(Box::new(ui::screens::profile::OpenProfile), cx)
+                }
                 label => {
                     if let Some(section) = settings::section(label) {
                         self.open_settings_section(section, window, cx);

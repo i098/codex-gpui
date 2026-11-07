@@ -359,7 +359,7 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     shell.into()
 }
 
-/// The settings nav item `label` if it opens a page here (not in the browser).
+/// The settings nav item `label` if it opens a page here (not the `/profile` route).
 pub fn section(label: &str) -> Option<&'static str> {
     NAV.iter()
         .flat_map(|(_, items)| items.iter())
@@ -490,7 +490,7 @@ const NAV: &[(&str, &[(&str, &str)])] = &[
     ),
 ];
 
-/// Opens in the browser instead of a settings page (trailing arrow in the nav).
+/// Leaves Settings for the `/profile` page (`appRoute`; trailing arrow in the nav).
 const EXTERNAL: &str = "Profile";
 
 /// State the nav and the page share: the open section, the search query and the settings.
@@ -957,9 +957,13 @@ impl SettingsNav {
             .child(rounded_clip(Theme::RADIUS_LG, Squircle, row));
         focus::ring(control, &focus, Theme::RADIUS_LG, px(2.), cx)
             .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
-            .when(label != EXTERNAL, |d| {
-                d.on_click(cx.listener(move |this, _, window, cx| this.open(label, window, cx)))
-            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if label == EXTERNAL {
+                    window.dispatch_action(Box::new(super::profile::OpenProfile), cx);
+                } else {
+                    this.open(label, window, cx);
+                }
+            }))
     }
 
     fn open(&mut self, label: &'static str, window: &mut Window, cx: &mut Context<Self>) {
