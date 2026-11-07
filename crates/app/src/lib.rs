@@ -1327,6 +1327,7 @@ impl Root {
                     supported_reasoning_efforts: Vec::new(),
                     is_default: true,
                     input_modalities: None,
+                    available_access_programs: None,
                 };
                 let data = vec![CatalogModel {
                     model,
@@ -2581,6 +2582,33 @@ impl Root {
                             cx,
                         );
                     }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// `thread/metadata/update` with `daybreakEnabled`; a failed save restores the old value in
+    /// every composer bound to the thread and shows `Could not save Daybreak preference`.
+    fn save_daybreak(&mut self, thread: String, enabled: bool, cx: &mut Context<Self>) {
+        let bridge = self.bridge.clone();
+        cx.spawn(async move |this, cx| {
+            let params = json!({ "threadId": thread, "daybreakEnabled": enabled });
+            let saved = bridge
+                .request::<_, Value>("thread/metadata/update", params)
+                .await;
+            this.update(cx, |this, cx| {
+                if let Err(error) = saved {
+                    eprintln!("codex-gpui: Daybreak metadata: {error:#}");
+                    for composer in this.thread_composers() {
+                        composer.update(cx, |c, cx| {
+                            if c.thread_id() == thread {
+                                c.set_daybreak(!enabled, cx);
+                            }
+                        });
+                    }
+                    this.toast(Toast::danger("Could not save Daybreak preference"), cx);
                 }
             })
             .ok();
@@ -5058,6 +5086,9 @@ impl Root {
             .is_none_or(|view| view.read(cx).id() != thread.id.as_str())
         {
             self.swap_draft(&thread.id, cx);
+            let daybreak = thread.daybreak_enabled.unwrap_or(false);
+            self.thread_composer
+                .update(cx, |c, cx| c.set_daybreak(daybreak, cx));
             if let Some(state) = self.thread_run_settings.get(&thread.id) {
                 self.thread_composer.update(cx, |c, cx| {
                     c.restore_run_settings(&state.collaboration_mode, state.permission.clone(), cx)
@@ -6031,6 +6062,7 @@ impl Root {
             composer.bind_connection(self.bridge.clone());
             composer.bind_thread(&thread.id);
             composer.set_models(&self.models, &self.config, cx);
+            composer.set_daybreak(thread.daybreak_enabled.unwrap_or(false), cx);
             composer.set_permission_profiles(&self.permission_profiles, &self.config, cx);
             composer.restore_run_settings(
                 &settings.collaboration_mode,
@@ -8569,6 +8601,16 @@ fn wire_thread_composer(composer: &mut Composer, this: WeakEntity<Root>, side: O
         });
     });
     composer.enable_shell_commands();
+    let daybreak = this.clone();
+    composer.on_daybreak(move |id, enabled, cx| {
+        let id = id.to_owned();
+        let daybreak = daybreak.clone();
+        cx.defer(move |cx| {
+            daybreak
+                .update(cx, |this, cx| this.save_daybreak(id, enabled, cx))
+                .ok();
+        });
+    });
     let (model, send) = (this.clone(), this.clone());
     composer.on_model(move |pick, cx| {
         model.update(cx, |this, cx| this.write_model(pick, cx)).ok();
