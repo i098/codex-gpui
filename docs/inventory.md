@@ -1126,7 +1126,7 @@ Chunks: automations-page-aa8b83be2225.js (`AutomationsLayoutPage`, lazy stub), a
 | 10 | Previous runs | click | Open a run chat; `Mark all as read`; `Archive all` (confirm). | `inbox.automations.history.*` | [ ] |
 | 11 | Row hover | hover | Row highlight; [INFERENCE] action buttons show. | automation-row-83d4b4688b9c.js | [ ] |
 | 12 | Focus ring | focus ring | 2 px ring. | app-shared CSS | [ ] |
-| 13 | No tasks | empty | `No scheduled tasks`; suggestions `Daily brief`, `Weekly review`, `Follow-up monitor`; detail `Select a scheduled task to view`. | `scheduled.sidebar.noScheduledTasks`, `inbox.automations.emptySuggestion.*` | [ ] |
+| 13 | No tasks | empty | `No scheduled tasks`; detail `Select a scheduled task to view`. | `scheduled.sidebar.noScheduledTasks` | [ ] |
 | 14 | Loading | loading | `Loading scheduled tasks…`, `Loading runs…`, `Loading scheduled task details`. | `scheduled.sidebar.loading` | [ ] |
 | 15 | Error | error | `Scheduled tasks could not be loaded`, `Couldn’t load runs`, `Could not save scheduled task`, `Could not delete scheduled task`. | `scheduled.sidebar.loadError`, `inbox.automations.*Error` | [ ] |
 | 16 | Resize | resize | Check at 1280, 767 and 600 px window width; list and detail panel share the main column. | automations-page-58e351b49373.js | [ ] |

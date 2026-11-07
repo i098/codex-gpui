@@ -171,6 +171,48 @@ fn file_and_index_reads_enforce_the_project_boundary() -> Result<()> {
 }
 
 #[test]
+fn file_writes_refuse_stale_reads_and_the_outside_of_the_project() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    common::install_panic_hook();
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    let host = LocalHost::new(root);
+    let call = |endpoint: &str, params: Value| -> Result<Value> {
+        json_body(&host.fetch(&Request::post(endpoint, Some(params)))?)
+    };
+    let path = root.join("edit.txt");
+    fs::write(&path, "first\n")?;
+    let read = call("read-file", json!({"cwd":root,"path":path}))?;
+    let mtime = read["mtimeMs"].as_u64().context("read mtime")?;
+    let saved = call(
+        "write-file",
+        json!({"cwd":root,"path":path,"content":"edited\n","expectedMtimeMs":mtime}),
+    )?;
+    ensure!(saved["outcome"] == "saved" && saved["mtimeMs"].is_u64());
+    ensure!(fs::read_to_string(&path)? == "edited\n");
+    // An agent's write after the read: the stale save leaves its text.
+    fs::write(&path, "agent\n")?;
+    let stale = fs::File::options().write(true).open(&path)?;
+    stale.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_millis(mtime + 7))?;
+    let conflict = call(
+        "write-file",
+        json!({"cwd":root,"path":path,"content":"mine\n","expectedMtimeMs":mtime}),
+    )?;
+    ensure!(conflict["outcome"] == "conflict");
+    ensure!(fs::read_to_string(&path)? == "agent\n");
+    let outside = tempfile::NamedTempFile::new()?;
+    ensure!(
+        call(
+            "write-file",
+            json!({"cwd":root,"path":outside.path(),"content":"x"})
+        )
+        .is_err()
+    );
+    ensure!(fs::read_to_string(outside.path())?.is_empty());
+    Ok(())
+}
+
+#[test]
 fn file_reads_preserve_text_and_identify_image_formats() -> Result<()> {
     #[cfg(target_os = "macos")]
     common::install_panic_hook();

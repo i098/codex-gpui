@@ -1445,13 +1445,6 @@ fn open_terminal(fx: &mut Fx) -> Result<()> {
         })
         .collect();
     let mut events = ui::screens::terminal::running_command_replay();
-    for event in &mut events {
-        if let bridge::Event::Notification { params, .. } = event
-            && params["turn"].is_object()
-        {
-            params["turn"]["rootTurnId"] = params["turn"]["id"].clone();
-        }
-    }
     ensure!(status.len() == 2, "recorded active and idle statuses");
     events.insert(0, status[0].clone());
     events.push(status[1].clone());
@@ -1521,18 +1514,18 @@ fn background_terminal_tab() -> Result<String> {
 // --- Settings ▸ Appearance ---
 
 /// Theme control on the Appearance page: Light, Dark, System (the headless window's system
-/// appearance is light). The segmented control ends at the 768 px column's right padding.
+/// appearance is light). The original's 80×60 tiles sit System, Light, Dark at x 883, 979, 1075.
 fn appearance_theme_control() -> Result<String> {
     use theme::{Appearance, Theme};
     let mut fx = Fx::new()?;
     fx.keys("cmd-,")?;
     fx.click(fx.at("settings", "Appearance")?)?;
     for (label, x, want) in [
-        ("Light", 1013., Appearance::Light),
-        ("Dark", 1064., Appearance::Dark),
-        ("System", 1122., Appearance::Light),
+        ("Light", 1019., Appearance::Light),
+        ("Dark", 1115., Appearance::Dark),
+        ("System", 923., Appearance::Light),
     ] {
-        fx.click((x, 258.))?;
+        fx.click((x, 272.))?;
         let got = fx.cx.update(|cx| cx.global::<Theme>().appearance);
         ensure!(got == want, "{label}: theme {got:?}");
     }

@@ -13,7 +13,9 @@ mod cloud_task;
 mod data_controls;
 pub use cloud_task::parse_task_response;
 mod cloud;
+mod cloud_snapshot;
 pub use cloud::{CloudTaskRequest, create_cloud_task};
+pub use cloud_snapshot::create_cloud_task_from_worktree;
 mod automation_notifications;
 pub mod computer_use_requests;
 pub mod connections;
@@ -35,6 +37,7 @@ mod goals;
 pub mod host;
 pub mod host_settings;
 pub mod hotkey;
+mod ide_context;
 mod logging;
 pub mod native_menus;
 mod new_project;
@@ -111,7 +114,7 @@ use ui::screens::diff::panel::{
     ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile,
     SIDE_PANEL_BREAKPOINT, SplitScreen, Tab, with_side_tabs,
 };
-use ui::screens::home::{ClearProject, HomeMain, OpenFolder, ProjectMenu};
+use ui::screens::home::{ClearProject, HomeMain, OpenFolder};
 #[cfg(target_os = "windows")]
 use ui::screens::home::{SetupWindowsSandboxElevated, SetupWindowsSandboxUnelevated};
 use ui::screens::recovery;
@@ -245,8 +248,8 @@ pub enum SidePanel {
     Terminal,
     /// An interactive shell, separate from a background command's read-only output.
     Console,
-    /// A file link in an answer: the file viewer ([`Root::file`]).
-    File,
+    /// A file link in an answer: the file viewer with this key in [`Root::files`].
+    File(usize),
     /// A generated image: the image view ([`Root::image`]).
     Image,
     /// `Open in side chat`: the side chat with this [`SideChat::key`].
@@ -299,6 +302,8 @@ pub struct State {
     pub confirm_before_close: ConfirmBeforeClose,
     pub project_root: Option<String>,
     pub zoom: f32,
+    /// The Recents header's `Chat sidebar options` choices.
+    pub chat_options: ui::screens::sidebar::ChatOptions,
     /// The composer's sent prompts ([`ui::composer::PromptHistory`]).
     pub prompt_history: Vec<String>,
     /// The unsent composer text of each thread (`draftKey`), by thread id.
@@ -319,6 +324,7 @@ impl Default for State {
             confirm_before_close: ConfirmBeforeClose::default(),
             project_root: None,
             zoom: 1.,
+            chat_options: Default::default(),
             prompt_history: Vec::new(),
             drafts: HashMap::new(),
             path: None,
@@ -495,8 +501,10 @@ pub struct Root {
     archived: HashSet<String>,
     diff: Option<Entity<DiffPanel>>,
     diff_watch: Option<diff_watch::Watch>,
-    /// The file viewer of [`SidePanel::File`]; cleared with the thread.
-    file: Option<Entity<FileView>>,
+    /// The file viewers of the [`SidePanel::File`] tabs, by key; cleared with the thread.
+    /// At most one is a preview tab, which the next opened file replaces.
+    files: Vec<(usize, Entity<FileView>)>,
+    next_file: usize,
     /// The plan of [`SidePanel::Plan`]; cleared with the thread.
     plan: Option<Entity<ui::screens::plan::PlanView>>,
     /// The page of [`SidePanel::NewTab`]; cleared with the thread.
@@ -533,6 +541,7 @@ pub struct Root {
     maps_page: Option<Entity<ui::screens::maps::Page>>,
     images_page: Option<Entity<ui::screens::images::Page>>,
     gpts_page: Option<Entity<ui::screens::gpts::Page>>,
+    projects_page: Option<Entity<ui::screens::projects::Page>>,
     cloud_modal: Option<Entity<ui::screens::cloud::CloudModal>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
@@ -580,6 +589,8 @@ pub struct Root {
     last_agent_messages: HashMap<String, (String, String)>,
     _inbox_poll: Task<()>,
     project_load: Option<Task<()>>,
+    /// The sidebar `Cloud` group's `/wham/tasks/list` read; a newer read or a new host drops it.
+    cloud_load: Option<Task<()>>,
     destination_load: Option<Task<()>>,
     unread_destinations: Option<Arc<[SharedString]>>,
     /// The MCP catalog lists the `codex_security_cloud` destination.
@@ -880,6 +891,7 @@ impl Root {
             sidebar.threads_state = ListState::Loading;
             sidebar.set_activity_archive_supported(!bridge.is_acp());
             sidebar.activity_available = false;
+            sidebar.chat_options = state.chat_options.clone();
             sidebar
         });
         cx.subscribe_in(
@@ -902,6 +914,33 @@ impl Root {
             &sidebar,
             window,
             |this, _, mode: &ModeChanged, window, cx| this.mode_changed(mode.0, window, cx),
+        )
+        .detach();
+        cx.subscribe_in(
+            &sidebar,
+            window,
+            |this, sidebar, _: &ui::screens::sidebar::ChatOrderChanged, window, cx| {
+                this.state.chat_options = sidebar.read(cx).chat_options.clone();
+                let threads = std::mem::take(&mut this.threads);
+                this.set_threads(&threads, cx);
+                this.save(window, cx);
+            },
+        )
+        .detach();
+        cx.subscribe_in(
+            &sidebar,
+            window,
+            |this, _, _: &ui::screens::sidebar::NewSectionRequested, window, cx| {
+                this.new_section(None, window, cx)
+            },
+        )
+        .detach();
+        cx.subscribe_in(
+            &sidebar,
+            window,
+            |this, _, open: &ui::screens::sidebar::OpenCloudTask, window, cx| {
+                this.open_remote_task(open.0.clone(), false, window, cx)
+            },
         )
         .detach();
         let main = cx.new(|_| ui::EmptyMain).into();
@@ -1014,15 +1053,12 @@ impl Root {
             wide,
             layout_before_narrow: None,
             focus: cx.focus_handle(),
-            home: cx.new(|cx| HomeMain {
-                composer: home_composer,
-                project: state.project_root.as_deref().map(project_name),
-                location: Default::default(),
-                projects: ProjectMenu::new(cx),
-                beacon: false,
-                windows_sandbox_setup_needed: false,
-                windows_sandbox_setup_pending: false,
-                headline: None,
+            home: cx.new(|cx| {
+                HomeMain::with_composer(
+                    home_composer,
+                    state.project_root.as_deref().map(project_name),
+                    cx,
+                )
             }),
             thread_composer,
             drafts: HashMap::new(),
@@ -1036,7 +1072,8 @@ impl Root {
             archived: HashSet::new(),
             diff: None,
             diff_watch: None,
-            file: None,
+            files: Vec::new(),
+            next_file: 1,
             plan: None,
             new_tab: None,
             subagents: None,
@@ -1061,6 +1098,7 @@ impl Root {
             maps_page: None,
             images_page: None,
             gpts_page: None,
+            projects_page: None,
             cloud_modal: None,
             settings_section: None,
             settings_page: None,
@@ -1111,6 +1149,7 @@ impl Root {
             automation_runs: Vec::new(),
             running_automations: HashSet::new(),
             project_load: None,
+            cloud_load: None,
             destination_load: None,
             unread_destinations: None,
             security_cloud: false,
@@ -1253,13 +1292,7 @@ impl Root {
             let account = if acp {
                 None
             } else {
-                match bridge.account_read().await {
-                    Ok(account) => Some(account),
-                    Err(error) => {
-                        eprintln!("codex-gpui: cannot read account: {error:#}");
-                        None
-                    }
-                }
+                Some(bridge.account_read().await)
             };
             let threads = bridge.thread_list().await;
             let (mut catalog, config, skills) = if acp {
@@ -1299,7 +1332,8 @@ impl Root {
             let profiles = if acp {
                 Value::Null
             } else {
-                permissions::list_profiles(&bridge, &cwd)
+                let signed_in = matches!(&account, Some(Ok(a)) if a.account.is_some());
+                permissions::list_profiles(&bridge, &cwd, signed_in)
                     .await
                     .unwrap_or_else(|error| {
                         eprintln!("codex-gpui: permission profiles: {error:#}");
@@ -1316,8 +1350,19 @@ impl Root {
             };
             this.update_in(cx, |this, window, cx| {
                 this._update_policy = updater::poll_policy(bridge.clone(), cx);
+                let failed = matches!(account, Some(Err(_)));
+                let account = match account {
+                    Some(Ok(account)) => Some(account),
+                    Some(Err(error)) => {
+                        eprintln!("codex-gpui: cannot read account: {error:#}");
+                        None
+                    }
+                    None => None,
+                };
                 this.set_account(account.as_ref(), cx);
+                this.set_account_error(failed, cx);
                 if !acp
+                    && !failed
                     && account
                         .as_ref()
                         .is_none_or(|a| a.account.is_none() && a.requires_openai_auth)
@@ -1389,7 +1434,7 @@ impl Root {
                         c.set_models(&models, &config.config, cx);
                         c.set_slash_skills(&skills, cx);
                         c.set_collaboration_modes(&modes, cx);
-                        c.set_permission_profiles(&profiles, cx);
+                        c.set_permission_profiles(&profiles, &config.config, cx);
                     });
                 }
                 this.config = config.config;
@@ -1403,6 +1448,10 @@ impl Root {
                 this.models = models;
                 this.refresh_automation_editor_options(None, cx);
                 this.ready = this.login.is_none();
+                if this.ready && !failed && !bridge.is_acp() {
+                    this.refresh_home_banner(cx);
+                    this.load_task_suggestions(cx);
+                }
                 hotkey::policy::refresh(this, cx);
                 connections::startup(this, cx);
                 chronicle::reconcile_on_launch(this, cx);
@@ -1525,6 +1574,10 @@ impl Root {
         self.gpts_page.as_ref()
     }
 
+    pub fn projects_page(&self) -> Option<&Entity<ui::screens::projects::Page>> {
+        self.projects_page.as_ref()
+    }
+
     /// The Home route's main panel.
     pub fn home(&self) -> &Entity<HomeMain> {
         &self.home
@@ -1568,7 +1621,26 @@ impl Root {
 
     /// The file viewer of the open thread, once a file link was clicked.
     pub fn file_view(&self) -> Option<&Entity<FileView>> {
-        self.file.as_ref()
+        match self.side {
+            Some(SidePanel::File(key)) => self.file(key),
+            _ => self.files.last().map(|(_, file)| file),
+        }
+    }
+
+    /// The file viewer of tab [`SidePanel::File`] `key`.
+    pub(crate) fn file(&self, key: usize) -> Option<&Entity<FileView>> {
+        self.files
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, file)| file)
+    }
+
+    /// The file viewer of the selected tab, when that tab is a file and shows.
+    pub(crate) fn visible_file(&self) -> Option<&Entity<FileView>> {
+        match self.side {
+            Some(side @ SidePanel::File(key)) if self.side_visible(side) => self.file(key),
+            _ => None,
+        }
     }
 
     /// The `⌘K` command menu, while open.
@@ -1610,6 +1682,9 @@ impl Root {
         self.automation_editor = None;
         self.new_project = None;
         self.project_load = None;
+        self.cloud_load = None;
+        self.sidebar
+            .update(cx, |s, cx| s.set_cloud_tasks(Vec::new(), cx));
         self.destination_load = None;
         self.set_unread_destinations(None, cx);
         self.suggestion_load = None;
@@ -1652,6 +1727,7 @@ impl Root {
         self.load_projects(cx);
         if self.ready && !self.signed_out() {
             self.load_destinations(cx);
+            self.load_task_suggestions(cx);
         }
         self.refresh_automation_unreads(cx);
         if self.scheduled_route() {
@@ -1710,6 +1786,7 @@ impl Root {
     fn load_projects(&mut self, cx: &mut Context<Self>) {
         self.sidebar
             .update(cx, |s, cx| s.set_projects_state(ListState::Loading, cx));
+        self.load_cloud_tasks(cx);
         let host = self.host.clone();
         let bridge = self.bridge.clone();
         let local = self.host_id == "local";
@@ -1739,6 +1816,7 @@ impl Root {
                         eprintln!("codex-gpui: cannot read sidebar projects: {error:#}");
                         this.sidebar
                             .update(cx, |s, cx| s.set_projects_state(ListState::Failed, cx));
+                        this.show_projects(Err(format!("{error:#}")), cx);
                     }
                 }
             })
@@ -1910,6 +1988,7 @@ impl Root {
         self.refresh_automation_editor_options(Some(&projects), cx);
         let composer = self.home.read(cx).composer.clone();
         composer.update(cx, |composer, _| composer.set_slash_projects(choices));
+        self.show_projects(Ok(projects.as_slice()), cx);
         self.sidebar
             .update(cx, |sidebar, cx| sidebar.set_projects(projects, cx));
     }
@@ -2546,6 +2625,49 @@ impl Root {
                         }
                         this.toast(Toast::danger(error.to_string()), cx);
                     }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn open_handoff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.git_busy.is_some() || self.has_dialog() {
+            return;
+        }
+        let Some(thread) = self.thread.clone() else {
+            return;
+        };
+        let cwd = thread.read(cx).cwd().to_owned();
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            let params = json!({"cwd": cwd});
+            let info = git_call(&*host, "thread-worktree-info", params.clone())?;
+            anyhow::ensure!(info["worktree"] == true, "This thread is already local");
+            let status = git_call(&*host, "git-commit-status", params)?;
+            Ok::<_, anyhow::Error>((
+                info["localRoot"].as_str().unwrap_or_default().to_owned(),
+                status["branch"].as_str().unwrap_or_default().to_owned(),
+                host.projects()?
+                    .into_iter()
+                    .filter_map(|project| project.root.map(|root| root.to_string()))
+                    .collect(),
+            ))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = read.await;
+            this.update_in(cx, |this, window, cx| {
+                if this.thread.as_ref() != Some(&thread) {
+                    return;
+                }
+                match result {
+                    Ok((workspace, branch, workspaces)) => {
+                        let dialog =
+                            cx.new(|cx| Dialog::handoff(workspace, branch, workspaces, cx));
+                        this.show_dialog(dialog, window, cx);
+                    }
+                    Err(error) => this.toast(Toast::danger(error.to_string()), cx),
                 }
             })
             .ok();
@@ -3530,7 +3652,7 @@ impl Root {
     fn side_tab(
         side: SidePanel,
         view: &Entity<ThreadView>,
-        file: Option<&Entity<FileView>>,
+        files: &[(usize, Entity<FileView>)],
         plan: Option<&Entity<ui::screens::plan::PlanView>>,
         image: bool,
         side_chats: &[SideChat],
@@ -3544,33 +3666,33 @@ impl Root {
             SidePanel::Changes => Some(Tab {
                 icon: "diff-tab-changes",
                 label: "Changes".into(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::Terminal => {
                 let (_, command, _) = view.read(cx).terminal()?;
                 Some(Tab {
                     icon: "thread-terminal",
                     label: command.into(),
-                    preview: false,
+                    detail: None,
                 })
             }
             SidePanel::Console => console.then(|| Tab {
                 icon: "terminal-interactive",
                 label: "Terminal".into(),
-                preview: false,
+                detail: None,
             }),
-            SidePanel::File => {
-                let file = file?.read(cx);
+            SidePanel::File(key) => {
+                let file = files.iter().find(|(k, _)| *k == key)?.1.read(cx);
                 Some(Tab {
                     icon: file.tab_icon(),
                     label: file.name(),
-                    preview: file.is_preview(),
+                    detail: Some(file.path.clone().into()),
                 })
             }
             SidePanel::Image => image.then(|| Tab {
                 icon: "diff-file-image",
                 label: "Image view".into(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::SideChat(key) => {
                 let chat = side_chats.iter().find(|chat| chat.key == key)?;
@@ -3582,35 +3704,35 @@ impl Root {
                         "side-chat"
                     },
                     label: chat.title.clone(),
-                    preview: false,
+                    detail: None,
                 })
             }
             SidePanel::Sources => Some(Tab {
                 icon: "navigation-files",
                 label: "Sources".into(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::Plan => Some(Tab {
                 icon: "navigation-files",
                 label: plan?.read(cx).title(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::NewTab => new_tab.then(|| Tab {
                 icon: "diff-new-tab",
                 label: "New tab".into(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::Subagents => subagents.then(|| Tab {
                 icon: "side-chat",
                 label: "Subagents".into(),
-                preview: false,
+                detail: None,
             }),
             SidePanel::Browser(key) => {
                 let (_, tab) = browsers.iter().find(|(k, _)| *k == key)?;
                 Some(Tab {
                     icon: "sidebar-cmd-browser",
                     label: tab.read(cx).title(),
-                    preview: false,
+                    detail: None,
                 })
             }
         }
@@ -3623,7 +3745,7 @@ impl Root {
         view: &Entity<ThreadView>,
         cx: &mut Context<Self>,
     ) -> Option<(AnyView, Vec<Tab>, usize)> {
-        let file = self.file.clone();
+        let files = &self.files;
         let plan = self.plan.clone();
         let image = self.image.is_some();
         let chats = &self.side_chats;
@@ -3635,7 +3757,7 @@ impl Root {
             Self::side_tab(
                 *side,
                 view,
-                file.as_ref(),
+                files,
                 plan.as_ref(),
                 image,
                 chats,
@@ -3658,7 +3780,7 @@ impl Root {
             SidePanel::Changes => self.diff.as_ref()?.clone().into(),
             SidePanel::Terminal => cx.new(|cx| Xterm::new(view.clone(), cx)).into(),
             SidePanel::Console => self.terminal_panel()?.clone().into(),
-            SidePanel::File => self.file.as_ref()?.clone().into(),
+            SidePanel::File(key) => self.file(key)?.clone().into(),
             SidePanel::Image => self.image.as_ref()?.clone().into(),
             SidePanel::SideChat(key) => self.chat(key)?.view.clone().into(),
             SidePanel::Sources => cx
@@ -3703,6 +3825,16 @@ impl Root {
     /// the previous, is selected; closing the last tab closes the panel. A side chat's tab
     /// discards its conversation.
     fn close_side(&mut self, side: SidePanel, window: &mut Window, cx: &mut Context<Self>) {
+        // A file tab with unsaved edits saves first and closes itself once clean.
+        if let SidePanel::File(key) = side
+            && let Some(file) = self.file(key).cloned()
+            && !file.update(cx, |file, cx| file.request_close(cx))
+        {
+            if self.side != Some(side) {
+                self.set_side(side, window, cx);
+            }
+            return;
+        }
         let open = self.tabs.contains(&side);
         match side {
             SidePanel::SideChat(key) => self.discard_side_chat(key, cx),
@@ -3723,6 +3855,9 @@ impl Root {
             return;
         };
         self.tabs.remove(ix);
+        if let SidePanel::File(key) = side {
+            self.files.retain(|(k, _)| *k != key);
+        }
         if self.side == Some(side) {
             self.side = self.tabs.get(ix).or(self.tabs.last()).copied();
         }
@@ -4209,6 +4344,7 @@ impl Root {
                 | DialogKind::Branches
                 | DialogKind::CreateBranch
                 | DialogKind::CreatePr
+                | DialogKind::Handoff
         );
         if git_dialog
             && dialog.read(cx).kind() != DialogKind::Branches
@@ -4263,6 +4399,10 @@ impl Root {
             }
             if let DialogOutcome::CreatePr { title, body, base, draft, commit_changes, open_browser } = outcome {
                 this.create_pr(dialog.clone(), json!({"title": title, "body": body, "base": base, "draft": draft, "commitChanges": commit_changes}), *open_browser, window, cx);
+                return;
+            }
+            if let DialogOutcome::Handoff { workspace, branch, bring_changes } = outcome {
+                this.move_thread_checkout(Some((workspace.clone(), branch.clone(), *bring_changes)), false, window, cx);
                 return;
             }
             if let DialogOutcome::CheckoutBranch { name, create } = outcome {
@@ -4417,6 +4557,7 @@ impl Root {
                 | DialogOutcome::CheckoutBranch { .. }
                 | DialogOutcome::CommitBeforeCheckout
                 | DialogOutcome::CreatePr { .. }
+                | DialogOutcome::Handoff { .. }
                 | DialogOutcome::DeleteMemories
                 | DialogOutcome::ChatMemories { .. }
                 | DialogOutcome::WritingConnect(_)
@@ -4466,7 +4607,7 @@ impl Root {
                         this.cloud_modal = None;
                         this.thread = None;
                         this.diff = None;
-                        this.file = None;
+                        this.files.clear();
                         this.plan = None;
                         this.split = None;
                         this.pull_requests_page = None;
@@ -4486,6 +4627,9 @@ impl Root {
                         this.threads_loaded = false;
                         this.automation_load = None;
                         this.project_load = None;
+                        this.cloud_load = None;
+                        this.sidebar
+                            .update(cx, |s, cx| s.set_cloud_tasks(Vec::new(), cx));
                         this.suggestion_load = None;
                         this.automations = None;
                         this.scheduled = None;
@@ -5092,7 +5236,7 @@ impl Root {
         )
         .detach();
         self.diff = Some(diff);
-        self.file = None;
+        self.files.clear();
         self.plan = None;
         self.new_tab = None;
         self.subagents = None;
@@ -5146,6 +5290,7 @@ impl Root {
                 GitAction::SwitchBranch => this.open_git_form(DialogKind::Branches, window, cx),
                 GitAction::CreatePr => this.open_create_pr(window, cx),
                 GitAction::MoveToWorktree => this.move_thread_checkout(None, false, window, cx),
+                GitAction::HandOff => this.open_handoff(window, cx),
                 GitAction::ViewPr
                 | GitAction::CopyPr
                 | GitAction::AddPrToChat
@@ -5187,6 +5332,37 @@ impl Root {
             self.send_shell(side, s, window, cx);
             return;
         }
+        if s.ide_context
+            && retry.is_none()
+            && let Some((view, _)) = self.conversation(side)
+        {
+            // `/ide-context`: ask the IDE off the UI thread, then send with its context.
+            let root = view.read(cx).cwd().to_owned();
+            cx.spawn_in(window, async move |this, cx| {
+                let context = cx
+                    .background_executor()
+                    .spawn(async move { ide_context::fetch(&root) })
+                    .await;
+                this.update_in(cx, |this, window, cx| {
+                    this.send_inner(side, s, None, context, window, cx)
+                })
+            })
+            .detach();
+            return;
+        }
+        self.send_inner(side, s, retry, None, window, cx);
+    }
+
+    /// [`Self::send`] once the IDE's context (`ide`) is known.
+    fn send_inner(
+        &mut self,
+        side: Option<usize>,
+        s: Submission,
+        retry: Option<FailedQueuedMessage>,
+        ide: Option<ide_context::IdeContext>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some((view, _)) = self.conversation(side) else {
             return;
         };
@@ -5213,6 +5389,10 @@ impl Root {
                 .queue_edit(side)
                 .and_then(|edit| edit.take_if(|edit| edit.thread_id == id));
             let mut input = user_input(&s);
+            if let Some(context) = &ide {
+                let text = input[0]["text"].as_str().unwrap_or_default().to_owned();
+                input[0]["text"] = ide_context::prompt(text, context).into();
+            }
             input.extend(place.iter().flat_map(|edit| edit.extra.clone()));
             let client_id = uuid_v4();
             FailedQueuedMessage {
@@ -5933,7 +6113,7 @@ impl Root {
             composer.bind_connection(self.bridge.clone());
             composer.bind_thread(&thread.id);
             composer.set_models(&self.models, &self.config, cx);
-            composer.set_permission_profiles(&self.permission_profiles, cx);
+            composer.set_permission_profiles(&self.permission_profiles, &self.config, cx);
             composer.restore_run_settings(
                 &settings.collaboration_mode,
                 settings.permission.clone(),
@@ -8045,7 +8225,9 @@ impl Root {
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             cx.background_spawn(async move { host.invalidate_identity() })
                 .await;
-            let account = bridge.account_read().await?;
+            let account = bridge.account_read().await;
+            this.update(cx, |this, cx| this.set_account_error(account.is_err(), cx))?;
+            let account = account?;
             this.update(cx, |this, cx| {
                 this.set_account(Some(&account), cx);
                 if this.chatgpt_account
@@ -8059,13 +8241,29 @@ impl Root {
                 }
             })?;
             if let Some(handle) = handle {
+                let signed_out = account.account.is_none() && account.requires_openai_auth;
                 cx.update_window(handle, |_, window, cx| {
-                    this.update(cx, |this, cx| this.maybe_onboard(window, cx))
+                    this.update(cx, |this, cx| {
+                        if signed_out && this.login.is_none() {
+                            cx.set_global(AppServer(this.bridge.clone()));
+                            this.login = Some(this.new_login(window, cx));
+                            cx.notify();
+                        }
+                        this.maybe_onboard(window, cx)
+                    })
                 })??;
             }
             Ok(())
         });
         log_err(task, cx);
+    }
+
+    /// `account/read` failed: Home shows the account access error page until a read succeeds.
+    fn set_account_error(&mut self, failed: bool, cx: &mut Context<Self>) {
+        self.home.update(cx, |home, cx| {
+            home.account_error = failed;
+            cx.notify();
+        });
     }
 
     /// Reads the first `thread/list` page again; threads of later loaded pages stay after it.
@@ -8294,7 +8492,7 @@ fn apply_permissions(params: &mut Value, permission: &Permission) {
         Permission::Ask => ("on-request", ":workspace", "user"),
         Permission::ApproveForMe => ("on-request", ":workspace", "guardian_subagent"),
         Permission::FullAccess => ("never", ":danger-full-access", "user"),
-        Permission::Custom => return,
+        Permission::Custom | Permission::Managed => return,
         Permission::Named(profile) => {
             params["permissions"] = profile.as_ref().into();
             return;

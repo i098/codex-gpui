@@ -1,0 +1,231 @@
+{
+ "preferredTarget": "zed",
+ "availableTargets": [
+  "zed",
+  "systemDefault",
+  "fileManager",
+  "terminal",
+  "xcode"
+ ],
+ "mode": "editor",
+ "targets": [
+  {
+   "id": "vscode",
+   "target": "vscode",
+   "label": "VS Code",
+   "icon": "/apps/vscode.png",
+   "kind": "editor",
+   "available": false
+  },
+  {
+   "id": "vscodeInsiders",
+   "target": "vscodeInsiders",
+   "label": "VS Code Insiders",
+   "icon": "/apps/vscode-insiders.png",
+   "kind": "editor",
+   "available": false
+  },
+  {
+   "id": "cursor",
+   "target": "cursor",
+   "label": "Cursor",
+   "icon": "/apps/cursor.png",
+   "kind": "editor",
+   "available": false
+  },
+  {
+   "id": "devin",
+   "target": "devin",
+   "label": "Devin Desktop",
+   "icon": "/apps/devin.svg",
+   "kind": "editor",
+   "available": false
+  },
+  {
+   "id": "bbedit",
+   "target": "bbedit",
+   "label": "BBEdit",
+   "icon": "/apps/bbedit.png",
+   "kind": "editor",
+   "available": false
+  },
+  {
+   "id": "emacs",
+   "target": "emacs",
+   "label": "Emacs",
+   "icon": "/apps/emacs.png",
+   "kind": "editor",
+   "available": false
+  },
+  {
+   "id": "sublimeText",
+   "target": "sublimeText",
+   "label": "Sublime Text",
+   "icon": "/apps/sublime-text.png",
+   "kind": "editor",
+   "available": false
+  },
+  {
+   "id": "zed",
+   "target": "zed",
+   "label": "Zed",
+   "icon": "/apps/zed.png",
+   "kind": "editor",
+   "available": true,
+   "default": true
+  },
+  {
+   "id": "windsurf",
+   "target": "windsurf",
+   "label": "Windsurf",
+   "icon": "/apps/windsurf.png",
+   "kind": "editor",
+   "available": false
+  },
+  {
+   "id": "antigravity",
+   "target": "antigravity",
+   "label": "Antigravity",
+   "icon": "/apps/antigravity.png",
+   "kind": "editor",
+   "available": false
+  },
+  {
+   "id": "systemDefault",
+   "target": "systemDefault",
+   "label": "Default app",
+   "icon": "/apps/file-explorer.png",
+   "kind": "systemDefault",
+   "hidden": true,
+   "available": true
+  },
+  {
+   "id": "fileManager",
+   "target": "fileManager",
+   "label": "Finder",
+   "icon": "/apps/finder.png",
+   "kind": "fileManager",
+   "available": true
+  },
+  {
+   "id": "terminal",
+   "target": "terminal",
+   "label": "Terminal",
+   "icon": "/apps/terminal.png",
+   "kind": "terminal",
+   "available": true
+  },
+  {
+   "id": "iterm2",
+   "target": "iterm2",
+   "label": "iTerm2",
+   "icon": "/apps/iterm2.png",
+   "kind": "terminal",
+   "available": false
+  },
+  {
+   "id": "kitty",
+   "target": "kitty",
+   "label": "Kitty",
+   "icon": "/apps/kitty.png",
+   "kind": "terminal",
+   "available": false
+  },
+  {
+   "id": "ghostty",
+   "target": "ghostty",
+   "label": "Ghostty",
+   "icon": "/apps/ghostty.png",
+   "kind": "terminal",
+   "available": false
+  },
+  {
+   "id": "warp",
+   "target": "warp",
+   "label": "Warp",
+   "icon": "/apps/warp.png",
+   "kind": "terminal",
+   "available": false
+  },
+  {
+   "id": "xcode",
+   "target": "xcode",
+   "label": "Xcode",
+   "icon": "/apps/xcode.png",
+   "kind": "editor",
+   "available": true
+  },
+  {
+   "id": "androidStudio",
+   "target": "androidStudio",
+   "label": "Android Studio",
+   "icon": "/apps/android-studio.png",
+   "kind": "editor",
+   "available": false
+  },
+  {
+   "id": "intellij",
+   "target": "intellij",
+   "label": "IntelliJ IDEA",
+   "icon": "/apps/intellij.png",
+   "kind": "editor",
+   "available": false
+  },
+  {
+   "id": "rider",
+   "target": "rider",
+   "label": "Rider",
+   "icon": "/apps/rider.png",
+   "kind": "editor",
+   "available": false
+  },
+  {
+   "id": "goland",
+   "target": "goland",
+   "label": "GoLand",
+   "icon": "/apps/goland.png",
+   "kind": "editor",
+   "available": false
+  },
+  {
+   "id": "rustrover",
+   "target": "rustrover",
+   "label": "RustRover",
+   "icon": "/apps/rustrover.png",
+   "kind": "editor",
+   "available": false
+  },
+  {
+   "id": "pycharm",
+   "target": "pycharm",
+   "label": "PyCharm",
+   "icon": "/apps/pycharm.png",
+   "kind": "editor",
+   "available": false
+  },
+  {
+   "id": "webstorm",
+   "target": "webstorm",
+   "label": "WebStorm",
+   "icon": "/apps/webstorm.svg",
+   "kind": "editor",
+   "available": false
+  },
+  {
+   "id": "phpstorm",
+   "target": "phpstorm",
+   "label": "PhpStorm",
+   "icon": "/apps/phpstorm.png",
+   "kind": "editor",
+   "available": false
+  },
+  {
+   "id": "textmate",
+   "target": "textmate",
+   "label": "TextMate",
+   "icon": "/apps/textmate.png",
+   "kind": "editor",
+   "available": false
+  }
+ ]
+}
