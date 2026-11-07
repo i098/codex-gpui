@@ -26,14 +26,11 @@ Measured against the original Codex app (26.1029) on the same account-free fixtu
 | Idle CPU, window visible, no thread link | 2.2 % of one core | 0.7 % |
 | Idle CPU, window visible, with thread link | 31.9 % | 0.7 % |
 | Idle CPU, window hidden, no thread link | 0.7 % | 0.2 % |
-| Size: original app (`du`) / codex-gpui release binary | 1 918 MiB | 100.5 MiB |
-| Scroll a long thread, frame interval p50 / p95 | not measurable | 16.67 / 18.6 ms |
+| App size (`du`) | 1 918 MiB | pending: release `.app` not measured yet |
 
 Method: amelia Mac mini (Apple M4), release build, same account-free fixture for both apps. Every row is the median of n=5 runs, interleaved between the apps. The "no thread link" rows launch with no thread open; the "with thread link" rows open a `codex://threads` link.
 
-- The codex-gpui size is the binary only; the app bundle is not assembled yet.
-- The original could not open a thread without a signed-in account, so its long-thread memory and scroll were not measured.
-- Scroll is the frame interval of a forced 60 Hz redraw, not frame work.
+- The original could not open a thread without a signed-in account, so its long-thread memory was not measured.
 
 ### Reproduce
 

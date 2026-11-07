@@ -5,7 +5,7 @@ root = sys.argv[1] if len(sys.argv) > 1 else "raw"
 groups = {}
 for p in sorted(glob.glob(f"{root}/*/result.json")):
     name = os.path.basename(os.path.dirname(p))
-    m = re.match(r"([ABCD])-(orig|ours)-(cold|warm|occ|plain|thread|scroll)-?(\d*)", name)
+    m = re.match(r"([ABC])-(orig|ours)-(cold|warm|occ|plain|thread)-?(\d*)", name)
     if not m: continue
     groups.setdefault(m.groups()[:3], []).append(json.load(open(p)))
 keys = ["first_frame", "shell_dom", "shell_frame", "sidebar_dom", "sidebar_frame", "cdp_target", "mock_first_ms", "mock_thread_list_ms",

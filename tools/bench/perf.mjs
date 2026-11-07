@@ -1,5 +1,5 @@
 // One measured launch on macOS. All times are Date.now() on this machine's clock. run.sh calls this once per run.
-// Usage: node perf.mjs <orig|ours> <outdir> [--cold] [--vis] [--bin <path>] [--thread] [--scroll] [--mock <dir>] [--port <n>]
+// Usage: node perf.mjs <orig|ours> <outdir> [--cold] [--vis] [--bin <path>] [--thread] [--mock <dir>] [--port <n>]
 // Env: BENCH_WORK (scratch dir, default /tmp/cgx-bench; holds the codex wrapper), BENCH_ORIG (the original ChatGPT.app).
 // Needs passwordless sudo for `purge` (--cold) and `launchctl asuser`, so the app starts in the background, never in front.
 import { execSync, spawn } from "node:child_process";
@@ -31,7 +31,7 @@ if (app === "orig") {
   argv = [`--remote-debugging-port=${PORT}`, "--remote-debugging-address=127.0.0.1", ...(vis ? ["--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", "--disable-background-timer-throttling"] : []), ...(thread ? [`codex://threads/${EX}`] : [])];
 } else {
   exe = exeOf(arg("--bin"));
-  env.push(`HOME=${prof}/home`, `CODEX_BIN=${W}/codex`, ...(vis ? ["CGX_PERF=1", "CGX_PERF_VISIBLE=1"] : []), ...(has("--scroll") ? ["CGX_PERF_SCROLL=1"] : []));
+  env.push(`HOME=${prof}/home`, `CODEX_BIN=${W}/codex`, ...(vis ? ["CGX_PERF=1", "CGX_PERF_VISIBLE=1"] : []));
   argv = thread ? [`codex://threads/${EX}`] : [];
 }
 for (const d of ["home", "codex-home", "userdata", "home/Library/Application Support"]) fs.mkdirSync(`${prof}/${d}`, { recursive: true });
@@ -119,8 +119,7 @@ const fpMB = (() => { let t = 0; for (const l of fp.split("\n")) { const m = l.m
 const sum = (P, k) => P.reduce((x, p) => x + p[k], 0);
 const mm = mockMarks();
 const rel = Object.fromEntries(Object.entries(marks).filter(([k, v]) => k !== "t0" && typeof v === "number").map(([k, v]) => [k, v - t0]));
-const scroll = fs.readFileSync(log, "utf8").match(/CGX_PERF scroll (.*)/)?.[1] ?? null;
-const res = { page30, scroll, app, args: a.slice(2), t0, foreign_at_30s: foreign30, foreign_at_90s: foreign(), ...rel, mock_first_ms: mm.mock_first && mm.mock_first - t0, mock_thread_list_ms: mm.mock_thread_list && mm.mock_thread_list - t0, mock_auth_calls_ms: mm.mock_auth_calls_ms,
+const res = { page30, app, args: a.slice(2), t0, foreign_at_30s: foreign30, foreign_at_90s: foreign(), ...rel, mock_first_ms: mm.mock_first && mm.mock_first - t0, mock_thread_list_ms: mm.mock_thread_list && mm.mock_thread_list - t0, mock_auth_calls_ms: mm.mock_auth_calls_ms,
   rss_mb_30s: +(sum(A, "rss") / 1024).toFixed(1), nproc: A.length, rss_mb_90s: +(sum(B, "rss") / 1024).toFixed(1),
   footprint_mb_90s: fpMB, cpu_pct_30_90: +(((sum(B, "cpu") - sum(A, "cpu")) / ((tB - tA) / 1000)) * 100).toFixed(2), window_s: (tB - tA) / 1000,
   per_proc_cpu: B.map((p) => ({ cmd: p.cmd.replace(/^.*\/(Codex \([A-Za-z]+\)|ChatGPT|[^/ ]+)( .*?--type=([a-z-]+))?.*$/, "$1 $3").trim(), pct: +(((p.cpu - (A.find((q) => q.pid === p.pid)?.cpu ?? p.cpu)) / ((tB - tA) / 1000)) * 100).toFixed(2) })) };
