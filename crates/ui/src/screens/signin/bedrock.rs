@@ -1,11 +1,10 @@
-use super::{Command, Login, LoginEvent, Style};
+use super::{Command, Login, LoginEvent, LoginRequest, RequestError, Style};
 use crate::{composer::Composer, icon::icon, text};
 use gpui::{
     AppContext as _, Context, Entity, Focusable as _, InteractiveElement as _, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _, px,
 };
 use serde::Deserialize;
-use serde_json::{Value, json};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Method {
@@ -100,36 +99,36 @@ impl Bedrock {
         self.fields[index].read(cx).field_text()
     }
 
-    fn request(&self, cx: &gpui::App) -> Option<(&'static str, Value)> {
+    fn request(&self, cx: &gpui::App) -> Option<LoginRequest> {
         let Step::Entry(method) = self.step else {
             return None;
         };
-        let region = self.field(5, cx).trim();
+        let region = self.field(5, cx).trim().to_owned();
         if region.is_empty() {
             return None;
         }
         let key = self.field(0, cx).trim();
         Some(match method {
-            Method::Profile if !key.is_empty() => (
-                "account/bedrock/setup",
-                json!({"type":"profile", "profile":key, "region":region}),
-            ),
-            Method::Environment => (
-                "account/bedrock/setup",
-                json!({"type":"environment", "region":region}),
-            ),
+            Method::Profile if !key.is_empty() => LoginRequest::BedrockProfile {
+                profile: key.to_owned(),
+                region,
+            },
+            Method::Environment => LoginRequest::BedrockEnvironment { region },
             Method::AccessKeys
                 if !self.field(1, cx).trim().is_empty() && !self.field(2, cx).trim().is_empty() =>
             {
-                (
-                    "account/login/start",
-                    json!({"type":"amazonBedrockAccessKeys", "accessKeyId":self.field(1,cx), "secretAccessKey":self.field(2,cx), "sessionToken":(!self.field(3,cx).trim().is_empty()).then(||self.field(3,cx)), "region":region}),
-                )
+                LoginRequest::BedrockAccessKeys {
+                    access_key_id: self.field(1, cx).to_owned(),
+                    secret_access_key: self.field(2, cx).to_owned(),
+                    session_token: (!self.field(3, cx).trim().is_empty())
+                        .then(|| self.field(3, cx).to_owned()),
+                    region,
+                }
             }
-            Method::ApiKey if !self.field(4, cx).trim().is_empty() => (
-                "account/login/start",
-                json!({"type":"amazonBedrock", "apiKey":self.field(4,cx), "region":region}),
-            ),
+            Method::ApiKey if !self.field(4, cx).trim().is_empty() => LoginRequest::BedrockApiKey {
+                api_key: self.field(4, cx).to_owned(),
+                region,
+            },
             _ => return None,
         })
     }
@@ -146,15 +145,19 @@ impl Login {
     }
 
     fn discover_bedrock(&mut self, cx: &mut Context<Self>) {
-        let Some(bridge) = self.bridge.clone() else {
+        let Some(port) = self.port.clone() else {
             return;
         };
         self.attempt += 1;
         let attempt = self.attempt;
+        let reply = port.send(LoginRequest::BedrockDiscover, cx);
         cx.spawn(async move |this, cx| {
-            let result = bridge
-                .request::<_, Discovery>("account/bedrock/discover", json!({}))
-                .await;
+            let result = reply.await.and_then(|value| {
+                serde_json::from_value::<Discovery>(value).map_err(|error| RequestError {
+                    code: None,
+                    message: error.to_string(),
+                })
+            });
             this.update(cx, |this, cx| {
                 if this.attempt != attempt {
                     return;
@@ -177,9 +180,7 @@ impl Login {
                         };
                     }
                     Err(error) => {
-                        let unsupported = error
-                            .downcast_ref::<bridge::RpcError>()
-                            .is_some_and(|error| error.code == -32601);
+                        let unsupported = error.code == Some(-32601);
                         if unsupported {
                             bedrock.discovery_supported = false;
                             bedrock.step = Step::Entry(Method::ApiKey);
@@ -248,11 +249,11 @@ impl Login {
         let Some(bedrock) = &self.bedrock else {
             return;
         };
-        let Some((method, params)) = bedrock.request(cx) else {
+        let Some(request) = bedrock.request(cx) else {
             return;
         };
-        let region = params["region"].as_str().unwrap_or_default().to_owned();
-        let Some(bridge) = self.bridge.clone() else {
+        let region = bedrock.field(5, cx).trim().to_owned();
+        let Some(port) = self.port.clone() else {
             return;
         };
         self.pending = true;
@@ -260,8 +261,9 @@ impl Login {
         self.restart_blocked = true;
         self.attempt += 1;
         let attempt = self.attempt;
+        let reply = port.send(request, cx);
         cx.spawn(async move |this, cx| {
-            let result = bridge.request::<_, Value>(method, params).await;
+            let result = reply.await;
             this.update(cx, |this, cx| {
                 if this.attempt != attempt {
                     return;
@@ -695,13 +697,26 @@ mod tests {
             ] {
                 bedrock.fields[index].update(cx, |field, cx| field.set_text(value, cx));
             }
-            let (_, request) = bedrock.request(cx).unwrap();
-            assert_eq!(request["accessKeyId"], " access-id ");
-            assert_eq!(request["secretAccessKey"], " secret ");
-            assert_eq!(request["sessionToken"], Value::Null);
-            assert_eq!(request["region"], "us-east-2");
+            let request = bedrock.request(cx).unwrap();
+            let LoginRequest::BedrockAccessKeys {
+                access_key_id,
+                secret_access_key,
+                session_token,
+                region,
+            } = request
+            else {
+                panic!("access keys step built another request");
+            };
+            assert_eq!(access_key_id, " access-id ");
+            assert_eq!(secret_access_key, " secret ");
+            assert_eq!(session_token, None);
+            assert_eq!(region, "us-east-2");
             bedrock.fields[3].update(cx, |field, cx| field.set_text(" token ", cx));
-            assert_eq!(bedrock.request(cx).unwrap().1["sessionToken"], " token ");
+            let Some(LoginRequest::BedrockAccessKeys { session_token, .. }) = bedrock.request(cx)
+            else {
+                panic!("access keys step built another request");
+            };
+            assert_eq!(session_token.as_deref(), Some(" token "));
         });
     }
 }

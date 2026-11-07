@@ -392,7 +392,10 @@ use anyhow::{Context as _, Result};
 use gpui::{AppContext as _, Context, Entity};
 use serde_json::{Value, json};
 use ui::screens::signin::bedrock::GovCloud;
-use ui::screens::signin::{Login, LoginEvent, Options, Provider};
+use ui::screens::signin::{
+    Login, LoginEvent, LoginPort, LoginRequest, LoginService, Options, Provider, Reply,
+    RequestError,
+};
 use url::Url;
 
 pub(crate) const ORIGINAL_APP_VERSION: &str = "26.1007.30912";
@@ -404,6 +407,9 @@ impl Root {
         cx: &mut Context<Self>,
     ) -> Entity<Login> {
         self.ready = false;
+        if !cx.has_global::<LoginService>() {
+            cx.set_global(LoginService(std::rc::Rc::new(ServerLogin)));
+        }
         let login = cx.new(Login::new);
         cx.subscribe_in(
             &login,
@@ -628,15 +634,93 @@ fn options(response: &Value) -> Result<Options> {
     })
 }
 
+/// Performs the sign-in screen's requests on the live app-server connection.
+struct ServerLogin;
+
+impl ServerLogin {
+    fn bridge(cx: &gpui::App) -> Result<std::sync::Arc<bridge::Bridge>, RequestError> {
+        cx.try_global::<ui::screens::settings::AppServer>()
+            .map(|server| server.0.clone())
+            .ok_or_else(|| RequestError {
+                code: None,
+                message: "no app-server connection".into(),
+            })
+    }
+}
+
+fn request_error(error: anyhow::Error) -> RequestError {
+    RequestError {
+        code: error
+            .downcast_ref::<bridge::RpcError>()
+            .map(|error| error.code),
+        message: error.to_string(),
+    }
+}
+
+impl LoginPort for ServerLogin {
+    fn user_agent(&self, cx: &gpui::App) -> Reply<String> {
+        let bridge = Self::bridge(cx);
+        Box::pin(async move {
+            let server = bridge?
+                .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
+                .await
+                .map_err(request_error)?;
+            Ok(server.user_agent)
+        })
+    }
+
+    fn send(&self, request: LoginRequest, cx: &gpui::App) -> Reply<Value> {
+        let bridge = Self::bridge(cx);
+        Box::pin(async move {
+            let bridge = bridge?;
+            match request {
+                LoginRequest::Requirements => bridge.config_requirements().await,
+                LoginRequest::Config => bridge.config_read_merged().await,
+                LoginRequest::GatewayRead => bridge.gateway_oauth_read().await,
+                LoginRequest::GatewayLogin => bridge.gateway_oauth_login().await,
+                LoginRequest::GatewayCancel => bridge.gateway_oauth_cancel().await,
+                LoginRequest::ChatGpt => bridge.login_start_chatgpt().await,
+                LoginRequest::DeviceCode => bridge.login_start_device_code().await,
+                LoginRequest::ApiKey(key) => bridge.login_start_api_key(&key).await,
+                LoginRequest::Cancel { login_id } => bridge.login_cancel(&login_id).await,
+                LoginRequest::BedrockDiscover => bridge.bedrock_discover().await,
+                LoginRequest::BedrockProfile { profile, region } => {
+                    bridge.bedrock_setup_profile(&profile, &region).await
+                }
+                LoginRequest::BedrockEnvironment { region } => {
+                    bridge.bedrock_setup_environment(&region).await
+                }
+                LoginRequest::BedrockAccessKeys {
+                    access_key_id,
+                    secret_access_key,
+                    session_token,
+                    region,
+                } => {
+                    bridge
+                        .login_start_bedrock_access_keys(
+                            &access_key_id,
+                            &secret_access_key,
+                            session_token.as_deref(),
+                            &region,
+                        )
+                        .await
+                }
+                LoginRequest::BedrockApiKey { api_key, region } => {
+                    bridge.login_start_bedrock_api_key(&api_key, &region).await
+                }
+            }
+            .map_err(request_error)
+        })
+    }
+}
+
 async fn check_govcloud(
     bridge: &bridge::Bridge,
     region: &str,
     executor: &gpui::BackgroundExecutor,
 ) -> GovCloud {
     use std::task::Poll;
-    let mut request = std::pin::pin!(
-        bridge.request::<_, Value>("account/bedrock/checkGovCloudRequirements", json!({}))
-    );
+    let mut request = std::pin::pin!(bridge.bedrock_check_govcloud());
     let mut timeout = std::pin::pin!(executor.timer(std::time::Duration::from_secs(10)));
     let result = std::future::poll_fn(|cx| {
         if let Poll::Ready(result) = request.as_mut().poll(cx) {
