@@ -6,7 +6,12 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-08
+
 ### Added
+- Build and test the app on Windows (`x86_64-pc-windows-msvc`) in CI. Read the home directory from `USERPROFILE` when `HOME` is unset, run the app-tools socket through `uds_windows`, remove worktrees from the main checkout, and keep the single-instance message from being lost.
+- Publish the macOS arm64 zip and a `.dmg` with each release, built on the self-hosted Apple-silicon runner (replaces the universal zip).
+- Add a Performance section to the README with measured start time, memory, CPU, size and scroll figures against the original Codex app.
 - Add a Performance section to the README with start time, memory, CPU and size figures against the original Codex app, re-measured with n=5 interleaved runs and split by thread state. `tools/bench/run.sh` reproduces the start, memory and CPU rows on a Mac.
 - Show the green `Awaiting approval` pill and the blue dot on a sidebar chat row while its thread waits for an approval (`thread/status/changed` with the `waitingOnApproval` active flag); both go when the flag clears or the thread goes idle.
 - Open a thread's latest plan in its own window (the original's `/plan-summary` page): Command-click Thread summary ▸ `Plan`. The window draws the plan with the thread's markdown in a `Plan` card; a plain click still opens the `Plan` side panel tab.
@@ -17,9 +22,13 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Open a thread's pull request in a `PR #n` side panel tab from the branch actions' `View PR` (`Open in GitHub` still opens the browser). The tab shows the GitHub detail: status, branch, reviewers, comments, checks, description and code changes. It also offers `Ready for review`, `Convert to draft` or `Reopen`, which run `gh pr ready`, `gh pr ready --undo` or `gh pr reopen` through app-server `process/spawn`.
 - Edit files in the Files tab: double-click a line to edit at that line. Edits save to disk 3 s after they start or on `⌘S` through the host's `write-file`, which refuses to overwrite a file that changed on disk since it was read (`Could not save file`). Closing a tab saves first; a failed save asks `Discard file changes?` (`Continue viewing` / `Discard changes`). A text file over 10 MiB opens read-only with `Large file opened read-only`.
 - Open the `Your dot` page from the sidebar: the app reads `/accounts/check` and opens an available dot on ChatGPT. Otherwise the page shows `Couldn't load your dot` with `Try again`, as the desktop original does. The sidebar hides `Your dot` when the account check reports no dot.
+- Turn on annotation mode in the in-app browser with the `Annotate` button or `⌘⇧.`. A toolbar under the page shows `Annotating · N`, sends the pending browser annotations as one turn, discards them after `Discard all pending annotations?`, or leaves the mode and keeps them.
 - Open the native `/profile` page from Settings ▸ `Profile` and the command menu. It reads `GET /profiles/me/page` and shows the avatar, name, `@username` and bio, the stats strip, the `Token activity` chart (`Daily`, `Weekly`, `Cumulative`), `Top plugins` and `Insights`, with the original's unavailable and `Retry` states.
 - Add the Library to Space: `Files` opens `Space › Library` with the `All`, `Folders` and `Favorites` tabs from `/files/library/nodes` and `/files/library/favorites`. Folder rows open the folder, and the breadcrumbs go back. `Add to Favorites` / `Remove from Favorites` and `Delete` (to Trash) act on file rows. `Trash` lists the trashed files with `Restore` and `Empty file trash` (after `Delete forever?`).
 - Open a terminal on a cloud environment setup page: it runs a login shell in the thread's environment on the durable app-server (`command/exec` with a pseudo-terminal, `command/exec/write`, `command/exec/terminate`), in the directory `environment/info` reports. It shows the original's `Waiting for environment…`, `Opening terminal…`, `Connecting…`, `Input may be incomplete` and `Environment changed` (`New terminal`) states. A lost connection opens a fresh shell after 1, 2 and 4 s (`Reconnecting…`), then shows `Couldn’t reconnect`; that state and `Shell exited` offer `Retry`.
+
+### Fixed
+- Keep a fast scroll smooth in a thread that shows the branch summary, git phase or worktree status row above its turns. Before, each turn saved the size of the row before it, so off-screen turns stood in at the wrong height and the view jumped or went blank.
 
 ## [0.1.1] - 2026-11-06
 

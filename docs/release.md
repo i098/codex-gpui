@@ -77,8 +77,8 @@ Every crate under `crates/` except `skia-hairline-sys` inherits it.
 `tools/version.sh` prints it.
 `tools/version.sh 0.2.0` bumps it in `Cargo.toml` and `Cargo.lock` and adds a `## [0.2.0]` section under `## [Unreleased]` in `CHANGELOG.md`.
 Merge the bump, then push the tag `v0.2.0`.
-The `release` workflow builds the bundle on a GitHub macOS arm64 runner, cross-compiling the Intel slice into one universal binary, and stops if the tag is not `v` plus the workspace version.
-It publishes `codex-gpui-0.2.0-macos-universal.zip` as a GitHub release with that version's changelog section as notes.
+The `release` workflow builds the arm64 bundle with `tools/bundle.sh` on the self-hosted runner (labels `self-hosted,macOS,ARM64,macmini-arm64`), signs it ad hoc unless the Developer ID and notary secrets exist, and stops if the tag is not `v` plus the workspace version.
+It publishes `codex-gpui-0.2.0-macos-arm64.zip` and `codex-gpui-0.2.0-macos-arm64.dmg` as a GitHub release with that version's changelog section as notes.
 About Codex shows the version.
 `Codex` > `Check for Updates…` uses the signed update feed when the bundle has one and organization policy permits updates.
 

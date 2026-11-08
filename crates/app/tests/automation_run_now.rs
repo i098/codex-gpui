@@ -1,3 +1,4 @@
+#![cfg(unix)] // shell-script fixtures and Unix permission bits
 //! `automation-run-now` over a real stdio JSON-RPC peer: a shell script that logs each request
 //! line it receives and answers it, so the test sees exactly what the host sent the app-server.
 use anyhow::{Result, ensure};

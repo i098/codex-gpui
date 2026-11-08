@@ -1,3 +1,4 @@
+#![cfg(unix)] // shell-script fixtures and Unix permission bits
 //! Error shell (SH-145, SH-147): the crash page when a spawned app-server dies or cannot
 //! start, and the startup loader until the first answers arrive.
 

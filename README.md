@@ -1,15 +1,21 @@
-# codex-gpui
+# codex-gpui: Codex Desktop in Rust
+codex-gpui is a native, fast, lightweight Codex Desktop in Rust for macOS and Linux, built with [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui). It is an open-source port of OpenAI Codex that drives the real `codex app-server`.
 
-codex-gpui is an open-source port of the Codex desktop app to Rust and [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui).
+[Build and run](docs/build-and-run.md) · [Architecture](docs/architecture.md) · [Parity](docs/parity.md) · [Contributing](CONTRIBUTING.md) · [Security](.github/SECURITY.md) · [Changelog](CHANGELOG.md)
+
+## Download
+
+- Latest release, with the macOS Apple silicon `.dmg`, Linux `AppImage` and Linux `deb`: [github.com/i098/codex-gpui/releases/latest](https://github.com/i098/codex-gpui/releases/latest)
+
+## Features
+
 The original is the Codex section of the macOS ChatGPT app.
 The goal is pixel parity with the original: the same layout, text, colors and icons, device pixel for device pixel.
 The app drives the real `codex app-server` over stdio, the same JSON-RPC transport that the original uses.
 
-[Build and run](docs/build-and-run.md) · [Architecture](docs/architecture.md) · [Parity](docs/parity.md) · [Contributing](CONTRIBUTING.md) · [Security](.github/SECURITY.md) · [Changelog](CHANGELOG.md)
-
-## Status
-
 The app runs on macOS (Apple silicon and Intel). The workspace also builds on Linux for CI. Pixel parity is checked by the harness in [Parity and proof](docs/parity.md); the sections there list what is and is not proven.
+
+Feature details, including computer use, SSH, terminals, skills, connectors, ACP, cloud transport, sign-in, onboarding and the Security workbench: [Features and runtime setup](docs/features.md).
 
 ## Performance
 
@@ -32,17 +38,7 @@ Measured against the original Codex app (26.1029; 26.1103 for size) on the same 
 
 How to reproduce: [docs/BENCHMARKS.md](docs/BENCHMARKS.md)
 
-An earlier table is replaced by this 5-run median check: that one mixed the thread-link state into the memory and CPU rows, and its "about 4.1 s" original start was arithmetic, not a measurement, so it is gone.
-
-Method: amelia Mac mini (Apple M4), release build, same account-free fixture for both apps. Every row is the median of n=5 runs, interleaved between the apps. The "no thread link" rows launch with no thread open; the "with thread link" rows open a `codex://threads` link.
-
-- The original could not open a thread without a signed-in account, so its long-thread memory was not measured.
-
-### Download
-
-- Latest release, with the macOS Apple silicon `.dmg`, Linux `AppImage` and Linux `deb`: [github.com/i098/codex-gpui/releases/latest](https://github.com/i098/codex-gpui/releases/latest)
-
-## Quick start
+## Build from source
 
 1. Install Rust 1.98.1 (`rust-toolchain.toml` pins it, so `rustup` does it on the first build).
 2. Make a `codex` binary available: `$CODEX_BIN`, the ChatGPT app's bundled one, or `codex` on `PATH`.
@@ -54,7 +50,9 @@ Method: amelia Mac mini (Apple M4), release build, same account-free fixture for
 
 Full requirements, flags, environment variables and tests: [Build and run](docs/build-and-run.md).
 
-## Documentation
+## Architecture
+
+Crates, data flow and design: [Architecture](docs/architecture.md).
 
 | Doc | Content |
 | --- | --- |
@@ -69,3 +67,7 @@ Full requirements, flags, environment variables and tests: [Build and run](docs/
 | [Inventory](docs/inventory.md) | Screen and flow inventory (data in `inventory.json`) |
 | [Proof matrix](docs/proof-matrix.md) | Census proof command |
 | [Windows](docs/windows.md) | Native windows |
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before you open a pull request. Report security issues through [.github/SECURITY.md](.github/SECURITY.md). Release history: [CHANGELOG.md](CHANGELOG.md).

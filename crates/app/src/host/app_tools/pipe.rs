@@ -2,13 +2,15 @@ use super::{Service, ToolCall};
 use anyhow::{Context as _, Result, ensure};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::os::unix::fs::PermissionsExt as _;
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+#[cfg(windows)]
+use uds_windows::{UnixListener, UnixStream};
 
 const MAX_FRAME: usize = 8 * 1024 * 1024;
 type Pending = Arc<Mutex<HashMap<String, Arc<Cancel>>>>;
@@ -77,11 +79,11 @@ impl Pipe {
         let directory = tempfile::Builder::new()
             .prefix("gpui-app-tools-")
             .tempdir_in(root)?;
-        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
+        crate::private::restrict(directory.path(), 0o700)?;
         let socket = directory.path().join("tools.sock");
         let listener = UnixListener::bind(&socket).context("Bind the native app tools socket")?;
         listener.set_nonblocking(true)?;
-        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
+        crate::private::restrict(&socket, 0o600)?;
         let stopped = Arc::new(AtomicBool::new(false));
         let clients = Arc::new(Mutex::new(HashMap::new()));
         let (stop, sockets) = (stopped.clone(), clients.clone());

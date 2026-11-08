@@ -217,6 +217,7 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "reloadBrowserPage" => Box::new(ui::browser::ReloadBrowserPage),
         "hardReloadBrowserPage" => Box::new(ui::browser::HardReloadBrowserPage),
         "focusBrowserAddressBar" => Box::new(ui::browser::FocusBrowserAddressBar),
+        "browser.toggleAnnotationMode" => Box::new(ui::browser::ToggleAnnotationMode),
         "toggleSidePanel" => Box::new(ToggleChangesPanel),
         "toggleFileTreePanel" => Box::new(crate::native_menus::ToggleNavigationPanel),
         "showWorkspaceTabView" => Box::new(ui::ShowWorkspaceTabView),

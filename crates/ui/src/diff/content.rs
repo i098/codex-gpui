@@ -964,6 +964,7 @@ mod context_tests {
         assert_eq!(hunks[0].lines.last().unwrap().number, 60);
     }
 
+    #[cfg(unix)] // POSIX path fixtures
     #[gpui::test]
     fn new_turn_item_paths_do_not_keep_the_previous_aggregate_root(cx: &mut gpui::TestAppContext) {
         let first: Turn = serde_json::from_value(serde_json::json!({

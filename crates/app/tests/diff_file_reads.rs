@@ -1,3 +1,4 @@
+#![cfg(unix)] // shell-script fixtures and Unix permission bits
 #[cfg(target_os = "macos")]
 #[path = "common/mod.rs"]
 mod common;

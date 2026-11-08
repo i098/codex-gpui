@@ -655,6 +655,7 @@ pub fn prompt_body(text: &str) -> &str {
 mod tests {
     use super::*;
 
+    #[cfg(unix)] // POSIX path fixtures
     #[test]
     fn model_directives_preserve_ranges_and_skip_code_examples() {
         let text = "```\n::code-comment{title=\"Example\" body=\"not feedback\" file=\"example.rs\"}\n```\n::code-comment{title=\"Fix the branch\" body=\"A } stays in quoted text\" file=\"src/a.rs\" start=4 end=6 priority=2}";

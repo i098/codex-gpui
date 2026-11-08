@@ -68,7 +68,6 @@ impl Settings {
     }
 
     pub fn begin_capture(&self, recording: &Recording) -> Result<PathBuf> {
-        use std::os::unix::fs::PermissionsExt as _;
         Self::validate_recording(recording)?;
         ensure!(
             recording.status == "recording",
@@ -85,10 +84,10 @@ impl Settings {
             root.canonicalize()?.starts_with(self.home.canonicalize()?),
             "Recording store escapes CODEX_HOME"
         );
-        fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
+        crate::private::restrict(&root, 0o700)?;
         let directory = root.join(format!("{:x}", Sha256::digest(recording.id.as_bytes())));
         fs::create_dir(&directory)?;
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+        crate::private::restrict(&directory, 0o700)?;
         Self::write_metadata(&directory, &serde_json::to_value(recording)?)?;
         Ok(directory.join("0000000000.chunk"))
     }

@@ -1,5 +1,7 @@
 # Features and runtime setup
 
+Features of the native Codex Desktop in Rust for macOS and Linux, and the runtime setup each one needs.
+
 ## Computer use runtime
 
 Install the pinned [LCU 0.11.6 release](https://github.com/amontlabs/lcu/releases/tag/v0.11.6) on Apple Silicon macOS:

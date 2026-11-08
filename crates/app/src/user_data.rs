@@ -54,6 +54,7 @@ mod tests {
         )
     }
 
+    #[cfg(unix)] // POSIX path fixtures
     #[test]
     fn resolves_per_os() {
         assert_eq!(

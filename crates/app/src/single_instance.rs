@@ -3,7 +3,7 @@
 use anyhow::{Context as _, Result};
 use async_channel::{Receiver, Sender};
 use std::fs;
-use std::io::{Read as _, Write};
+use std::io::{BufRead as _, BufReader, Write};
 use std::path::Path;
 use std::thread;
 
@@ -74,16 +74,16 @@ fn remove_stale_socket(path: &Path) {
 
 #[cfg(target_os = "windows")]
 fn remove_stale_socket(path: &Path) {
-    let _ = path;
+    // The connect was refused or found nothing, so no app listens on this file.
+    let _ = fs::remove_file(path);
 }
 
 fn serve(listener: UnixListener, sender: Sender<Vec<String>>) {
     for connection in listener.incoming() {
         let Ok(mut stream) = connection else { continue };
+        // The sender ends the message with a newline; a peer reset after that must not drop it.
         let mut message = Vec::new();
-        if stream.read_to_end(&mut message).is_err() {
-            continue;
-        }
+        let _ = BufReader::new(&mut stream).read_until(b'\n', &mut message);
         if let Ok(arguments) = serde_json::from_slice::<Vec<String>>(&message)
             && sender.send_blocking(arguments).is_err()
         {

@@ -3000,9 +3000,12 @@ impl Render for ThreadView {
             }
             l.key = Some(key);
             l.width = width;
+            // The turns are the column's last children: the git phase, worktree status and
+            // branch summary rows come before them.
+            let turns = &bounds[bounds.len().saturating_sub(ids.len())..];
             l.turns = ids
                 .iter()
-                .zip(&bounds)
+                .zip(turns)
                 .map(|(id, b)| (id.clone(), (b.top() - origin, b.size.height)))
                 .collect();
             if let Some((id, viewport_top)) = older_anchor.borrow_mut().take()
@@ -4349,6 +4352,51 @@ mod tests {
         assert!(far(px(-501.), h, view));
         assert!(!far(px(1200.), h, view));
         assert!(far(px(1201.), h, view));
+    }
+
+    /// The branch summary card sits above the turns in their column: each turn keeps its own
+    /// saved height, so a stand-in is as tall as the turn it replaces.
+    #[gpui::test]
+    fn laid_out_turns_skip_the_branch_summary(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| cx.set_global(theme::Theme::dark()));
+        let turn = |id: &str, text: &str| {
+            serde_json::json!({"id": id, "status": "completed", "items": [
+                {"type": "agentMessage", "id": format!("{id}-a"), "text": text},
+            ]})
+        };
+        let thread: Thread = serde_json::from_value(serde_json::json!({
+            "id": "laid-out", "preview": "", "modelProvider": "test", "cwd": "/tmp",
+            "createdAt": 0, "updatedAt": 0, "status": {"type": "idle"},
+            "turns": [turn("a", "One."), turn("b", "One.\n\nTwo.\n\nThree."), turn("c", "Four.")]
+        }))
+        .unwrap();
+        let composer = cx.new(|_| gpui::EmptyView).into();
+        let window = cx.add_window(|_, _| {
+            let clock = Clock {
+                utc_offset: 0,
+                pinned_now: Some(0),
+                elapsed_since: None,
+            };
+            ThreadView::new(thread, clock, composer)
+        });
+        let heights = |cx: &mut gpui::TestAppContext, card: bool| {
+            window
+                .update(cx, |view, _, cx| {
+                    view.set_git_repository(card.then(|| Ok(Default::default())), cx)
+                })
+                .unwrap();
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+            window
+                .read_with(cx, |view, _| {
+                    let laid_out = view.laid_out.borrow();
+                    ["a", "b", "c"].map(|id| laid_out.turns[id].1)
+                })
+                .unwrap()
+        };
+        let plain = heights(cx, false);
+        assert!(plain[1] > plain[0], "{plain:?}");
+        assert_eq!(heights(cx, true), plain);
     }
 
     /// refs/thread/dark@1280x832.png, top fade at device x 1792.., rows 88..: the pixels

@@ -1427,6 +1427,7 @@ mod tests {
         assert_eq!(panel.files[panel.active_file].name.as_ref(), "c.rs");
     }
 
+    #[cfg(unix)] // POSIX path fixtures
     #[test]
     fn generated_filter_hides_files_and_restores_their_order() {
         let patch = "@@ -0,0 +1 @@\n+line\n";
