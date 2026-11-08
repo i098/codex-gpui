@@ -1,5 +1,7 @@
 # Build and run
 
+Build and run the native Codex Desktop in Rust, codex-gpui, on macOS and Linux.
+
 ## Requirements
 
 - macOS on Apple silicon (arm64) and Intel (x86_64); the release zip and .dmg are arm64 only.
