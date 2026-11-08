@@ -51,6 +51,7 @@ pub mod onboarding;
 mod permissions;
 mod personalization;
 mod pets;
+mod private;
 mod profile_menu;
 mod pull_requests;
 pub mod qa;

@@ -2,7 +2,6 @@ use anyhow::{Context as _, Result, ensure};
 use serde_json::json;
 use std::{
     fs,
-    os::unix::fs::PermissionsExt as _,
     path::{Path, PathBuf},
     process::Command,
     sync::OnceLock,
@@ -35,7 +34,7 @@ fn private_directory(path: &Path) -> Result<()> {
         fs::symlink_metadata(path)?.file_type().is_dir(),
         "QA directory is not a real directory"
     );
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    crate::private::restrict(path, 0o700)?;
     Ok(())
 }
 
@@ -86,7 +85,10 @@ pub fn prepare() -> Result<()> {
         // Link, never copy: a copy would fork the rotating token.
         let link = root.join("codex/auth.json");
         if shared_auth.is_file() && fs::symlink_metadata(&link).is_err() {
+            #[cfg(unix)]
             std::os::unix::fs::symlink(&shared_auth, &link)?;
+            #[cfg(windows)]
+            std::os::windows::fs::symlink_file(&shared_auth, &link)?;
         }
     }
     // This runs before GPUI, app-server, or any worker thread starts.
@@ -115,7 +117,7 @@ pub fn configure_command(command: &mut Command) -> Result<()> {
             .map(|directory| directory.join(program))
             .find(|path| {
                 fs::metadata(path).is_ok_and(|metadata| {
-                    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+                    metadata.is_file() && crate::private::is_executable(&metadata)
                 })
             })
             .context("cannot resolve the QA app-server executable on the original PATH")?
