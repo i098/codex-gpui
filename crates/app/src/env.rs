@@ -5,7 +5,9 @@ fn non_empty(key: &str) -> Option<OsString> {
 }
 
 pub fn home() -> Option<PathBuf> {
-    non_empty("HOME").map(PathBuf::from)
+    non_empty("HOME")
+        .or_else(|| non_empty("USERPROFILE"))
+        .map(PathBuf::from)
 }
 
 /// `$CODEX_HOME`, else `~/.codex`.

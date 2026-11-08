@@ -52,10 +52,9 @@ impl LocalHost {
             pollster::block_on(bridge.request("config/read", json!({"includeLayers": false})))?;
         let configured = &config["config"]["desktop"]["projectlessWorkspaceRoot"];
         let root = if configured.is_null() {
-            PathBuf::from(
-                std::env::var_os("HOME").context("No home directory for projectless tasks")?,
-            )
-            .join("Documents/Codex")
+            crate::env::home()
+                .context("No home directory for projectless tasks")?
+                .join("Documents/Codex")
         } else {
             PathBuf::from(
                 configured

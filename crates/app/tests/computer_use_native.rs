@@ -1,3 +1,4 @@
+#![cfg(unix)] // shell-script fixtures and Unix permission bits
 use anyhow::Result;
 #[cfg(not(target_os = "macos"))]
 use app::host::computer_use_native::NativeComputerUse;

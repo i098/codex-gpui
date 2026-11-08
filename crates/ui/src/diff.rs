@@ -4697,6 +4697,7 @@ mod tests {
             .unwrap();
     }
 
+    #[cfg(unix)] // POSIX path fixtures
     #[test]
     fn subtract_fixture() {
         let panel = DiffPanel::subtract();

@@ -9,6 +9,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [0.1.2] - 2026-11-08
 
 ### Added
+- Build and test the app on Windows (`x86_64-pc-windows-msvc`) in CI. Read the home directory from `USERPROFILE` when `HOME` is unset, run the app-tools socket through `uds_windows`, remove worktrees from the main checkout, and keep the single-instance message from being lost.
 - Publish the macOS arm64 zip and a `.dmg` with each release, built on the self-hosted Apple-silicon runner (replaces the universal zip).
 - Add a Performance section to the README with measured start time, memory, CPU, size and scroll figures against the original Codex app.
 - Add a Performance section to the README with start time, memory, CPU and size figures against the original Codex app, re-measured with n=5 interleaved runs and split by thread state. `tools/bench/run.sh` reproduces the start, memory and CPU rows on a Mac.

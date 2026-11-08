@@ -1544,11 +1544,28 @@ pub(super) fn remove_unstarted_worktree(worktrees_root: &Path, worktree: &Worktr
             )?;
         }
     }
-    let removed = git(root, &["worktree", "remove", &root.to_string_lossy()])?;
+    let removed = remove_worktree(root, false)?;
     ensure!(removed.success, "{}", removed.failure());
     fs::remove_file(reserved.join(MARKER))?;
     let _ = fs::remove_dir(reserved);
     Ok(())
+}
+
+/// `git worktree remove` for `root`. Windows cannot delete a directory that a running process
+/// uses as its working directory, so Git runs from the main checkout, never from `root`.
+fn remove_worktree(root: &Path, force: bool) -> Result<Git> {
+    let common = answer(
+        root,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    let main = common.as_deref().map(Path::new).and_then(Path::parent);
+    let path = root.to_string_lossy();
+    let args: &[&str] = if force {
+        &["worktree", "remove", "--force", &path]
+    } else {
+        &["worktree", "remove", &path]
+    };
+    git(main.unwrap_or(root), args)
 }
 
 /// Trimmed stdout of a successful Git call that printed something.

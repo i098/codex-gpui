@@ -1,3 +1,4 @@
+#![cfg(unix)] // shell-script fixtures and Unix permission bits
 mod common;
 
 use anyhow::{Context as _, Result, ensure};

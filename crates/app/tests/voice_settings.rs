@@ -1,3 +1,4 @@
+#![cfg(unix)] // shell-script fixtures and Unix permission bits
 use anyhow::Result;
 use app::host::{CloudHost, Host, LocalHost, Request, voice::Settings};
 use serde_json::{Value, json};
