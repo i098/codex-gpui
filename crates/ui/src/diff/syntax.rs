@@ -75,7 +75,8 @@ static THEME: LazyLock<SyntaxTheme> = LazyLock::new(|| {
             ("string", 3),
             ("comment", 4),
             ("constant, support.function, support.type", 5),
-            ("meta.generic-name, variable.other", 6),
+            // Python nests `meta.generic-name` inside `entity.name.function`; the name wins.
+            ("meta.generic-name - entity.name, variable.other", 6),
             ("punctuation, keyword.operator, variable.parameter", 7),
         ]
         .into_iter()
