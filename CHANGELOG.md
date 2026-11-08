@@ -22,6 +22,9 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add the Library to Space: `Files` opens `Space › Library` with the `All`, `Folders` and `Favorites` tabs from `/files/library/nodes` and `/files/library/favorites`. Folder rows open the folder, and the breadcrumbs go back. `Add to Favorites` / `Remove from Favorites` and `Delete` (to Trash) act on file rows. `Trash` lists the trashed files with `Restore` and `Empty file trash` (after `Delete forever?`).
 - Open a terminal on a cloud environment setup page: it runs a login shell in the thread's environment on the durable app-server (`command/exec` with a pseudo-terminal, `command/exec/write`, `command/exec/terminate`), in the directory `environment/info` reports. It shows the original's `Waiting for environment…`, `Opening terminal…`, `Connecting…`, `Input may be incomplete` and `Environment changed` (`New terminal`) states. A lost connection opens a fresh shell after 1, 2 and 4 s (`Reconnecting…`), then shows `Couldn’t reconnect`; that state and `Shell exited` offer `Retry`.
 
+### Fixed
+- Keep a fast scroll smooth in a thread that shows the branch summary, git phase or worktree status row above its turns. Before, each turn saved the size of the row before it, so off-screen turns stood in at the wrong height and the view jumped or went blank.
+
 ## [0.1.1] - 2026-11-06
 
 ### Added
