@@ -132,6 +132,8 @@ const STATES = {
   },
   composer: async (d) => {
     await d.click(`document.querySelector(".ProseMirror")`, "composer");
+    // The draft survives a viewport change within one launch; start from an empty composer.
+    await d.evaluate(`document.execCommand("selectAll"), document.execCommand("delete")`);
     await d.type("Refactor src/math.py");
     await d.click(`[...document.querySelectorAll("button")].find((b) => b.offsetParent !== null && b.innerText.trim().startsWith("GPT-6 Astra"))`, "model picker");
     await d.waitFor(`document.querySelector("[role=menu]")`, "model menu");

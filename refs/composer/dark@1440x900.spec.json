@@ -13,9 +13,9 @@
   "--toast-close-button-start": "0",
   "--text-3xs": ".5rem",
   "--color-background-segmented-form-selected": "light-dark(#181818,color-mix(in srgb, rgb(45, 45, 45) 90%, #ffffff))",
-  "--app-color-text-secondary": "",
-  "--font-text-xs-size": ".75rem",
   "--app-color-background-button-tertiary-active": "rgba(255, 255, 255, 0.1)",
+  "--font-text-xs-size": ".75rem",
+  "--app-color-text-secondary": "",
   "--color-token-interactive-bg-secondary-selected": "rgba(255, 255, 255, 0.052)",
   "--color-background-primary-surface": "light-dark(color-mix(in oklab, #ffffff 5%, transparent),color-mix(in oklab, #ffffff 8%, transparent))",
   "--gray-150": "light-dark(#dfdfdf,#1c1c1c)",
@@ -470,8 +470,8 @@
   "--brand-cyan-400": "#00b1ff",
   "--gray-25": "light-dark(#fcfcfc,#101010)",
   "--color-surface-secondary": "#141414",
-  "--font-heading-xl-line-height": "2.375rem",
   "--dil-radius-3xl": "24px",
+  "--font-heading-xl-line-height": "2.375rem",
   "--app-color-text-unread-badge": "#fff",
   "--color-ring-discovery-solid": "#3a83f7",
   "--color-codex-terminal-ansi-bright-black": "rgba(255, 255, 255, 0.71)",
@@ -938,8 +938,8 @@
   "--pink-a25": "color-mix(in oklab, #ff66ad 8%, transparent)",
   "--radius-sm": "calc(.375rem * 1.25)",
   "--color-media-control-hover": "color-mix(in srgb, #fff 40%, #0d0d0d)",
-  "--codex-base-surface": "#181818",
   "--radius-xs-base": ".25rem",
+  "--codex-base-surface": "#181818",
   "--color-token-editor-warning-foreground": "light-dark(#e25507,#ff8549)",
   "--switch-thumb-offset": "3px",
   "--orange-a300": "color-mix(in oklab, #fb6a22 81%, transparent)",
@@ -5102,7 +5102,7 @@
     "lineHeight": "18.5714px",
     "cursor": "default"
    },
-   "label": "Add a subtract(a, b) function to src/math.py next to add, t…",
+   "label": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '…",
    "cls": "group relative cursor-interaction text-sm hover:bg-primary-ghost-hover h-[var(--height-token-row)] sidebar-item focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring has-[[aria-haspopup=menu][aria-expanded=true]]:bg-primary-ghost-hover data-[app-action-sidebar-thread-selected=true]:bg-primary-ghost-hover data-[file-drop-active=true]:bg-primary-ghost-hover [@media(hover:none)]:flex [@media(hover:none)]:items-center py-row-y pe-row-y ps-[var(--padding-row-cell-x,var(--padding-row-x))]"
   },
   {
@@ -5231,7 +5231,7 @@
    "rect": [
     60,
     326,
-    393.98,
+    525.25,
     20
    ],
    "style": {
@@ -5258,7 +5258,7 @@
    "rect": [
     68,
     326,
-    385.98,
+    517.25,
     20
    ],
    "style": {
@@ -5282,7 +5282,7 @@
    "rect": [
     68,
     327.5,
-    385.98,
+    517.25,
     16.5
    ],
    "style": {
@@ -5306,7 +5306,7 @@
    "rect": [
     68,
     327.5,
-    385.98,
+    517.25,
     16.5
    ],
    "style": {
@@ -10037,11 +10037,11 @@
   },
   {
    "node": 151,
-   "text": "Add a subtract(a, b) function to src/math.py next to add, t…",
+   "text": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '…",
    "rect": [
     68,
     327.5,
-    385.98,
+    517.25,
     16.5
    ],
    "font": "430 14px/20px -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
@@ -10097,11 +10097,11 @@
   },
   {
    "node": 267,
-   "text": "Refactor src/math.pyRefactor src/math.py",
+   "text": "Refactor src/math.py",
    "rect": [
     532.25,
     797.5,
-    271.81,
+    135.91,
     16.5
    ],
    "font": "430 14px/20px -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
