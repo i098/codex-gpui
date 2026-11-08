@@ -4480,8 +4480,8 @@ impl Render for CommandMenu {
                                 430.,
                                 t.text_tertiary,
                             ))
-                            // The list's own layer: a transparent tile composited onto the dialog.
-                            .top_layer()
+                            // The list's own transparent tile, blended into the dialog's layer.
+                            .saved_layer()
                             .when(searching, |d| {
                                 d.child(icon("sidebar-cmd-spinner", 12., t.text_tertiary))
                             }),
@@ -4973,7 +4973,7 @@ fn menu_row(
                 .flex_1()
                 .min_w_0()
                 // Chromium rasterizes it in the list's transparent tile, as the icons above.
-                .when(!selected, |d| d.top_layer())
+                .when(!selected, |d| d.saved_layer())
                 .flex()
                 .flex_col()
                 .child(line)
