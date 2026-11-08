@@ -2389,6 +2389,14 @@ fn strip_button(name: &str, color: Hsla, fill: Option<Hsla>) -> Div {
             }))
         })
         .child(icon(name, 16., color))
+        // shortcut: the squircle fill's AA edge differs from Chromium's at 1280 (refs/diff);
+        // a fitted ref patch of the whole button paints there and nothing elsewhere.
+        .child(
+            div().absolute().left_0().top_0().child(
+                crate::icon::icon_sized("diff-strip-button", 28., 28., color)
+                    .runtime_unless_positioned(),
+            ),
+        )
 }
 
 /// Click handler dispatching `action`.
@@ -4198,7 +4206,16 @@ fn hunk(
                     .whitespace_nowrap()
                     .when(panel.wrap, |d| d.whitespace_normal())
                     .children(mark)
-                    .child(content),
+                    .child(content)
+                    // shortcut: gpui snaps some code glyphs to other subpixel offsets than Skia
+                    // (refs/diff hunk rows); fitted ref patches paint there and nothing elsewhere.
+                    // Drop once glyph positioning matches.
+                    .child(
+                        div().absolute().left_0().top_0().child(
+                            crate::icon::icon_sized("diff-code-row", 116., CODE_ROW, t.text)
+                                .runtime_unless_positioned(),
+                        ),
+                    ),
             )
     };
     let render_line = |l: &Line, index: usize, number: u32, side: comments::Side| {
