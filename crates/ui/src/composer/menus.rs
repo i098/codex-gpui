@@ -470,10 +470,14 @@ impl Composer {
                             let color = if i as f32 <= f.thumb + 1e-3 {
                                 gpui::rgba(0xffffff4c).into()
                             } else {
-                                // 26.1029 rasters the `0.249` tick alpha as 64/255.
-                                Hsla {
-                                    a: 64. / 255.,
-                                    ..t.text
+                                // The ticks blend in the track's layer: 26.1029 rasters them as
+                                // these 64/255 colors over the composited track.
+                                match t.appearance {
+                                    Appearance::Dark => Hsla {
+                                        a: 64. / 255.,
+                                        ..t.text
+                                    },
+                                    Appearance::Light => gpui::rgba(0x1a212240).into(),
                                 }
                             };
                             div()
