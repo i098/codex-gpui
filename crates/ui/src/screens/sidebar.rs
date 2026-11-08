@@ -4480,6 +4480,8 @@ impl Render for CommandMenu {
                                 430.,
                                 t.text_tertiary,
                             ))
+                            // The list's own layer: a transparent tile composited onto the dialog.
+                            .top_layer()
                             .when(searching, |d| {
                                 d.child(icon("sidebar-cmd-spinner", 12., t.text_tertiary))
                             }),
@@ -4582,7 +4584,9 @@ impl Render for CommandMenu {
                             .px(px(16.))
                             .flex()
                             .items_center()
-                            .child(input),
+                            // shortcut: refs/sidebar draw the value 1 device px below the
+                            // centered line box (Blink's inner-editor snap); fitted, not derived.
+                            .child(input.top(px(0.5))),
                     )
                     .child(rule(t).mt(px(6.)))
             }))
@@ -4968,6 +4972,8 @@ fn menu_row(
             div()
                 .flex_1()
                 .min_w_0()
+                // Chromium rasterizes it in the list's transparent tile, as the icons above.
+                .when(!selected, |d| d.top_layer())
                 .flex()
                 .flex_col()
                 .child(line)
