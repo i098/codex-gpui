@@ -2985,8 +2985,9 @@ impl Render for ThreadView {
                 // The original's virtualizer gives each turn its height rounded to device px
                 // (370.8 -> 371), so every turn starts on a device pixel.
                 // shortcut: rounds the summed heights, not each one; the same for two turns.
+                // Only with a live-watched turn (refs/terminal): refs/thread matches unsnapped.
                 let body = body
-                    .snap_origin()
+                    .when(live_turn.is_some(), |b| b.snap_origin())
                     .when(i + 1 == n && live_turn == Some(&turn.id), |b| {
                         b.min_h(live_min_h)
                     });
