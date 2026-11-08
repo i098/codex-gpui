@@ -4587,9 +4587,6 @@ impl Render for CommandMenu {
                     .min_h_0()
                     .when(has_input, |list| list.mt(px(-4.)))
                     .overflow_y_scroll()
-                    // Chromium composites the `overflow: auto` list in its own transparent
-                    // layer over the dialog's (cc layers are flat).
-                    .top_layer()
                     .flex()
                     .flex_col()
                     .children(groups)
@@ -4733,18 +4730,30 @@ fn rule(t: &Theme) -> Div {
         }))
 }
 
-/// `color`'s alpha inside nested CSS `opacity` layers the way Skia scales an 8-bit
-/// premultiplied pixel per layer: `(v * (round(opacity * 255) + 1)) >> 8`.
+/// `color` inside nested CSS `opacity` layers the way Skia scales an 8-bit premultiplied
+/// pixel per layer: `(v * (round(opacity * 255) + 1)) >> 8`, for the alpha and each channel.
+/// A channel that stays at the alpha keeps its color (white's float-pipeline hair).
 fn layered(color: Hsla, opacities: &[f32]) -> Hsla {
-    let a = opacities
-        .iter()
-        .fold((color.a * 255.).round() as u32, |a, o| {
-            (a * ((o * 255.).round() as u32 + 1)) >> 8
-        });
-    Hsla {
+    let rgba = gpui::Rgba::from(color);
+    let byte = |v: f32| (v * 255.).round() as u32;
+    let scale = |v: u32| opacities.iter().fold(v, |v, o| (v * (byte(*o) + 1)) >> 8);
+    let a0 = byte(rgba.a);
+    let a = scale(a0);
+    let channel = |c: f32| {
+        let v = scale((c * a0 as f32).round() as u32);
+        if v == a || a == 0 {
+            c
+        } else {
+            v as f32 / a as f32
+        }
+    };
+    gpui::Rgba {
+        r: channel(rgba.r),
+        g: channel(rgba.g),
+        b: channel(rgba.b),
         a: a as f32 / 255.,
-        ..color
     }
+    .into()
 }
 
 /// A command menu row. CSS dims unselected rows with `opacity: .75` and the `kbd` with `.8`:
@@ -4904,12 +4913,29 @@ fn menu_row(
         .flex()
         .items_center()
         .gap(px(8.))
+        // The original's highlight composites in float with the spec's exact alpha
+        // (rgba(255,255,255,.08) dark, rgba(26,28,31,.055) light), not Skia's 8-bit blit.
         .when(selected, |d| {
-            d.child(shapes::decoration(shapes::Decoration {
-                radius: Corners::all(px(12.5)),
-                fill: Some(t.ghost_hover),
-                ..Default::default()
-            }))
+            d.child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(px(12.5))
+                    .bg(match t.appearance {
+                        Appearance::Dark => gpui::Rgba {
+                            r: 1.,
+                            g: 1.,
+                            b: 1.,
+                            a: 0.08,
+                        },
+                        Appearance::Light => gpui::Rgba {
+                            r: 26. / 255.,
+                            g: 28. / 255.,
+                            b: 31. / 255.,
+                            a: 0.055,
+                        },
+                    }),
+            )
         })
         // The original draws no slot for icon-less commands.
         .when(
@@ -5031,6 +5057,12 @@ mod tests {
         // `kbd`'s 10% white (26) in `opacity: .8` (20), in the unselected row's `.75` (15).
         assert_eq!(alpha(layered(t.text_alpha_10, &[0.8])), 20);
         assert_eq!(alpha(layered(t.text_alpha_10, &[0.8, 0.75])), 15);
+        // Light's `#1a1c1f` at 26 premultiplies to 3, then 2, then 1 in the row: grey 17.
+        let light = gpui::Rgba::from(layered(Theme::light().text_alpha_10, &[0.8, 0.75]));
+        assert_eq!(
+            ((light.r * 255.).round(), (light.a * 255.).round()),
+            (17., 15.)
+        );
     }
 
     #[test]
