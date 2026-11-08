@@ -3087,7 +3087,9 @@ impl Render for ThreadView {
             (width, 40.),
             scale,
             self.scroll.clone(),
-            !self.clip_right,
+            // The summary portal's composited layer over the fade: the fade blends onto the
+            // composited page, as for a lone thread.
+            !self.clip_right && !self.summary_open,
         );
         // The px the main surface's rounded clip covers in part at its right corners: the top
         // fade's surface fill, drawn onto the page after the shell's corners
