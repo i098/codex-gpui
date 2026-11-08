@@ -112,7 +112,8 @@ pub fn panel_tab(
             )
         })
         .when(closable, |d| d.child(close))
-        .child(crate::icon::icon("thread-terminal", 16., color).runtime())
+        // 26.1029 at 1440 the tab sits at dev x 1579.66: a fitted image holds its AA edge there.
+        .child(crate::icon::icon("thread-terminal", 16., color).runtime_unless_positioned())
         .child(
             div()
                 .relative()
