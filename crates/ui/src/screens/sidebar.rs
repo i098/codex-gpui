@@ -4913,15 +4913,15 @@ fn menu_row(
         .flex()
         .items_center()
         .gap(px(8.))
-        // Dark's highlight (rgba(255,255,255,.08)) lands as 21/255 white composited in float
-        // (refs: 42 over 23, the blurred backdrop's 42/43 edge), light's in Skia's 8-bit blit.
+        // Dark's highlight (rgba(255,255,255,.08)) composites in float, a hair over .08 (the
+        // ref's 42/43 edge over the blurred backdrop); light's in Skia's 8-bit blit.
         .when(selected, |d| match t.appearance {
             Appearance::Dark => {
                 d.child(div().absolute().inset_0().rounded(px(12.5)).bg(gpui::Rgba {
                     r: 1.,
                     g: 1.,
                     b: 1.,
-                    a: 21. / 255.,
+                    a: 0.0805,
                 }))
             }
             Appearance::Light => d.child(shapes::decoration(shapes::Decoration {
