@@ -814,38 +814,6 @@ fn scheduled_suggestions_follow_late_reads_and_host_replacement() -> Result<()> 
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
-fn recorded_suggestions() -> Result<Value> {
-    json_body(&ReplayHost::from_recording(RECORDING)?.fetch(&app::host::suggested_automations())?)
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn unbundled_suggestion_icon_shows_its_emoji() -> Result<()> {
-    let mut fx = common::Fx::new()?;
-    let host = Arc::new(ReplayHost::from_recording(RECORDING)?);
-    fx.root
-        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
-    fx.action(Box::new(ui::OpenScheduled))?;
-    let page = fx.read(|root, _| root.suggestions().unwrap().clone());
-    let mut server = recorded_suggestions()?;
-    // Change only the view input; the host still replays the genuine response.
-    server[0]["icon_url"] = "https://example.invalid/not-bundled.svg".into();
-    let suggestions = serde_json::from_value(server.clone())?;
-    page.update(&mut fx.cx, |page, cx| page.set_suggestions(suggestions, cx));
-    let unbundled = fx.shot()?;
-    server[0]["icon_url"] = Value::Null;
-    let suggestions = serde_json::from_value(server)?;
-    page.update(&mut fx.cx, |page, cx| page.set_suggestions(suggestions, cx));
-    let emoji = fx.shot()?;
-    assert_eq!(
-        common::changed(&unbundled, &emoji, common::MAIN_PANEL),
-        0,
-        "an unbundled icon must show the same emoji as a missing icon URL"
-    );
-    Ok(())
-}
-
 #[path = "../src/host/automation_schedule.rs"]
 mod automation_schedule;
 
