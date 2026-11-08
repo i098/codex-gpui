@@ -533,7 +533,7 @@ pub(super) fn diff_card(
                                 }),
                                 ..Default::default()
                             }))
-                            .child(icon("thread-file-diff", 24., t.text_secondary)),
+                            .child(icon("thread-file-diff", 24., t.text_secondary).runtime()),
                     )
                     .child(
                         div()
@@ -600,9 +600,9 @@ pub(super) fn diff_card(
                                     None,
                                 )
                                 .child(if focus.reverted {
-                                    icon("thread-undo", 14., t.text).flip_x()
+                                    icon("thread-undo", 14., t.text).flip_x().runtime()
                                 } else {
-                                    icon("thread-undo", 14., t.text)
+                                    icon("thread-undo", 14., t.text).runtime()
                                 })
                                 .when(pending, |button| button.opacity(0.5))
                                 .on_click({
