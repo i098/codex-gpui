@@ -3432,7 +3432,7 @@ impl Render for ThreadView {
 
 /// shortcut: fitted ref px at scroller tile seams no single layer origin reproduces (one
 /// captured screen each); replace with the tile rule once found or the screen is recaptured.
-fn paint_patches(
+pub(crate) fn paint_patches(
     (screen, patches): (&'static str, &'static [(&'static str, u32, u32)]),
 ) -> impl IntoElement {
     canvas(
