@@ -145,7 +145,7 @@ impl Root {
             }
             if absolute {
                 let path = if let Some(relative) = query.strip_prefix("~/") {
-                    PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(relative)
+                    crate::env::home().unwrap_or_default().join(relative)
                 } else {
                     PathBuf::from(&query)
                 };

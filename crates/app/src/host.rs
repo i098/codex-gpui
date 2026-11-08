@@ -880,7 +880,7 @@ impl LocalHost {
             native_computer_use: Arc::new(computer_use_native::NativeComputerUse::new(&home)),
             workspace_parent: home.join("projects"),
             home,
-            ssh_home: std::env::var_os("HOME").map(PathBuf::from),
+            ssh_home: crate::env::home(),
             bridge: None,
             #[cfg(target_os = "macos")]
             app_tools: Mutex::new(None),
@@ -936,20 +936,13 @@ impl LocalHost {
     }
 
     pub fn from_env() -> Self {
-        let mut host = Self::new(
-            std::env::var_os("CODEX_HOME")
-                .filter(|s| !s.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".codex")
-                }),
-        );
-        host.computer_use_settings = std::env::var_os("HOME")
-            .map(PathBuf::from)
+        let user_home = crate::env::home();
+        let mut host = Self::new(crate::env::codex_home().unwrap_or_else(|| ".codex".into()));
+        host.computer_use_settings = user_home
+            .clone()
             .filter(|home| home.is_absolute())
             .map(|home| computer_use::ComputerUseSettings::new(home, &host.home));
-        host.workspace_parent =
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("Documents/ChatGPT");
+        host.workspace_parent = user_home.unwrap_or_default().join("Documents/ChatGPT");
         host
     }
 

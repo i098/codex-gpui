@@ -172,7 +172,7 @@ pub fn controls(
 
 /// Reads the current host's rows; empty on an unsupported platform.
 pub fn current_controls(settings: &Map<String, Value>) -> Vec<BrowserControl> {
-    let (Some(platform), Some(home)) = (Platform::CURRENT, std::env::var_os("HOME")) else {
+    let (Some(platform), Some(home)) = (Platform::CURRENT, crate::env::home()) else {
         return Vec::new();
     };
     let path = |name| std::env::var_os(name).map(PathBuf::from);

@@ -105,9 +105,8 @@ impl Root {
     /// catalogs (~40 s each when signed in); opening a page reads the app-server's cache, as
     /// the original does.
     fn load_plugins(&self, page: Entity<Page>, route: String, force: bool, cx: &mut Context<Self>) {
-        let personal_marketplace = std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))
-            .map(|home| PathBuf::from(home).join(".agents/plugins/marketplace.json"));
+        let personal_marketplace = crate::env::home()
+            .map(|home| home.join(".agents/plugins/marketplace.json"));
         let (generation, available) = page.update(cx, |page, cx| {
             page.generation += 1;
             page.data = Data {
