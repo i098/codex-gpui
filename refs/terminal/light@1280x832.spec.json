@@ -131,8 +131,8 @@
   "--segmented-control-font-weight": "600",
   "--codex-data-color-red": "light-dark(#e02e2a,#ff6764)",
   "--color-border-danger-outline-hover": "#e02e2a",
-  "--dil-radius-sm": "6px",
   "--color-background-primary-solid-active": "light-dark(light-dark(#414141,#8f8f8f),light-dark(#1c1c1c,#dcdcdc))",
+  "--dil-radius-sm": "6px",
   "--color-token-main-surface-primary": "#ffffff",
   "--control-gutter-md": ".75rem",
   "--alpha-08": "color-mix(in oklab, #1a1c1f 8%, transparent)",
@@ -550,8 +550,8 @@
   "--color-background-discovery-solid": "#924ff7",
   "--color-text-primary-soft": "#1a1c1f",
   "--radius-2xs-base": ".125rem",
-  "--modal-sheet-fade-shadow": "0 -8px 16px 0 #00000012, 0 -2px 6px 0 #0000000d, 0 0 0 1px rgba(26, 28, 31, 0.078)",
   "--page-font-scale": "1",
+  "--modal-sheet-fade-shadow": "0 -8px 16px 0 #00000012, 0 -2px 6px 0 #0000000d, 0 0 0 1px rgba(26, 28, 31, 0.078)",
   "--color-background-mode-toggle-selected": "color-mix(in oklab, rgba(255, 255, 255, 0.96) 90%, transparent)",
   "--default-transition-timing-function": "cubic-bezier(.4, 0, .2, 1)",
   "--color-token-text-link-foreground": "#2c67c5",
@@ -938,8 +938,8 @@
   "--pink-a25": "color-mix(in oklab, #ff66ad 8%, transparent)",
   "--color-media-control-hover": "color-mix(in srgb, #fff 40%, #0d0d0d)",
   "--radius-sm": "calc(.375rem * 1.25)",
-  "--codex-base-surface": "#ffffff",
   "--radius-xs-base": ".25rem",
+  "--codex-base-surface": "#ffffff",
   "--color-token-editor-warning-foreground": "light-dark(#e25507,#ff8549)",
   "--switch-thumb-offset": "3px",
   "--orange-a300": "color-mix(in oklab, #fb6a22 81%, transparent)",
@@ -9868,7 +9868,7 @@
     "color": "rgb(26, 28, 31)",
     "fontSize": "16px"
    },
-   "label": "Today 5:30 PM",
+   "label": "Today 3:46 AM",
    "cls": "flex justify-center py-4"
   },
   {
@@ -9877,9 +9877,9 @@
    "depth": 34,
    "tag": "time",
    "rect": [
-    454.71,
+    454.22,
     151,
-    91.58,
+    92.56,
     20
    ],
    "style": {
@@ -9900,7 +9900,7 @@
    "depth": 35,
    "tag": "span",
    "rect": [
-    454.71,
+    454.22,
     153.5,
     37.08,
     15
@@ -10275,9 +10275,9 @@
    "depth": 39,
    "tag": "div",
    "rect": [
-    488.46,
+    485.8,
     233.75,
-    156.04,
+    158.7,
     26
    ],
    "style": {
@@ -16157,7 +16157,7 @@
    "node": 354,
    "text": "Today",
    "rect": [
-    454.71,
+    454.22,
     153.5,
     37.08,
     15
@@ -16167,11 +16167,11 @@
   },
   {
    "node": 353,
-   "text": "5:30 PM",
+   "text": "3:46 AM",
    "rect": [
-    491.79,
+    491.3,
     153.5,
-    54.5,
+    55.48,
     15
    ],
    "font": "400 13px/20px -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
