@@ -40,7 +40,7 @@ impl ControlFocus {
         self.keyboard.set(true);
     }
 
-    fn visible(&self, window: &Window) -> bool {
+    pub(crate) fn visible(&self, window: &Window) -> bool {
         self.handle.is_focused(window) && (self.keyboard.get() || window.last_input_was_keyboard())
     }
 }
