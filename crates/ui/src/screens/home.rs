@@ -581,7 +581,12 @@ pub fn shell(main: AnyView, cx: &mut App) -> AnyView {
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     let main = home_main(window, cx);
     let sidebar = super::sidebar::home_sidebar(cx, None);
-    cx.new(|_| Shell::new(sidebar, main)).into()
+    cx.new(|_| {
+        let mut shell = Shell::new(sidebar, main);
+        shell.page_on_body = true;
+        shell
+    })
+    .into()
 }
 
 fn open_folder_key(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {
@@ -1317,14 +1322,14 @@ fn utility_bar(
             .px(px(6.))
             .pb(px(4.))
             .relative()
-            // `_attached_1hrlq`: `--radius-2xl` top corners, `--codex-corner-shape`.
+            // `_attached_1hrlq`: `--radius-2xl` top corners. Its `corner-shape` squircle only
+            // clips outside the item's round background.
             .child(shapes::decoration(shapes::Decoration {
                 radius: Corners {
                     top_left: px(20.),
                     top_right: px(20.),
                     ..Corners::all(px(0.))
                 },
-                corner: shapes::Corner::Squircle,
                 fill: Some(t.composer_action_bar),
                 ..Default::default()
             }))
