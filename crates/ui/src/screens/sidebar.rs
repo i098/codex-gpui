@@ -4920,23 +4920,27 @@ fn menu_row(
         .flex()
         .items_center()
         .gap(px(8.))
-        // Dark's highlight (rgba(255,255,255,.08)) composites over the blurred backdrop; GPUI
-        // quantizes the alpha to 20/255, so a white a hair over 1 lands the ref's 42/43 edge.
-        // Light's is Skia's 8-bit blit.
-        .when(selected, |d| match t.appearance {
-            Appearance::Dark => {
-                d.child(div().absolute().inset_0().rounded(px(12.5)).bg(gpui::Rgba {
-                    r: 1.0072,
-                    g: 1.0072,
-                    b: 1.0072,
-                    a: 20. / 255.,
-                }))
-            }
-            Appearance::Light => d.child(shapes::decoration(shapes::Decoration {
+        // `primary-ghost-hover` at its exact CSS alpha, blitted in the dialog's layer: Skia
+        // blends its float color into the fill there before the layer meets the backdrop
+        // (the 8-bit tokens put dark's row 1 level low, and the backdrop's 42/43 edge off).
+        .when(selected, |d| {
+            let (rgb, a) = match t.appearance {
+                Appearance::Dark => ([1., 1., 1.], 0.08),
+                Appearance::Light => ([26. / 255., 28. / 255., 31. / 255.], 0.055),
+            };
+            d.child(shapes::decoration(shapes::Decoration {
                 radius: Corners::all(px(12.5)),
-                fill: Some(t.ghost_hover),
+                fill: Some(
+                    gpui::Rgba {
+                        r: rgb[0],
+                        g: rgb[1],
+                        b: rgb[2],
+                        a,
+                    }
+                    .into(),
+                ),
                 ..Default::default()
-            })),
+            }))
         })
         // The original draws no slot for icon-less commands.
         .when(
@@ -4959,9 +4963,10 @@ fn menu_row(
                         let chat = item.thread.is_some().then_some("archive-chat");
                         slot.children(item.icon.or(chat).map(|name| {
                             // `navigateForward` is the back arrow with `-scale-x-100`.
-                            // Chromium rasterizes it in the `overflow: auto` list's own layer.
+                            // Chromium rasterizes it in the `overflow: auto` list's own layer,
+                            // a transparent tile except under the selected row's highlight.
                             icon(name, 16., fg.opacity(row_opacity))
-                                .composited(Some(list))
+                                .composited((!selected).then_some(list))
                                 .when(item.label == "Forward", |i| i.flip_x())
                         }))
                     }
