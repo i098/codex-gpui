@@ -202,15 +202,8 @@ pub(in crate::host) fn remove_managed_worktree(root: &Path, roots: &[PathBuf]) -
             &[],
         )?;
     }
-    checked(run(
-        &root,
-        &[
-            "worktree",
-            "remove",
-            "--force",
-            root.to_str().context("Worktree path is not UTF-8")?,
-        ],
-    )?)?;
+    let removed = remove_worktree(&root, true)?;
+    ensure!(removed.success, "{}", removed.failure());
     let reservation = root.parent().context("Worktree has no parent")?;
     let marker = reservation.join(MARKER);
     if marker.is_file()

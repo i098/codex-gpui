@@ -213,6 +213,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)] // the fixture path holds a quote, which Windows forbids
     #[test]
     fn patches_preserve_paths_content_and_index_in_both_directions() {
         let directory = tempfile::tempdir().unwrap();
