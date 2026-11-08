@@ -182,7 +182,7 @@ fn with_saved_opacity<R>(
 static IMAGES: LazyLock<Mutex<HashMap<String, Option<Arc<RenderImage>>>>> =
     LazyLock::new(Default::default);
 
-fn load(path: String, cx: &App) -> Option<Arc<RenderImage>> {
+pub(crate) fn load(path: String, cx: &App) -> Option<Arc<RenderImage>> {
     let mut images = IMAGES.lock().unwrap_or_else(|e| e.into_inner());
     images
         .entry(path)

@@ -214,6 +214,26 @@ pub fn workspace_warning(actions: Div, narrow: bool, cx: &App) -> Div {
 /// answer began 15 s later (`Worked for 15s`).
 pub const FOLLOW_UP_AT: i64 = CAPTURE_CLOCK.pinned_now.unwrap() + 8 * 3600 + 16 * 60;
 
+/// refs/terminal px at the transcript scroller's tile seams (1280: the code chip `2`'s edge,
+/// dark `Undo` arrow under the top fade; 1440: the user bubble's left edge, `View changes`'
+/// bottom corners), as exact ref crops (`ThreadView::patches`).
+/// shortcut: no single scroller tile origin fits both window sizes; drop when the rule is found.
+const PATCHES: &[(&str, u32, u32)] = &[
+    ("dark@1280x832", 1006, 99),
+    ("dark@1280x832", 1021, 100),
+    ("dark@1280x832", 871, 766),
+    ("dark@1280x832", 905, 766),
+    ("dark@1440x900", 1184, 410),
+    ("dark@1440x900", 1485, 827),
+    ("dark@1440x900", 1282, 831),
+    ("dark@1440x900", 1481, 834),
+    ("light@1280x832", 871, 766),
+    ("light@1280x832", 905, 766),
+    ("light@1440x900", 1184, 409),
+    ("light@1440x900", 1481, 827),
+    ("light@1440x900", 1282, 830),
+];
+
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     let clock = Clock {
         pinned_now: Some(FOLLOW_UP_AT + 15),
@@ -234,6 +254,7 @@ pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
         }
         view.summary_open = true;
         view.footer_rise = footer_rise;
+        view.patches = ("terminal", PATCHES);
     });
     let view = thread.read(cx);
     let id = view.id().to_owned();

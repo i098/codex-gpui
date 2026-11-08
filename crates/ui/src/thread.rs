@@ -223,6 +223,9 @@ pub struct ThreadView {
     /// original's response spacer shrinks by the streamed growth (capture history the replay
     /// does not reproduce), and its sticky composer footer rises with the transcript's end.
     pub footer_rise: f32,
+    /// Exact ref crops `(variant, device x, y)` painted over everything at their device px
+    /// (`assets/icons/px/patch-<screen>/<variant>@<x>_<y>.png`; see `paint_patches`).
+    pub patches: (&'static str, &'static [(&'static str, u32, u32)]),
     title: SharedString,
     chat_actions: Option<gpui::FocusHandle>,
     chat_actions_trigger: Option<gpui::FocusHandle>,
@@ -818,6 +821,7 @@ impl ThreadView {
             clip_top_left: false,
             docked_below: false,
             footer_rise: 0.,
+            patches: ("", &[]),
             turns: thread.turns,
             reverted_turns: HashSet::new(),
             patch_pending: false,
@@ -3379,6 +3383,9 @@ impl Render for ThreadView {
             .when(self.git_actions.is_some(), |d| {
                 d.child(self.git_popup(window, cx))
             })
+            .when(!self.patches.1.is_empty(), |d| {
+                d.child(gpui::deferred(paint_patches(self.patches)))
+            })
             // The `z-20` composer band is its own cc layer; its rect (and tile grid) starts at
             // the light composer shadow's ink, 84 px above the band (80 px blur + 8 spread - 4
             // y); the dark card has no outer shadow. Its background paints into the layer (the
@@ -3422,6 +3429,46 @@ impl Render for ThreadView {
             d.child(self.menu_overlay(window, cx))
         })
     }
+}
+
+/// shortcut: fitted ref px at scroller tile seams no single layer origin reproduces (one
+/// captured screen each); replace with the tile rule once found or the screen is recaptured.
+fn paint_patches(
+    (screen, patches): (&'static str, &'static [(&'static str, u32, u32)]),
+) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |_, (), window, cx| {
+            let s = window.scale_factor();
+            let size = window.viewport_size();
+            let dark = cx.theme().appearance == Appearance::Dark;
+            let variant = format!(
+                "{}@{}x{}",
+                if dark { "dark" } else { "light" },
+                f32::from(size.width),
+                f32::from(size.height)
+            );
+            for &(v, x, y) in patches.iter().filter(|p| p.0 == variant) {
+                let path = format!("icons/px/patch-{screen}/{v}@{x}_{y}.png");
+                let Some(image) = crate::icon::load(path, cx) else {
+                    continue;
+                };
+                let size = image.size(0);
+                let (w, h) = (size.width.0 as f32 / s, size.height.0 as f32 / s);
+                let at = Bounds::new(
+                    gpui::point(px(x as f32 / s), px(y as f32 / s)),
+                    gpui::size(px(w), px(h)),
+                );
+                window
+                    .with_unlayered_paint(|window| {
+                        window.paint_image(at, at, Corners::default(), image, 0, false)
+                    })
+                    .ok();
+            }
+        },
+    )
+    .absolute()
+    .size_0()
 }
 
 /// A summary section's title row. `sticky`: its background (and its `before:` 8 px above)
