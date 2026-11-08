@@ -24,7 +24,6 @@ use std::{
     collections::{HashMap, HashSet},
     ops::Range,
     path::Path,
-    sync::Arc,
     time::{Duration, Instant},
 };
 use theme::{ActiveTheme as _, Appearance, Theme};
@@ -4579,7 +4578,7 @@ impl Render for CommandMenu {
                             .items_center()
                             .child(input),
                     )
-                    .child(div().mt(px(6.)).h(px(1.)).bg(t.border))
+                    .child(rule(t).mt(px(6.)))
             }))
             .child(
                 div()
@@ -4588,6 +4587,9 @@ impl Render for CommandMenu {
                     .min_h_0()
                     .when(has_input, |list| list.mt(px(-4.)))
                     .overflow_y_scroll()
+                    // Chromium composites the `overflow: auto` list in its own transparent
+                    // layer over the dialog's (cc layers are flat).
+                    .top_layer()
                     .flex()
                     .flex_col()
                     .children(groups)
@@ -4623,7 +4625,7 @@ impl Render for CommandMenu {
                 )
             })
             .child(
-                div().flex_none().child(div().h(px(1.)).bg(t.border)).child(
+                div().flex_none().child(rule(t)).child(
                     div()
                         .id("command-menu-tabs")
                         .role(gpui::Role::TabList)
@@ -4719,6 +4721,17 @@ impl Render for CommandMenu {
 
 /// `#0002` `--color-dialog-overlay` over the window behind the command menu.
 const OVERLAY: u32 = 0x0000_0022;
+
+/// A 1 px `t.border` divider, blitted by Skia in the dialog's layer like the other dialog ops.
+fn rule(t: &Theme) -> Div {
+    div()
+        .relative()
+        .h(px(1.))
+        .child(shapes::decoration(shapes::Decoration {
+            fill: Some(t.border),
+            ..Default::default()
+        }))
+}
 
 /// `color`'s alpha inside nested CSS `opacity` layers the way Skia scales an 8-bit
 /// premultiplied pixel per layer: `(v * (round(opacity * 255) + 1)) >> 8`.
@@ -4949,12 +4962,7 @@ fn menu_row(
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     let sidebar = home_sidebar(cx, None);
     let main = super::home::home_main(window, cx);
-    // The references show one unread Explore destination.
-    let shell = cx.new(|_| {
-        let mut shell = Shell::new(sidebar, main);
-        shell.unread_destinations = Some(Arc::from([SharedString::from("explore")]));
-        shell
-    });
+    let shell = cx.new(|_| Shell::new(sidebar, main));
     let menu = cx.new(|cx| CommandMenu::new("math", cx));
     let focus = menu.read(cx).focus.clone();
     focus.focus(window, cx);
