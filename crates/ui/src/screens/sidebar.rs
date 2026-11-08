@@ -4924,20 +4924,15 @@ fn menu_row(
         .flex()
         .items_center()
         .gap(px(8.))
-        // The selected row's highlight and content share the list's tile (a saved layer here).
-        .when(selected, |d| d.saved_layer())
-        // `primary-ghost-hover`, blitted in the dialog's layer over its fill before the layer
-        // meets the blurred backdrop. Chromium lands dark's white .08 at 35 over the fill's 16
-        // (premultiplied); Skia's 8-bit blit needs alpha 21 for that, 20 gives 34 (1 level low).
+        // The selected row's highlight and content share the list's transparent tile (a saved
+        // layer here), which Chromium blends into the dialog's layer: `primary-ghost-hover`.
         .when(selected, |d| {
-            d.child(shapes::decoration(shapes::Decoration {
-                radius: Corners::all(px(12.5)),
-                fill: Some(match t.appearance {
-                    Appearance::Dark => rgba(0xffffff15).into(),
-                    Appearance::Light => t.ghost_hover,
-                }),
-                ..Default::default()
-            }))
+            d.saved_layer()
+                .child(shapes::decoration(shapes::Decoration {
+                    radius: Corners::all(px(12.5)),
+                    fill: Some(t.ghost_hover),
+                    ..Default::default()
+                }))
         })
         // The original draws no slot for icon-less commands.
         .when(
