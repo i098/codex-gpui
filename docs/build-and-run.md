@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- macOS on Apple silicon (arm64) and Intel (x86_64); the release zip is universal.
+- macOS on Apple silicon (arm64) and Intel (x86_64); the release zip and .dmg are arm64 only.
 - Rust 1.98.1. `rust-toolchain.toml` pins it, so `rustup` installs it on the first build.
 - A `codex` binary. The app uses the first one that it finds:
   1. `$CODEX_BIN`.
