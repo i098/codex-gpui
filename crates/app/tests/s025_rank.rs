@@ -48,7 +48,14 @@ fn ambiguous_queries_match_the_original_order() -> Result<()> {
                 })
                 .collect()
         });
-        let expected = state["groups"].as_array().context("groups")?;
+        // 26.1029 (`ob`) lists a query's commands before `Chats`; the 26.1007 recording put
+        // `Chats` first.
+        let mut expected: Vec<_> = state["groups"]
+            .as_array()
+            .context("groups")?
+            .iter()
+            .collect();
+        expected.sort_by_key(|group| group["heading"] == "Chats");
         ensure!(
             actual
                 .iter()
