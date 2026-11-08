@@ -127,7 +127,14 @@ const FLOWS: &[(&str, Flow)] = &[
     ("view_changes_opens_panel", view_changes_opens_panel),
     ("thread_card_focus_ring", thread_card_focus_ring),
     ("diff_file_header_toggle", diff_file_header_toggle),
-    ("parity_diff", || parity_flow("diff", open_changes)),
+    // As the capture does: `View changes` opens the file without "all expanded".
+    ("parity_diff", || {
+        parity_flow("diff", |fx| {
+            fx.click(fx.at("home", "Add a subtract")?)?;
+            fx.wait_thread(SUBTRACT)?;
+            fx.click(fx.at("thread", "View changes")?)
+        })
+    }),
     ("background_terminal_tab", background_terminal_tab),
     ("parity_terminal", || parity_flow("terminal", open_terminal)),
     ("appearance_theme_control", appearance_theme_control),

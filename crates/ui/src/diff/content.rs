@@ -700,7 +700,8 @@ impl DiffPanel {
                 }
             }))
             .h(px(32.))
-            .px(px(8.))
+            // 26.1029's headerless separator is a flat band across the whole row.
+            .when(entry.line_info_separators, |d| d.px(px(8.)))
             .flex()
             .font_family(SANS)
             .text_size(px(12.))
@@ -817,12 +818,6 @@ impl DiffPanel {
                     .px(px(7.6242))
                     .child(shapes::decoration(Decoration {
                         fill: Some(background.into()),
-                        radius: gpui::Corners {
-                            top_left: px(6.),
-                            bottom_left: px(6.),
-                            top_right: px(8.),
-                            bottom_right: px(8.),
-                        },
                         ..Default::default()
                     }))
                     .child(label)

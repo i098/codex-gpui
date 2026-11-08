@@ -424,11 +424,14 @@ impl DiffPanel {
 
     /// The subtract session as the reference shows it: the 26.1029 capture reports every
     /// path under the canonical `/private/tmp`, so the workspace root is the thread cwd.
+    /// Opened by `View changes`: the file is open but the panel is not "all expanded".
     pub fn subtract() -> Self {
         let start: ThreadStartResponse =
             fixture::response("sessions/subtract.jsonl", "thread/start", 0);
         let read: ThreadReadResponse = fixture::response("readback.jsonl", "thread/read", 1);
-        Self::last_turn(&start.cwd, &start.cwd, &read.thread.turns)
+        let mut panel = Self::last_turn(&start.cwd, &start.cwd, &read.thread.turns);
+        panel.files_expanded = false;
+        panel
     }
 
     /// "Last Turn" source: every file change of the last of `turns`, a thread in `cwd`. Paths
@@ -2236,9 +2239,9 @@ impl SplitScreen {
                 div()
                     .absolute()
                     .left_0()
-                    .top(px(12.))
+                    .top(px(14.))
                     .w(px(1.))
-                    .h(px(20.))
+                    .h(px(16.))
                     .bg(over(t.border, layout)),
             )
             .children(self.tabs.iter().enumerate().map(|(ix, t)| {
@@ -4160,10 +4163,11 @@ fn hunk(
                         .h_full()
                         .when(panel.wrap, |d| d.h_auto())
                         .flex()
-                        .justify_end()
+                        // 26.1029: `padding-inline: 1.5ch; text-align: center` over a 4ch column.
+                        .justify_center()
                         .items_center()
                         .when(panel.wrap, |d| d.items_start())
-                        .pr(px(CH))
+                        .px(px(CH * 1.5))
                         .child(shapes::decoration(Decoration {
                             fill: Some(number_bg),
                             ..Default::default()
