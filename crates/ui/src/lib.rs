@@ -1139,7 +1139,7 @@ pub fn home_sidebar_header(
                         Some("⌥⌘U"),
                         Side::Bottom,
                     ))
-                    .child(div().w(px(4.)))
+                    .child(div().w(px(6.)))
                 })
                 .child(tooltip(
                     icon_button(
@@ -1162,8 +1162,8 @@ pub fn home_sidebar_header(
                 .gap(px(1.))
                 .px(px(8.))
                 .mb(px(8.))
-                // The rows are `overflow: hidden`: Skia draws the Your dot `<img>` under the
-                // row's AA clip, whose run blitter snaps its edge coverage.
+                // The rows are `overflow: hidden`: Skia draws their icons under the row's AA
+                // clip, whose run blitter snaps its edge coverage.
                 .child(rounded_clip(
                     RADIUS_BUTTON_XL,
                     shapes::Corner::Squircle,
@@ -1186,9 +1186,7 @@ pub fn home_sidebar_header(
                             shapes::Corner::Squircle,
                             row(
                                 "your-dot",
-                                // An `<img>`: its svg (with its own fill) draws into the overlap layer.
-                                icon::icon("your-dot", 16., gpui::rgb(0xbac1d3).into())
-                                    .image()
+                                icon::icon("your-dot", 16., t.text_default_nav)
                                     .own_layer(Some(overlap))
                                     .into_any_element(),
                                 "Your dot",
@@ -2135,7 +2133,8 @@ impl Shell {
             .absolute()
             .top_0()
             .left_0()
-            .right_0()
+            // The header stops at the page's end inset (`inset-x-0` of the 1276 px layout).
+            .right(PAGE_INSET)
             .h(Theme::TITLEBAR_HEIGHT)
             .on_mouse_down(MouseButton::Left, |e, window, _| {
                 if e.click_count == 2 {
@@ -2244,8 +2243,11 @@ impl Shell {
                         })
                         // Chromium squashes it into the titlebar's overlap layer, at whole
                         // device px (layer 44 at (380, 0) at 2x, layer 97 at (0, 0) at 110%).
+                        // The side-panel toggle is the sidebar glyph `rotate-180`; the glyph is
+                        // symmetric about its horizontal axis, so a mirror draws the same.
                         .child(
-                            icon::icon("new-tab", 16., t.text_tertiary)
+                            icon::icon("sidebar", 16., t.text_tertiary)
+                                .flip_x()
                                 .own_layer(Some(Point::default())),
                         ),
                 )

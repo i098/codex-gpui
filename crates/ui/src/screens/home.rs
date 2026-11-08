@@ -566,7 +566,8 @@ pub fn home_main(window: &mut Window, cx: &mut App) -> AnyView {
     cx.new(|cx| HomeMain::new(window, cx)).into()
 }
 
-/// The Home sidebar and `main` in the shell, with the references' unread Explore destination.
+/// The Home sidebar and `main` in the shell, with an unread Explore destination (the
+/// composer reference shows one; the Home reference does not).
 pub fn shell(main: AnyView, cx: &mut App) -> AnyView {
     let sidebar = super::sidebar::home_sidebar(cx, None);
     cx.new(|_| {
@@ -580,13 +581,7 @@ pub fn shell(main: AnyView, cx: &mut App) -> AnyView {
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     let main = home_main(window, cx);
     let sidebar = super::sidebar::home_sidebar(cx, None);
-    // The references show one unread Explore destination.
-    cx.new(|_| {
-        let mut shell = Shell::new(sidebar, main);
-        shell.unread_destinations = Some(std::sync::Arc::from([SharedString::from("explore")]));
-        shell
-    })
-    .into()
+    cx.new(|_| Shell::new(sidebar, main)).into()
 }
 
 fn open_folder_key(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {
@@ -1319,7 +1314,7 @@ fn utility_bar(
     let finished = animation_finished(window, cx);
     div().mx(px(13.)).pb(px(20.)).mb(px(-24.)).child(
         div()
-            .px(px(4.))
+            .px(px(6.))
             .pb(px(4.))
             .relative()
             // `_attached_1hrlq`: `--radius-2xl` top corners, `--codex-corner-shape`.
@@ -1335,7 +1330,7 @@ fn utility_bar(
             }))
             // The mask covers the viewport, not the translated scroll contents.
             .child(
-                div().py(px(3.)).child(
+                div().py(px(4.)).child(
                     div()
                         .mx(px(-2.))
                         .relative()
@@ -1711,7 +1706,6 @@ impl Render for HomeMain {
                 self.suggestions_loading || !self.suggestions.is_empty(),
                 |column| column.child(self.suggestions(&t, window, cx)),
             );
-        let toolbar = div().flex_none().h(px(46.));
         if chat {
             // `_Hero`: `min-block-size: var(--home-composer-top)`, `max(0px, 42svh - 44px)`
             // (the toolbar inset), `items-end`, 24 px above and 22 px below the headline; the
@@ -1741,12 +1735,17 @@ impl Render for HomeMain {
                 .relative()
                 .flex()
                 .flex_col()
-                .child(toolbar.child(self.chat_work_toggle(&t, window, cx)))
+                .child(
+                    div()
+                        .flex_none()
+                        .h(px(46.))
+                        .child(self.chat_work_toggle(&t, window, cx)),
+                )
                 .child(crate::composer::drop_target(page, &self.composer, cx))
                 .children(self.browse_dialog(&t, cx))
                 .into_any_element();
         }
-        // The page column under the `home-mode-toggle` row is the file drop target.
+        // The page column is the file drop target.
         let page = div()
             .flex_1()
             .min_h_0()
@@ -1810,8 +1809,6 @@ impl Render for HomeMain {
             .size_full()
             .flex()
             .flex_col()
-            // `home-mode-toggle` toolbar row.
-            .child(toolbar)
             .child(crate::composer::drop_target(page, &self.composer, cx))
             .into_any_element()
     }
