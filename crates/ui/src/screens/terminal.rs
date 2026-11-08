@@ -233,10 +233,20 @@ pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
         .map(|(command, _)| command.clone())
         .unwrap_or_default();
     let xterm = cx.new(|cx| Xterm::new(thread.clone(), cx));
-    // The turn completed while the user was away: the thread is unread ("needs attention").
+    // The turn completed while the user was away: the thread is unread ("needs attention"),
+    // and its follow-up moves it to the top of Recents.
     let sidebar = home_sidebar(cx, Some(&id));
     if let Ok(sidebar) = sidebar.clone().downcast::<HomeSidebar>() {
-        sidebar.update(cx, |sidebar, _| sidebar.unread = vec![id]);
+        let read: bridge::types::ThreadReadResponse =
+            crate::fixture::response("readback.jsonl", "thread/read", 1);
+        let thread = bridge::types::Thread {
+            updated_at: FOLLOW_UP_AT + 17,
+            ..read.thread
+        };
+        sidebar.update(cx, |sidebar, cx| {
+            sidebar.add_thread(&thread, cx);
+            sidebar.unread = vec![id];
+        });
     }
     let shell = cx.new(|_| {
         let mut shell = Shell::new(sidebar, thread.clone().into());
