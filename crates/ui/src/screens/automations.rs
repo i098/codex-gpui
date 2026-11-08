@@ -18,7 +18,7 @@ use gpui::{
     Action, Anchor, AnyElement, AnyView, App, AppContext as _, ClickEvent, Context, Corners, Div,
     Entity, FocusHandle, Focusable as _, InteractiveElement, IntoElement, KeyDownEvent,
     MouseButton, ParentElement, Render, Role, SharedString, Stateful, StatefulInteractiveElement,
-    Styled, Window, actions, anchored, canvas, deferred, div, img, prelude::FluentBuilder as _, px,
+    Styled, Window, actions, anchored, canvas, deferred, div, prelude::FluentBuilder as _, px,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -106,7 +106,7 @@ pub struct ShareAutomation {
     pub id: String,
 }
 
-/// One `list-automations` item, as the sidebar `Upcoming` list and the task thread show it.
+/// One `list-automations` item, as the sidebar task list and the task thread show it.
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
@@ -169,15 +169,6 @@ fn visible<'a>(
             kept && task.name.to_lowercase().contains(&query)
         })
         .collect()
-}
-
-/// The list heading: `Upcoming`, or the one chosen inactive status.
-fn heading(statuses: [bool; 3]) -> &'static str {
-    match statuses {
-        [false, true, false] => "Paused",
-        [false, false, true] => "Completed",
-        _ => "Upcoming",
-    }
 }
 
 /// The items of a `list-automations` body that parse; others are skipped like the original's
@@ -404,7 +395,7 @@ pub struct Suggestion {
     title: SharedString,
     description: SharedString,
     emoji: SharedString,
-    icon_url: Option<String>,
+    // `icon_url` is not read: offline, the original shows the emoji fallback (`load_error`).
     #[serde(default)]
     user_message: String,
     #[serde(default)]
@@ -431,9 +422,9 @@ fn oracle(key: &str) -> Value {
     serde_json::from_str(body).expect("oracle body JSON")
 }
 
-/// `scheduled.landing.example.*` in bundle order: the page fills up to 6 cards with these
-/// after the server's suggestions. ponytail: the original shuffles them per mount
-/// (`Math.random`); the port keeps bundle order.
+/// `scheduled.landing.example.*`: the page fills up to 6 cards with these after the
+/// server's suggestions. ponytail: the original shuffles them per mount (`Math.random`); the
+/// port keeps the order of the 26.1029 reference capture.
 fn landing_examples() -> Vec<Suggestion> {
     [
         (
@@ -443,10 +434,10 @@ fn landing_examples() -> Vec<Suggestion> {
             "Help me set up a weekly meal plan with a grocery list. Ask about my dietary preferences, household size, and when I’d like to receive it before scheduling.",
         ),
         (
-            "💰",
-            "Weekly finances update",
-            "Review my recent spending, and anything that needs attention.",
-            "Help me set up a weekly review of my recent spending, recurring charges, and anything that needs attention. Ask which financial information I want to use and what day and time works for me before scheduling.",
+            "✉️",
+            "Email monitor",
+            "Scan my emails and let me know anything that needs my attention.",
+            "Help me set up an email monitor that flags messages needing my attention. Ask which inbox or senders to watch, what counts as important, and how often to check before scheduling. Help me connect email if needed.",
         ),
         (
             "😴",
@@ -455,16 +446,16 @@ fn landing_examples() -> Vec<Suggestion> {
             "Help me set up a regular sleep check-in. Ask about my sleep goals, the information I’m comfortable sharing, and when I’d like to check in before scheduling.",
         ),
         (
+            "💰",
+            "Weekly finances update",
+            "Review my recent spending, and anything that needs attention.",
+            "Help me set up a weekly review of my recent spending, recurring charges, and anything that needs attention. Ask which financial information I want to use and what day and time works for me before scheduling.",
+        ),
+        (
             "🛩",
             "Find flights for a trip",
             "Find the best deal on flights for an upcoming trip.",
             "Help me set up a flight price watch for an upcoming trip. Ask where I’m flying from and to, my dates, budget, and how often to check. Notify me when there’s a good match.",
-        ),
-        (
-            "✉️",
-            "Email monitor",
-            "Scan my emails and let me know anything that needs my attention.",
-            "Help me set up an email monitor that flags messages needing my attention. Ask which inbox or senders to watch, what counts as important, and how often to check before scheduling. Help me connect email if needed.",
         ),
     ]
     .into_iter()
@@ -472,7 +463,6 @@ fn landing_examples() -> Vec<Suggestion> {
         title: title.into(),
         description: description.into(),
         emoji: emoji.into(),
-        icon_url: None,
         user_message: prompt.into(),
         system_hint: None,
         locked: None,
@@ -496,13 +486,7 @@ fn cards(mut all: Vec<Suggestion>) -> Vec<Suggestion> {
 pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     let server = serde_json::from_value(oracle("\"url\":\"/suggested_automations\""))
         .expect("suggested_automations shape");
-    let (shell, _, _) = shell_with(server, Vec::new(), None, 0, cx);
-    shell.update(cx, |shell, _| {
-        shell.can_go_back = true;
-        // The reference has an unseen Explore destination: the rail's `…` carries the dot.
-        shell.unread_destinations = Some(["unseen".into()].into());
-    });
-    shell.into()
+    shell_with(server, Vec::new(), None, 0, cx).0.into()
 }
 
 /// The app's `/scheduled` route with the host's `tasks`: the task thread of `selected`
@@ -589,8 +573,8 @@ fn shell_with(
     (shell, sidebar, page)
 }
 
-/// `ScheduledSidebar`: header `Scheduled` + search, `New task`, section `Upcoming` with one
-/// 48 px row per task (`automation-row`): name, `Oct 17 · Weekly`, and on hover the list
+/// `ScheduledSidebar`: header `Scheduled` + filter + search, `New task`, then one 48 px row
+/// per task (`automation-row`): name, `Oct 17 · Weekly`, and on hover the list
 /// fill with the `Scheduled task actions` button fading in. The selected row keeps the fill.
 pub struct ScheduledSidebar {
     pub history: Option<Entity<history::History>>,
@@ -826,7 +810,7 @@ impl ScheduledSidebar {
             .on_mouse_down_out(cx.listener(|this, _, window, cx| this.close_filter(window, cx)))
             .child(crate::composer::popover(t, 220., |menu| {
                 menu.child(div().px(px(8.)).py(px(6.)).child(text(
-                    "Filter by",
+                    "Status",
                     12.,
                     16.,
                     400.,
@@ -1506,7 +1490,19 @@ impl Render for ScheduledSidebar {
                                 600.,
                                 t.text_default_nav,
                             )))
-                            .child(tooltip(search, "Search", None, Side::Top)),
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.))
+                                    .child(
+                                        div()
+                                            .relative()
+                                            .child(tooltip(filter, "Filter", None, Side::Top))
+                                            .children(filter_menu),
+                                    )
+                                    .child(tooltip(search, "Search", None, Side::Top)),
+                            ),
                     )
                     .when_some(self.search.clone(), |d, field| {
                         d.child(
@@ -1560,32 +1556,9 @@ impl Render for ScheduledSidebar {
                     .gap(px(4.))
                     .px(px(8.))
                     .pb(px(8.))
-                    .child(
-                        div()
-                            .h(px(30.))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .pl(px(8.))
-                            .pr(px(6.))
-                            .child(text(
-                                heading(self.statuses),
-                                14.,
-                                21.,
-                                500.,
-                                t.text_tertiary,
-                            ))
-                            .child(
-                                div()
-                                    .relative()
-                                    .child(tooltip(filter, "Filter", None, Side::Top))
-                                    .children(filter_menu),
-                            ),
-                    )
                     .when_some(notice, |d, notice| {
                         d.child(
                             div()
-                                .mt(px(1.))
                                 .px(px(8.))
                                 .py(px(4.))
                                 .flex()
@@ -1655,36 +1628,6 @@ impl AutomationsPage {
     fn card(&self, i: usize, s: &Suggestion, cx: &mut Context<Self>) -> Stateful<Div> {
         let t: &Theme = cx.theme();
         let hover_bg = t.ghost_hover;
-        // `icon_url` is shown from its bundled copy under assets/ui/automations, its paths
-        // rasterized by Chromium's Skia like Blink draws an svg `<img>`. Elsewhere GPUI's own
-        // image raster (the copies declare 40x40, the 20 px slot at 2x: GPUI rasterizes svg
-        // images at their intrinsic size).
-        let bundled = s.icon_url.as_ref().and_then(|url| {
-            let path = format!("ui/automations/{}", url.rsplit('/').next().unwrap_or(url));
-            cx.asset_source()
-                .load(&path)
-                .ok()
-                .flatten()
-                .map(|source| (path, source))
-        });
-        let glyph = match bundled {
-            Some((path, source)) => {
-                if cfg!(target_os = "macos") {
-                    canvas(
-                        |_, _, _| {},
-                        move |b, (), window, cx| {
-                            let white = gpui::white();
-                            shapes::paint_icon(&source, &path, b, false, white, None, window, cx);
-                        },
-                    )
-                    .size(px(20.))
-                    .into_any_element()
-                } else {
-                    img(path).size(px(20.)).into_any_element()
-                }
-            }
-            None => text(s.emoji.clone(), 28., 28., 430., t.text).into_any_element(),
-        };
         div()
             .id(("suggestion", i))
             .flex_1()
@@ -1720,7 +1663,7 @@ impl AutomationsPage {
                     .child(if self.starting == Some(i) {
                         icon("sidebar-cmd-spinner", 20., t.text).into_any_element()
                     } else {
-                        glyph
+                        text(s.emoji.clone(), 28., 28., 430., t.text).into_any_element()
                     }),
             )
             .child(
