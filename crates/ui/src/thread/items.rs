@@ -533,7 +533,15 @@ pub(super) fn diff_card(
                                 }),
                                 ..Default::default()
                             }))
-                            .child(icon("thread-file-diff", 24., t.text_secondary).runtime()),
+                            // Fitted images hold the page blend; under the nested top fade
+                            // (refs/terminal@1280x832, card at dev y 77) only the raster in
+                            // the scroller's layer blends in Chromium's order, so the images
+                            // are fitted per position everywhere else.
+                            // shortcut: positions copied per ref use; add new uses' positions.
+                            .child(
+                                icon("thread-file-diff", 24., t.text_secondary)
+                                    .runtime_unless_positioned(),
+                            ),
                     )
                     .child(
                         div()
@@ -600,9 +608,10 @@ pub(super) fn diff_card(
                                     None,
                                 )
                                 .child(if focus.reverted {
-                                    icon("thread-undo", 14., t.text).flip_x().runtime()
+                                    icon("thread-undo", 14., t.text).flip_x()
                                 } else {
-                                    icon("thread-undo", 14., t.text).runtime()
+                                    // As the card's icon above.
+                                    icon("thread-undo", 14., t.text).runtime_unless_positioned()
                                 })
                                 .when(pending, |button| button.opacity(0.5))
                                 .on_click({
