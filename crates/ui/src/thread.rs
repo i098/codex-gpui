@@ -253,6 +253,9 @@ pub struct ThreadView {
     forked_from: Option<String>,
     _tick: Option<Task<()>>,
     running_since: HashMap<String, Instant>,
+    /// The newest turn started while the thread was open: the original keeps room under it so
+    /// that, scrolled to the bottom, it starts near the top (refs/terminal).
+    live_turn: Option<String>,
     /// A running turn's worked seconds, frozen when its final answer started streaming.
     answer_secs: HashMap<String, i64>,
     /// Reasoning items seen starting, and the seconds each took once completed. The protocol
@@ -825,6 +828,7 @@ impl ThreadView {
             forked_from: thread.forked_from_id,
             _tick: None,
             running_since: HashMap::new(),
+            live_turn: None,
             answer_secs: HashMap::new(),
             reasoning_since: HashMap::new(),
             reasoning_secs: HashMap::new(),
@@ -2059,8 +2063,9 @@ impl ThreadView {
                         .entry(n.turn.id.clone())
                         .or_insert_with(|| cx.background_executor().now());
                 } else {
+                    // A turn watched live keeps `Worked for` at its answer's first text (refs/terminal:
+                    // 15s, its recorded `durationMs` 17420).
                     self.running_since.remove(&n.turn.id);
-                    self.answer_secs.remove(&n.turn.id);
                 }
                 match self.turns.iter_mut().find(|t| t.id == n.turn.id) {
                     Some(turn) => {
@@ -2077,6 +2082,7 @@ impl ThreadView {
                     }
                     None => {
                         n.turn.items.iter_mut().for_each(cache_automation_result);
+                        self.live_turn = Some(n.turn.id.clone());
                         self.turns.push(n.turn);
                     }
                 }
@@ -2443,14 +2449,13 @@ impl ThreadView {
             // The final answer folds the work while it still streams, as `Worked for` the time
             // until the answer started.
             let running = turn.status == TurnStatus::InProgress;
-            let secs = if running {
-                self.answer_secs
-                    .get(&turn.id)
-                    .copied()
-                    .unwrap_or_else(|| self.running_seconds(turn, cx.background_executor().now()))
-            } else {
-                turn.duration_ms.unwrap_or(0) / 1000
-            };
+            let secs = self.answer_secs.get(&turn.id).copied().unwrap_or_else(|| {
+                if running {
+                    self.running_seconds(turn, cx.background_executor().now())
+                } else {
+                    turn.duration_ms.unwrap_or(0) / 1000
+                }
+            });
             let label = format!("Worked for {}", duration(secs));
             let open = self.expanded.contains(&turn.id)
                 || self.find.as_ref().is_some_and(|find| {
@@ -2904,6 +2909,13 @@ impl Render for ThreadView {
         let laid_out = self.laid_out.borrow();
         markdown::set_line_width(laid_out.width);
         let separators = separators(&self.turns, self.clock.now());
+        // refs/terminal: scrolled to the bottom, a live turn starts 91 px below the scroller's
+        // top, past 44 px of bottom padding and the 114 px composer room; the scroller is the
+        // window minus 48.
+        // shortcut: window-derived height, wrong beside a docked bottom panel (skipped there);
+        // measure the scroller if a live turn under a bottom panel matters.
+        let live_min_h = window.viewport_size().height - px(48. + 91. + 44. + 114.);
+        let live_turn = self.live_turn.as_ref().filter(|_| !self.docked_below);
         let turns: Vec<Div> = self
             .turns
             .iter()
@@ -2955,6 +2967,9 @@ impl Render for ThreadView {
                         }
                     }
                 };
+                let body = body.when(i + 1 == n && live_turn == Some(&turn.id), |b| {
+                    b.min_h(live_min_h)
+                });
                 match &self.forked_from {
                     Some(parent) if i == 0 && stand_in.is_none() => div()
                         .flex()
@@ -4259,7 +4274,7 @@ mod tests {
         view.update(cx, |view, cx| view.apply(&event("completed"), cx));
         view.read_with(cx, |view, _| {
             assert!(!view.running_since.contains_key("turn"));
-            assert!(!view.answer_secs.contains_key("turn"));
+            assert_eq!(view.answer_secs["turn"], 1);
         });
     }
 
