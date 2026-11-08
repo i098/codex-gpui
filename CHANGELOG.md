@@ -6,6 +6,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-08
+
 ### Added
 - Publish the macOS arm64 zip and a `.dmg` with each release, built on the self-hosted Apple-silicon runner (replaces the universal zip).
 - Add a Performance section to the README with measured start time, memory, CPU, size and scroll figures against the original Codex app.
