@@ -4913,29 +4913,22 @@ fn menu_row(
         .flex()
         .items_center()
         .gap(px(8.))
-        // The original's highlight composites in float with the spec's exact alpha
-        // (rgba(255,255,255,.08) dark, rgba(26,28,31,.055) light), not Skia's 8-bit blit.
-        .when(selected, |d| {
-            d.child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .rounded(px(12.5))
-                    .bg(match t.appearance {
-                        Appearance::Dark => gpui::Rgba {
-                            r: 1.,
-                            g: 1.,
-                            b: 1.,
-                            a: 0.08,
-                        },
-                        Appearance::Light => gpui::Rgba {
-                            r: 26. / 255.,
-                            g: 28. / 255.,
-                            b: 31. / 255.,
-                            a: 0.055,
-                        },
-                    }),
-            )
+        // Dark's highlight (rgba(255,255,255,.08)) lands as 21/255 white composited in float
+        // (refs: 42 over 23, the blurred backdrop's 42/43 edge), light's in Skia's 8-bit blit.
+        .when(selected, |d| match t.appearance {
+            Appearance::Dark => {
+                d.child(div().absolute().inset_0().rounded(px(12.5)).bg(gpui::Rgba {
+                    r: 1.,
+                    g: 1.,
+                    b: 1.,
+                    a: 21. / 255.,
+                }))
+            }
+            Appearance::Light => d.child(shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(12.5)),
+                fill: Some(t.ghost_hover),
+                ..Default::default()
+            })),
         })
         // The original draws no slot for icon-less commands.
         .when(
