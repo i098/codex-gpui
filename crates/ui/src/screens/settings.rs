@@ -321,6 +321,9 @@ pub const THEME: &str = "host.appearance-theme";
 /// `Show Full access in the composer`; turning it on first asks `Make Full Access available?`.
 pub const FULL_ACCESS_SHOWN: &str = "host.show-full-access-in-composer";
 
+/// The configured projectless chat folder (`config.toml`); unset = `~/Documents/Codex`.
+const PROJECTLESS_ROOT: &str = "desktop.projectlessWorkspaceRoot";
+
 /// The live app-server connection. Settings and sign-in send their writes through it when
 /// the app sets this global; the parity fixture runs without one.
 pub struct AppServer(pub Arc<Bridge>);
@@ -351,7 +354,10 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
             ..Default::default()
         });
     }
-    let config: ConfigReadResponse = fixture::response("readback.jsonl", "config/read", 0);
+    let mut config: ConfigReadResponse = fixture::response("readback.jsonl", "config/read", 0);
+    // The reference's mock app-server sets the scrubbed projectless chat folder, as Settings
+    // shows it (with `Reset`).
+    config.config["desktop"]["projectlessWorkspaceRoot"] = json!("/Users/user/Documents/Codex");
     let skills: Value = fixture::response("readback.jsonl", "skills/list", 0);
     // The reference's Statsig values: Computer history on; Ads controls and Debug off.
     let integrations = cx.new(|_| integrations::State {
@@ -362,8 +368,6 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     let (shell, _) = shell(&config.config, &skills, None, integrations, cx);
     shell.update(cx, |shell, _| {
         shell.can_go_back = true;
-        // The reference has an unseen Explore destination: the rail's `…` carries the dot.
-        shell.unread_destinations = Some(["unseen".into()].into());
     });
     shell.into()
 }
@@ -516,8 +520,8 @@ pub struct SettingsPage {
     query: String,
     /// `config/read` config, plus a `host` object for host settings.
     values: Value,
-    /// `projectlessWorkspaceRoot` default: `~/Documents/Codex`.
-    projectless_root: String,
+    /// `projectlessWorkspaceRoot` while unset: `~/Documents/Codex`.
+    projectless_default: String,
     pending_instructions: Vec<SettingChanged>,
     integrations: Entity<integrations::State>,
     pub personalization: Entity<personalization::Personalization>,
@@ -550,16 +554,14 @@ impl SettingsPage {
             .map(|(home, _)| home.to_string())
             .next()
             .unwrap_or_default();
-        let projectless_root = config["desktop"]["projectlessWorkspaceRoot"]
-            .as_str()
-            .map_or_else(|| format!("{home}/Documents/Codex"), str::to_string);
+        let projectless_default = format!("{home}/Documents/Codex");
         let values = config.clone();
         Self {
             section: "General",
             subtree: None,
             query: String::new(),
             values,
-            projectless_root,
+            projectless_default,
             pending_instructions: Vec::new(),
             integrations,
             personalization: cx.new(personalization::Personalization::new),
@@ -1422,20 +1424,25 @@ impl SettingsPane {
             weight: FontWeight(430.),
             ..font(MONO)
         };
-        let root = middle_truncate(&page.projectless_root, |s| {
-            let run = TextRun {
-                len: s.len(),
-                font: mono.clone(),
-                color: t.text_secondary,
-                background_color: None,
-                underline: None,
-                strikethrough: None,
-            };
-            let line = window
-                .text_system()
-                .shape_line(s.to_string().into(), px(12.), &[run], None);
-            line.width <= px(192.)
-        });
+        let configured = page.get(PROJECTLESS_ROOT).as_str().map(str::to_owned);
+        let root = middle_truncate(
+            configured.as_deref().unwrap_or(&page.projectless_default),
+            |s| {
+                let run = TextRun {
+                    len: s.len(),
+                    font: mono.clone(),
+                    color: t.text_secondary,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                let line =
+                    window
+                        .text_system()
+                        .shape_line(s.to_string().into(), px(12.), &[run], None);
+                line.width <= px(192.)
+            },
+        );
         let path = div()
             .flex()
             .items_center()
@@ -1446,7 +1453,30 @@ impl SettingsPane {
                     .overflow_hidden()
                     .child(text(root, 12., 16., 430., t.text_secondary).font_family(MONO)),
             )
-            .child(button("Change", t.text_alpha_5, None, t))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(button("Change", t.text_alpha_5, None, t))
+                    // `Reset` (ghost) only while a folder is configured.
+                    .when(configured.is_some(), |d| {
+                        d.child(
+                            div()
+                                .id("projectless-reset")
+                                .h(px(28.))
+                                .px(px(9.))
+                                .flex()
+                                .items_center()
+                                .child(text("Reset", 13., 18., 430., t.text_tertiary))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.page.update(cx, |page, cx| {
+                                        page.set(PROJECTLESS_ROOT, Value::Null, cx)
+                                    });
+                                })),
+                        )
+                    }),
+            )
             .into_any_element();
         let hotkey = div()
             .flex()
@@ -1489,9 +1519,9 @@ impl SettingsPane {
                 "General",
                 vec![
                     row(
-                        "Projectless task folder",
+                        "Projectless chat folder",
                         Some(
-                            "The location where tasks started outside of projects store their data by default.",
+                            "The location where chats started outside of projects store their data by default.",
                         ),
                         path,
                     ),
@@ -1499,9 +1529,9 @@ impl SettingsPane {
                         "Default file open destination",
                         Some("Where files and folders open by default"),
                         select(
-                            "Zed",
+                            "Default app",
                             430.,
-                            Some(app_icon("icons/settings-zed.png".into(), 255, over(t.primary_soft_alpha, t.background_panel))),
+                            Some(default_app_icon(t)),
                             false,
                             false,
                             t,
@@ -1546,7 +1576,7 @@ impl SettingsPane {
                     ),
                     row(
                         "Full view by default",
-                        Some("Start new tasks with Chat and content in a single tab strip"),
+                        Some("Open content tabs in full view in new chats"),
                         self.toggle("host.default-workspace-full-view", false, t, window, cx),
                     ),
                     row(
@@ -1611,7 +1641,7 @@ impl SettingsPane {
                         select("Standard", 430., None, false, false, t).into_any_element(),
                     ),
                     row(
-                        "Suggested prompts",
+                        "Homepage suggestions",
                         Some(
                             "Suggest what to do next by searching project files and connected apps",
                         ),
@@ -1757,7 +1787,7 @@ impl SettingsPane {
                 vec![
                     row(
                         "Confetti cannon",
-                        Some("Let Codex fire confetti in the app when you ask!"),
+                        Some("Show confetti in the app when you ask!"),
                         self.toggle("host.toys-confetti-enabled", false, t, window, cx),
                     ),
                     row(
@@ -1930,8 +1960,6 @@ impl Render for SettingsPane {
             .size_full()
             .flex()
             .flex_col()
-            // Draggable toolbar row of the page (`h-toolbar`).
-            .child(div().flex_none().h(px(46.)))
             .child(
                 div()
                     .id("settings-page")
@@ -2293,6 +2321,32 @@ pub(crate) fn select_with(
                 .child(text(label, style.size, style.line_height, weight, t.text)),
         )
         .child(icon("chevron-down", 14., t.text_tertiary))
+}
+
+/// The `Default app` target's `<img>`: macOS's generic application icon, which the host
+/// resolves to a 1024 px image the app does not ship. Drawn from a straight-alpha image fitted
+/// to each theme's ref over its bilinear footprint (a 20 px box 1 px around the 18 px one),
+/// keyed by the theme's text color.
+// shortcut: only the 2x images at the refs' subpixel phase exist, so other scales show no
+// icon; ship the system icon (NSWorkspace) once the host resolves target icons.
+fn default_app_icon(t: &Theme) -> AnyElement {
+    div()
+        .size(px(18.))
+        .flex_none()
+        .relative()
+        .child(
+            div()
+                .absolute()
+                .left(px(-1.))
+                .top(px(-1.))
+                .child(crate::icon::icon_sized(
+                    "settings-default-app",
+                    20.,
+                    20.,
+                    t.text,
+                )),
+        )
+        .into_any_element()
 }
 
 /// An app icon `<img>` (`path`, e.g. the app's 64 px `apps/zed.png`, in an 18 px box) at
