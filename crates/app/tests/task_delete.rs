@@ -1,3 +1,4 @@
+#![cfg(unix)] // shell-script fixtures and Unix permission bits
 use anyhow::{Result, ensure};
 use app::host::{Host, LocalHost, Request, json_body};
 use rusqlite::Connection;
