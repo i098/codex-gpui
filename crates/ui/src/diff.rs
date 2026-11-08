@@ -2623,7 +2623,7 @@ impl Render for SplitScreen {
                     div()
                         .absolute()
                         .top(px(14.))
-                        .right(px(42.))
+                        .right(px(46.))
                         .w(px(1.))
                         .h(px(16.))
                         .bg(over(t.border, layout_color(t))),
