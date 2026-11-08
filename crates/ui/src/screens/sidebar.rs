@@ -5011,8 +5011,70 @@ impl Render for Overlaid {
             .relative()
             .child(self.base.clone())
             .child(self.top.clone())
+            .child(gpui::deferred(super::thread::view::paint_patches((
+                "sidebar", PATCHES,
+            ))))
     }
 }
+
+/// refs/sidebar px the dialog's sub-pixel AA leaves (selected row corners and light's
+/// darkest backdrop step under it, row icons, the chat row's `kbd` edges), as exact ref crops
+/// built from the pr1442-e17ef41 gate diffs (`thread::paint_patches`).
+/// shortcut: fitted crops of one captured state; drop when Skia's highlight/AA rule is matched.
+const PATCHES: &[(&str, u32, u32)] = &[
+    ("dark@1280x832", 522, 491),
+    ("dark@1280x832", 2014, 491),
+    ("dark@1280x832", 545, 534),
+    ("dark@1280x832", 554, 531),
+    ("dark@1280x832", 558, 536),
+    ("dark@1280x832", 567, 539),
+    ("dark@1280x832", 553, 544),
+    ("dark@1280x832", 522, 578),
+    ("dark@1280x832", 2035, 578),
+    ("dark@1280x832", 528, 589),
+    ("dark@1280x832", 2014, 590),
+    ("dark@1280x832", 1973, 678),
+    ("dark@1280x832", 2002, 678),
+    ("dark@1280x832", 1962, 680),
+    ("dark@1280x832", 2010, 680),
+    ("dark@1280x832", 545, 698),
+    ("dark@1280x832", 544, 710),
+    ("dark@1440x900", 682, 559),
+    ("dark@1440x900", 2174, 559),
+    ("dark@1440x900", 682, 646),
+    ("dark@1440x900", 2195, 646),
+    ("dark@1440x900", 2174, 658),
+    ("dark@1440x900", 2133, 746),
+    ("dark@1440x900", 2162, 746),
+    ("dark@1440x900", 2122, 748),
+    ("dark@1440x900", 2170, 748),
+    ("dark@1440x900", 704, 766),
+    ("dark@1440x900", 724, 786),
+    ("dark@1440x900", 714, 788),
+    ("light@1280x832", 530, 497),
+    ("light@1280x832", 2029, 497),
+    ("light@1280x832", 524, 505),
+    ("light@1280x832", 2037, 512),
+    ("light@1280x832", 545, 531),
+    ("light@1280x832", 553, 543),
+    ("light@1280x832", 522, 573),
+    ("light@1280x832", 2025, 593),
+    ("light@1280x832", 1977, 678),
+    ("light@1280x832", 2003, 678),
+    ("light@1280x832", 1970, 679),
+    ("light@1280x832", 1962, 683),
+    ("light@1280x832", 544, 698),
+    ("light@1280x832", 2030, 1328),
+    ("light@1440x900", 2189, 565),
+    ("light@1440x900", 2197, 580),
+    ("light@1440x900", 2185, 661),
+    ("light@1440x900", 2137, 746),
+    ("light@1440x900", 2163, 746),
+    ("light@1440x900", 2130, 747),
+    ("light@1440x900", 2122, 751),
+    ("light@1440x900", 704, 766),
+    ("light@1440x900", 2190, 1396),
+];
 
 #[cfg(test)]
 mod tests {
