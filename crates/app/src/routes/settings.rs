@@ -2,11 +2,11 @@ use crate::*;
 use gpui::Div;
 
 pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
-    root.on_action(
-        cx.listener(|this, _: &OpenSettings, window, cx| {
+    root.on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
+        if !hotkey::open_settings_in_owner(this, cx) {
             this.navigate(Route::Settings, window, cx)
-        }),
-    )
+        }
+    }))
     .on_action(cx.listener(
         |this, action: &settings::usage::analytics::OpenChat, window, cx| {
             this.navigate(Route::Thread(action.0.clone()), window, cx);

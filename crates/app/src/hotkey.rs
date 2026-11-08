@@ -88,6 +88,23 @@ pub(crate) struct Popout {
     mini: Option<mini::State>,
 }
 
+/// Shows Settings in a popout's owner window: Mini and the hotkey window have no Settings page.
+pub(crate) fn open_settings_in_owner(root: &Root, cx: &mut App) -> bool {
+    let Some(popout) = &root.popout else {
+        return false;
+    };
+    let owner = popout.owner;
+    if owner
+        .update(cx, |owner, window, cx| {
+            owner.navigate(Route::Settings, window, cx)
+        })
+        .is_ok()
+    {
+        let _ = windows::show(owner.into(), windows::Presentation::Foreground, cx);
+    }
+    true
+}
+
 pub(crate) fn thread_shown(root: &Root, window: &mut Window, cx: &mut Context<Root>) {
     sync_recents(root, cx);
     if root
@@ -1693,6 +1710,27 @@ mod tests {
                 .owner_root
                 .read_with(&popup.app, |root, _| root.state.route == Route::Home)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn popout_opens_settings_in_its_owner_window() -> Result<()> {
+        let Popup {
+            mut app,
+            owner_root,
+            popup,
+            popup_root,
+            _home,
+            ..
+        } = open_popout()?;
+        app.update_window(popup.into(), |_, window, cx| {
+            window.dispatch_action(Box::new(ui::OpenSettings), cx)
+        })?;
+        app.run_until_parked();
+        let owner_route = owner_root.read_with(&app, |root, _| root.state.route.clone());
+        anyhow::ensure!(owner_route == Route::Settings, "{owner_route:?}");
+        let popup_route = popup_root.read_with(&app, |root, _| root.state.route.clone());
+        anyhow::ensure!(popup_route == Route::Home, "{popup_route:?}");
         Ok(())
     }
 
