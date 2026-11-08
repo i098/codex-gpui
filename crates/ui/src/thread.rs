@@ -3233,88 +3233,93 @@ impl Render for ThreadView {
         let native_approval = composer
             .as_ref()
             .is_some_and(|composer| composer.read(cx).is_computer_use_request());
-        let page = div()
-            .size_full()
-            .relative()
-            .overflow_hidden()
-            .bg(t.surface)
-            .on_mouse_down(gpui::MouseButton::Right, cx.listener(Self::right_click))
-            .child(
-                div()
-                    .id("conversation")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .track_focus(&focus)
-                    .on_action(cx.listener(Self::copy_selection))
-                    .when(
-                        cfg!(target_os = "macos") && self.carets.range().is_some(),
-                        |view| view.on_action(cx.listener(Self::speak_selection)),
-                    )
-                    // A press on the transcript collapses the selection to a caret, takes the
-                    // focus from the editor, and starts a drag (TH-127). Buttons stop it; a
-                    // control that took the focus during the press (the inline editor) keeps it.
-                    .capture_any_mouse_down(cx.listener(|view, _, window, cx| {
-                        view.press_focus = window.focused(cx);
-                    }))
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(move |view, e: &gpui::MouseDownEvent, window, cx| {
-                            if window.focused(cx) != view.press_focus {
-                                return;
-                            }
-                            window.focus(&focus, cx);
-                            view.carets.press(e.position, cx);
-                            cx.notify();
-                        }),
-                    )
-                    // The scroller's contents are a composited layer (transparent tile).
-                    .layer()
-                    .pt(px(32.))
-                    .child(
-                        frame_start(&self.carets, self.scroll.clone())
-                            .absolute()
-                            .size_0(),
-                    )
-                    .children(tracker)
-                    .children(self.older_cursor.is_some().then(|| {
-                        let label = if self.loading_older {
-                            "Loading earlier messages"
-                        } else {
-                            "Load earlier messages"
-                        };
-                        div().mx_auto().max_w(CONTENT_MAX_WIDTH).pb(px(12.)).child(
-                            recovery::retry_button("load-older", label, window, cx).on_click(
-                                cx.listener(|view, _, _, cx| {
-                                    if !view.loading_older {
-                                        cx.emit(LoadOlderTurns);
-                                    }
-                                }),
-                            ),
+        let page =
+            div()
+                .size_full()
+                .relative()
+                .overflow_hidden()
+                .bg(t.surface)
+                .on_mouse_down(gpui::MouseButton::Right, cx.listener(Self::right_click))
+                .child(
+                    div()
+                        .id("conversation")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll)
+                        .track_focus(&focus)
+                        .on_action(cx.listener(Self::copy_selection))
+                        .when(
+                            cfg!(target_os = "macos") && self.carets.range().is_some(),
+                            |view| view.on_action(cx.listener(Self::speak_selection)),
                         )
-                    }))
-                    .child(
-                        div()
-                            .mx_auto()
-                            .w_full()
-                            .max_w(CONTENT_MAX_WIDTH)
-                            .px(px(16.))
-                            .pb(px(32. + 12.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(12.))
-                            .when_some(self.git_phase, |d, phase| {
-                                d.child(text(phase, 14., 20., 400., t.text_secondary))
-                            })
-                            .when_some(self.worktree_status, |d, status| {
-                                d.child(text(status, 14., 20., 400., t.text))
-                            })
-                            .when_some(
-                                self.git_repository
-                                    .as_ref()
-                                    .and_then(|result| result.as_ref().ok()),
-                                |d, repo| {
-                                    d.child(
+                        // A press on the transcript collapses the selection to a caret, takes the
+                        // focus from the editor, and starts a drag (TH-127). Buttons stop it; a
+                        // control that took the focus during the press (the inline editor) keeps it.
+                        .capture_any_mouse_down(cx.listener(|view, _, window, cx| {
+                            view.press_focus = window.focused(cx);
+                        }))
+                        .on_mouse_down(
+                            gpui::MouseButton::Left,
+                            cx.listener(move |view, e: &gpui::MouseDownEvent, window, cx| {
+                                if window.focused(cx) != view.press_focus {
+                                    return;
+                                }
+                                window.focus(&focus, cx);
+                                view.carets.press(e.position, cx);
+                                cx.notify();
+                            }),
+                        )
+                        .pt(px(32.))
+                        // The scroller's contents are a composited layer (transparent tile) whose
+                        // cc tiles start under the 32 px padding: in the scrolled refs/terminal the
+                        // tile seams (viewport dev y 762 at 1280, 389 at 1440) cut the inline code
+                        // chip and the user bubble there.
+                        .child(
+                            div()
+                                .layer()
+                                .child(
+                                    frame_start(&self.carets, self.scroll.clone())
+                                        .absolute()
+                                        .size_0(),
+                                )
+                                .children(tracker)
+                                .children(self.older_cursor.is_some().then(|| {
+                                    let label = if self.loading_older {
+                                        "Loading earlier messages"
+                                    } else {
+                                        "Load earlier messages"
+                                    };
+                                    div().mx_auto().max_w(CONTENT_MAX_WIDTH).pb(px(12.)).child(
+                                        recovery::retry_button("load-older", label, window, cx)
+                                            .on_click(cx.listener(|view, _, _, cx| {
+                                                if !view.loading_older {
+                                                    cx.emit(LoadOlderTurns);
+                                                }
+                                            })),
+                                    )
+                                }))
+                                .child(
+                                    div()
+                                        .mx_auto()
+                                        .w_full()
+                                        .max_w(CONTENT_MAX_WIDTH)
+                                        .px(px(16.))
+                                        .pb(px(32. + 12.))
+                                        .flex()
+                                        .flex_col()
+                                        .gap(px(12.))
+                                        .when_some(self.git_phase, |d, phase| {
+                                            d.child(text(phase, 14., 20., 400., t.text_secondary))
+                                        })
+                                        .when_some(self.worktree_status, |d, status| {
+                                            d.child(text(status, 14., 20., 400., t.text))
+                                        })
+                                        .when_some(
+                                            self.git_repository
+                                                .as_ref()
+                                                .and_then(|result| result.as_ref().ok()),
+                                            |d, repo| {
+                                                d.child(
                                         div()
                                             .id("thread-git-summary")
                                             .role(gpui::Role::Button)
@@ -3356,63 +3361,64 @@ impl Render for ThreadView {
                                                 view.open_git_actions(false, window, cx)
                                             })),
                                     )
-                                },
-                            )
-                            .children(turns)
-                            .on_children_prepainted(measure),
-                    )
-                    .children(self.voice_card(window, cx))
-                    // Room for the docked composer.
-                    .child(div().h(px(114.)))
-                    .child(top_fade),
-            )
-            .when(self.clip_right, |d| d.child(gpui::deferred(corners)))
-            .when(
-                self.scroll.max_offset().y > px(0.) && !following_bottom,
-                |d| d.child(self.scroll_to_bottom(&t, cx)),
-            )
-            // A portal in the original: its shadow spills over the titlebar and the sidebar.
-            .when(self.summary_open, |d| {
-                d.child(gpui::deferred(self.summary(window, &t, cx)))
-            })
-            .when(self.git_actions.is_some(), |d| {
-                d.child(self.git_popup(window, cx))
-            })
-            // The `z-20` composer band is its own cc layer; its rect (and tile grid) starts at
-            // the light composer shadow's ink, 84 px above the band (80 px blur + 8 spread - 4
-            // y); the dark card has no outer shadow. Its background paints into the layer (the
-            // shadows blit onto it there), so it is a `shapes` fill, not a GPUI quad.
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .bottom_0()
-                    .when(t.appearance == Appearance::Light, |d| d.pt(px(84.)))
-                    // The band covers the transcript: a press on it (the editor) is not a
-                    // transcript press.
-                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .layer()
-                    .when(native_approval, |d| d.cc_tiles().window_space_recording())
-                    .child(
-                        div()
-                            .relative()
-                            .pb(px(16.))
-                            .child(shapes::decoration(shapes::Decoration {
-                                fill: Some(t.surface),
-                                ..Default::default()
-                            }))
-                            .child(bottom_fade.absolute().top(px(-32.)).left_0())
-                            .child(
-                                div()
-                                    .mx_auto()
-                                    .w_full()
-                                    .max_w(CONTENT_MAX_WIDTH)
-                                    .px(px(16.))
-                                    .child(self.composer.clone()),
-                            ),
-                    ),
-            );
+                                            },
+                                        )
+                                        .children(turns)
+                                        .on_children_prepainted(measure),
+                                )
+                                .children(self.voice_card(window, cx))
+                                // Room for the docked composer.
+                                .child(div().h(px(114.)))
+                                .child(top_fade),
+                        ),
+                )
+                .when(self.clip_right, |d| d.child(gpui::deferred(corners)))
+                .when(
+                    self.scroll.max_offset().y > px(0.) && !following_bottom,
+                    |d| d.child(self.scroll_to_bottom(&t, cx)),
+                )
+                // A portal in the original: its shadow spills over the titlebar and the sidebar.
+                .when(self.summary_open, |d| {
+                    d.child(gpui::deferred(self.summary(window, &t, cx)))
+                })
+                .when(self.git_actions.is_some(), |d| {
+                    d.child(self.git_popup(window, cx))
+                })
+                // The `z-20` composer band is its own cc layer; its rect (and tile grid) starts at
+                // the light composer shadow's ink, 84 px above the band (80 px blur + 8 spread - 4
+                // y); the dark card has no outer shadow. Its background paints into the layer (the
+                // shadows blit onto it there), so it is a `shapes` fill, not a GPUI quad.
+                .child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .when(t.appearance == Appearance::Light, |d| d.pt(px(84.)))
+                        // The band covers the transcript: a press on it (the editor) is not a
+                        // transcript press.
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .layer()
+                        .when(native_approval, |d| d.cc_tiles().window_space_recording())
+                        .child(
+                            div()
+                                .relative()
+                                .pb(px(16.))
+                                .child(shapes::decoration(shapes::Decoration {
+                                    fill: Some(t.surface),
+                                    ..Default::default()
+                                }))
+                                .child(bottom_fade.absolute().top(px(-32.)).left_0())
+                                .child(
+                                    div()
+                                        .mx_auto()
+                                        .w_full()
+                                        .max_w(CONTENT_MAX_WIDTH)
+                                        .px(px(16.))
+                                        .child(self.composer.clone()),
+                                ),
+                        ),
+                );
         page.when_some(composer, |d, composer| {
             crate::composer::drop_target(d, &composer, cx)
         })
