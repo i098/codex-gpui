@@ -67,7 +67,7 @@ on a Mac with nothing real behind it:
   other unrecorded reads 404 and writes 200 `{}`.
 - `app/run.sh <theme>` starts stub and app with a fresh profile under `/tmp/cgx-refs-offline`, a git
   repository for `/tmp/cgx-mac/proj`, a private `--user-data-dir` (the Codex browser holds one process
-  lock per user-data directory) and `--host-resolver-rules` that leave only 127.0.0.1 reachable.
+  lock per user-data directory) and `--host-resolver-rules` that leave only 127.0.0.1 reachable. GPU rasterisation is off (`--disable-gpu*`): the GPU path (Graphite) rounds anti-aliased edges and blurs shadows differently from the software Skia that the native port reproduces.
   `app/stop.sh` ends exactly those processes.
 - `capture.mjs` with `R1_APP_CDP` attaches to the app's main page instead of a route1 page: it fixes the
   clock, reloads Home, repeats the opaque-window message that main sent only once, and then drives the

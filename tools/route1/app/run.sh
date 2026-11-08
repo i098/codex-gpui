@@ -38,6 +38,7 @@ sudo -n launchctl asuser "$(id -u)" sudo -n -u "$USER" env -i PATH=/usr/bin:/bin
   CODEX_CLI_PATH="$D/codex" APP="$APP" STUB_PORT="$STUB_PORT" R1_THEME="$THEME" \
   "$APP/Contents/MacOS/ChatGPT" --remote-debugging-port="$PORT" --remote-debugging-address=127.0.0.1 \
   --user-data-dir="$R/prof/userdata" --force-device-scale-factor=2 --num-raster-threads=1 --disable-checker-imaging --disable-partial-raster \
+  --disable-gpu --disable-gpu-compositing --disable-gpu-rasterization \
   --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-background-timer-throttling \
   --ignore-certificate-errors '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1' \
   >"$D/app.log" 2>&1 </dev/null &

@@ -15,9 +15,9 @@
   "--color-background-segmented-form-selected": "light-dark(#ffffff,color-mix(in srgb, rgb(255, 255, 255) 90%, #1a1c1f))",
   "--color-background-primary-surface": "light-dark(color-mix(in oklab, #1a1c1f 5%, transparent),color-mix(in oklab, #1a1c1f 8%, transparent))",
   "--color-token-interactive-bg-secondary-selected": "rgba(26, 28, 31, 0.049)",
-  "--app-color-background-button-tertiary-active": "rgba(26, 28, 31, 0.196)",
-  "--font-text-xs-size": ".75rem",
   "--app-color-text-secondary": "",
+  "--font-text-xs-size": ".75rem",
+  "--app-color-background-button-tertiary-active": "rgba(26, 28, 31, 0.196)",
   "--gray-150": "light-dark(#dfdfdf,#1c1c1c)",
   "--color-background-success-soft-active": "#b8ebcc",
   "--modal-backdrop-fade-shadow": "0 8px 16px 0 #00000012, 0 2px 6px 0 #0000000d, 0 0 0 1px rgba(26, 28, 31, 0.078)",
@@ -38,10 +38,10 @@
   "--modal-container-inner-padding": "calc(.25rem * 5)",
   "--badge-radius-lg": "calc(.375rem * 1.25)",
   "--tw-mask-conic": "linear-gradient(#fff, #fff)",
-  "--dil-radius-4xl": "24px",
   "--color-border-success-outline": "light-dark(#00a240,#008635)",
-  "--ease-in": "cubic-bezier(.4, 0, 1, 1)",
   "--app-color-background-elevated-secondary": "rgba(255, 255, 255, 0.96)",
+  "--ease-in": "cubic-bezier(.4, 0, 1, 1)",
+  "--dil-radius-4xl": "24px",
   "--menu-separator-gutter": ".25rem calc(.25rem * 2)",
   "--app-color-ads-text-primary": "",
   "--color-background-composer-action-bar": "#f6f6f6",
@@ -471,8 +471,8 @@
   "--gray-25": "light-dark(#fcfcfc,#101010)",
   "--color-surface-secondary": "#f6f6f6",
   "--font-heading-xl-line-height": "2.375rem",
-  "--dil-radius-3xl": "24px",
   "--app-color-text-unread-badge": "#fff",
+  "--dil-radius-3xl": "24px",
   "--color-ring-discovery-solid": "#3a83f7",
   "--color-codex-terminal-ansi-bright-black": "rgba(26, 28, 31, 0.695)",
   "--blue-200": "#66b5ff",
@@ -938,8 +938,8 @@
   "--pink-a25": "color-mix(in oklab, #ff66ad 8%, transparent)",
   "--color-media-control-hover": "color-mix(in srgb, #fff 40%, #0d0d0d)",
   "--radius-sm": "calc(.375rem * 1.25)",
-  "--codex-base-surface": "#ffffff",
   "--radius-xs-base": ".25rem",
+  "--codex-base-surface": "#ffffff",
   "--color-token-editor-warning-foreground": "light-dark(#e25507,#ff8549)",
   "--switch-thumb-offset": "3px",
   "--orange-a300": "color-mix(in oklab, #fb6a22 81%, transparent)",
@@ -2092,93 +2092,6 @@
   },
   {
    "id": 20,
-   "parent": 17,
-   "depth": 16,
-   "tag": "span",
-   "rect": [
-    24,
-    52,
-    20,
-    20
-   ],
-   "style": {
-    "position": "absolute",
-    "color": "rgba(26, 28, 31, 0.494)",
-    "borderTopColor": "rgba(26, 28, 31, 0.494)",
-    "borderRightColor": "rgba(26, 28, 31, 0.494)",
-    "borderBottomColor": "rgba(26, 28, 31, 0.494)",
-    "borderLeftColor": "rgba(26, 28, 31, 0.494)",
-    "fontSize": "13px",
-    "fontWeight": "400",
-    "lineHeight": "13px",
-    "textAlign": "center",
-    "whiteSpace": "nowrap",
-    "cursor": "default"
-   },
-   "cls": "absolute end-0 top-0"
-  },
-  {
-   "id": 21,
-   "parent": 20,
-   "depth": 17,
-   "tag": "span",
-   "rect": [
-    24,
-    52,
-    20,
-    20
-   ],
-   "style": {
-    "display": "flex",
-    "alignItems": "center",
-    "justifyContent": "center",
-    "color": "rgba(26, 28, 31, 0.494)",
-    "borderTopColor": "rgba(26, 28, 31, 0.494)",
-    "borderRightColor": "rgba(26, 28, 31, 0.494)",
-    "borderBottomColor": "rgba(26, 28, 31, 0.494)",
-    "borderLeftColor": "rgba(26, 28, 31, 0.494)",
-    "fontSize": "13px",
-    "fontWeight": "400",
-    "lineHeight": "13px",
-    "textAlign": "center",
-    "whiteSpace": "nowrap",
-    "cursor": "default"
-   },
-   "cls": "flex h-5 min-w-5 shrink-0 items-center justify-center"
-  },
-  {
-   "id": 22,
-   "parent": 21,
-   "depth": 18,
-   "tag": "span",
-   "rect": [
-    30,
-    58,
-    8,
-    8
-   ],
-   "style": {
-    "backgroundColor": "rgb(58, 131, 247)",
-    "color": "rgba(26, 28, 31, 0.494)",
-    "borderTopColor": "rgba(26, 28, 31, 0.494)",
-    "borderRightColor": "rgba(26, 28, 31, 0.494)",
-    "borderBottomColor": "rgba(26, 28, 31, 0.494)",
-    "borderLeftColor": "rgba(26, 28, 31, 0.494)",
-    "borderTopLeftRadius": "9999px",
-    "borderTopRightRadius": "9999px",
-    "borderBottomRightRadius": "9999px",
-    "borderBottomLeftRadius": "9999px",
-    "fontSize": "13px",
-    "fontWeight": "400",
-    "lineHeight": "13px",
-    "textAlign": "center",
-    "whiteSpace": "nowrap",
-    "cursor": "default"
-   },
-   "cls": "block size-2 shrink-0 rounded-full bg-info-solid"
-  },
-  {
-   "id": 23,
    "parent": 14,
    "depth": 13,
    "tag": "button",
@@ -2210,8 +2123,8 @@
    "cls": "Button-BZrLNX browser:[--button-text-color:var(--color-text-tertiary)] browser:[--button-text-color-hover:var(--color-text-primary-ghost)] browser:data-selected:[--button-text-color:var(--color-text-primary-ghost)] browser:data-selected:[--button-text-color-hover:var(--color-text-primary-ghost)]"
   },
   {
-   "id": 24,
-   "parent": 23,
+   "id": 21,
+   "parent": 20,
    "depth": 14,
    "tag": "span",
    "rect": [
@@ -2241,8 +2154,8 @@
    "cls": "ButtonInner-Ku4XvS"
   },
   {
-   "id": 25,
-   "parent": 24,
+   "id": 22,
+   "parent": 21,
    "depth": 15,
    "tag": "svg",
    "rect": [
@@ -2268,8 +2181,8 @@
    "svg": "<svg aria-hidden=\"true\" focusable=\"false\" data-no-autosize=\"true\" width=\"20\" height=\"20\" viewBox=\"0 0 20 20\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M7.01826 3.38781C7.47069 1.69958 9.20694 0.697366 10.8952 1.14953L16.9479 2.7716C18.6362 3.22397 19.6383 4.9593 19.1862 6.64757L17.2106 14.0216C16.8715 15.2866 15.8124 16.1623 14.5935 16.3341C14.3503 17.5978 13.2984 18.601 11.9528 18.7189L5.1081 19.3175C3.48242 19.4595 2.04916 18.2567 1.90693 16.631L1.17549 8.26672C1.03327 6.64107 2.23548 5.20804 3.86103 5.06554L6.63349 4.82238L7.01826 3.38781ZM3.97724 6.39074C3.08335 6.46908 2.42258 7.25658 2.50068 8.1505L3.23213 16.5148C3.31035 17.4088 4.0988 18.0705 4.99287 17.9923L11.8366 17.3937C12.7306 17.3154 13.3914 16.527 13.3132 15.6329L12.8444 10.2706L10.78 10.4523C9.49733 10.5643 8.3659 9.6148 8.25361 8.33214L8.05244 6.03332L3.97724 6.39074ZM10.5505 2.43468C9.57185 2.17269 8.56586 2.75305 8.30342 3.73156L8.04365 4.69836L8.9997 4.61535C9.78022 4.54706 10.5566 4.79156 11.1569 5.29504L13.0124 6.85168C13.6126 7.35543 13.988 8.07788 14.0563 8.85851L14.5915 14.9825C15.2198 14.8273 15.7464 14.3452 15.9255 13.6769L17.9011 6.30382C18.1633 5.32505 17.5829 4.31818 16.6042 4.05578L10.5505 2.43468ZM9.57881 8.21593C9.62702 8.76703 10.1136 9.17528 10.6647 9.12707L12.7272 8.9464C12.6834 8.52775 12.4799 8.14127 12.1569 7.87023L10.3024 6.31457C10.0402 6.09451 9.71672 5.96583 9.37959 5.94054L9.57881 8.21593Z\" fill=\"currentColor\"></path></svg>"
   },
   {
-   "id": 26,
-   "parent": 24,
+   "id": 23,
+   "parent": 21,
    "depth": 15,
    "tag": "span",
    "rect": [
@@ -2296,7 +2209,7 @@
    "cls": "sr-only"
   },
   {
-   "id": 27,
+   "id": 24,
    "parent": 14,
    "depth": 13,
    "tag": "button",
@@ -2324,8 +2237,8 @@
    "cls": "Button-BZrLNX browser:[--button-text-color:var(--color-text-tertiary)] browser:[--button-text-color-hover:var(--color-text-primary-ghost)] browser:data-selected:[--button-text-color:var(--color-text-primary-ghost)] browser:data-selected:[--button-text-color-hover:var(--color-text-primary-ghost)]"
   },
   {
-   "id": 28,
-   "parent": 27,
+   "id": 25,
+   "parent": 24,
    "depth": 14,
    "tag": "span",
    "rect": [
@@ -2351,8 +2264,8 @@
    "cls": "ButtonInner-Ku4XvS"
   },
   {
-   "id": 29,
-   "parent": 28,
+   "id": 26,
+   "parent": 25,
    "depth": 15,
    "tag": "svg",
    "rect": [
@@ -2374,8 +2287,8 @@
    "svg": "<svg aria-hidden=\"true\" focusable=\"false\" data-no-autosize=\"true\" width=\"20\" height=\"20\" viewBox=\"0 0 20 20\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M10.001 1.83496C14.5104 1.83498 18.166 5.49062 18.166 10C18.166 14.5094 14.5104 18.165 10.001 18.165C5.49157 18.165 1.83594 14.5094 1.83594 10C1.83595 5.49061 5.49158 1.83496 10.001 1.83496ZM10 5.16797C9.633 5.16814 9.33516 5.46602 9.33496 5.83301V9.72363L7.44629 11.6123C7.18665 11.8719 7.18677 12.294 7.44629 12.5537C7.70599 12.8134 8.128 12.8134 8.3877 12.5537L10.3486 10.5918C10.5513 10.389 10.665 10.1139 10.665 9.82715V5.83301C10.6648 5.46591 10.3671 5.16797 10 5.16797Z\" fill=\"currentColor\"></path></svg>"
   },
   {
-   "id": 30,
-   "parent": 28,
+   "id": 27,
+   "parent": 25,
    "depth": 15,
    "tag": "span",
    "rect": [
@@ -2398,7 +2311,7 @@
    "cls": "sr-only"
   },
   {
-   "id": 31,
+   "id": 28,
    "parent": 14,
    "depth": 13,
    "tag": "button",
@@ -2430,8 +2343,8 @@
    "cls": "Button-BZrLNX browser:[--button-text-color:var(--color-text-tertiary)] browser:[--button-text-color-hover:var(--color-text-primary-ghost)] browser:data-selected:[--button-text-color:var(--color-text-primary-ghost)] browser:data-selected:[--button-text-color-hover:var(--color-text-primary-ghost)]"
   },
   {
-   "id": 32,
-   "parent": 31,
+   "id": 29,
+   "parent": 28,
    "depth": 14,
    "tag": "span",
    "rect": [
@@ -2461,8 +2374,8 @@
    "cls": "ButtonInner-Ku4XvS"
   },
   {
-   "id": 33,
-   "parent": 32,
+   "id": 30,
+   "parent": 29,
    "depth": 15,
    "tag": "svg",
    "rect": [
@@ -2489,8 +2402,8 @@
    "svg": "<svg aria-hidden=\"true\" class=\"Icon-X4VkKC\" focusable=\"false\" height=\"20\" viewBox=\"0 0 20 20\" width=\"20\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M10.5208 1.88086C15.7221 1.88086 18.3078 5.71869 18.3079 9.1875C18.3079 10.6634 17.6928 12.1653 16.6019 13.0332C16.0469 13.4746 15.3655 13.7517 14.598 13.7559C13.9313 13.7594 13.2416 13.5557 12.5511 13.1377C11.9219 13.6395 11.2034 13.9685 10.4534 14.0312C9.535 14.108 8.63654 13.7825 7.91047 13.0283L7.87238 12.9883C7.85039 12.965 7.8186 12.9309 7.77863 12.8887C7.69832 12.8039 7.58559 12.6849 7.45637 12.5488C7.19751 12.2762 6.87183 11.9348 6.60578 11.6572L6.54719 11.5889C6.27521 11.2405 6.30519 10.736 6.6302 10.4229L6.84504 10.2158L6.10383 9.44629C5.84919 9.18175 5.857 8.76058 6.12141 8.50586C6.38599 8.25118 6.80713 8.2589 7.06184 8.52344L7.80305 9.29297L9.59406 7.56836L8.85383 6.7998C8.59913 6.5352 8.60778 6.11407 8.87238 5.85938C9.13699 5.60473 9.55813 5.61237 9.81281 5.87695L10.553 6.64648L10.7747 6.43359C11.1235 6.098 11.6792 6.10952 12.013 6.45996L13.3167 7.8291C14.0599 8.59431 14.3531 9.50484 14.2337 10.4219C14.1535 11.0377 13.8891 11.6205 13.5052 12.1455C13.9126 12.3481 14.2758 12.4274 14.5911 12.4258C15.0278 12.4233 15.4257 12.269 15.7737 11.9922C16.4894 11.4229 16.9779 10.3387 16.9779 9.1875C16.9777 6.36405 14.9015 3.21094 10.5208 3.21094C6.8614 3.21118 3.69922 6.00766 3.45344 9.52734C3.17857 13.4658 5.9647 16.7887 10.2064 16.7891C11.8181 16.7891 13.4105 16.3859 14.5159 15.5303C14.8063 15.3055 15.2247 15.3591 15.4495 15.6494C15.6741 15.9398 15.6207 16.3573 15.3304 16.582C13.9169 17.6762 12.0013 18.1191 10.2064 18.1191C5.1481 18.1188 1.80089 14.096 2.12629 9.43457C2.42465 5.16205 6.22034 1.8811 10.5208 1.88086ZM7.8802 11.0654C8.06588 11.2601 8.25662 11.4605 8.42023 11.6328C8.54982 11.7693 8.66289 11.8886 8.74348 11.9736C8.78365 12.016 8.81607 12.0508 8.8382 12.0742L8.87238 12.1094C9.33016 12.583 9.83897 12.7472 10.3431 12.7051C10.8683 12.661 11.4519 12.3855 11.9945 11.8633C12.543 11.3352 12.848 10.7668 12.9154 10.25C12.9794 9.75778 12.8385 9.24516 12.3587 8.75293L12.3538 8.74707L11.3665 7.70996L7.8802 11.0654Z\" fill-rule=\"evenodd\" clip-rule=\"evenodd\" fill=\"currentColor\"></path></svg>"
   },
   {
-   "id": 34,
-   "parent": 32,
+   "id": 31,
+   "parent": 29,
    "depth": 15,
    "tag": "span",
    "rect": [
@@ -2517,7 +2430,7 @@
    "cls": "sr-only"
   },
   {
-   "id": 35,
+   "id": 32,
    "parent": 14,
    "depth": 13,
    "tag": "button",
@@ -2549,8 +2462,8 @@
    "cls": "Button-BZrLNX browser:[--button-text-color:var(--color-text-tertiary)] browser:[--button-text-color-hover:var(--color-text-primary-ghost)] browser:data-selected:[--button-text-color:var(--color-text-primary-ghost)] browser:data-selected:[--button-text-color-hover:var(--color-text-primary-ghost)]"
   },
   {
-   "id": 36,
-   "parent": 35,
+   "id": 33,
+   "parent": 32,
    "depth": 14,
    "tag": "span",
    "rect": [
@@ -2580,8 +2493,8 @@
    "cls": "ButtonInner-Ku4XvS"
   },
   {
-   "id": 37,
-   "parent": 36,
+   "id": 34,
+   "parent": 33,
    "depth": 15,
    "tag": "svg",
    "rect": [
@@ -2608,8 +2521,8 @@
    "svg": "<svg aria-hidden=\"true\" class=\"Icon-X4VkKC\" focusable=\"false\" height=\"20\" viewBox=\"0 0 20 20\" width=\"20\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M4.16638 8.50146C4.99378 8.50146 5.66523 9.17215 5.66541 9.99951C5.66541 10.827 4.99389 11.4985 4.16638 11.4985C3.33902 11.4984 2.66833 10.8269 2.66833 9.99951C2.66851 9.17226 3.33913 8.50164 4.16638 8.50146Z\" fill=\"currentColor\"></path> <path d=\"M9.99939 8.50146C10.8268 8.50146 11.4982 9.17215 11.4984 9.99951C11.4984 10.827 10.8269 11.4985 9.99939 11.4985C9.17214 11.4982 8.50134 10.8268 8.50134 9.99951C8.50152 9.17234 9.17225 8.50177 9.99939 8.50146Z\" fill=\"currentColor\"></path> <path d=\"M15.8334 8.50146C16.6606 8.50166 17.3322 9.17228 17.3324 9.99951C17.3324 10.8269 16.6607 11.4983 15.8334 11.4985C15.006 11.4984 14.3353 10.8269 14.3353 9.99951C14.3355 9.17226 15.0061 8.50164 15.8334 8.50146Z\" fill=\"currentColor\"></path></svg>"
   },
   {
-   "id": 38,
-   "parent": 36,
+   "id": 35,
+   "parent": 33,
    "depth": 15,
    "tag": "span",
    "rect": [
@@ -2636,7 +2549,7 @@
    "cls": "sr-only"
   },
   {
-   "id": 39,
+   "id": 36,
    "parent": 14,
    "depth": 13,
    "tag": "div",
@@ -2658,7 +2571,7 @@
    "cls": "w-6 border-t border-default browser:self-center browser:-my-1"
   },
   {
-   "id": 40,
+   "id": 37,
    "parent": 14,
    "depth": 13,
    "tag": "div",
@@ -2679,8 +2592,8 @@
    "cls": "group/nav-list flex flex-col gap-2 browser:gap-px browser:not-empty:pb-px browser:[--nav-item-height:calc(var(--height-token-row)-1px)] shrink-0 items-center browser:items-stretch browser:gap-y-4"
   },
   {
-   "id": 41,
-   "parent": 40,
+   "id": 38,
+   "parent": 37,
    "depth": 14,
    "tag": "button",
    "rect": [
@@ -2711,8 +2624,8 @@
    "cls": "Button-BZrLNX browser:[--button-text-color:var(--color-text-tertiary)] browser:[--button-text-color-hover:var(--color-text-primary-ghost)] browser:data-selected:[--button-text-color:var(--color-text-primary-ghost)] browser:data-selected:[--button-text-color-hover:var(--color-text-primary-ghost)] touch-none"
   },
   {
-   "id": 42,
-   "parent": 41,
+   "id": 39,
+   "parent": 38,
    "depth": 15,
    "tag": "span",
    "rect": [
@@ -2742,8 +2655,8 @@
    "cls": "ButtonInner-Ku4XvS"
   },
   {
-   "id": 43,
-   "parent": 42,
+   "id": 40,
+   "parent": 39,
    "depth": 16,
    "tag": "svg",
    "rect": [
@@ -2770,8 +2683,8 @@
    "svg": "<svg aria-hidden=\"true\" class=\"Icon-X4VkKC\" focusable=\"false\" height=\"20\" viewBox=\"0 0 20 20\" width=\"20\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M5.4165 2.46094C6.81931 2.46094 7.95654 3.59817 7.95654 5.00098C7.95654 6.17299 7.16182 7.1563 6.08252 7.44922V12.5518C7.16194 12.8446 7.95654 13.8289 7.95654 15.001C7.95654 16.4038 6.81931 17.541 5.4165 17.541C4.0137 17.541 2.87646 16.4038 2.87646 15.001C2.87646 13.8282 3.67209 12.844 4.75244 12.5518V7.44922C3.67222 7.15691 2.87646 6.17365 2.87646 5.00098C2.87646 3.59817 4.0137 2.46094 5.4165 2.46094ZM5.4165 13.791C4.74824 13.791 4.20654 14.3327 4.20654 15.001C4.20654 15.6692 4.74824 16.2109 5.4165 16.2109C6.08477 16.2109 6.62646 15.6692 6.62646 15.001C6.62646 14.3327 6.08477 13.791 5.4165 13.791ZM5.4165 3.79102C4.74824 3.79102 4.20654 4.33271 4.20654 5.00098C4.20654 5.66924 4.74824 6.21094 5.4165 6.21094C6.08477 6.21094 6.62646 5.66924 6.62646 5.00098C6.62646 4.33271 6.08477 3.79102 5.4165 3.79102Z\" fill-rule=\"evenodd\" clip-rule=\"evenodd\" fill=\"currentColor\"></path> <path d=\"M15.0005 12.4609C16.4031 12.4612 17.5405 13.5983 17.5405 15.001C17.5405 16.4036 16.4031 17.5408 15.0005 17.541C13.5977 17.541 12.4604 16.4038 12.4604 15.001C12.4604 13.5982 13.5977 12.4609 15.0005 12.4609ZM15.0005 13.791C14.3322 13.791 13.7905 14.3327 13.7905 15.001C13.7905 15.6692 14.3322 16.2109 15.0005 16.2109C15.6685 16.2107 16.2104 15.6691 16.2104 15.001C16.2104 14.3329 15.6685 13.7913 15.0005 13.791Z\" fill-rule=\"evenodd\" clip-rule=\"evenodd\" fill=\"currentColor\"></path> <path d=\"M11.1958 2.8623C11.4553 2.60296 11.8765 2.60325 12.1362 2.8623C12.3959 3.122 12.3959 3.54401 12.1362 3.80371L11.603 4.33594H12.6665C14.3221 4.3362 15.6654 5.67836 15.6655 7.33398V10.3145C15.6655 10.6815 15.3674 10.9791 15.0005 10.9795C14.6332 10.9795 14.3354 10.6817 14.3354 10.3145V7.33398C14.3353 6.4129 13.5876 5.66628 12.6665 5.66602H11.606L12.1362 6.19629C12.3959 6.45599 12.3959 6.87702 12.1362 7.13672C11.8765 7.39619 11.4554 7.39634 11.1958 7.13672L9.67627 5.61719C9.33568 5.27612 9.33544 4.72276 9.67627 4.38184L11.1958 2.8623Z\" fill=\"currentColor\"></path></svg>"
   },
   {
-   "id": 44,
-   "parent": 42,
+   "id": 41,
+   "parent": 39,
    "depth": 16,
    "tag": "span",
    "rect": [
@@ -2798,8 +2711,8 @@
    "cls": "sr-only"
   },
   {
-   "id": 45,
-   "parent": 40,
+   "id": 42,
+   "parent": 37,
    "depth": 14,
    "tag": "button",
    "rect": [
@@ -2830,8 +2743,8 @@
    "cls": "Button-BZrLNX browser:[--button-text-color:var(--color-text-tertiary)] browser:[--button-text-color-hover:var(--color-text-primary-ghost)] browser:data-selected:[--button-text-color:var(--color-text-primary-ghost)] browser:data-selected:[--button-text-color-hover:var(--color-text-primary-ghost)] touch-none"
   },
   {
-   "id": 46,
-   "parent": 45,
+   "id": 43,
+   "parent": 42,
    "depth": 15,
    "tag": "span",
    "rect": [
@@ -2861,8 +2774,8 @@
    "cls": "ButtonInner-Ku4XvS"
   },
   {
-   "id": 47,
-   "parent": 46,
+   "id": 44,
+   "parent": 43,
    "depth": 16,
    "tag": "svg",
    "rect": [
@@ -2889,8 +2802,8 @@
    "svg": "<svg aria-hidden=\"true\" class=\"Icon-X4VkKC\" focusable=\"false\" height=\"20\" viewBox=\"0 0 20 20\" width=\"20\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M5.83362 12.668C6.66098 12.6681 7.33167 13.3396 7.33167 14.167V16.667C7.33149 17.4942 6.66087 18.1649 5.83362 18.165H3.33362C2.50622 18.165 1.83477 17.4943 1.83459 16.667V14.167C1.83459 13.3395 2.50611 12.668 3.33362 12.668H5.83362ZM3.33362 13.998C3.24065 13.998 3.16467 14.074 3.16467 14.167V16.667C3.16485 16.7598 3.24076 16.835 3.33362 16.835H5.83362C5.92633 16.8348 6.00141 16.7597 6.00159 16.667V14.167C6.00159 14.0741 5.92644 13.9982 5.83362 13.998H3.33362Z\" fill-rule=\"evenodd\" clip-rule=\"evenodd\" fill=\"currentColor\"></path> <path d=\"M7.99963 1.83496C9.47147 1.83496 10.6647 3.02816 10.6647 4.5V9.33496H15.4996C16.9715 9.33496 18.1647 10.5282 18.1647 12V15.5C18.1647 16.9718 16.9715 18.165 15.4996 18.165H11.9996C10.528 18.1648 9.33459 16.9717 9.33459 15.5V10.665H4.49963C3.02796 10.6648 1.83459 9.47172 1.83459 8V4.5C1.83459 3.02828 3.02796 1.83516 4.49963 1.83496H7.99963ZM10.6647 15.5C10.6647 16.2372 11.2625 16.8348 11.9996 16.835H15.4996C16.2369 16.835 16.8346 16.2373 16.8346 15.5V12C16.8346 11.2627 16.2369 10.665 15.4996 10.665H10.6647V15.5ZM4.49963 3.16504C3.7625 3.16524 3.16467 3.76282 3.16467 4.5V8C3.16467 8.73718 3.7625 9.33476 4.49963 9.33496H9.33459V4.5C9.33459 3.7627 8.73693 3.16504 7.99963 3.16504H4.49963Z\" fill-rule=\"evenodd\" clip-rule=\"evenodd\" fill=\"currentColor\"></path> <path d=\"M16.6666 1.83496C17.4939 1.83509 18.1655 2.50573 18.1656 3.33301V5.83301C18.1656 6.66043 17.494 7.3319 16.6666 7.33203H14.1666C13.3393 7.33186 12.6686 6.66041 12.6686 5.83301V3.33301C12.6688 2.50576 13.3394 1.83514 14.1666 1.83496H16.6666ZM14.1666 3.16504C14.0739 3.16521 13.9988 3.2403 13.9987 3.33301V5.83301C13.9987 5.92587 14.0738 6.00178 14.1666 6.00195H16.6666C16.7595 6.00182 16.8356 5.92589 16.8356 5.83301V3.33301C16.8354 3.24027 16.7594 3.16517 16.6666 3.16504H14.1666Z\" fill-rule=\"evenodd\" clip-rule=\"evenodd\" fill=\"currentColor\"></path></svg>"
   },
   {
-   "id": 48,
-   "parent": 46,
+   "id": 45,
+   "parent": 43,
    "depth": 16,
    "tag": "span",
    "rect": [
@@ -2917,7 +2830,7 @@
    "cls": "sr-only"
   },
   {
-   "id": 49,
+   "id": 46,
    "parent": 13,
    "depth": 12,
    "tag": "div",
@@ -2935,8 +2848,8 @@
    "cls": "relative shrink-0 w-9"
   },
   {
-   "id": 50,
-   "parent": 49,
+   "id": 47,
+   "parent": 46,
    "depth": 13,
    "tag": "div",
    "rect": [
@@ -2956,8 +2869,8 @@
    "cls": "flex items-center flex-col gap-2"
   },
   {
-   "id": 51,
-   "parent": 50,
+   "id": 48,
+   "parent": 47,
    "depth": 14,
    "tag": "div",
    "rect": [
@@ -2974,8 +2887,8 @@
    "cls": "flex w-full"
   },
   {
-   "id": 52,
-   "parent": 51,
+   "id": 49,
+   "parent": 48,
    "depth": 15,
    "tag": "div",
    "rect": [
@@ -2999,8 +2912,8 @@
    "cls": "flex min-w-0 flex-1 items-center gap-0 sidebar-item justify-center"
   },
   {
-   "id": 53,
-   "parent": 52,
+   "id": 50,
+   "parent": 49,
    "depth": 16,
    "tag": "div",
    "rect": [
@@ -3018,8 +2931,8 @@
    "cls": "flex min-w-0 flex-1 justify-center"
   },
   {
-   "id": 54,
-   "parent": 53,
+   "id": 51,
+   "parent": 50,
    "depth": 17,
    "tag": "button",
    "rect": [
@@ -3051,8 +2964,8 @@
    "cls": "Button-BZrLNX outline-hidden cursor-interaction has-[[data-ambient-usage-label]]:h-auto has-[[data-ambient-usage-label]]:min-h-8"
   },
   {
-   "id": 55,
-   "parent": 54,
+   "id": 52,
+   "parent": 51,
    "depth": 18,
    "tag": "span",
    "rect": [
@@ -3082,8 +2995,8 @@
    "cls": "ButtonInner-Ku4XvS"
   },
   {
-   "id": 56,
-   "parent": 55,
+   "id": 53,
+   "parent": 52,
    "depth": 19,
    "tag": "span",
    "rect": [
@@ -3110,8 +3023,8 @@
    "cls": "relative isolate inline-flex shrink-0"
   },
   {
-   "id": 57,
-   "parent": 56,
+   "id": 54,
+   "parent": 53,
    "depth": 20,
    "tag": "img",
    "rect": [
@@ -3142,7 +3055,7 @@
    "src": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUF"
   },
   {
-   "id": 58,
+   "id": 55,
    "parent": 12,
    "depth": 11,
    "tag": "div",
@@ -3164,8 +3077,8 @@
    "cls": "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden sidebar-navigation"
   },
   {
-   "id": 59,
-   "parent": 58,
+   "id": 56,
+   "parent": 55,
    "depth": 12,
    "tag": "div",
    "rect": [
@@ -3184,8 +3097,8 @@
    "cls": "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden sidebar-navigation"
   },
   {
-   "id": 60,
-   "parent": 59,
+   "id": 57,
+   "parent": 56,
    "depth": 13,
    "tag": "div",
    "rect": [
@@ -3203,8 +3116,8 @@
    "cls": "flex min-h-0 min-w-0 flex-1 flex-col"
   },
   {
-   "id": 61,
-   "parent": 61,
+   "id": 58,
+   "parent": 58,
    "depth": 15,
    "tag": "nav",
    "rect": [
@@ -3223,8 +3136,8 @@
    "cls": "Navigation-bibgtK"
   },
   {
-   "id": 62,
-   "parent": 61,
+   "id": 59,
+   "parent": 58,
    "depth": 16,
    "tag": "div",
    "rect": [
@@ -3242,8 +3155,8 @@
    "cls": "flex min-h-0 flex-1 flex-col select-none"
   },
   {
-   "id": 63,
-   "parent": 62,
+   "id": 60,
+   "parent": 59,
    "depth": 17,
    "tag": "div",
    "rect": [
@@ -3266,8 +3179,8 @@
    "cls": "header-LjJHnp relative z-10 -mb-(--sidebar-scroll-header-spacing) flex shrink-0 flex-col gap-(--sidebar-navigation-header-gap) px-row-x pb-(--sidebar-scroll-header-spacing) browser:pb-0 browser:pt-2"
   },
   {
-   "id": 64,
-   "parent": 63,
+   "id": 61,
+   "parent": 60,
    "depth": 18,
    "tag": "div",
    "rect": [
@@ -3286,8 +3199,8 @@
    "cls": "@container/navigation-header ms-2 flex h-[var(--sidebar-navigation-header-height,calc(var(--spacing)*8))] items-center pe-1 browser:ms-2.5 browser:h-9"
   },
   {
-   "id": 65,
-   "parent": 64,
+   "id": 62,
+   "parent": 61,
    "depth": 19,
    "tag": "h1",
    "rect": [
@@ -3311,8 +3224,8 @@
    "cls": "min-w-0 flex-1 truncate font-openai-sans text-heading-sm leading-6 font-semibold text-default [font-synthesis-weight:auto] browser:text-[17px]"
   },
   {
-   "id": 66,
-   "parent": 64,
+   "id": 63,
+   "parent": 61,
    "depth": 19,
    "tag": "div",
    "rect": [
@@ -3331,8 +3244,8 @@
    "cls": "flex shrink-0 items-center gap-toolbar-action [--side-tooltip:bottom]"
   },
   {
-   "id": 67,
-   "parent": 66,
+   "id": 64,
+   "parent": 63,
    "depth": 20,
    "tag": "button",
    "rect": [
@@ -3364,8 +3277,8 @@
    "cls": "Button-BZrLNX [--button-ring-offset:0px] browser:[--button-text-color:var(--color-text-tertiary)] browser:[--button-text-color-hover:var(--color-text-tertiary)] browser:data-selected:[--button-text-color:var(--color-text-primary-ghost)] browser:data-selected:[--button-text-color-hover:var(--color-text-primary-ghost)] [--display-icon-compact:contents] [--display-icon-leading:none] outline-hidden cursor-interaction"
   },
   {
-   "id": 68,
-   "parent": 67,
+   "id": 65,
+   "parent": 64,
    "depth": 21,
    "tag": "span",
    "rect": [
@@ -3395,8 +3308,8 @@
    "cls": "ButtonInner-Ku4XvS"
   },
   {
-   "id": 69,
-   "parent": 69,
+   "id": 66,
+   "parent": 66,
    "depth": 23,
    "tag": "svg",
    "rect": [
@@ -3423,8 +3336,8 @@
    "svg": "<svg aria-hidden=\"true\" class=\"Icon-X4VkKC\" focusable=\"false\" height=\"16\" viewBox=\"0 0 16 16\" width=\"16\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M10 11.4746C10.2899 11.4746 10.5254 11.7101 10.5254 12C10.5254 12.2899 10.2899 12.5254 10 12.5254H6C5.71005 12.5254 5.47461 12.2899 5.47461 12C5.47461 11.7101 5.71005 11.4746 6 11.4746H10Z\" fill=\"currentColor\"></path> <path d=\"M12 7.47461C12.2899 7.47461 12.5254 7.71005 12.5254 8C12.5254 8.28995 12.2899 8.52539 12 8.52539H4C3.71005 8.52539 3.47461 8.28995 3.47461 8C3.47461 7.71005 3.71005 7.47461 4 7.47461H12Z\" fill=\"currentColor\"></path> <path d=\"M14 3.47461C14.2899 3.47461 14.5254 3.71005 14.5254 4C14.5254 4.28995 14.2899 4.52539 14 4.52539H2C1.71005 4.52539 1.47461 4.28995 1.47461 4C1.47461 3.71005 1.71005 3.47461 2 3.47461H14Z\" fill=\"currentColor\"></path></svg>"
   },
   {
-   "id": 70,
-   "parent": 66,
+   "id": 67,
+   "parent": 63,
    "depth": 20,
    "tag": "button",
    "rect": [
@@ -3456,8 +3369,8 @@
    "cls": "Button-BZrLNX [--button-ring-offset:0px] browser:[--button-text-color:var(--color-text-tertiary)] browser:[--button-text-color-hover:var(--color-text-tertiary)] browser:data-selected:[--button-text-color:var(--color-text-primary-ghost)] browser:data-selected:[--button-text-color-hover:var(--color-text-primary-ghost)] [--display-icon-compact:contents] [--display-icon-leading:none]"
   },
   {
-   "id": 71,
-   "parent": 70,
+   "id": 68,
+   "parent": 67,
    "depth": 21,
    "tag": "span",
    "rect": [
@@ -3487,8 +3400,8 @@
    "cls": "ButtonInner-Ku4XvS"
   },
   {
-   "id": 72,
-   "parent": 72,
+   "id": 69,
+   "parent": 69,
    "depth": 23,
    "tag": "svg",
    "rect": [
@@ -3515,8 +3428,8 @@
    "svg": "<svg aria-hidden=\"true\" class=\"Icon-X4VkKC\" focusable=\"false\" height=\"16\" viewBox=\"0 0 16 16\" width=\"16\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M7.32843 1.91016C10.2876 1.91016 12.6867 4.30938 12.6868 7.26855C12.6868 8.57363 12.2191 9.7688 11.4437 10.6982L14.0433 13.2979C14.2481 13.5028 14.2481 13.8351 14.0433 14.04C13.8383 14.245 13.5061 14.2449 13.3011 14.04L10.6956 11.4346C9.7753 12.1793 8.60456 12.627 7.32843 12.627C4.36925 12.6268 1.97003 10.2278 1.97003 7.26855C1.97021 4.30949 4.36936 1.91033 7.32843 1.91016ZM7.32843 2.96094C4.94926 2.96111 3.02099 4.88939 3.02081 7.26855C3.02081 9.64787 4.94915 11.577 7.32843 11.5771C9.70786 11.5771 11.637 9.64798 11.637 7.26855C11.6368 4.88928 9.70775 2.96094 7.32843 2.96094Z\" fill-rule=\"evenodd\" clip-rule=\"evenodd\" fill=\"currentColor\"></path></svg>"
   },
   {
-   "id": 73,
-   "parent": 63,
+   "id": 70,
+   "parent": 60,
    "depth": 18,
    "tag": "div",
    "rect": [
@@ -3535,8 +3448,8 @@
    "cls": "group/nav-list flex flex-col gap-px browser:not-empty:pb-px browser:[--nav-item-height:calc(var(--height-token-row)-1px)] mb-2"
   },
   {
-   "id": 74,
-   "parent": 73,
+   "id": 71,
+   "parent": 70,
    "depth": 19,
    "tag": "button",
    "rect": [
@@ -3567,8 +3480,8 @@
    "cls": "focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-[-2px] group-data-[appearance=grouped]/nav-list:rounded-none group-data-[appearance=grouped]/nav-list:after:pointer-events-none group-data-[appearance=grouped]/nav-list:after:absolute group-data-[appearance=grouped]/nav-list:after:inset-x-0 group-data-[appearance=grouped]/nav-list:after:bottom-0 group-data-[appearance=grouped]/nav-list:after:ms-[calc(var(--padding-row-cell-x,var(--padding-row-x))+var(--icon-leading-size)+var(--spacing-nav-row-content))] group-data-[appearance=grouped]/nav-list:after:border-b-hairline group-data-[appearance=grouped]/nav-list:after:border-default group-data-[appearance=grouped]/nav-list:last:after:hidden sidebar-item relative shrink-0 items-center overflow-hidden text-start text-sm disabled:cursor-default disabled:opacity-50 aria-disabled:cursor-default aria-disabled:opacity-50 cursor-interaction h-[var(--nav-item-height,var(--height-token-row))] flex w-full gap-2 px-[var(--padding-row-cell-x,var(--padding-row-x))] py-row-y hover:bg-primary-ghost-hover data-[state=open]:bg-primary-ghost-hover"
   },
   {
-   "id": 75,
-   "parent": 74,
+   "id": 72,
+   "parent": 71,
    "depth": 20,
    "tag": "div",
    "rect": [
@@ -3593,8 +3506,8 @@
    "cls": "flex min-w-0 items-center gap-nav-row-content text-base group-data-[appearance=grouped]/nav-list:font-normal group-data-[appearance=grouped]/nav-list:leading-5 group-data-[appearance=grouped]/nav-list:tracking-[-0.14px] flex-1 text-default"
   },
   {
-   "id": 76,
-   "parent": 75,
+   "id": 73,
+   "parent": 72,
    "depth": 21,
    "tag": "span",
    "rect": [
@@ -3619,8 +3532,8 @@
    "cls": "flex icon-leading-slot min-w-[var(--icon-leading-size)] shrink-0 items-center justify-center"
   },
   {
-   "id": 77,
-   "parent": 77,
+   "id": 74,
+   "parent": 74,
    "depth": 23,
    "tag": "svg",
    "rect": [
@@ -3643,8 +3556,8 @@
    "svg": "<svg aria-hidden=\"true\" class=\"\" height=\"16\" viewBox=\"0 0 16 16\" width=\"16\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M8.00049 2.14111C8.29021 2.14138 8.52588 2.37672 8.52588 2.6665V7.4751H13.3335C13.6233 7.47527 13.8579 7.71065 13.8579 8.00049C13.8576 8.29011 13.6231 8.5257 13.3335 8.52588H8.52588V13.3335C8.5257 13.6231 8.29011 13.8576 8.00049 13.8579C7.71065 13.8579 7.47527 13.6233 7.4751 13.3335V8.52588H2.6665C2.37672 8.52588 2.14138 8.29021 2.14111 8.00049C2.14111 7.71054 2.37655 7.4751 2.6665 7.4751H7.4751V2.6665C7.4751 2.37655 7.71054 2.14111 8.00049 2.14111Z\" fill=\"currentColor\"></path></svg>"
   },
   {
-   "id": 78,
-   "parent": 75,
+   "id": 75,
+   "parent": 72,
    "depth": 21,
    "tag": "span",
    "rect": [
@@ -3668,8 +3581,8 @@
    "cls": "text-fade-truncate"
   },
   {
-   "id": 79,
-   "parent": 62,
+   "id": 76,
+   "parent": 59,
    "depth": 17,
    "tag": "div",
    "rect": [
@@ -3689,8 +3602,8 @@
    "cls": "min-h-0 flex-1 overflow-y-auto pt-(--sidebar-navigation-header-gap) mb-(--sidebar-footer-height) flex flex-col gap-2"
   },
   {
-   "id": 80,
-   "parent": 79,
+   "id": 77,
+   "parent": 76,
    "depth": 18,
    "tag": "div",
    "rect": [
@@ -3712,8 +3625,8 @@
    "cls": "flex flex-col gap-4 px-row-x pb-row-x"
   },
   {
-   "id": 81,
-   "parent": 80,
+   "id": 78,
+   "parent": 77,
    "depth": 19,
    "tag": "div",
    "rect": [
@@ -3738,7 +3651,7 @@
    "cls": "px-2 py-1 text-sm text-tertiary"
   },
   {
-   "id": 82,
+   "id": 79,
    "parent": 8,
    "depth": 7,
    "tag": "div",
@@ -3758,8 +3671,8 @@
    "cls": "group/panel-resizer absolute flex touch-none select-none pointer-events-none z-20 right-0 bottom-0 w-4 translate-x-2 top-0"
   },
   {
-   "id": 83,
-   "parent": 82,
+   "id": 80,
+   "parent": 79,
    "depth": 8,
    "tag": "div",
    "rect": [
@@ -3778,8 +3691,8 @@
    "cls": "absolute inset-0 flex no-drag focus:outline-none cursor-col-resize active:cursor-col-resize after:pointer-events-auto after:absolute after:inset-0 after:left-1/2"
   },
   {
-   "id": 84,
-   "parent": 84,
+   "id": 81,
+   "parent": 81,
    "depth": 8,
    "tag": "header",
    "rect": [
@@ -3800,8 +3713,8 @@
    "cls": "pointer-events-none z-30 flex h-[var(--app-shell-titlebar-height,var(--height-toolbar))] min-w-0 items-center overflow-x-clip draggable absolute inset-x-0 top-[calc(var(--app-shell-page-banner-height,0px)+var(--app-shell-titlebar-top-inset,0px))] bg-[var(--codex-titlebar-tint,transparent)]"
   },
   {
-   "id": 85,
-   "parent": 84,
+   "id": 82,
+   "parent": 81,
    "depth": 9,
    "tag": "div",
    "rect": [
@@ -3819,8 +3732,8 @@
    "cls": "pointer-events-none relative grid [-webkit-app-region:initial] min-w-0 h-full shrink-0"
   },
   {
-   "id": 86,
-   "parent": 85,
+   "id": 83,
+   "parent": 82,
    "depth": 10,
    "tag": "div",
    "rect": [
@@ -3838,8 +3751,8 @@
    "cls": "pointer-events-none relative col-start-1 row-start-1 h-full w-full min-w-0 [container-type:inline-size] ps-[max(var(--spacing-token-safe-header-left),0.5rem)] browser:min-[768px]:[[data-app-shell-sidebar-open=false]_&]:ps-[calc(var(--app-shell-navigation-rail-width)+var(--spacing)*2)]"
   },
   {
-   "id": 87,
-   "parent": 86,
+   "id": 84,
+   "parent": 83,
    "depth": 11,
    "tag": "div",
    "rect": [
@@ -3858,8 +3771,8 @@
    "cls": "inline-flex h-full items-center gap-toolbar-action pointer-events-none w-full"
   },
   {
-   "id": 88,
-   "parent": 87,
+   "id": 85,
+   "parent": 84,
    "depth": 12,
    "tag": "div",
    "rect": [
@@ -3877,8 +3790,8 @@
    "cls": "pointer-events-auto flex shrink-0 items-center no-drag"
   },
   {
-   "id": 89,
-   "parent": 88,
+   "id": 86,
+   "parent": 85,
    "depth": 13,
    "tag": "div",
    "rect": [
@@ -3897,8 +3810,8 @@
    "cls": "flex items-center gap-1.5"
   },
   {
-   "id": 90,
-   "parent": 89,
+   "id": 87,
+   "parent": 86,
    "depth": 14,
    "tag": "button",
    "rect": [
@@ -3931,8 +3844,8 @@
    "cls": "Button-BZrLNX [--button-ring-offset:0px] browser:[--button-text-color:var(--color-text-tertiary)] browser:[--button-text-color-hover:var(--color-text-tertiary)] browser:data-selected:[--button-text-color:var(--color-text-primary-ghost)] browser:data-selected:[--button-text-color-hover:var(--color-text-primary-ghost)] [--display-icon-compact:contents] [--display-icon-leading:none]"
   },
   {
-   "id": 91,
-   "parent": 90,
+   "id": 88,
+   "parent": 87,
    "depth": 15,
    "tag": "span",
    "rect": [
@@ -3962,8 +3875,8 @@
    "cls": "ButtonInner-Ku4XvS"
   },
   {
-   "id": 92,
-   "parent": 91,
+   "id": 89,
+   "parent": 88,
    "depth": 16,
    "tag": "svg",
    "rect": [
@@ -3989,8 +3902,8 @@
    "svg": "<svg data-no-autosize=\"true\" aria-hidden=\"false\" height=\"16\" viewBox=\"0 0 16 16\" width=\"16\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M6.96231 2.96214C7.16727 2.7574 7.49953 2.75742 7.7045 2.96214C7.90913 3.16712 7.9092 3.49939 7.7045 3.70433L3.93301 7.47483H13.3334C13.6232 7.47501 13.8578 7.71038 13.8578 8.00022C13.8577 8.28999 13.6232 8.52544 13.3334 8.52562H3.93301L7.7045 12.2951C7.90924 12.5001 7.90909 12.8323 7.7045 13.0373C7.49953 13.2423 7.16735 13.2422 6.96231 13.0373L2.53067 8.60667L2.47208 8.54124C2.21571 8.22666 2.21566 7.77279 2.47208 7.45823L2.53067 7.3928L6.96231 2.96214Z\" fill=\"currentColor\"></path></svg>"
   },
   {
-   "id": 93,
-   "parent": 89,
+   "id": 90,
+   "parent": 86,
    "depth": 14,
    "tag": "button",
    "rect": [
@@ -4023,8 +3936,8 @@
    "cls": "Button-BZrLNX [--button-ring-offset:0px] browser:[--button-text-color:var(--color-text-tertiary)] browser:[--button-text-color-hover:var(--color-text-tertiary)] browser:data-selected:[--button-text-color:var(--color-text-primary-ghost)] browser:data-selected:[--button-text-color-hover:var(--color-text-primary-ghost)] [--display-icon-compact:contents] [--display-icon-leading:none]"
   },
   {
-   "id": 94,
-   "parent": 93,
+   "id": 91,
+   "parent": 90,
    "depth": 15,
    "tag": "span",
    "rect": [
@@ -4054,8 +3967,8 @@
    "cls": "ButtonInner-Ku4XvS"
   },
   {
-   "id": 95,
-   "parent": 94,
+   "id": 92,
+   "parent": 91,
    "depth": 16,
    "tag": "svg",
    "rect": [
@@ -4082,8 +3995,8 @@
    "svg": "<svg data-no-autosize=\"true\" aria-hidden=\"false\" class=\"-scale-x-100\" height=\"16\" viewBox=\"0 0 16 16\" width=\"16\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M6.96231 2.96214C7.16727 2.7574 7.49953 2.75742 7.7045 2.96214C7.90913 3.16712 7.9092 3.49939 7.7045 3.70433L3.93301 7.47483H13.3334C13.6232 7.47501 13.8578 7.71038 13.8578 8.00022C13.8577 8.28999 13.6232 8.52544 13.3334 8.52562H3.93301L7.7045 12.2951C7.90924 12.5001 7.90909 12.8323 7.7045 13.0373C7.49953 13.2423 7.16735 13.2422 6.96231 13.0373L2.53067 8.60667L2.47208 8.54124C2.21571 8.22666 2.21566 7.77279 2.47208 7.45823L2.53067 7.3928L6.96231 2.96214Z\" fill=\"currentColor\"></path></svg>"
   },
   {
-   "id": 96,
-   "parent": 87,
+   "id": 93,
+   "parent": 84,
    "depth": 12,
    "tag": "div",
    "rect": [
@@ -4101,8 +4014,8 @@
    "cls": "pointer-events-auto flex shrink-0 items-center no-drag"
   },
   {
-   "id": 97,
-   "parent": 96,
+   "id": 94,
+   "parent": 93,
    "depth": 13,
    "tag": "div",
    "rect": [
@@ -4117,8 +4030,8 @@
    }
   },
   {
-   "id": 98,
-   "parent": 97,
+   "id": 95,
+   "parent": 94,
    "depth": 14,
    "tag": "div",
    "rect": [
@@ -4137,8 +4050,8 @@
    "cls": "flex items-center gap-1.5"
   },
   {
-   "id": 99,
-   "parent": 98,
+   "id": 96,
+   "parent": 95,
    "depth": 15,
    "tag": "div",
    "rect": [
@@ -4157,8 +4070,8 @@
    "cls": "me-1.5 flex items-center gap-1.5"
   },
   {
-   "id": 100,
-   "parent": 99,
+   "id": 97,
+   "parent": 96,
    "depth": 16,
    "tag": "button",
    "rect": [
@@ -4190,8 +4103,8 @@
    "cls": "Button-BZrLNX [--button-ring-offset:0px] browser:[--button-text-color:var(--color-text-tertiary)] browser:[--button-text-color-hover:var(--color-text-tertiary)] browser:data-selected:[--button-text-color:var(--color-text-primary-ghost)] browser:data-selected:[--button-text-color-hover:var(--color-text-primary-ghost)] [--display-icon-compact:contents] [--display-icon-leading:none] group/sidebar-trigger"
   },
   {
-   "id": 101,
-   "parent": 100,
+   "id": 98,
+   "parent": 97,
    "depth": 17,
    "tag": "span",
    "rect": [
@@ -4221,8 +4134,8 @@
    "cls": "ButtonInner-Ku4XvS"
   },
   {
-   "id": 102,
-   "parent": 102,
+   "id": 99,
+   "parent": 99,
    "depth": 19,
    "tag": "svg",
    "rect": [
@@ -4249,8 +4162,8 @@
    "svg": "<svg data-no-autosize=\"true\" aria-hidden=\"true\" class=\"Icon-X4VkKC\" focusable=\"false\" height=\"16\" viewBox=\"0 0 16 16\" width=\"16\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M11.5 2.30762C13.1707 2.30762 14.5254 3.66235 14.5254 5.33301V10.666C14.5254 12.3367 13.1707 13.6914 11.5 13.6914H4.5C2.82934 13.6914 1.47461 12.3367 1.47461 10.666V5.33301C1.47461 3.66235 2.82934 2.30762 4.5 2.30762H11.5ZM6.52539 12.6416H11.5C12.5908 12.6416 13.4746 11.7568 13.4746 10.666V5.33301C13.4746 4.24225 12.5908 3.3584 11.5 3.3584H6.52539V12.6416ZM4.5 3.3584C3.40924 3.3584 2.52539 4.24225 2.52539 5.33301V10.666C2.52539 11.7568 3.40924 12.6416 4.5 12.6416H5.47461V3.3584H4.5Z\" fill-rule=\"evenodd\" clip-rule=\"evenodd\" fill=\"currentColor\"></path></svg>"
   },
   {
-   "id": 103,
-   "parent": 84,
+   "id": 100,
+   "parent": 81,
    "depth": 9,
    "tag": "div",
    "rect": [
@@ -4274,8 +4187,8 @@
    "cls": "group/titlebar pointer-events-none top-[var(--app-shell-page-header-offset,0px)] flex h-[var(--app-shell-header-height,var(--height-toolbar))] min-w-0 flex-1 isolate self-start items-center gap-toolbar-action overflow-hidden [contain:layout_paint] [-webkit-app-region:initial] ps-2 relative pe-2"
   },
   {
-   "id": 104,
-   "parent": 84,
+   "id": 101,
+   "parent": 81,
    "depth": 9,
    "tag": "div",
    "rect": [
@@ -4292,8 +4205,8 @@
    "cls": "pointer-events-none absolute inset-0 [-webkit-app-region:initial]"
   },
   {
-   "id": 105,
-   "parent": 105,
+   "id": 102,
+   "parent": 102,
    "depth": 11,
    "tag": "div",
    "rect": [
@@ -4311,8 +4224,8 @@
    "cls": "absolute inset-y-0 flex min-w-0 left-0"
   },
   {
-   "id": 106,
-   "parent": 105,
+   "id": 103,
+   "parent": 102,
    "depth": 12,
    "tag": "div",
    "rect": [
@@ -4331,8 +4244,8 @@
    "cls": "pointer-events-none absolute z-10 w-px bg-border top-1/2 h-4 -translate-y-1/2 start-0"
   },
   {
-   "id": 107,
-   "parent": 105,
+   "id": 104,
+   "parent": 102,
    "depth": 12,
    "tag": "div",
    "rect": [
@@ -4348,8 +4261,8 @@
    "cls": "min-w-0 flex-1"
   },
   {
-   "id": 108,
-   "parent": 108,
+   "id": 105,
+   "parent": 105,
    "depth": 9,
    "tag": "main",
    "rect": [
@@ -4372,8 +4285,8 @@
    "cls": "outline-none MainContentSurface-EnuIYE MainContentLeftBorder-IFAvO_"
   },
   {
-   "id": 109,
-   "parent": 108,
+   "id": 106,
+   "parent": 105,
    "depth": 10,
    "tag": "div",
    "rect": [
@@ -4390,8 +4303,8 @@
    "cls": "pointer-events-none absolute inset-y-0 start-0"
   },
   {
-   "id": 110,
-   "parent": 108,
+   "id": 107,
+   "parent": 105,
    "depth": 10,
    "tag": "div",
    "rect": [
@@ -4410,8 +4323,8 @@
    "cls": "WorkspaceContent-dnr6uY relative isolate flex min-h-0 flex-1 overflow-hidden"
   },
   {
-   "id": 111,
-   "parent": 110,
+   "id": 108,
+   "parent": 107,
    "depth": 11,
    "tag": "div",
    "rect": [
@@ -4430,8 +4343,8 @@
    "cls": "MainContentViewport-OinMfT"
   },
   {
-   "id": 112,
-   "parent": 111,
+   "id": 109,
+   "parent": 108,
    "depth": 12,
    "tag": "div",
    "rect": [
@@ -4450,8 +4363,8 @@
    "cls": "MainContentFrame-sss8BP"
   },
   {
-   "id": 113,
-   "parent": 112,
+   "id": 110,
+   "parent": 109,
    "depth": 13,
    "tag": "div",
    "rect": [
@@ -4469,8 +4382,8 @@
    "cls": "relative flex min-h-0 flex-1 [--thread-content-responsive-max-width:var(--thread-content-expanded-max-width,inherit)] @max-thread-expanded/app-shell-main-content:[--thread-content-responsive-max-width:var(--thread-content-compact-max-width,inherit)]"
   },
   {
-   "id": 114,
-   "parent": 113,
+   "id": 111,
+   "parent": 110,
    "depth": 14,
    "tag": "div",
    "rect": [
@@ -4490,8 +4403,8 @@
    "cls": "MainContentTopFade-T6W4RS background-j0etS7"
   },
   {
-   "id": 115,
-   "parent": 113,
+   "id": 112,
+   "parent": 110,
    "depth": 14,
    "tag": "div",
    "rect": [
@@ -4509,8 +4422,8 @@
    "cls": "flex h-full min-h-0 min-w-0 flex-1 flex-col outline-none"
   },
   {
-   "id": 116,
-   "parent": 116,
+   "id": 113,
+   "parent": 113,
    "depth": 17,
    "tag": "div",
    "rect": [
@@ -4527,8 +4440,8 @@
    "cls": "@container h-full min-h-0 overflow-y-auto"
   },
   {
-   "id": 117,
-   "parent": 116,
+   "id": 114,
+   "parent": 113,
    "depth": 18,
    "tag": "div",
    "rect": [
@@ -4552,8 +4465,8 @@
    "cls": "w-full items-center px-3 flex flex-col justify-center py-6 min-h-full pb-11 select-none"
   },
   {
-   "id": 118,
-   "parent": 117,
+   "id": 115,
+   "parent": 114,
    "depth": 19,
    "tag": "div",
    "rect": [
@@ -4575,8 +4488,8 @@
    "cls": "flex w-full max-w-xl flex-col items-center text-center justify-center gap-3 max-w-[46.125rem]! gap-11"
   },
   {
-   "id": 119,
-   "parent": 118,
+   "id": 116,
+   "parent": 115,
    "depth": 20,
    "tag": "div",
    "rect": [
@@ -4597,8 +4510,8 @@
    "cls": "flex flex-col items-center gap-2"
   },
   {
-   "id": 120,
-   "parent": 119,
+   "id": 117,
+   "parent": 116,
    "depth": 21,
    "tag": "div",
    "rect": [
@@ -4616,8 +4529,8 @@
    "cls": "leading-6 font-medium text-default text-lg"
   },
   {
-   "id": 121,
-   "parent": 120,
+   "id": 118,
+   "parent": 117,
    "depth": 22,
    "tag": "div",
    "rect": [
@@ -4639,8 +4552,8 @@
    "cls": "flex flex-col items-center gap-3"
   },
   {
-   "id": 122,
-   "parent": 121,
+   "id": 119,
+   "parent": 118,
    "depth": 23,
    "tag": "span",
    "rect": [
@@ -4661,8 +4574,8 @@
    "cls": "select-none text-5xl leading-none"
   },
   {
-   "id": 123,
-   "parent": 121,
+   "id": 120,
+   "parent": 118,
    "depth": 23,
    "tag": "div",
    "rect": [
@@ -4684,8 +4597,8 @@
    "cls": "flex flex-col items-center gap-0.5"
   },
   {
-   "id": 124,
-   "parent": 123,
+   "id": 121,
+   "parent": 120,
    "depth": 24,
    "tag": "h1",
    "rect": [
@@ -4705,8 +4618,8 @@
    "cls": "text-[18px] leading-[26px] font-normal tracking-[-0.025em] text-default"
   },
   {
-   "id": 125,
-   "parent": 123,
+   "id": 122,
+   "parent": 120,
    "depth": 24,
    "tag": "p",
    "rect": [
@@ -4730,8 +4643,8 @@
    "cls": "text-[14px] leading-5 font-normal tracking-[-0.01em] text-tertiary"
   },
   {
-   "id": 126,
-   "parent": 118,
+   "id": 123,
+   "parent": 115,
    "depth": 20,
    "tag": "div",
    "rect": [
@@ -4752,8 +4665,8 @@
    "cls": "flex w-full flex-wrap items-center justify-center gap-2"
   },
   {
-   "id": 127,
-   "parent": 126,
+   "id": 124,
+   "parent": 123,
    "depth": 21,
    "tag": "ul",
    "rect": [
@@ -4772,8 +4685,8 @@
    "cls": "grid w-full grid-cols-1 gap-5 @min-[39rem]:grid-cols-2"
   },
   {
-   "id": 128,
-   "parent": 127,
+   "id": 125,
+   "parent": 124,
    "depth": 22,
    "tag": "li",
    "rect": [
@@ -4790,8 +4703,8 @@
    }
   },
   {
-   "id": 129,
-   "parent": 128,
+   "id": 126,
+   "parent": 125,
    "depth": 23,
    "tag": "button",
    "rect": [
@@ -4825,142 +4738,142 @@
     "cursor": "default"
    },
    "cls": "no-drag cursor-interaction items-center select-none disabled:cursor-default aria-disabled:cursor-default focus:outline-hidden disabled:opacity-40 aria-disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0 whitespace-normal flex min-h-27 w-full gap-4 rounded-[24px] border border-dashed border-default p-5 text-start not-disabled:hover:bg-primary-ghost-hover"
+  },
+  {
+   "id": 127,
+   "parent": 126,
+   "depth": 24,
+   "tag": "span",
+   "rect": [
+    540.25,
+    417,
+    24,
+    24
+   ],
+   "style": {
+    "display": "flex",
+    "alignItems": "center",
+    "justifyContent": "center",
+    "color": "rgba(26, 28, 31, 0.494)",
+    "borderTopColor": "rgba(26, 28, 31, 0.494)",
+    "borderRightColor": "rgba(26, 28, 31, 0.494)",
+    "borderBottomColor": "rgba(26, 28, 31, 0.494)",
+    "borderLeftColor": "rgba(26, 28, 31, 0.494)",
+    "fontSize": "16px",
+    "cursor": "default"
+   },
+   "cls": "flex size-6 shrink-0 items-center justify-center text-tertiary"
+  },
+  {
+   "id": 128,
+   "parent": 127,
+   "depth": 25,
+   "tag": "span",
+   "rect": [
+    538.25,
+    415,
+    28,
+    28
+   ],
+   "style": {
+    "color": "rgb(26, 28, 31)",
+    "fontSize": "28px",
+    "lineHeight": "28px",
+    "cursor": "default"
+   },
+   "cls": "text-xl leading-none text-default"
+  },
+  {
+   "id": 129,
+   "parent": 126,
+   "depth": 24,
+   "tag": "span",
+   "rect": [
+    580.25,
+    395,
+    277,
+    68
+   ],
+   "style": {
+    "display": "flex",
+    "flexDirection": "column",
+    "gap": "2px",
+    "color": "rgb(26, 28, 31)",
+    "fontSize": "16px",
+    "cursor": "default"
+   },
+   "cls": "flex min-w-0 flex-1 flex-col gap-0.5"
   },
   {
    "id": 130,
    "parent": 129,
-   "depth": 24,
-   "tag": "span",
-   "rect": [
-    540.25,
-    417,
-    24,
-    24
-   ],
-   "style": {
-    "display": "flex",
-    "alignItems": "center",
-    "justifyContent": "center",
-    "color": "rgba(26, 28, 31, 0.494)",
-    "borderTopColor": "rgba(26, 28, 31, 0.494)",
-    "borderRightColor": "rgba(26, 28, 31, 0.494)",
-    "borderBottomColor": "rgba(26, 28, 31, 0.494)",
-    "borderLeftColor": "rgba(26, 28, 31, 0.494)",
-    "fontSize": "16px",
-    "cursor": "default"
-   },
-   "cls": "flex size-6 shrink-0 items-center justify-center text-tertiary"
-  },
-  {
-   "id": 131,
-   "parent": 130,
    "depth": 25,
-   "tag": "span",
-   "rect": [
-    538.25,
-    415,
-    28,
-    28
-   ],
-   "style": {
-    "color": "rgb(26, 28, 31)",
-    "fontSize": "28px",
-    "lineHeight": "28px",
-    "cursor": "default"
-   },
-   "cls": "text-xl leading-none text-default"
-  },
-  {
-   "id": 132,
-   "parent": 129,
-   "depth": 24,
    "tag": "span",
    "rect": [
     580.25,
     395,
     277,
-    68
+    26
    ],
    "style": {
-    "display": "flex",
-    "flexDirection": "column",
-    "gap": "2px",
+    "display": "flow-root",
     "color": "rgb(26, 28, 31)",
     "fontSize": "16px",
+    "fontWeight": "400",
+    "lineHeight": "26px",
+    "letterSpacing": "-0.32px",
+    "overflow": "hidden",
     "cursor": "default"
    },
-   "cls": "flex min-w-0 flex-1 flex-col gap-0.5"
+   "cls": "line-clamp-1 text-[16px] leading-[26px] font-normal tracking-[-0.02em] text-default"
+  },
+  {
+   "id": 131,
+   "parent": 129,
+   "depth": 25,
+   "tag": "span",
+   "rect": [
+    580.25,
+    423,
+    277,
+    40
+   ],
+   "style": {
+    "display": "flow-root",
+    "color": "rgba(26, 28, 31, 0.494)",
+    "borderTopColor": "rgba(26, 28, 31, 0.494)",
+    "borderRightColor": "rgba(26, 28, 31, 0.494)",
+    "borderBottomColor": "rgba(26, 28, 31, 0.494)",
+    "borderLeftColor": "rgba(26, 28, 31, 0.494)",
+    "fontSize": "14px",
+    "fontWeight": "400",
+    "lineHeight": "20px",
+    "overflow": "hidden",
+    "cursor": "default"
+   },
+   "cls": "line-clamp-2 text-[14px] leading-5 font-normal text-tertiary"
+  },
+  {
+   "id": 132,
+   "parent": 124,
+   "depth": 22,
+   "tag": "li",
+   "rect": [
+    898.25,
+    374,
+    359,
+    110
+   ],
+   "style": {
+    "display": "list-item",
+    "color": "rgb(26, 28, 31)",
+    "fontSize": "16px",
+    "textAlign": "center"
+   }
   },
   {
    "id": 133,
    "parent": 132,
-   "depth": 25,
-   "tag": "span",
-   "rect": [
-    580.25,
-    395,
-    277,
-    26
-   ],
-   "style": {
-    "display": "flow-root",
-    "color": "rgb(26, 28, 31)",
-    "fontSize": "16px",
-    "fontWeight": "400",
-    "lineHeight": "26px",
-    "letterSpacing": "-0.32px",
-    "overflow": "hidden",
-    "cursor": "default"
-   },
-   "cls": "line-clamp-1 text-[16px] leading-[26px] font-normal tracking-[-0.02em] text-default"
-  },
-  {
-   "id": 134,
-   "parent": 132,
-   "depth": 25,
-   "tag": "span",
-   "rect": [
-    580.25,
-    423,
-    277,
-    40
-   ],
-   "style": {
-    "display": "flow-root",
-    "color": "rgba(26, 28, 31, 0.494)",
-    "borderTopColor": "rgba(26, 28, 31, 0.494)",
-    "borderRightColor": "rgba(26, 28, 31, 0.494)",
-    "borderBottomColor": "rgba(26, 28, 31, 0.494)",
-    "borderLeftColor": "rgba(26, 28, 31, 0.494)",
-    "fontSize": "14px",
-    "fontWeight": "400",
-    "lineHeight": "20px",
-    "overflow": "hidden",
-    "cursor": "default"
-   },
-   "cls": "line-clamp-2 text-[14px] leading-5 font-normal text-tertiary"
-  },
-  {
-   "id": 135,
-   "parent": 127,
-   "depth": 22,
-   "tag": "li",
-   "rect": [
-    898.25,
-    374,
-    359,
-    110
-   ],
-   "style": {
-    "display": "list-item",
-    "color": "rgb(26, 28, 31)",
-    "fontSize": "16px",
-    "textAlign": "center"
-   }
-  },
-  {
-   "id": 136,
-   "parent": 135,
    "depth": 23,
    "tag": "button",
    "rect": [
@@ -4996,8 +4909,8 @@
    "cls": "no-drag cursor-interaction items-center select-none disabled:cursor-default aria-disabled:cursor-default focus:outline-hidden disabled:opacity-40 aria-disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0 whitespace-normal flex min-h-27 w-full gap-4 rounded-[24px] border border-dashed border-default p-5 text-start not-disabled:hover:bg-primary-ghost-hover"
   },
   {
-   "id": 137,
-   "parent": 136,
+   "id": 134,
+   "parent": 133,
    "depth": 24,
    "tag": "span",
    "rect": [
@@ -5021,8 +4934,8 @@
    "cls": "flex size-6 shrink-0 items-center justify-center text-tertiary"
   },
   {
-   "id": 138,
-   "parent": 137,
+   "id": 135,
+   "parent": 134,
    "depth": 25,
    "tag": "span",
    "rect": [
@@ -5040,8 +4953,8 @@
    "cls": "text-xl leading-none text-default"
   },
   {
-   "id": 139,
-   "parent": 136,
+   "id": 136,
+   "parent": 133,
    "depth": 24,
    "tag": "span",
    "rect": [
@@ -5061,8 +4974,8 @@
    "cls": "flex min-w-0 flex-1 flex-col gap-0.5"
   },
   {
-   "id": 140,
-   "parent": 139,
+   "id": 137,
+   "parent": 136,
    "depth": 25,
    "tag": "span",
    "rect": [
@@ -5084,8 +4997,8 @@
    "cls": "line-clamp-1 text-[16px] leading-[26px] font-normal tracking-[-0.02em] text-default"
   },
   {
-   "id": 141,
-   "parent": 139,
+   "id": 138,
+   "parent": 136,
    "depth": 25,
    "tag": "span",
    "rect": [
@@ -5110,8 +5023,8 @@
    "cls": "line-clamp-2 text-[14px] leading-5 font-normal text-tertiary"
   },
   {
-   "id": 142,
-   "parent": 127,
+   "id": 139,
+   "parent": 124,
    "depth": 22,
    "tag": "li",
    "rect": [
@@ -5128,8 +5041,8 @@
    }
   },
   {
-   "id": 143,
-   "parent": 142,
+   "id": 140,
+   "parent": 139,
    "depth": 23,
    "tag": "button",
    "rect": [
@@ -5163,142 +5076,142 @@
     "cursor": "default"
    },
    "cls": "no-drag cursor-interaction items-center select-none disabled:cursor-default aria-disabled:cursor-default focus:outline-hidden disabled:opacity-40 aria-disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0 whitespace-normal flex min-h-27 w-full gap-4 rounded-[24px] border border-dashed border-default p-5 text-start not-disabled:hover:bg-primary-ghost-hover"
+  },
+  {
+   "id": 141,
+   "parent": 140,
+   "depth": 24,
+   "tag": "span",
+   "rect": [
+    540.25,
+    547,
+    24,
+    24
+   ],
+   "style": {
+    "display": "flex",
+    "alignItems": "center",
+    "justifyContent": "center",
+    "color": "rgba(26, 28, 31, 0.494)",
+    "borderTopColor": "rgba(26, 28, 31, 0.494)",
+    "borderRightColor": "rgba(26, 28, 31, 0.494)",
+    "borderBottomColor": "rgba(26, 28, 31, 0.494)",
+    "borderLeftColor": "rgba(26, 28, 31, 0.494)",
+    "fontSize": "16px",
+    "cursor": "default"
+   },
+   "cls": "flex size-6 shrink-0 items-center justify-center text-tertiary"
+  },
+  {
+   "id": 142,
+   "parent": 141,
+   "depth": 25,
+   "tag": "span",
+   "rect": [
+    538.25,
+    545,
+    28,
+    28
+   ],
+   "style": {
+    "color": "rgb(26, 28, 31)",
+    "fontSize": "28px",
+    "lineHeight": "28px",
+    "cursor": "default"
+   },
+   "cls": "text-xl leading-none text-default"
+  },
+  {
+   "id": 143,
+   "parent": 140,
+   "depth": 24,
+   "tag": "span",
+   "rect": [
+    580.25,
+    525,
+    277,
+    68
+   ],
+   "style": {
+    "display": "flex",
+    "flexDirection": "column",
+    "gap": "2px",
+    "color": "rgb(26, 28, 31)",
+    "fontSize": "16px",
+    "cursor": "default"
+   },
+   "cls": "flex min-w-0 flex-1 flex-col gap-0.5"
   },
   {
    "id": 144,
    "parent": 143,
-   "depth": 24,
-   "tag": "span",
-   "rect": [
-    540.25,
-    547,
-    24,
-    24
-   ],
-   "style": {
-    "display": "flex",
-    "alignItems": "center",
-    "justifyContent": "center",
-    "color": "rgba(26, 28, 31, 0.494)",
-    "borderTopColor": "rgba(26, 28, 31, 0.494)",
-    "borderRightColor": "rgba(26, 28, 31, 0.494)",
-    "borderBottomColor": "rgba(26, 28, 31, 0.494)",
-    "borderLeftColor": "rgba(26, 28, 31, 0.494)",
-    "fontSize": "16px",
-    "cursor": "default"
-   },
-   "cls": "flex size-6 shrink-0 items-center justify-center text-tertiary"
-  },
-  {
-   "id": 145,
-   "parent": 144,
    "depth": 25,
-   "tag": "span",
-   "rect": [
-    538.25,
-    545,
-    28,
-    28
-   ],
-   "style": {
-    "color": "rgb(26, 28, 31)",
-    "fontSize": "28px",
-    "lineHeight": "28px",
-    "cursor": "default"
-   },
-   "cls": "text-xl leading-none text-default"
-  },
-  {
-   "id": 146,
-   "parent": 143,
-   "depth": 24,
    "tag": "span",
    "rect": [
     580.25,
     525,
     277,
-    68
+    26
    ],
    "style": {
-    "display": "flex",
-    "flexDirection": "column",
-    "gap": "2px",
+    "display": "flow-root",
     "color": "rgb(26, 28, 31)",
     "fontSize": "16px",
+    "fontWeight": "400",
+    "lineHeight": "26px",
+    "letterSpacing": "-0.32px",
+    "overflow": "hidden",
     "cursor": "default"
    },
-   "cls": "flex min-w-0 flex-1 flex-col gap-0.5"
+   "cls": "line-clamp-1 text-[16px] leading-[26px] font-normal tracking-[-0.02em] text-default"
+  },
+  {
+   "id": 145,
+   "parent": 143,
+   "depth": 25,
+   "tag": "span",
+   "rect": [
+    580.25,
+    553,
+    277,
+    40
+   ],
+   "style": {
+    "display": "flow-root",
+    "color": "rgba(26, 28, 31, 0.494)",
+    "borderTopColor": "rgba(26, 28, 31, 0.494)",
+    "borderRightColor": "rgba(26, 28, 31, 0.494)",
+    "borderBottomColor": "rgba(26, 28, 31, 0.494)",
+    "borderLeftColor": "rgba(26, 28, 31, 0.494)",
+    "fontSize": "14px",
+    "fontWeight": "400",
+    "lineHeight": "20px",
+    "overflow": "hidden",
+    "cursor": "default"
+   },
+   "cls": "line-clamp-2 text-[14px] leading-5 font-normal text-tertiary"
+  },
+  {
+   "id": 146,
+   "parent": 124,
+   "depth": 22,
+   "tag": "li",
+   "rect": [
+    898.25,
+    504,
+    359,
+    110
+   ],
+   "style": {
+    "display": "list-item",
+    "color": "rgb(26, 28, 31)",
+    "fontSize": "16px",
+    "textAlign": "center"
+   }
   },
   {
    "id": 147,
    "parent": 146,
-   "depth": 25,
-   "tag": "span",
-   "rect": [
-    580.25,
-    525,
-    277,
-    26
-   ],
-   "style": {
-    "display": "flow-root",
-    "color": "rgb(26, 28, 31)",
-    "fontSize": "16px",
-    "fontWeight": "400",
-    "lineHeight": "26px",
-    "letterSpacing": "-0.32px",
-    "overflow": "hidden",
-    "cursor": "default"
-   },
-   "cls": "line-clamp-1 text-[16px] leading-[26px] font-normal tracking-[-0.02em] text-default"
-  },
-  {
-   "id": 148,
-   "parent": 146,
-   "depth": 25,
-   "tag": "span",
-   "rect": [
-    580.25,
-    553,
-    277,
-    40
-   ],
-   "style": {
-    "display": "flow-root",
-    "color": "rgba(26, 28, 31, 0.494)",
-    "borderTopColor": "rgba(26, 28, 31, 0.494)",
-    "borderRightColor": "rgba(26, 28, 31, 0.494)",
-    "borderBottomColor": "rgba(26, 28, 31, 0.494)",
-    "borderLeftColor": "rgba(26, 28, 31, 0.494)",
-    "fontSize": "14px",
-    "fontWeight": "400",
-    "lineHeight": "20px",
-    "overflow": "hidden",
-    "cursor": "default"
-   },
-   "cls": "line-clamp-2 text-[14px] leading-5 font-normal text-tertiary"
-  },
-  {
-   "id": 149,
-   "parent": 127,
-   "depth": 22,
-   "tag": "li",
-   "rect": [
-    898.25,
-    504,
-    359,
-    110
-   ],
-   "style": {
-    "display": "list-item",
-    "color": "rgb(26, 28, 31)",
-    "fontSize": "16px",
-    "textAlign": "center"
-   }
-  },
-  {
-   "id": 150,
-   "parent": 149,
    "depth": 23,
    "tag": "button",
    "rect": [
@@ -5334,8 +5247,8 @@
    "cls": "no-drag cursor-interaction items-center select-none disabled:cursor-default aria-disabled:cursor-default focus:outline-hidden disabled:opacity-40 aria-disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0 whitespace-normal flex min-h-27 w-full gap-4 rounded-[24px] border border-dashed border-default p-5 text-start not-disabled:hover:bg-primary-ghost-hover"
   },
   {
-   "id": 151,
-   "parent": 150,
+   "id": 148,
+   "parent": 147,
    "depth": 24,
    "tag": "span",
    "rect": [
@@ -5359,8 +5272,8 @@
    "cls": "flex size-6 shrink-0 items-center justify-center text-tertiary"
   },
   {
-   "id": 152,
-   "parent": 151,
+   "id": 149,
+   "parent": 148,
    "depth": 25,
    "tag": "span",
    "rect": [
@@ -5378,8 +5291,8 @@
    "cls": "text-xl leading-none text-default"
   },
   {
-   "id": 153,
-   "parent": 150,
+   "id": 150,
+   "parent": 147,
    "depth": 24,
    "tag": "span",
    "rect": [
@@ -5399,8 +5312,8 @@
    "cls": "flex min-w-0 flex-1 flex-col gap-0.5"
   },
   {
-   "id": 154,
-   "parent": 153,
+   "id": 151,
+   "parent": 150,
    "depth": 25,
    "tag": "span",
    "rect": [
@@ -5422,8 +5335,8 @@
    "cls": "line-clamp-1 text-[16px] leading-[26px] font-normal tracking-[-0.02em] text-default"
   },
   {
-   "id": 155,
-   "parent": 153,
+   "id": 152,
+   "parent": 150,
    "depth": 25,
    "tag": "span",
    "rect": [
@@ -5448,8 +5361,8 @@
    "cls": "line-clamp-2 text-[14px] leading-5 font-normal text-tertiary"
   },
   {
-   "id": 156,
-   "parent": 127,
+   "id": 153,
+   "parent": 124,
    "depth": 22,
    "tag": "li",
    "rect": [
@@ -5466,8 +5379,8 @@
    }
   },
   {
-   "id": 157,
-   "parent": 156,
+   "id": 154,
+   "parent": 153,
    "depth": 23,
    "tag": "button",
    "rect": [
@@ -5503,8 +5416,8 @@
    "cls": "no-drag cursor-interaction items-center select-none disabled:cursor-default aria-disabled:cursor-default focus:outline-hidden disabled:opacity-40 aria-disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0 whitespace-normal flex min-h-27 w-full gap-4 rounded-[24px] border border-dashed border-default p-5 text-start not-disabled:hover:bg-primary-ghost-hover"
   },
   {
-   "id": 158,
-   "parent": 157,
+   "id": 155,
+   "parent": 154,
    "depth": 24,
    "tag": "span",
    "rect": [
@@ -5528,8 +5441,8 @@
    "cls": "flex size-6 shrink-0 items-center justify-center text-tertiary"
   },
   {
-   "id": 159,
-   "parent": 158,
+   "id": 156,
+   "parent": 155,
    "depth": 25,
    "tag": "span",
    "rect": [
@@ -5547,8 +5460,8 @@
    "cls": "text-xl leading-none text-default"
   },
   {
-   "id": 160,
-   "parent": 157,
+   "id": 157,
+   "parent": 154,
    "depth": 24,
    "tag": "span",
    "rect": [
@@ -5568,8 +5481,8 @@
    "cls": "flex min-w-0 flex-1 flex-col gap-0.5"
   },
   {
-   "id": 161,
-   "parent": 160,
+   "id": 158,
+   "parent": 157,
    "depth": 25,
    "tag": "span",
    "rect": [
@@ -5591,8 +5504,8 @@
    "cls": "line-clamp-1 text-[16px] leading-[26px] font-normal tracking-[-0.02em] text-default"
   },
   {
-   "id": 162,
-   "parent": 160,
+   "id": 159,
+   "parent": 157,
    "depth": 25,
    "tag": "span",
    "rect": [
@@ -5617,8 +5530,8 @@
    "cls": "line-clamp-2 text-[14px] leading-5 font-normal text-tertiary"
   },
   {
-   "id": 163,
-   "parent": 127,
+   "id": 160,
+   "parent": 124,
    "depth": 22,
    "tag": "li",
    "rect": [
@@ -5635,8 +5548,8 @@
    }
   },
   {
-   "id": 164,
-   "parent": 163,
+   "id": 161,
+   "parent": 160,
    "depth": 23,
    "tag": "button",
    "rect": [
@@ -5672,8 +5585,8 @@
    "cls": "no-drag cursor-interaction items-center select-none disabled:cursor-default aria-disabled:cursor-default focus:outline-hidden disabled:opacity-40 aria-disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0 whitespace-normal flex min-h-27 w-full gap-4 rounded-[24px] border border-dashed border-default p-5 text-start not-disabled:hover:bg-primary-ghost-hover"
   },
   {
-   "id": 165,
-   "parent": 164,
+   "id": 162,
+   "parent": 161,
    "depth": 24,
    "tag": "span",
    "rect": [
@@ -5697,8 +5610,8 @@
    "cls": "flex size-6 shrink-0 items-center justify-center text-tertiary"
   },
   {
-   "id": 166,
-   "parent": 165,
+   "id": 163,
+   "parent": 162,
    "depth": 25,
    "tag": "span",
    "rect": [
@@ -5716,8 +5629,8 @@
    "cls": "text-xl leading-none text-default"
   },
   {
-   "id": 167,
-   "parent": 164,
+   "id": 164,
+   "parent": 161,
    "depth": 24,
    "tag": "span",
    "rect": [
@@ -5737,8 +5650,8 @@
    "cls": "flex min-w-0 flex-1 flex-col gap-0.5"
   },
   {
-   "id": 168,
-   "parent": 167,
+   "id": 165,
+   "parent": 164,
    "depth": 25,
    "tag": "span",
    "rect": [
@@ -5760,8 +5673,8 @@
    "cls": "line-clamp-1 text-[16px] leading-[26px] font-normal tracking-[-0.02em] text-default"
   },
   {
-   "id": 169,
-   "parent": 167,
+   "id": 166,
+   "parent": 164,
    "depth": 25,
    "tag": "span",
    "rect": [
@@ -5786,8 +5699,8 @@
    "cls": "line-clamp-2 text-[14px] leading-5 font-normal text-tertiary"
   },
   {
-   "id": 170,
-   "parent": 84,
+   "id": 167,
+   "parent": 81,
    "depth": 8,
    "tag": "div",
    "rect": [
@@ -5805,7 +5718,7 @@
    }
   },
   {
-   "id": 171,
+   "id": 168,
    "parent": 1,
    "depth": 2,
    "tag": "div",
@@ -5824,7 +5737,7 @@
    "cls": "pointer-events-none fixed inset-0 z-60 zoom-adjusted-viewport h-[calc(100dvh/var(--codex-window-zoom))] contain-layout [&>*]:pointer-events-auto"
   },
   {
-   "id": 172,
+   "id": 169,
    "parent": 0,
    "depth": 1,
    "tag": "div",
@@ -5842,8 +5755,8 @@
    "cls": "pointer-events-none fixed inset-0 overflow-visible"
   },
   {
-   "id": 173,
-   "parent": 172,
+   "id": 170,
+   "parent": 169,
    "depth": 2,
    "tag": "div",
    "rect": [
@@ -5860,7 +5773,7 @@
    "cls": "pointer-events-none fixed inset-0 [contain:paint]"
   },
   {
-   "id": 174,
+   "id": 171,
    "parent": 0,
    "depth": 1,
    "tag": "div",
@@ -5905,7 +5818,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 26,
+   "node": 23,
    "text": "Space",
    "rect": [
     25.5,
@@ -5917,7 +5830,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 30,
+   "node": 27,
    "text": "Scheduled",
    "rect": [
     25.5,
@@ -5929,7 +5842,7 @@
    "color": "rgb(26, 28, 31)"
   },
   {
-   "node": 34,
+   "node": 31,
    "text": "Plugins",
    "rect": [
     25.5,
@@ -5941,7 +5854,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 38,
+   "node": 35,
    "text": "Explore",
    "rect": [
     25.5,
@@ -5953,7 +5866,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 44,
+   "node": 41,
    "text": "Code Review",
    "rect": [
     25.5,
@@ -5965,7 +5878,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 48,
+   "node": 45,
    "text": "Sites",
    "rect": [
     25.5,
@@ -5977,7 +5890,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 65,
+   "node": 62,
    "text": "Scheduled",
    "rect": [
     68,
@@ -5989,7 +5902,7 @@
    "color": "oklab(0.22559 -0.00131416 -0.00642684 / 0.85)"
   },
   {
-   "node": 78,
+   "node": 75,
    "text": "New task",
    "rect": [
     92,
@@ -6001,7 +5914,7 @@
    "color": "oklab(0.22559 -0.00131416 -0.00642684 / 0.85)"
   },
   {
-   "node": 81,
+   "node": 78,
    "text": "No scheduled tasks",
    "rect": [
     68,
@@ -6013,7 +5926,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 122,
+   "node": 119,
    "text": "🕗",
    "rect": [
     864.84,
@@ -6025,7 +5938,7 @@
    "color": "rgb(26, 28, 31)"
   },
   {
-   "node": 124,
+   "node": 121,
    "text": "Schedule a task",
    "rect": [
     828.01,
@@ -6037,7 +5950,7 @@
    "color": "rgb(26, 28, 31)"
   },
   {
-   "node": 125,
+   "node": 122,
    "text": "ChatGPT can take care of ongoing tasks so you don’t have to.",
    "rect": [
     693.69,
@@ -6049,7 +5962,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 131,
+   "node": 128,
    "text": "📚",
    "rect": [
     538.25,
@@ -6061,7 +5974,7 @@
    "color": "rgb(26, 28, 31)"
   },
   {
-   "node": 133,
+   "node": 130,
    "text": "AP Lang practice",
    "rect": [
     580.25,
@@ -6073,7 +5986,7 @@
    "color": "rgb(26, 28, 31)"
   },
   {
-   "node": 134,
+   "node": 131,
    "text": "Give me short AP Lang rhetoric and argument practice three times a week",
    "rect": [
     580.25,
@@ -6085,7 +5998,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 134,
+   "node": 131,
    "text": "Give me short AP Lang rhetoric and argument practice three times a week",
    "rect": [
     580.25,
@@ -6097,7 +6010,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 138,
+   "node": 135,
    "text": "🔧",
    "rect": [
     917.25,
@@ -6109,7 +6022,7 @@
    "color": "rgb(26, 28, 31)"
   },
   {
-   "node": 140,
+   "node": 137,
    "text": "TrueNAS homelab upkeep",
    "rect": [
     959.25,
@@ -6121,7 +6034,7 @@
    "color": "rgb(26, 28, 31)"
   },
   {
-   "node": 141,
+   "node": 138,
    "text": "Refresh my TrueNAS SCALE maintenance checklist once a month",
    "rect": [
     959.25,
@@ -6133,7 +6046,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 141,
+   "node": 138,
    "text": "Refresh my TrueNAS SCALE maintenance checklist once a month",
    "rect": [
     959.25,
@@ -6145,7 +6058,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 145,
+   "node": 142,
    "text": "📰",
    "rect": [
     538.25,
@@ -6157,7 +6070,7 @@
    "color": "rgb(26, 28, 31)"
   },
   {
-   "node": 147,
+   "node": 144,
    "text": "Tempus AI developments",
    "rect": [
     580.25,
@@ -6169,7 +6082,7 @@
    "color": "rgb(26, 28, 31)"
   },
   {
-   "node": 148,
+   "node": 145,
    "text": "Let me know when Tempus AI has a development that could materially change its outlook",
    "rect": [
     580.25,
@@ -6181,7 +6094,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 148,
+   "node": 145,
    "text": "Let me know when Tempus AI has a development that could materially change its outlook",
    "rect": [
     580.25,
@@ -6193,7 +6106,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 148,
+   "node": 145,
    "text": "Let me know when Tempus AI has a development that could materially change its outlook",
    "rect": [
     580.25,
@@ -6205,7 +6118,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 148,
+   "node": 145,
    "text": "Let me know when Tempus AI has a development that could materially change its outlook",
    "rect": [
     580.25,
@@ -6217,7 +6130,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 152,
+   "node": 149,
    "text": "🥗",
    "rect": [
     917.25,
@@ -6229,7 +6142,7 @@
    "color": "rgb(26, 28, 31)"
   },
   {
-   "node": 154,
+   "node": 151,
    "text": "Weekly meal plan",
    "rect": [
     959.25,
@@ -6241,7 +6154,7 @@
    "color": "rgb(26, 28, 31)"
   },
   {
-   "node": 155,
+   "node": 152,
    "text": "Plan meals for the week and make a grocery list.",
    "rect": [
     959.25,
@@ -6253,7 +6166,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 155,
+   "node": 152,
    "text": "Plan meals for the week and make a grocery list.",
    "rect": [
     959.25,
@@ -6265,7 +6178,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 159,
+   "node": 156,
    "text": "✉️",
    "rect": [
     538.25,
@@ -6277,7 +6190,7 @@
    "color": "rgb(26, 28, 31)"
   },
   {
-   "node": 161,
+   "node": 158,
    "text": "Email monitor",
    "rect": [
     580.25,
@@ -6289,7 +6202,7 @@
    "color": "rgb(26, 28, 31)"
   },
   {
-   "node": 162,
+   "node": 159,
    "text": "Scan my emails and let me know anything that needs my attention.",
    "rect": [
     580.25,
@@ -6301,7 +6214,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 162,
+   "node": 159,
    "text": "Scan my emails and let me know anything that needs my attention.",
    "rect": [
     580.25,
@@ -6313,7 +6226,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 166,
+   "node": 163,
    "text": "😴",
    "rect": [
     917.25,
@@ -6325,7 +6238,7 @@
    "color": "rgb(26, 28, 31)"
   },
   {
-   "node": 168,
+   "node": 165,
    "text": "Sleep coaching",
    "rect": [
     959.25,
@@ -6337,7 +6250,7 @@
    "color": "rgb(26, 28, 31)"
   },
   {
-   "node": 169,
+   "node": 166,
    "text": "Track my sleep quality and help me improve my habits.",
    "rect": [
     959.25,
@@ -6349,7 +6262,7 @@
    "color": "rgba(26, 28, 31, 0.494)"
   },
   {
-   "node": 169,
+   "node": 166,
    "text": "Track my sleep quality and help me improve my habits.",
    "rect": [
     959.25,
