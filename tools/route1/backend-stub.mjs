@@ -19,8 +19,9 @@ for (const [key, entry] of Object.entries(oracle)) {
   if (!r) continue;
   rec.set(`${req.method} ${req.url.replace(/^https:\/\/chatgpt\.com\/backend-api/, "")}`, r);
 }
-// The 26.1029 app reads the account list from this path; the 26.1007 recording holds the same answer under the old one.
-rec.set("GET /wham/accounts/check", rec.get("GET /accounts/check/v4-2023-04-27"));
+// The 26.1029 app reads these from new paths; the 26.1007 recording holds the same answers under the old ones.
+for (const [path, recorded] of [["/wham/accounts/check", "/accounts/check/v4-2023-04-27"], ["/codex/sites/access", "/wham/sites/access"], ["/wham/profiles/me", "/profiles/me"]])
+  rec.set(`GET ${path}`, rec.get(`GET ${recorded}`));
 const EMPTY_CHATS = JSON.stringify({ items: [], total: 0, limit: 100, offset: 0, has_missing_conversations: false });
 const SKIP = new Set(["content-encoding", "content-length", "transfer-encoding", "connection"]);
 

@@ -56,16 +56,16 @@ for screen in "${screens[@]}"; do
   if [ "$screen" = terminal ]; then terminal=1; else rest+=("$screen"); fi
 done
 rc=0
-for theme in dark light; do
+for theme in ${R1_THEMES:-dark light}; do
   if [ ${#rest[@]} -gt 0 ]; then
     launch "$theme"
-    R1_APP_CDP="http://127.0.0.1:$LOCAL" R1_THEMES=$theme R1_OUT="$OUT" node "$here/capture-all.mjs" "${rest[@]}" || rc=1
+    R1_APP_CDP="http://127.0.0.1:$LOCAL" R1_THEMES=$theme R1_OUT="$OUT" timeout 900 node "$here/capture-all.mjs" "${rest[@]}" || rc=1
     land
   fi
   if [ -n "$terminal" ]; then
     for size in "1280 832" "1440 900"; do
       launch "$theme"
-      R1_APP_CDP="http://127.0.0.1:$LOCAL" R1_OUT="$OUT" node "$here/capture.mjs" terminal "$theme" $size || rc=1
+      R1_APP_CDP="http://127.0.0.1:$LOCAL" R1_OUT="$OUT" timeout 300 node "$here/capture.mjs" terminal "$theme" $size || rc=1
       land
     done
   fi

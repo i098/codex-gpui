@@ -49,6 +49,38 @@ It serializes captures only, not builds.
 Linux state discovery still supports `linux/start.sh`; set `R1_ORACLE` to an owned oracle copy first.
 Set `R1_OUT` to an owned capture directory before importing `linux/lib.mjs`.
 
+## Capturing the original app (26.1029), no login
+
+The 26.1029 renderer cannot run in a plain browser: it reads `appServices.appServerManagers`, a live
+Cap'n Web graph of the main process's conversation store (thread, turn and item state, replay admission,
+account). The parity references of 26.1029 therefore come from the real app, started in the background
+on a Mac with nothing real behind it:
+
+- `linux/mock-app-server.mjs` is its `codex app-server` (`app/codex` is the `CODEX_CLI_PATH` stand-in). It
+  replays the fixtures and reports a fake signed-in ChatGPT account (`MOCK_BACKEND_ORIGIN`): an unsigned
+  token with placeholder ids, and workspace routing to the loopback stub. `MOCK_THEME` and the scrubbed
+  projectless folder come in the `desktop` table of `config/read`. `MOCK_HOLD_COMMAND` makes the
+  follow-up turn of the terminal screen replay the subtract session as a new turn whose `python3` check
+  never completes.
+- `backend-stub.mjs` is the ChatGPT backend on `https://127.0.0.1:4750`: it answers from the scrubbed
+  `oracle.json` recordings (renamed 26.1029 paths are aliased), the owner's chats with an empty page,
+  other unrecorded reads 404 and writes 200 `{}`.
+- `app/run.sh <theme>` starts stub and app with a fresh profile under `/tmp/cgx-refs-offline`, a git
+  repository for `/tmp/cgx-mac/proj`, a private `--user-data-dir` (the Codex browser holds one process
+  lock per user-data directory) and `--host-resolver-rules` that leave only 127.0.0.1 reachable.
+  `app/stop.sh` ends exactly those processes.
+- `capture.mjs` with `R1_APP_CDP` attaches to the app's main page instead of a route1 page: it fixes the
+  clock, reloads Home, repeats the opaque-window message that main sent only once, and then drives the
+  screens as before.
+
+```sh
+R1_APP_HOST=user@mac R1_APP_SSH_OPTS="-i key" tools/route1/app-capture.sh /sdc-disk/tmp/cgx/refs-new
+```
+
+The script copies the files, captures both themes (the terminal screen with one app launch per size, because
+its follow-up turn stays in the thread) and deletes the scratch directory. No account, credential or
+network is involved. The 26.1007 references of the nine gated screens stay in `refs-26.1007/` for rollback.
+
 ## Bootstrap recordings
 
 The renderer waits for `threadReadState.open` before its initial data becomes ready.

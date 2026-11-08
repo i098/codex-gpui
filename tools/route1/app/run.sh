@@ -26,6 +26,7 @@ git -C "$P" init -q
 git -C "$P" add -A
 git -C "$P" -c user.name=Demo -c user.email=user@example.com commit -qm "Initial commit"
 printf 'def add(a, b):\n    return a + b\n\n\ndef subtract(a, b):\n    return a - b\n' >"$P/src/math.py"
+/opt/homebrew/bin/node "$D/seed.mjs" "$D/mock/oracle.json" "$R/prof/codex-home"
 # Stub and app start through launchctl asuser (the console user's session gives the app a window server and
 # keeps both alive after the ssh session ends); the app stays in the background.
 sudo -n launchctl asuser "$(id -u)" sudo -n -u "$USER" env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin \

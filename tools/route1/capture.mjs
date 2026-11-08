@@ -409,6 +409,8 @@ export async function capture(screen, theme, w, h, outDir = new URL("../../refs/
     } else await p.send("Page.navigate", { url: `${SERVER}/index.html?theme=${theme}` });
     const d = driver(p, w, h);
     await d.waitFor(`document.querySelector("nav[aria-label='App navigation']") && document.querySelectorAll("nav [data-thread-title]").length >= 3 && !document.body.innerText.includes("Loading model")`, "home", 90000);
+    // Main sends the opaque-window message once, when a window starts; the reloaded page asks for it again.
+    if (APP) await p.evaluate(`window.dispatchEvent(new MessageEvent("message", { data: { type: "electron-window-opaque-surface-changed", opaqueWindowSurfaceEnabled: true } }))`);
     if (APP && !(await p.evaluate(`document.documentElement.dataset.theme === ${JSON.stringify(theme)}`))) throw new Error(`the app runs another theme than ${theme}`);
     await settle(1000);
     // Announcement modals and beacon banners are dismissed the way a user would.

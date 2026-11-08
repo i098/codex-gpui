@@ -118,10 +118,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   const notes = turn.notes.filter((n) => !held(n));
   if (turn === r) for (const n of notes) out(n);
   else {
-    // The turn ends 17 s after it started, as the recorded one did ("Worked for 17s").
+    // The desktop shows 2 s less than this delay as the turn's duration: the recorded one lasted 17 s ("Worked for 17s").
     const at = (i) => 300 + 15 * i;
     const started = at(notes.findIndex((n) => n.method === "turn/started"));
-    notes.forEach((n, i) => setTimeout(() => out(n), n.method === "turn/completed" || n.method === "thread/status/changed" && n.params.status.type === "idle" ? started + 17000 : at(i)));
+    notes.forEach((n, i) => setTimeout(() => out(n), n.method === "turn/completed" || n.method === "thread/status/changed" && n.params.status.type === "idle" ? started + 19000 : at(i)));
   }
 });
 
