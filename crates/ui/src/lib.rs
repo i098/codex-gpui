@@ -2463,8 +2463,10 @@ impl Render for Shell {
                     }
                 });
             };
-            window.with_skia_layer(255, |window| {
-                shapes::paint(&layout, None, bounds, window, cx);
+            // EXPERIMENT (temporary): 1280 wide paints the page onto the body directly; 1440
+            // wide puts the page surface in a layer of its own over the layout's.
+            let direct = window.viewport_size().width < px(1300.);
+            let rest = |window: &mut Window, cx: &mut App| {
                 shapes::paint(&surface, None, page_surface, window, cx);
                 #[cfg(target_os = "macos")]
                 if main_layer
@@ -2476,7 +2478,16 @@ impl Render for Shell {
                 if !main_layer {
                     main_surface(window, cx);
                 }
-            });
+            };
+            if direct {
+                shapes::paint(&layout, None, bounds, window, cx);
+                rest(window, cx);
+            } else {
+                window.with_skia_layer(255, |window| {
+                    shapes::paint(&layout, None, bounds, window, cx)
+                });
+                window.with_skia_layer(255, |window| rest(window, cx));
+            }
             // Its own layer: the hairline blends onto transparent, then onto the page.
             if main_layer {
                 window.with_skia_layer(255, |window| main_surface(window, cx));
