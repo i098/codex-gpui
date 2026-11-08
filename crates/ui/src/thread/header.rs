@@ -388,7 +388,8 @@ impl ThreadView {
                         } else {
                             icon_button(
                                 "toggle-summary",
-                                icon("thread-summary", 16., t.text_tertiary).runtime(),
+                                icon("thread-summary", 16., t.text_tertiary)
+                                    .runtime_unless_positioned(),
                                 t,
                             )
                         }
