@@ -2098,8 +2098,9 @@ mod launch_tests {
         host_settings::Settings,
     };
     use bridge::Bridge;
-    use std::{os::unix::fs::PermissionsExt, sync::Arc};
+    use std::sync::Arc;
 
+    #[cfg(unix)]
     #[test]
     fn custom_launch_modes_preserve_paths_preferences_and_failure_results() -> Result<()> {
         #[cfg(target_os = "macos")]
@@ -2135,7 +2136,7 @@ mod launch_tests {
             &handler,
             "#!/bin/sh\ncase \"$2\" in\nstdin) cat > \"$1\";;\nfail) exit 3;;\n*) printf '%s' \"$3\" > \"$1\";;\nesac\n",
         )?;
-        fs::set_permissions(&handler, fs::Permissions::from_mode(0o755))?;
+        fs::set_permissions(&handler, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
         let mut settings = Settings::default();
         settings.write(
             "open-in-target-preferences",
