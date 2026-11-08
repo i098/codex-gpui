@@ -174,7 +174,7 @@ fn creates_the_automation_worktree_at_the_remote_default_without_touching_the_so
 
     let copied = root.join(".codex/environments/environment.toml");
     assert_eq!(
-        git(
+        Path::new(&git(
             &root,
             &[
                 "config",
@@ -182,8 +182,8 @@ fn creates_the_automation_worktree_at_the_remote_default_without_touching_the_so
                 "--get",
                 "codex.localEnvironmentConfigPath"
             ]
-        )?,
-        copied.to_str().unwrap()
+        )?),
+        copied
     );
     assert_eq!(
         fs::read_to_string(root.join("setup-source.txt"))?,

@@ -120,4 +120,4 @@ jobs:
       # Tests compare patch and file bytes: keep checkouts LF, as on Linux and macOS.
       - run: git config --global core.autocrlf false
       - run: cargo build --locked -p app --target x86_64-pc-windows-msvc
-      - run: cargo test --locked --workspace --features app/test-support --target x86_64-pc-windows-msvc
+      - run: cargo test --locked --no-fail-fast --workspace --features app/test-support --target x86_64-pc-windows-msvc
