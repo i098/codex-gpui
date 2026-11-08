@@ -4973,7 +4973,7 @@ fn menu_row(
                 .flex_1()
                 .min_w_0()
                 // Chromium rasterizes it in the list's transparent tile, as the icons above.
-                .when(!selected, |d| d.saved_layer())
+                .saved_layer()
                 .flex()
                 .flex_col()
                 .child(line)
