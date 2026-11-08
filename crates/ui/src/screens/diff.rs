@@ -13,14 +13,7 @@ const SUBTRACT: &str = "01a13de9-6fff-78e1-84fc-ebb3a2dc873f";
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     let sidebar = home_sidebar(cx, Some(SUBTRACT));
     let thread = subtract_thread_beside_panel(window, cx, true);
-    // The reference capture shows the file header with no hunk rows below it.
-    let panel = cx
-        .new(|_| {
-            let mut panel = DiffPanel::subtract();
-            panel.files.iter_mut().for_each(|f| f.open = false);
-            panel
-        })
-        .into();
+    let panel = cx.new(|_| DiffPanel::subtract()).into();
     split_screen(
         sidebar,
         thread,

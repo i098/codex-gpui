@@ -422,17 +422,18 @@ impl DiffPanel {
         cx.notify();
     }
 
-    /// The subtract session as the reference shows it.
+    /// The subtract session as the reference shows it: the 26.1029 capture reports every
+    /// path under the canonical `/private/tmp`, so the workspace root is the thread cwd.
     pub fn subtract() -> Self {
         let start: ThreadStartResponse =
             fixture::response("sessions/subtract.jsonl", "thread/start", 0);
         let read: ThreadReadResponse = fixture::response("readback.jsonl", "thread/read", 1);
-        Self::last_turn(&start.cwd, &read.thread.cwd, &read.thread.turns)
+        Self::last_turn(&start.cwd, &start.cwd, &read.thread.turns)
     }
 
     /// "Last Turn" source: every file change of the last of `turns`, a thread in `cwd`. Paths
-    /// show relative to `workspace_root`; the server reports the thread cwd canonicalized
-    /// (`/private/tmp/...`), which is why the reference shows `../../../private/tmp/...`.
+    /// show relative to `workspace_root`; a server that reports the thread cwd canonicalized
+    /// (`/private/tmp/...`) under a `/tmp` root shows `../../../private/tmp/...`.
     pub fn last_turn(workspace_root: &str, cwd: &str, turns: &[Turn]) -> Self {
         let mut files: Vec<FileDiff> = Vec::new();
         let changes = turns
@@ -2052,7 +2053,7 @@ impl SplitScreen {
     /// Titlebar row over a side panel (`Task tabs`): tabs use slots up to 240 px wide (the
     /// selected one on its surface, the others `text-tertiary`, surface and `×` on hover),
     /// `New tab`, and the `Enter full view` / `Hide tabs` buttons. The caller places it from
-    /// the panel's left edge to the window's right edge, 44 px tall.
+    /// the panel's left edge to the page's end inset (`PAGE_INSET`), 44 px tall.
     fn tab_strip(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let slot_width = ((f32::from(panel_width(window, cx)) - 121.).round()
             / self.tabs.len().max(1) as f32)
@@ -2673,7 +2674,7 @@ impl Render for SplitScreen {
                                     if content_left {
                                         strip.w(panel_end - left)
                                     } else {
-                                        strip.right_0()
+                                        strip.right(crate::PAGE_INSET)
                                     }
                                 }),
                         ),
@@ -4728,7 +4729,7 @@ mod tests {
         let [file] = &panel.files[..] else {
             panic!("one file")
         };
-        assert_eq!(file.dir, "../../../private/tmp/cgx-mac/proj/src/");
+        assert_eq!(file.dir, "src/");
         assert_eq!(file.name, "math.py");
         assert_eq!((file.added, file.removed), (4, 0));
         assert_eq!(

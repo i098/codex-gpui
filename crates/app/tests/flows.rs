@@ -127,13 +127,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("view_changes_opens_panel", view_changes_opens_panel),
     ("thread_card_focus_ring", thread_card_focus_ring),
     ("diff_file_header_toggle", diff_file_header_toggle),
-    ("parity_diff", || {
-        parity_flow("diff", |fx| {
-            open_changes(fx)?;
-            // The reference shows the file collapsed.
-            fx.click((panel_left(fx.size.0) + 100., 111.))
-        })
-    }),
+    ("parity_diff", || parity_flow("diff", open_changes)),
     ("background_terminal_tab", background_terminal_tab),
     ("parity_terminal", || parity_flow("terminal", open_terminal)),
     ("appearance_theme_control", appearance_theme_control),
