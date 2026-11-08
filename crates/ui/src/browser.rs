@@ -35,8 +35,8 @@ const SEARCH_URL: &str = "https://www.google.com/search";
 pub struct OpenBrowserTab(pub Option<String>);
 
 // `navigateBrowserBack` (`⌘←`), `navigateBrowserForward` (`⌘→`), `reloadBrowserPage` (`⌘R`),
-// `hardReloadBrowserPage` (`⌘⇧R`) and `focusBrowserAddressBar` (`⌘L`): the selected
-// browser tab's commands.
+// `hardReloadBrowserPage` (`⌘⇧R`), `focusBrowserAddressBar` (`⌘L`) and
+// `browser.toggleAnnotationMode` (`⌘⇧.`): the selected browser tab's commands.
 gpui::actions!(
     ui,
     [
@@ -44,7 +44,8 @@ gpui::actions!(
         BrowserForward,
         ReloadBrowserPage,
         HardReloadBrowserPage,
-        FocusBrowserAddressBar
+        FocusBrowserAddressBar,
+        ToggleAnnotationMode
     ]
 );
 
@@ -107,6 +108,11 @@ pub enum BrowserEvent {
     },
     TitleChanged,
     LoadFinished,
+    /// The annotation toolbar's Send: the owner sends the pending annotations as a turn.
+    SendAnnotations,
+    /// The annotation toolbar's Discard: the owner confirms, then drops the pending
+    /// annotations.
+    DiscardAnnotations,
 }
 
 /// What the page reports: its committed URL, title, history position and whether it is
@@ -132,6 +138,10 @@ pub struct BrowserTab {
     page_bounds: Bounds<Pixels>,
     /// Set by the owner while the tab is not on screen (another tab is selected).
     hidden: bool,
+    /// `thread.browser.commentMode`: clicks on the page annotate it.
+    annotating: bool,
+    /// The chat's browser annotations not sent yet, as the owner reports them.
+    pending_annotations: usize,
     focus: FocusHandle,
     _changes: Task<()>,
 }
@@ -180,6 +190,8 @@ impl BrowserTab {
             error_details: false,
             page_bounds: Bounds::default(),
             hidden: false,
+            annotating: false,
+            pending_annotations: 0,
             focus: cx.focus_handle(),
             _changes: changes,
         };
@@ -301,6 +313,39 @@ impl BrowserTab {
         window.dispatch_action(Box::new(crate::SelectAll), cx);
     }
 
+    /// `⌘⇧.` and the Annotate button: enters annotation mode on a page, or leaves it.
+    pub fn toggle_annotation_mode(&mut self, cx: &mut Context<Self>) {
+        self.set_annotating(!self.annotating && self.can_annotate(), cx);
+    }
+
+    /// `Exit annotation mode` keeps the pending annotations; Send leaves the mode too.
+    fn set_annotating(&mut self, annotating: bool, cx: &mut Context<Self>) {
+        if self.annotating != annotating {
+            self.annotating = annotating;
+            cx.notify();
+        }
+    }
+
+    pub fn annotating(&self) -> bool {
+        self.annotating
+    }
+
+    /// The original disables the Annotate button without a page to annotate.
+    fn can_annotate(&self) -> bool {
+        self.state.url.is_some() && self.error.is_none()
+    }
+
+    pub fn pending_annotations(&self) -> usize {
+        self.pending_annotations
+    }
+
+    pub fn set_pending_annotations(&mut self, count: usize, cx: &mut Context<Self>) {
+        if self.pending_annotations != count {
+            self.pending_annotations = count;
+            cx.notify();
+        }
+    }
+
     /// Reads the page again after it reported a change, emitting what differs.
     fn page_changed(&mut self, change: page::PageChange, cx: &mut Context<Self>) {
         let previous = std::mem::replace(&mut self.state, self.page.state());
@@ -310,6 +355,7 @@ impl BrowserTab {
             self.error = Some(error);
             self.error_details = false;
             self.load_state = LoadState::Failed;
+            self.annotating = false;
             self.show_url(cx);
             cx.emit(BrowserEvent::LoadFinished);
             cx.notify();
@@ -483,6 +529,7 @@ impl Render for BrowserTab {
                     .text_size(px(13.))
                     .child(self.address.clone()),
             )
+            .child(self.annotate_button(cx))
             .when(loading, |d| {
                 // The 2 px load indicator along the toolbar's bottom edge (`animate-pulse`).
                 d.child(
@@ -557,10 +604,168 @@ impl Render for BrowserTab {
             .flex_col()
             .child(toolbar)
             .child(page)
+            .when(self.annotating, |d| d.child(self.annotation_toolbar(cx)))
     }
 }
 
 impl BrowserTab {
+    /// `thread.browser.commentMode`: the Annotate control right of the address bar. Active,
+    /// it reads `Annotating`; without a page it is disabled.
+    fn annotate_button(&self, cx: &Context<Self>) -> gpui::AnyElement {
+        let t = cx.theme();
+        let glyph = |color| icon("diff-comment-add", 16., color);
+        if self.annotating {
+            return div()
+                .id("browser-annotate")
+                .flex_none()
+                .h(px(28.))
+                .px(px(8.))
+                .gap(px(4.))
+                .rounded(px(8.))
+                .flex()
+                .items_center()
+                .cursor_pointer()
+                .role(gpui::Role::Button)
+                .aria_label("Annotate this page")
+                .bg(t.background_accent)
+                .text_color(t.text_accent)
+                .text_size(px(13.))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .child(glyph(t.text_accent))
+                .child("Annotating")
+                .on_click(cx.listener(|tab, _, _, cx| tab.toggle_annotation_mode(cx)))
+                .into_any_element();
+        }
+        if !self.can_annotate() {
+            return div()
+                .id("browser-annotate")
+                .flex_none()
+                .size(px(28.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(glyph(t.text_tertiary).opacity(0.4))
+                .into_any_element();
+        }
+        tooltip(
+            icon_button("browser-annotate", glyph(t.text_tertiary), t)
+                .aria_label("Annotate this page")
+                .on_click(cx.listener(|tab, _, _, cx| tab.toggle_annotation_mode(cx))),
+            "Point at items to ask about or change",
+            Some("⌘⇧."),
+            Side::Bottom,
+        )
+        .into_any_element()
+    }
+
+    /// `thread.browser.tweaks.*`: the annotation toolbar under the page while annotating.
+    /// Exit keeps the pending annotations; Discard asks first; Send sends them as a turn.
+    // shortcut: a bar under the page, not the original's floating one over it, because the
+    // native page draws over every gpui element; float it once the page layer (#836) lands.
+    fn annotation_toolbar(&self, cx: &Context<Self>) -> impl IntoElement {
+        let t = cx.theme();
+        let count = self.pending_annotations;
+        let action = |id: &'static str,
+                      glyph: &'static str,
+                      label: &'static str,
+                      run: fn(&mut Self, &mut Context<Self>)| {
+            tooltip(
+                icon_button(id, icon(glyph, 16., t.text_secondary), t)
+                    .aria_label(label)
+                    .on_click(cx.listener(move |tab, _, _, cx| run(tab, cx))),
+                label,
+                None,
+                Side::Top,
+            )
+        };
+        let discard = if count > 0 {
+            action(
+                "browser-annotations-discard",
+                "shortcut-trash",
+                "Discard annotations",
+                |_, cx| cx.emit(BrowserEvent::DiscardAnnotations),
+            )
+            .into_any_element()
+        } else {
+            div()
+                .flex_none()
+                .size(px(28.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(icon("shortcut-trash", 16., t.text_secondary).opacity(0.4))
+                .into_any_element()
+        };
+        let status = if count > 0 {
+            format!("Annotating · {count}")
+        } else {
+            "Annotating".to_owned()
+        };
+        let send_label = if count == 1 {
+            "Send 1 pending annotation".to_owned()
+        } else {
+            format!("Send {count} pending annotations")
+        };
+        let send = div()
+            .id("browser-annotations-send")
+            .flex_none()
+            .size(px(28.))
+            .rounded_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .role(gpui::Role::Button)
+            .aria_label(SharedString::from(send_label))
+            .bg(t.button_primary_solid)
+            .child(icon("composer-arrow-up", 16., t.text_inverse))
+            .map(|send| {
+                if count > 0 {
+                    send.cursor_pointer()
+                        .hover(|s| s.bg(t.button_primary_solid_hover))
+                        .on_click(cx.listener(|tab, _, _, cx| {
+                            tab.set_annotating(false, cx);
+                            cx.emit(BrowserEvent::SendAnnotations);
+                        }))
+                } else {
+                    send.opacity(0.4)
+                }
+            });
+        div()
+            .id("browser-annotation-toolbar")
+            .role(gpui::Role::Toolbar)
+            .aria_label("Browser annotations")
+            .flex_none()
+            .h(px(44.))
+            .px(px(8.))
+            .gap(px(12.))
+            .flex()
+            .items_center()
+            .border_t_1()
+            .border_color(t.border_subtle)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(action(
+                        "browser-annotations-exit",
+                        "close",
+                        "Exit annotation mode",
+                        |tab, cx| tab.set_annotating(false, cx),
+                    ))
+                    .child(discard),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .justify_center()
+                    .child(text(status, 14., 20., 400., t.text).truncate()),
+            )
+            .child(send)
+    }
+
     /// `browserSidebar.loadError`: the network error page the original loads in place of a
     /// main-frame load that failed, at its narrow (side panel) layout.
     fn error_page(&self, error: &LoadError, cx: &Context<Self>) -> impl IntoElement {

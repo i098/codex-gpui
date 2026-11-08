@@ -104,6 +104,14 @@ fn old_servers_keep_next_turn_settings_but_real_errors_are_visible() -> Result<(
                     .any(|request| request["method"] == "thread/settings/update")
             })
         })?;
+        if expected_error {
+            // The refusal arrives over real I/O, so a fixed virtual-clock advance races it.
+            fx.wait("settings error toast", |fx| {
+                fx.read(|root, cx| root.toasts(cx))
+                    .iter()
+                    .any(|text| text.contains("Could not update thread settings"))
+            })?;
+        }
         fx.advance(std::time::Duration::from_millis(200))?;
         ensure!(
             fx.read(|root, cx| root.composer(cx).read(cx).permission())

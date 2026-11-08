@@ -421,6 +421,7 @@ pub fn key_label(accelerator: &str) -> String {
 /// (`backgroundSubmit.enabled` needs `kind === "home"`).
 const HOME_ONLY: &[&str] = &["composer.submitInBackground"];
 const DIALOG_HIDDEN: &[&str] = &[
+    "browser.toggleAnnotationMode",
     "navigateBrowserBack",
     "navigateBrowserForward",
     "focusBrowserAddressBar",
