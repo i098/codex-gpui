@@ -5015,7 +5015,8 @@ impl Render for Overlaid {
             .child(self.base.clone())
             .child(self.top.clone())
             .child(gpui::deferred(super::thread::view::paint_patches((
-                "sidebar", PATCHES,
+                "sidebar",
+                &[],
             ))))
     }
 }
