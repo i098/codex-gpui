@@ -260,6 +260,7 @@ pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     let shell = cx.new(|_| {
         let mut shell = Shell::new(sidebar, thread.clone().into());
         shell.attention = true;
+        shell.can_go_back = true;
         shell
     });
     let panel = (xterm.into(), "thread-terminal", label.into());
