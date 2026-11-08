@@ -3,6 +3,7 @@ use gpui::Div;
 
 mod archive;
 mod automations;
+mod dots;
 mod gpts;
 mod home;
 mod images;
@@ -64,6 +65,8 @@ pub enum Route {
     Gpts(Option<String>),
     /// Explore ▸ `Projects` (`/projects`).
     Projects,
+    /// Sidebar `Your dot` (`/dots/home`): the dots eligibility landing.
+    Dots,
     /// Settings ▸ `Profile` (`/profile`): the signed-in user's profile page.
     Profile,
 }
@@ -85,6 +88,7 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = images::actions(root, cx);
     root = gpts::actions(root, cx);
     root = projects::actions(root, cx);
+    root = dots::actions(root, cx);
     root = profile::actions(root, cx);
     root = root.on_action(cx.listener(
         |this, _: &ui::screens::thread::view::OpenPlanSummary, window, cx| {
@@ -264,6 +268,7 @@ impl Root {
             Route::Images => Some(images::page(self, cx)),
             Route::Gpts(id) => Some(gpts::page(self, id, window, cx)),
             Route::Projects => Some(projects::page(self, window, cx)),
+            Route::Dots => Some(dots::page(self, window, cx)),
             Route::Profile => Some(profile::page(self, window, cx)),
             Route::Onboarding(page) => {
                 self.open_onboarding(page, window, cx);
