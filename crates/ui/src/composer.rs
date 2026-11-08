@@ -2325,7 +2325,7 @@ impl Composer {
     /// focus ring shows, as Chromium's `:focus-visible` keeps it after keyboard input.
     pub fn open_model_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.toggle_menu(Menu::Effort, window, cx);
-        self.slider_focus.read(cx).show_ring();
+        // TEMP underlay capture: self.slider_focus.read(cx).show_ring();
     }
 
     fn current_model(&self) -> Option<&ModelOption> {
