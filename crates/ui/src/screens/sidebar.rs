@@ -4413,6 +4413,11 @@ impl Render for CommandMenu {
         // The input spans the dialog less its border (`margin-inline: -4px`) and `px-4`.
         let input = (!self.recent_cycle).then(|| self.query_input(width - 34., window, cx));
         let has_input = input.is_some();
+        // The list's window origin: inside the 1 px border and `p-1`, under the 46 px input.
+        let list = point(
+            px((w - width) / 2. + 5.),
+            px(top + 5. + if has_input { 46. } else { 0. }),
+        );
         // `bg-surface/65` mixed in oklab (see `composer::popover` for light's white).
         let fill = match t.appearance {
             Appearance::Light => gpui::Rgba {
@@ -4494,6 +4499,7 @@ impl Render for CommandMenu {
                                 item,
                                 if error { "" } else { query },
                                 (index, chat, !self.recent_cycle),
+                                list,
                                 selected,
                                 t,
                                 window,
@@ -4767,6 +4773,7 @@ fn menu_row(
     item: &Item,
     query: &str,
     (id, chat, show_keys): (usize, usize, bool),
+    list: Point<Pixels>,
     selected: bool,
     t: &Theme,
     window: &Window,
@@ -4913,15 +4920,16 @@ fn menu_row(
         .flex()
         .items_center()
         .gap(px(8.))
-        // Dark's highlight (rgba(255,255,255,.08)) composites in float, a hair over .08 (the
-        // ref's 42/43 edge over the blurred backdrop); light's in Skia's 8-bit blit.
+        // Dark's highlight (rgba(255,255,255,.08)) composites over the blurred backdrop; GPUI
+        // quantizes the alpha to 20/255, so a white a hair over 1 lands the ref's 42/43 edge.
+        // Light's is Skia's 8-bit blit.
         .when(selected, |d| match t.appearance {
             Appearance::Dark => {
                 d.child(div().absolute().inset_0().rounded(px(12.5)).bg(gpui::Rgba {
-                    r: 1.,
-                    g: 1.,
-                    b: 1.,
-                    a: 0.0805,
+                    r: 1.0072,
+                    g: 1.0072,
+                    b: 1.0072,
+                    a: 20. / 255.,
                 }))
             }
             Appearance::Light => d.child(shapes::decoration(shapes::Decoration {
@@ -4951,7 +4959,9 @@ fn menu_row(
                         let chat = item.thread.is_some().then_some("archive-chat");
                         slot.children(item.icon.or(chat).map(|name| {
                             // `navigateForward` is the back arrow with `-scale-x-100`.
+                            // Chromium rasterizes it in the `overflow: auto` list's own layer.
                             icon(name, 16., fg.opacity(row_opacity))
+                                .composited(Some(list))
                                 .when(item.label == "Forward", |i| i.flip_x())
                         }))
                     }
