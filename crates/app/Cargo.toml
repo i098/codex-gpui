@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+description = "codex-gpui: native Codex Desktop in Rust for macOS and Linux, built with GPUI. Drives the real codex app-server."
+keywords = ["codex-desktop", "rust", "gpui", "native-app", "codex"]
 
 [features]
 test-support = []

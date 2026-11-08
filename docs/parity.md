@@ -1,5 +1,7 @@
 # Parity and proof
 
+Pixel parity of the native Codex Desktop in Rust with the original Codex app, checked against the original renderer.
+
 ## Parity method
 
 The references come from the original renderer itself.

@@ -1,6 +1,6 @@
 # Architecture
 
-
+How the native Codex Desktop in Rust is split into crates.
 
 | Crate | Role |
 |---|---|
