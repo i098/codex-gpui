@@ -123,4 +123,4 @@ jobs:
       # Every test target must compile. The unit tests run; the UI replay integration tests under
       # crates/app/tests still use POSIX path and shell-script fixtures, so they stay Unix-only.
       - run: cargo test --locked --workspace --features app/test-support --all-targets --no-run --target x86_64-pc-windows-msvc
-      - run: cargo test --locked --workspace --features app/test-support --lib --bins --target x86_64-pc-windows-msvc
+      - run: cargo test --locked --no-fail-fast --workspace --features app/test-support --lib --bins --target x86_64-pc-windows-msvc

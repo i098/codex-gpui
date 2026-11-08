@@ -953,6 +953,7 @@ mod tests {
         });
     }
 
+    #[cfg(unix)] // POSIX path fixtures
     #[test]
     fn pasted_text_keeps_its_host_after_another_window_becomes_active() {
         let recording = tempfile::NamedTempFile::new().unwrap();
