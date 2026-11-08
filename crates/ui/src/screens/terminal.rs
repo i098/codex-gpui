@@ -17,7 +17,10 @@ pub use surface::{TerminalEvent, TerminalStyle, TerminalSurface};
 
 use super::diff::panel::with_side_panel;
 use super::sidebar::{HomeSidebar, home_sidebar};
-use super::thread::{subtract_thread_beside_panel, view::ThreadView};
+use super::thread::{
+    CAPTURE_CLOCK, subtract_thread_beside_panel,
+    view::{Clock, ThreadView},
+};
 use crate::{Shell, text};
 
 #[derive(Clone, PartialEq, Action)]
@@ -206,10 +209,18 @@ pub fn workspace_warning(actions: Div, narrow: bool, cx: &App) -> Div {
         )))
 }
 
+/// refs/terminal: the follow-up started `Today 5:16 PM` (8 h 16 min after `CAPTURE_CLOCK`) and its
+/// answer began 15 s later (`Worked for 15s`).
+pub const FOLLOW_UP_AT: i64 = CAPTURE_CLOCK.pinned_now.unwrap() + 8 * 3600 + 16 * 60;
+
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
-    let thread = subtract_thread_beside_panel(window, cx, true);
+    let clock = Clock {
+        pinned_now: Some(FOLLOW_UP_AT + 15),
+        ..CAPTURE_CLOCK
+    };
+    let thread = subtract_thread_beside_panel(window, cx, true, clock);
     thread.update(cx, |view, cx| {
-        for event in running_command_replay() {
+        for event in running_command_replay(FOLLOW_UP_AT) {
             view.apply(&event, cx);
         }
         view.summary_open = true;
@@ -222,17 +233,17 @@ pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
         .map(|(command, _)| command.clone())
         .unwrap_or_default();
     let xterm = cx.new(|cx| Xterm::new(thread.clone(), cx));
-    // The turn completed while the user was away: the thread is unread ("needs attention").
+    // The turn completed while the user was away: the thread is unread ("needs attention"),
+    // and so is the readback `In two sentences` chat (refs/terminal: both rows carry the dot).
     let sidebar = home_sidebar(cx, Some(&id));
     if let Ok(sidebar) = sidebar.clone().downcast::<HomeSidebar>() {
-        sidebar.update(cx, |sidebar, _| sidebar.unread = vec![id]);
+        sidebar.update(cx, |sidebar, _| {
+            sidebar.unread = vec![id, "01a13de9-35ed-7c72-a36a-68eeb2f4e1ee".into()]
+        });
     }
     let shell = cx.new(|_| {
         let mut shell = Shell::new(sidebar, thread.clone().into());
-        shell.can_go_back = true;
         shell.attention = true;
-        // refs/terminal: Explore's unread dot (an unseen, unpinned MCP destination).
-        shell.unread_destinations = Some(std::sync::Arc::from([SharedString::from("mcp:fixture")]));
         shell
     });
     let panel = (xterm.into(), "thread-terminal", label.into());
@@ -450,60 +461,126 @@ pub fn thumbnail(thread: &ThreadView, window: &Window, cx: &App) -> impl IntoEle
         .child(surface)
 }
 
-/// The notifications tools/route1/server.mjs (`replayRunningCommand`) sends for the reference:
-/// the subtract session's python3 check, started in a new turn that completes while the
-/// command never gets `item/completed`.
-pub fn running_command_replay() -> Vec<Event> {
-    let msgs: Vec<Value> = include_str!("../../../../fixtures/sessions/subtract.jsonl")
-        .lines()
-        .map(|l| serde_json::from_str::<Value>(l).expect("fixture line is JSON")["msg"].take())
-        .collect();
-    let all = |method: &'static str| {
-        msgs.iter()
-            .filter(move |m| m["method"] == method)
-            .map(|m| m["params"].clone())
+/// The notifications tools/route1/linux/mock-app-server.mjs (`MOCK_HOLD_COMMAND`) sends for the
+/// reference's follow-up `Run the check again`: the subtract session's turn again, with fresh ids,
+/// its times moved to start at `started_at` (unix s) and its python3 check printing `2` and never
+/// completing, so the turn ends with a background terminal. Thread status and account
+/// notifications are left out.
+pub fn running_command_replay(started_at: i64) -> Vec<Event> {
+    const HOLD: &str = "python3";
+    let held = |m: &Value| {
+        let item = &m["params"]["item"];
+        item["type"] == "commandExecution"
+            && item["command"].as_str().is_some_and(|c| c.contains(HOLD))
     };
-    let is_check = |p: &Value| {
-        p["item"]["type"] == "commandExecution"
+    let notes: Vec<Value> = include_str!("../../../../fixtures/sessions/subtract.jsonl")
+        .lines()
+        .map(|l| serde_json::from_str::<Value>(l).expect("fixture line is JSON"))
+        .filter(|l| l["dir"] == "recv")
+        .map(|mut l| l["msg"].take())
+        .skip_while(|m| m["method"] != "turn/started")
+        .filter(|m| {
+            let method = m["method"].as_str().unwrap_or_default();
+            m["params"]["threadId"].is_string()
+                && !method.starts_with("thread/status")
+                && !(method == "item/completed" && held(m))
+        })
+        .collect();
+    let turn = &notes[0]["params"]["turn"];
+    let shift = started_at - turn["startedAt"].as_i64().expect("recorded turn start");
+    let mut ids = vec![turn["id"].as_str().expect("turn id").to_owned()];
+    ids.extend(
+        notes
+            .iter()
+            .filter_map(|m| Some(m["params"]["item"]["id"].as_str()?.to_owned())),
+    );
+    ids.sort();
+    ids.dedup();
+    fn retime(v: &mut Value, shift: i64) {
+        match v {
+            Value::Object(o) => {
+                for (k, x) in o.iter_mut() {
+                    match (k.as_str(), x.as_i64()) {
+                        ("startedAt" | "completedAt", Some(at)) => *x = (at + shift).into(),
+                        ("startedAtMs" | "completedAtMs", Some(at)) => {
+                            *x = (at + shift * 1000).into()
+                        }
+                        _ => retime(x, shift),
+                    }
+                }
+            }
+            Value::Array(a) => a.iter_mut().for_each(|x| retime(x, shift)),
+            _ => {}
+        }
+    }
+    let mut events = Vec::new();
+    for m in notes {
+        let mut text = m.to_string();
+        for id in &ids {
+            text = text.replace(id.as_str(), &format!("{id}-again"));
+        }
+        let mut m: Value = serde_json::from_str(&text).expect("rekeyed JSON");
+        retime(&mut m, shift);
+        let method = m["method"].as_str().unwrap_or_default().to_owned();
+        let output = (method == "item/started" && held(&m)).then(|| {
+            let p = &m["params"];
+            json!({
+                "threadId": p["threadId"], "turnId": p["turnId"],
+                "itemId": p["item"]["id"], "delta": "2\n",
+            })
+        });
+        let mut params = m["params"].take();
+        if params["item"]["type"] == "userMessage" {
+            params["item"]["content"] =
+                json!([{"type": "text", "text": "Run the check again", "text_elements": []}]);
+        }
+        events.push(Event::Notification {
+            method: method.into(),
+            params,
+        });
+        if let Some(params) = output {
+            events.push(Event::Notification {
+                method: "item/commandExecution/outputDelta".into(),
+                params,
+            });
+        }
+    }
+    events
+}
+
+#[test]
+fn follow_up_replay_leaves_its_check_running() {
+    let events = running_command_replay(FOLLOW_UP_AT);
+    let notes: Vec<_> = events
+        .iter()
+        .map(|e| match e {
+            Event::Notification { method, params } => (method.as_str(), params),
+            _ => unreachable!("replay holds notifications only"),
+        })
+        .collect();
+    let (first, started) = notes[0];
+    assert_eq!(
+        (first, started["turn"]["startedAt"].as_i64()),
+        ("turn/started", Some(FOLLOW_UP_AT))
+    );
+    assert!(started["turn"]["id"].as_str().unwrap().ends_with("-again"));
+    assert_eq!(notes.last().unwrap().0, "turn/completed");
+    let user = notes
+        .iter()
+        .find(|(_, p)| p["item"]["type"] == "userMessage")
+        .unwrap()
+        .1;
+    assert_eq!(user["item"]["content"][0]["text"], "Run the check again");
+    assert!(!notes.iter().any(|(m, p)| {
+        *m == "item/completed"
             && p["item"]["command"]
                 .as_str()
                 .is_some_and(|c| c.contains("python3"))
-    };
-    let turn_id = "01a13de9-70bc-7de1-8ae6-000000000001";
-    let mut command = all("item/started").find(is_check).expect("python3 check");
-    let item_id = format!(
-        "{}-running",
-        command["item"]["id"].as_str().unwrap_or_default()
-    );
-    command["turnId"] = turn_id.into();
-    command["item"]["id"] = item_id.clone().into();
-    let output = all("item/completed")
-        .find(is_check)
-        .expect("python3 output")["item"]["aggregatedOutput"]
-        .take();
-    let mut started = all("turn/started").next().expect("turn/started");
-    started["turn"]["id"] = turn_id.into();
-    // A `rootTurnId` other than `id` marks a review sub-turn, folded into the root turn.
-    started["turn"]["rootTurnId"] = turn_id.into();
-    let mut completed = all("turn/completed").next().expect("turn/completed");
-    completed["turn"]["id"] = turn_id.into();
-    completed["turn"]["rootTurnId"] = turn_id.into();
-    completed["turn"]["items"] = json!([command["item"]]);
-    let delta = json!({
-        "threadId": command["threadId"],
-        "turnId": turn_id,
-        "itemId": item_id,
-        "delta": output,
-    });
-    [
-        ("turn/started", started),
-        ("item/started", command),
-        ("item/commandExecution/outputDelta", delta),
-        ("turn/completed", completed),
-    ]
-    .map(|(method, params)| Event::Notification {
-        method: method.into(),
-        params,
-    })
-    .into()
+    }));
+    let output: Vec<_> = notes
+        .iter()
+        .filter(|(m, _)| *m == "item/commandExecution/outputDelta")
+        .map(|(_, p)| p["delta"].as_str().unwrap())
+        .collect();
+    assert_eq!(output, ["2\n"]);
 }

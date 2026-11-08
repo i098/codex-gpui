@@ -299,7 +299,8 @@ fn open_terminal(fx: &mut Fx) -> Result<()> {
             .filter(|line| line["msg"]["method"] == "thread/status/changed")
             .collect();
     ensure!(statuses.len() == 2, "expected active and idle statuses");
-    let mut events = ui::screens::terminal::running_command_replay();
+    let mut events =
+        ui::screens::terminal::running_command_replay(ui::screens::terminal::FOLLOW_UP_AT);
     let status = |line: &Value| bridge::Event::Notification {
         method: "thread/status/changed".into(),
         params: line["msg"]["params"].clone(),

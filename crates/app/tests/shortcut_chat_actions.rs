@@ -47,7 +47,8 @@ fn next_tab_takes_its_keys_only_with_focus_in_a_side_tab() -> Result<()> {
     fx.keys("cmd-2")?;
     fx.wait_thread(common::SUBTRACT)?;
     fx.keys("alt-cmd-b")?;
-    for event in ui::screens::terminal::running_command_replay() {
+    let at = ui::screens::terminal::FOLLOW_UP_AT;
+    for event in ui::screens::terminal::running_command_replay(at) {
         fx.root
             .update(&mut fx.cx, |root, cx| root.on_event(event, cx));
         fx.cx.run_until_parked();

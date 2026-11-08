@@ -146,7 +146,8 @@ fn panel_tabs_replay() -> Result<()> {
                 let view = fx.read(|r, _| r.thread().cloned()).context("no thread")?;
                 fx.cx.update(|cx| {
                     view.update(cx, |v, cx| {
-                        for event in ui::screens::terminal::running_command_replay() {
+                        let at = ui::screens::terminal::FOLLOW_UP_AT;
+                        for event in ui::screens::terminal::running_command_replay(at) {
                             v.apply(&event, cx);
                         }
                     })
