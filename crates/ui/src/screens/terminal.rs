@@ -233,13 +233,10 @@ pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
         .map(|(command, _)| command.clone())
         .unwrap_or_default();
     let xterm = cx.new(|cx| Xterm::new(thread.clone(), cx));
-    // The turn completed while the user was away: the thread is unread ("needs attention"),
-    // and so is the readback `In two sentences` chat (refs/terminal: both rows carry the dot).
+    // The turn completed while the user was away: the thread is unread ("needs attention").
     let sidebar = home_sidebar(cx, Some(&id));
     if let Ok(sidebar) = sidebar.clone().downcast::<HomeSidebar>() {
-        sidebar.update(cx, |sidebar, _| {
-            sidebar.unread = vec![id, "01a13de9-35ed-7c72-a36a-68eeb2f4e1ee".into()]
-        });
+        sidebar.update(cx, |sidebar, _| sidebar.unread = vec![id]);
     }
     let shell = cx.new(|_| {
         let mut shell = Shell::new(sidebar, thread.clone().into());
