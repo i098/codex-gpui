@@ -581,12 +581,7 @@ pub fn shell(main: AnyView, cx: &mut App) -> AnyView {
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     let main = home_main(window, cx);
     let sidebar = super::sidebar::home_sidebar(cx, None);
-    cx.new(|_| {
-        let mut shell = Shell::new(sidebar, main);
-        shell.page_on_body = true;
-        shell
-    })
-    .into()
+    cx.new(|_| Shell::new(sidebar, main)).into()
 }
 
 fn open_folder_key(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {
@@ -1322,17 +1317,35 @@ fn utility_bar(
             .px(px(6.))
             .pb(px(4.))
             .relative()
-            // `_attached_1hrlq`: `--radius-2xl` top corners. Its `corner-shape` squircle only
-            // clips outside the item's round background.
-            .child(shapes::decoration(shapes::Decoration {
-                radius: Corners {
-                    top_left: px(20.),
-                    top_right: px(20.),
-                    ..Corners::all(px(0.))
-                },
-                fill: Some(t.composer_action_bar),
-                ..Default::default()
-            }))
+            // `_item`'s round `--radius-2xl` top corners, under the `_attached_1hrlq` rail's
+            // `overflow: clip` squircle (`--codex-corner-shape`), whose box runs 20 px lower.
+            .child(crate::rounded_clip(
+                px(20.),
+                shapes::Corner::Squircle,
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .bottom(px(-20.))
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .bottom(px(20.))
+                            .child(shapes::decoration(shapes::Decoration {
+                                radius: Corners {
+                                    top_left: px(20.),
+                                    top_right: px(20.),
+                                    ..Corners::all(px(0.))
+                                },
+                                fill: Some(t.composer_action_bar),
+                                ..Default::default()
+                            })),
+                    ),
+            ))
             // The mask covers the viewport, not the translated scroll contents.
             .child(
                 div().py(px(4.)).child(
