@@ -189,18 +189,19 @@ fn user_file(read: &Value) -> Option<&str> {
         .as_str()
 }
 
-/// Publishes the host's `enabled-reasoning-efforts` to composers.
-pub(super) fn sync_enabled_efforts(cx: &mut App) {
-    let enabled = cx
+/// Publishes the host's `enabled-reasoning-efforts` and the account kind to composers.
+pub(super) fn sync_enabled_efforts(chatgpt: bool, cx: &mut App) {
+    let setting = cx
         .try_global::<host_settings::Settings>()
         .and_then(|settings| settings.read_all().get(ENABLED_EFFORTS).cloned())
         .and_then(|value| serde_json::from_value(value).ok());
-    cx.set_global(EnabledEfforts(enabled));
+    cx.set_global(EnabledEfforts { setting, chatgpt });
 }
 
-/// A saved `enabled-reasoning-efforts` re-filters every composer's effort choices.
+/// A saved `enabled-reasoning-efforts` or a new account re-filters every composer's effort
+/// choices.
 pub(super) fn efforts_saved(root: &mut Root, cx: &mut Context<Root>) {
-    sync_enabled_efforts(cx);
+    sync_enabled_efforts(root.chatgpt_account, cx);
     let mut composers = root.thread_composers();
     composers.push(root.home.read(cx).composer.clone());
     for composer in composers {

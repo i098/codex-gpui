@@ -566,22 +566,15 @@ pub fn home_main(window: &mut Window, cx: &mut App) -> AnyView {
     cx.new(|cx| HomeMain::new(window, cx)).into()
 }
 
-/// The Home sidebar and `main` in the shell, with an unread Explore destination (the
-/// composer reference shows one; the Home reference does not).
+/// The Home sidebar and `main` in the shell.
 pub fn shell(main: AnyView, cx: &mut App) -> AnyView {
     let sidebar = super::sidebar::home_sidebar(cx, None);
-    cx.new(|_| {
-        let mut shell = Shell::new(sidebar, main);
-        shell.unread_destinations = Some(std::sync::Arc::from([SharedString::from("explore")]));
-        shell
-    })
-    .into()
+    cx.new(|_| Shell::new(sidebar, main)).into()
 }
 
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     let main = home_main(window, cx);
-    let sidebar = super::sidebar::home_sidebar(cx, None);
-    cx.new(|_| Shell::new(sidebar, main)).into()
+    shell(main, cx)
 }
 
 fn open_folder_key(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {

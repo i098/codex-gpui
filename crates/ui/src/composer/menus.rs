@@ -490,8 +490,9 @@ impl Composer {
                                 .top(px(12. - thumb / 2. - 3.))
                                 .size(px(thumb + 6.))
                                 .layer()
-                                .child(
-                                    div()
+                                .child({
+                                    let thumb_el = div()
+                                        .id("effort-thumb-ring")
                                         .absolute()
                                         .left(px(3.))
                                         .top(px(3.))
@@ -509,8 +510,21 @@ impl Composer {
                                                     false,
                                                 )],
                                             )
-                                        })),
-                                ),
+                                        }));
+                                    // `data-keyboard-focused`: a 2 px `--color-ring` outline on
+                                    // the thumb while the slider has `:focus-visible`.
+                                    if interactive {
+                                        crate::focus::ring(
+                                            thumb_el,
+                                            &self.slider_focus,
+                                            Theme::RADIUS_FULL,
+                                            px(2.),
+                                            cx,
+                                        )
+                                    } else {
+                                        thumb_el
+                                    }
+                                }),
                         )
                         .when(interactive, |d| {
                             d.on_mouse_down(MouseButton::Left, move |_, _, cx| press(cx))
@@ -949,7 +963,9 @@ impl Composer {
                 }
             }))
             .child(menu);
-        let slot = div().absolute().bottom(px(36.)).flex();
+        // 26.1029 opens the effort menu 4 px above its trigger, the permissions menu 8 px.
+        let gap = if center_width.is_some() { 32. } else { 36. };
+        let slot = div().absolute().bottom(px(gap)).flex();
         // The original's popper places the menu with `transform: translate()` rounded to device
         // px (floating-ui `roundByDPR`), so its origin keeps no fraction of the anchor's.
         deferred(match center_width {

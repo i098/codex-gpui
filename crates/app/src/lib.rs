@@ -1463,7 +1463,7 @@ impl Root {
                     });
                 let models: Vec<Model> =
                     catalog.data.into_iter().map(|entry| entry.model).collect();
-                settings_configuration::sync_enabled_efforts(cx);
+                settings_configuration::sync_enabled_efforts(this.chatgpt_account, cx);
                 let mut composers = this.thread_composers();
                 composers.push(this.home.read(cx).composer.clone());
                 for composer in composers {
@@ -8257,8 +8257,12 @@ impl Root {
         self.activity_access.account = account.and_then(|account| account.account.clone());
         self.refresh_activity_access(cx);
         self.account_email = account.and_then(chatgpt_email);
-        self.chatgpt_account =
+        let chatgpt =
             account.is_some_and(|account| matches!(account.account, Some(Account::Chatgpt { .. })));
+        if chatgpt != self.chatgpt_account {
+            self.chatgpt_account = chatgpt;
+            settings_configuration::efforts_saved(self, cx);
+        }
         let profile = account.and_then(|account| match &account.account {
             Some(Account::Chatgpt { email, .. }) => Some(ui::ProfileAccount::Chatgpt(
                 email.clone().map(SharedString::from),
