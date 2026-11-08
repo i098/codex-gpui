@@ -340,9 +340,6 @@ pub struct Shell {
     /// With `main_composited`: the main view draws its right corners' px of partial clip
     /// coverage itself, after the shell (a lone thread: `shapes::paint_clipped_tile`).
     pub main_clips_right: bool,
-    /// Chromium rasters the page frame (layout color, page surface ring and shadow) straight
-    /// onto the body in the root's opaque tile (refs/home, refs/diff), not in a translucent tile.
-    pub page_on_body: bool,
     /// A chat needs attention (unread): the rail's Home item carries the unread dot.
     pub attention: bool,
     /// Unseen, unpinned MCP destinations; `None` while their source is unavailable.
@@ -459,7 +456,6 @@ impl Shell {
             main_layer: false,
             main_opaque_scroll: None,
             main_clips_right: false,
-            page_on_body: false,
             attention: false,
             unread_destinations: None,
             security_available: false,
@@ -2329,9 +2325,7 @@ impl Render for Shell {
         // layer: its tile holds `_PageSurfaceLayout`'s translucent color, the page surface's
         // drop shadow (`--shadow-card`) and 0.5 px ring (`--elevation-stroke-subtle`) blend onto
         // that translucent pixel with the blits Skia picks for them (not `.layer()`'s
-        // transparent-tile blits), and the compositor blends the tile onto the body. At
-        // `page_on_body` they blend onto the body's opaque pixel instead.
-        let page_on_body = self.page_on_body;
+        // transparent-tile blits), and the compositor blends the tile onto the body.
         let layout = shapes::Decoration {
             fill: Some(t.page_surface_layout),
             ..Default::default()
@@ -2469,7 +2463,7 @@ impl Render for Shell {
                     }
                 });
             };
-            let paint_page = |window: &mut Window, cx: &mut App| {
+            window.with_skia_layer(255, |window| {
                 shapes::paint(&layout, None, bounds, window, cx);
                 shapes::paint(&surface, None, page_surface, window, cx);
                 #[cfg(target_os = "macos")]
@@ -2482,12 +2476,7 @@ impl Render for Shell {
                 if !main_layer {
                     main_surface(window, cx);
                 }
-            };
-            if page_on_body {
-                paint_page(window, cx);
-            } else {
-                window.with_skia_layer(255, |window| paint_page(window, cx));
-            }
+            });
             // Its own layer: the hairline blends onto transparent, then onto the page.
             if main_layer {
                 window.with_skia_layer(255, |window| main_surface(window, cx));
