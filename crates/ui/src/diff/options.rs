@@ -118,8 +118,10 @@ impl DiffPanel {
         }
         self.search_changed();
     }
+    // 26.1029 labels the toggle from the panel-wide flag (`diffControls.expanded`), not from
+    // the files: `View changes` opens one file and still offers "Expand all diffs".
     pub(super) fn all_expanded(&self) -> bool {
-        !self.files.is_empty() && self.files.iter().all(|file| file.open)
+        self.files_expanded
     }
 
     pub(super) fn option_checked(&self, index: usize) -> Option<bool> {
