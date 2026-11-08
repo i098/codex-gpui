@@ -47,7 +47,7 @@ MARGIN = 0.2  # distance of the fitted value from a rounding boundary, in 8-bit 
 # every ref use, in the screens' own layers (full parity run with no fitted images): no image.
 RUNTIME = {"bell-unread", "chevron-down-small", "composer-model", "diff-file-python",
            "diff-jump-to-file", "diff-more", "diff-open-in", "diff-show-files", "mobile-notifications",
-           "mobile-start", "scheduled-filled", "sidebar-cmd-spinner", "thread-chevron-right", "thread-copy",
+           "scheduled-filled", "sidebar-cmd-spinner", "thread-chevron-right", "thread-copy",
            "thread-fork", "thread-lang-python", "thread-project", "thread-rate", "thread-read-aloud"}
 # Glyphs fitted over a background that varies by 1 level under the box (the send button's
 # circle): its uncovered pixels count as background. Elsewhere such a variation is a layer
