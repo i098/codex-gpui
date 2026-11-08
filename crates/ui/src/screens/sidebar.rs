@@ -4920,25 +4920,16 @@ fn menu_row(
         .flex()
         .items_center()
         .gap(px(8.))
-        // `primary-ghost-hover` at its exact CSS alpha, blitted in the dialog's layer: Skia
-        // blends its float color into the fill there before the layer meets the backdrop
-        // (the 8-bit tokens put dark's row 1 level low, and the backdrop's 42/43 edge off).
+        // `primary-ghost-hover`, blitted in the dialog's layer over its fill before the layer
+        // meets the blurred backdrop. Chromium lands dark's white .08 at 35 over the fill's 16
+        // (premultiplied); Skia's 8-bit blit needs alpha 21 for that, 20 gives 34 (1 level low).
         .when(selected, |d| {
-            let (rgb, a) = match t.appearance {
-                Appearance::Dark => ([1., 1., 1.], 0.08),
-                Appearance::Light => ([26. / 255., 28. / 255., 31. / 255.], 0.055),
-            };
             d.child(shapes::decoration(shapes::Decoration {
                 radius: Corners::all(px(12.5)),
-                fill: Some(
-                    gpui::Rgba {
-                        r: rgb[0],
-                        g: rgb[1],
-                        b: rgb[2],
-                        a,
-                    }
-                    .into(),
-                ),
+                fill: Some(match t.appearance {
+                    Appearance::Dark => rgba(0xffffff15).into(),
+                    Appearance::Light => t.ghost_hover,
+                }),
                 ..Default::default()
             }))
         })
