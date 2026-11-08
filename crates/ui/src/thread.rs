@@ -39,7 +39,7 @@ use theme::{ActiveTheme as _, Appearance, Theme};
 
 use crate::icon::icon;
 use crate::motion::{self, HoverFade};
-use crate::screens::sidebar::title;
+use crate::screens::sidebar::opened_title;
 use crate::tooltip::{Side, tooltip};
 use crate::{MONO, SANS, composer::shadow, icon_button, layout_color, over, text};
 use gpui::{Anchor, Edges, anchored, deferred};
@@ -785,7 +785,7 @@ impl ThreadView {
             cache_automation_result(item);
         }
         Self {
-            title: title(&thread),
+            title: opened_title(&thread),
             chat_actions: None,
             chat_actions_trigger: None,
             chat_actions_hovered: false,
@@ -3055,9 +3055,11 @@ impl Render for ThreadView {
             !self.clip_right,
         );
         // The px the main surface's rounded clip covers in part at its right corners: the top
-        // fade's and the composer band's surface fill, drawn onto the page after the shell's
-        // corners (`Shell::main_clips_right`), in a deferred draw. cc draws a band tile that
-        // holds only the fill (no ink of the composer card, which is centered) as a color quad.
+        // fade's surface fill, drawn onto the page after the shell's corners
+        // (`Shell::main_clips_right`), in a deferred draw. Beside a docked bottom panel the
+        // composer band's fill too: cc draws a band tile that holds only the fill (no ink of
+        // the composer card, which is centered) as a color quad. Without one the shell rasters
+        // the bottom corner.
         // ponytail: the bottom corner's px all in the band's last tile (510 px stride).
         let card_ink = crate::composer::card_decoration(&t, false)
             .shadows
@@ -3072,6 +3074,7 @@ impl Render for ThreadView {
         } else {
             Pixels::ZERO
         };
+        let docked_below = self.docked_below;
         let corners = gpui::canvas(
             |_, _, _| {},
             move |bounds, (), window, cx| {
@@ -3090,6 +3093,9 @@ impl Render for ThreadView {
                     ..Default::default()
                 };
                 shapes::paint_clipped_tile(&fade, false, top, bounds, window, cx);
+                if !docked_below {
+                    return;
+                }
                 let width = bounds.size.width;
                 let card_right = (width + width.min(CONTENT_MAX_WIDTH)) / 2. - px(16.);
                 let w = dev(width);

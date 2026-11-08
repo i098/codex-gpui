@@ -237,7 +237,8 @@ impl ThreadView {
             .absolute()
             .top_0()
             .left(Theme::SIDEBAR_WIDTH)
-            .right(px(43.))
+            // The page end inset (4 px), then the `-ms-1.5` slot of the titlebar end group.
+            .right(px(47.))
             // Its composited `group/titlebar` layer is the caller's (`diff::split_screen`).
             .child(self.header(side_pane || !self.title.is_empty(), cx))
     }
@@ -258,9 +259,9 @@ impl ThreadView {
                     div()
                         .absolute()
                         .left_0()
-                        .top(px(12.))
+                        .top(px(14.))
                         .w(px(1.))
-                        .h(px(20.))
+                        .h(px(16.))
                         .bg(over(t.border, layout_color(t)))
                         // The quad is part of the layer's recorded bounds.
                         .child(
@@ -287,13 +288,13 @@ impl ThreadView {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .child(icon("thread-project", 16., t.text)),
+                                .child(icon("folder", 16., t.text)),
                         )
                         .child(
                             div()
                                 .min_w_0()
                                 .ml(px(-2.))
-                                .px(px(6.))
+                                .px(px(8.))
                                 .overflow_hidden()
                                 .child(
                                     text(self.header_title(), 14., 24., 500., t.text)

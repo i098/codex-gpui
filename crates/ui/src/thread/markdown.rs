@@ -850,7 +850,8 @@ impl<'a> Markdown<'a> {
                             let mention = tones(self.theme).mention;
                             let (bottom, glyph) = if python {
                                 (
-                                    3.37,
+                                    // 26.1029: a 14 px slot icon container, its 16 px glyph 1 px above.
+                                    4.18,
                                     icon("thread-lang-python", 16., mention).into_any_element(),
                                 )
                             } else {

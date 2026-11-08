@@ -337,8 +337,9 @@ pub struct Shell {
     pub main_layer: bool,
     /// The opaque accelerated scroller that can occlude the page frame.
     pub main_opaque_scroll: Option<gpui::ScrollHandle>,
-    /// With `main_composited`: the main view draws its right corners' px of partial clip
-    /// coverage itself, after the shell (a lone thread: `shapes::paint_clipped_tile`).
+    /// With `main_composited`: the main view draws its top-right corner's px of partial clip
+    /// coverage itself, after the shell (a lone thread: `shapes::paint_clipped_tile`), and its
+    /// bottom-right one beside a docked bottom panel; else the shell rasters that one.
     pub main_clips_right: bool,
     /// A chat needs attention (unread): the rail's Home item carries the unread dot.
     pub attention: bool,
@@ -2517,7 +2518,10 @@ impl Render for Shell {
                 }
                 let mut main = bounds;
                 for (x, y, dx, dy, backgrounds, viz) in corners {
-                    if composited || viz {
+                    // A lone thread's composer band (26.1029) ends 16 px short of the right
+                    // edge: its bottom-right corner clips only the main fill, as on Home.
+                    let band_free = clips_right && !docked && !main_layer && dx < 0. && dy < 0.;
+                    if (composited || viz) && !band_free {
                         // viz draws each layer of the clipped surface through the clip's
                         // coverage `m`, partial px with `SkBlendARGB32`: its own fill F onto the
                         // page, then the content C (painted over the square F). In a layer of
@@ -2547,7 +2551,7 @@ impl Render for Shell {
                                 let own = clips_right || main_layer;
                                 let own = Corners {
                                     top_right: own,
-                                    bottom_right: main_layer || (clips_right && !docked),
+                                    bottom_right: main_layer,
                                     ..Default::default()
                                 };
                                 shapes::paint_rounded_clip(radius, own, main, window, cx);

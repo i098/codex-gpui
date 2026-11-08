@@ -84,14 +84,24 @@ pub struct Project {
 
 /// Thread name or preview, cut to 80 characters. Views supply their own empty-state label.
 pub fn title(thread: &Thread) -> SharedString {
+    title_within(thread, 80)
+}
+
+/// An opened (read) thread's title: 26.1029 cuts its preview to 60 characters.
+pub fn opened_title(thread: &Thread) -> SharedString {
+    title_within(thread, 60)
+}
+
+fn title_within(thread: &Thread, max: usize) -> SharedString {
     if let Some(name) = &thread.name {
         return name.clone().into();
     }
     let preview = thread.preview.trim();
-    if preview.chars().count() <= 80 {
+    if preview.chars().count() <= max {
         preview.to_owned().into()
     } else {
-        format!("{}…", preview.chars().take(79).collect::<String>()).into()
+        let cut: String = preview.chars().take(max - 1).collect();
+        format!("{}…", cut.trim_end()).into()
     }
 }
 
@@ -463,7 +473,14 @@ impl HomeSidebar {
         Self {
             threads: threads
                 .iter()
-                .map(|t| (t.id.clone(), display_title(title(t)), t.updated_at))
+                .map(|t| {
+                    let title = if selected == Some(t.id.as_str()) {
+                        opened_title(t)
+                    } else {
+                        title(t)
+                    };
+                    (t.id.clone(), display_title(title), t.updated_at)
+                })
                 .collect(),
             projects: Vec::new(),
             threads_state: ListState::Ready,
@@ -4809,6 +4826,18 @@ mod tests {
         let sidebar = HomeSidebar::new(std::slice::from_ref(&thread), Some(&thread.id));
         assert_eq!(sidebar.threads[0].1.as_ref(), "New chat");
         assert!(title(&thread).is_empty());
+    }
+
+    #[test]
+    fn opened_thread_title_is_cut_to_60_characters() {
+        let list: ThreadListResponse = fixture::response("readback.jsonl", "thread/list", 0);
+        let mut thread = list.data.into_iter().next().unwrap();
+        thread.name = None;
+        thread.preview = format!("b{}", "a ".repeat(41));
+        // The 59th character is a space: it goes before the ellipsis.
+        let cut = format!("b{}a…", "a ".repeat(28));
+        assert_eq!(opened_title(&thread).as_ref(), cut);
+        assert!(title(&thread).ends_with("a…"));
     }
 
     #[test]
