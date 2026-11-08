@@ -470,7 +470,11 @@ impl Composer {
                             let color = if i as f32 <= f.thumb + 1e-3 {
                                 gpui::rgba(0xffffff4c).into()
                             } else {
-                                Hsla { a: 0.249, ..t.text }
+                                // 26.1029 rasters the `0.249` tick alpha as 64/255.
+                                Hsla {
+                                    a: 64. / 255.,
+                                    ..t.text
+                                }
                             };
                             div()
                                 .absolute()
