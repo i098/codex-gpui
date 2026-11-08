@@ -4924,6 +4924,8 @@ fn menu_row(
         .flex()
         .items_center()
         .gap(px(8.))
+        // The selected row's highlight and content share the list's tile (a saved layer here).
+        .when(selected, |d| d.saved_layer())
         // `primary-ghost-hover`, blitted in the dialog's layer over its fill before the layer
         // meets the blurred backdrop. Chromium lands dark's white .08 at 35 over the fill's 16
         // (premultiplied); Skia's 8-bit blit needs alpha 21 for that, 20 gives 34 (1 level low).
@@ -4973,7 +4975,7 @@ fn menu_row(
                 .flex_1()
                 .min_w_0()
                 // Chromium rasterizes it in the list's transparent tile, as the icons above.
-                .saved_layer()
+                .when(!selected, |d| d.saved_layer())
                 .flex()
                 .flex_col()
                 .child(line)
