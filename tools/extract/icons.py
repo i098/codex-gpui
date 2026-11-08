@@ -84,6 +84,9 @@ NAMES = {
     "c9e426407c": "settings-worktrees",
     "76d8980617": "chevron-down",
     "cc1b800935": "pencil",
+    # Mobile setup features (26.1029)
+    "cad0be165a": "mobile-notifications",
+    "7fd15be3f3": "mobile-start",
 }
 
 DROP = re.compile(r'\s(?:class|role|focusable|aria-[\w-]+|data-[\w-]+)="[^"]*"')
