@@ -238,6 +238,8 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+    // Auxiliary windows (About, plan summary) and a closed main window have no Root handler.
+    cx.on_action(|_: &OpenSettings, cx| cx.defer(windows::open_settings));
 }
 
 /// Builds the application menu through the native menu family.
@@ -9466,9 +9468,6 @@ impl Render for Root {
                     this.open_dialog(DialogKind::FullAccess, window, cx);
                 }),
             )
-            .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
-                this.navigate(Route::Settings, window, cx)
-            }))
             .on_action(cx.listener(
                 |this, _: &settings::integrations::OpenPluginManager, window, cx| {
                     this.open_settings_section("Plugins", window, cx)

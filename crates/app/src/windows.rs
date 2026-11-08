@@ -478,6 +478,19 @@ pub fn reopen(cx: &mut App) -> Result<()> {
     Ok(())
 }
 
+/// Shows Settings in the primary window, reopening it when it is closed.
+pub(crate) fn open_settings(cx: &mut App) {
+    let result = primary_or_open(cx).and_then(|handle| {
+        handle.update(cx, |root, window, cx| {
+            root.navigate(crate::Route::Settings, window, cx)
+        })?;
+        show(handle.into(), Presentation::Foreground, cx)
+    });
+    if let Err(error) = result {
+        eprintln!("codex-gpui: cannot open settings: {error:#}");
+    }
+}
+
 /// The last active primary window, else any primary: the window a deep link or Dock
 /// reopen addresses.
 pub fn primary(cx: &App) -> Option<AnyWindowHandle> {

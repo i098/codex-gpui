@@ -6,6 +6,9 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+### Fixed
+- Open Settings in the main window when Mini or the hotkey window has focus, and from windows without a Settings page (About, plan summary). Before, `⌘,` and `Codex ▸ Settings…` did nothing there.
+
 ## [0.1.2] - 2026-11-08
 
 ### Added
