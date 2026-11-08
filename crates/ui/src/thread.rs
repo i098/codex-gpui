@@ -2877,13 +2877,15 @@ fn forked_marker(parent: &str, t: &Theme) -> Div {
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = cx.background_executor().now();
+        // A static capture shows streamed text after its fade.
+        let finished = crate::screens::home::animation_finished(window, cx);
         self.stream_fades.retain(|_, segments| {
             segments.retain_mut(|segment| {
                 let elapsed = now.saturating_duration_since(segment.started_at);
                 segment.alpha = crate::motion::EASE_STREAMING(
                     elapsed.as_secs_f32() / crate::motion::STREAMING_TEXT.as_secs_f32(),
                 );
-                !cx.reduce_motion() && elapsed < crate::motion::STREAMING_TEXT
+                !cx.reduce_motion() && !finished && elapsed < crate::motion::STREAMING_TEXT
             });
             !segments.is_empty()
         });
