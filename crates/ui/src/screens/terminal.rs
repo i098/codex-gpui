@@ -219,11 +219,20 @@ pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
         ..CAPTURE_CLOCK
     };
     let thread = subtract_thread_beside_panel(window, cx, true, clock);
+    // refs/terminal@1440x900: the transcript ends at 895.83, 1/6 px above the scroller's bottom
+    // (at 1280x832 it ends below it).
+    // shortcut: the captured spacer history per window size; record new sizes when captured.
+    let footer_rise = if window.viewport_size().height == px(900.) {
+        1. / 6.
+    } else {
+        0.
+    };
     thread.update(cx, |view, cx| {
         for event in running_command_replay(FOLLOW_UP_AT) {
             view.apply(&event, cx);
         }
         view.summary_open = true;
+        view.footer_rise = footer_rise;
     });
     let view = thread.read(cx);
     let id = view.id().to_owned();

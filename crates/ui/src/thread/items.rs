@@ -333,8 +333,15 @@ pub(super) fn wrap_row() -> Div {
 /// in degrees (90 = open). At rest it is the fitted icon; while it turns, the svg path is
 /// rotated about its viewBox centre and rasterized like any icon (no clipping: the path stays
 /// 5.5 px from the centre). The sprite fallback (Linux) rotates the mask instead.
-/// `None` draws the running status without a disclosure control.
-pub(super) fn disclosure(label: String, angle: Option<f32>, window: &Window, t: &Theme) -> Div {
+/// `None` draws the running status without a disclosure control. `tabular`: the label's
+/// digits take tabular advances (`tabular-nums`, the original's live turn timer).
+pub(super) fn disclosure(
+    label: String,
+    angle: Option<f32>,
+    tabular: bool,
+    window: &Window,
+    t: &Theme,
+) -> Div {
     let color = t.text_tertiary;
     let chevron = angle.map(|angle| {
         if angle == 0. {
@@ -407,7 +414,20 @@ pub(super) fn disclosure(label: String, angle: Option<f32>, window: &Window, t: 
                     .flex_wrap()
                     .items_center()
                     .gap(px(4.))
-                    .child(measured(window, label, 14., 21., 430., color, None))
+                    .child(measured_with(
+                        window,
+                        label,
+                        14.,
+                        21.,
+                        430.,
+                        color,
+                        None,
+                        if tabular {
+                            crate::composer::tabular_features()
+                        } else {
+                            Default::default()
+                        },
+                    ))
                     .children(chevron),
             ),
         )

@@ -219,6 +219,10 @@ pub struct ThreadView {
     /// A bottom panel (the terminal) shares the main surface below the view, so the page's
     /// composited layer is one tile tall.
     pub docked_below: bool,
+    /// How far the transcript ends above the scroller's bottom when scrolled to it: the
+    /// original's response spacer shrinks by the streamed growth (capture history the replay
+    /// does not reproduce), and its sticky composer footer rises with the transcript's end.
+    pub footer_rise: f32,
     title: SharedString,
     chat_actions: Option<gpui::FocusHandle>,
     chat_actions_trigger: Option<gpui::FocusHandle>,
@@ -813,6 +817,7 @@ impl ThreadView {
             clip_right: false,
             clip_top_left: false,
             docked_below: false,
+            footer_rise: 0.,
             turns: thread.turns,
             reverted_turns: HashSet::new(),
             patch_pending: false,
@@ -2490,30 +2495,37 @@ impl ThreadView {
                 )
             };
             col = col.child(div().h(px(16.))).child(
-                disclosure(label, Some(angle), window, t)
-                    .id(group.clone())
-                    // `select-none` in the original: a press here leaves the text selection.
-                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |view, _, _, cx| {
-                        let open = !view.expanded.remove(&id);
-                        if open {
-                            view.expanded.insert(id.clone());
-                        }
-                        let instant = motion::reduced(cx);
-                        state.update(cx, |(epoch, d), cx| {
-                            let now = cx.background_executor().now() - *epoch;
-                            let target = open as u8 as f32;
-                            d.chevron
-                                .transition(target, now, motion::BASIC, motion::EASE_IN_OUT);
-                            let (duration, ease) = match (instant, open) {
-                                (true, _) => (Duration::ZERO, motion::EASE_ENTER),
-                                (false, true) => (motion::RELAXED, motion::EASE_ENTER),
-                                (false, false) => (motion::BASIC, motion::EASE_ENTER_SNAPPY),
-                            };
-                            d.content.transition(target, now, duration, ease);
-                        });
-                        cx.notify();
-                    })),
+                // A turn watched live keeps the timer's `tabular-nums` (refs/terminal `15s`).
+                disclosure(
+                    label,
+                    Some(angle),
+                    self.answer_secs.contains_key(&turn.id),
+                    window,
+                    t,
+                )
+                .id(group.clone())
+                // `select-none` in the original: a press here leaves the text selection.
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |view, _, _, cx| {
+                    let open = !view.expanded.remove(&id);
+                    if open {
+                        view.expanded.insert(id.clone());
+                    }
+                    let instant = motion::reduced(cx);
+                    state.update(cx, |(epoch, d), cx| {
+                        let now = cx.background_executor().now() - *epoch;
+                        let target = open as u8 as f32;
+                        d.chevron
+                            .transition(target, now, motion::BASIC, motion::EASE_IN_OUT);
+                        let (duration, ease) = match (instant, open) {
+                            (true, _) => (Duration::ZERO, motion::EASE_ENTER),
+                            (false, true) => (motion::RELAXED, motion::EASE_ENTER),
+                            (false, false) => (motion::BASIC, motion::EASE_ENTER_SNAPPY),
+                        };
+                        d.content.transition(target, now, duration, ease);
+                    });
+                    cx.notify();
+                })),
             );
             if progress > 0. {
                 let natural = height.get();
@@ -2595,6 +2607,7 @@ impl ThreadView {
                 .child(disclosure(
                     format!("Working for {}", duration(secs)),
                     None,
+                    false,
                     window,
                     t,
                 ))
@@ -2969,9 +2982,14 @@ impl Render for ThreadView {
                         }
                     }
                 };
-                let body = body.when(i + 1 == n && live_turn == Some(&turn.id), |b| {
-                    b.min_h(live_min_h)
-                });
+                // The original's virtualizer gives each turn its height rounded to device px
+                // (370.8 -> 371), so every turn starts on a device pixel.
+                // shortcut: rounds the summed heights, not each one; the same for two turns.
+                let body = body
+                    .snap_origin()
+                    .when(i + 1 == n && live_turn == Some(&turn.id), |b| {
+                        b.min_h(live_min_h)
+                    });
                 match &self.forked_from {
                     Some(parent) if i == 0 && stand_in.is_none() => div()
                         .flex()
@@ -3136,16 +3154,23 @@ impl Render for ThreadView {
         // state: the 280 px terminal panel, gradient at y 402).
         // ponytail: one data point for the layer height at which tiling stops.
         let tiled = !self.docked_below;
+        // Chromium rasters the footer's layer from the floor of its device top, so a footer
+        // risen by a fraction of a device px moves the fade's dither phase down one row.
+        let rise = self.footer_rise;
         let bottom_fade = canvas(
             move |bounds, window, _| {
+                let scale = window.scale_factor();
                 gradient_image(
                     &[(surface_color, 0.), (clear, 1.)],
                     clear,
                     (f32::from(bounds.size.width), f32::from(bounds.size.height)),
-                    (0., f32::from(bounds.top()) - 44.),
+                    (
+                        0.,
+                        f32::from(bounds.top()) - 44. + (rise * scale).ceil() / scale,
+                    ),
                     true,
                     tiled,
-                    window.scale_factor(),
+                    scale,
                 )
             },
             |bounds, image, window, _| {
@@ -3623,11 +3648,23 @@ fn fit_width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&s
 }
 
 fn shaped_width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>) -> Pixels {
+    shaped_width_with(window, s, size, weight, family, Default::default())
+}
+
+fn shaped_width_with(
+    window: &Window,
+    s: &str,
+    size: f32,
+    weight: f32,
+    family: Option<&str>,
+    features: gpui::FontFeatures,
+) -> Pixels {
     let family = SharedString::from(family.unwrap_or(SANS));
     let run = TextRun {
         len: s.len(),
         font: gpui::Font {
             weight: FontWeight(weight),
+            features,
             ..font(family)
         },
         color: white(),
@@ -3651,9 +3688,34 @@ fn measured(
     color: Hsla,
     family: Option<&'static str>,
 ) -> Div {
+    measured_with(
+        window,
+        s,
+        size,
+        line_height,
+        weight,
+        color,
+        family,
+        Default::default(),
+    )
+}
+
+/// [`measured`] with OpenType `features` (`tabular-nums`: `tnum`).
+#[allow(clippy::too_many_arguments)]
+fn measured_with(
+    window: &Window,
+    s: impl Into<SharedString>,
+    size: f32,
+    line_height: f32,
+    weight: f32,
+    color: Hsla,
+    family: Option<&'static str>,
+    features: gpui::FontFeatures,
+) -> Div {
     let s = s.into();
-    let w = markdown::ItemPen::new(window).share(width(window, &s, size, weight, family), true);
-    let label = text(s, size, line_height, weight, color);
+    let shaped = shaped_width_with(window, &s, size, weight, family, features.clone());
+    let w = markdown::ItemPen::new(window).share(crate::run_width(shaped, window), true);
+    let label = text(s, size, line_height, weight, color).font_features(features);
     div().flex_none().w(w).child(match family {
         Some(f) => label.font_family(f),
         None => label,
