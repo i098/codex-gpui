@@ -636,6 +636,7 @@ mod tests {
 
     const ID: &str = "00000000-0000-4000-8000-000000000001";
 
+    #[cfg(unix)] // POSIX path fixtures
     #[test]
     fn file_urls_become_decoded_paths() {
         assert_eq!(

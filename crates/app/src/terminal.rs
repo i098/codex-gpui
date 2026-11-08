@@ -2124,6 +2124,7 @@ mod tests {
         }})
     }
 
+    #[cfg(unix)] // POSIX path fixtures
     #[test]
     fn cloud_cwd_is_the_environment_directory() {
         let bridge = durable(|read, write| {
@@ -2301,6 +2302,7 @@ mod tests {
         )));
     }
 
+    #[cfg(unix)] // POSIX path fixtures
     #[test]
     fn terminal_directories_stay_with_the_assigned_project() {
         let state = json!({

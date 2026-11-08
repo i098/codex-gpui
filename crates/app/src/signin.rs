@@ -339,6 +339,7 @@ mod browser {
             Ok(())
         }
 
+        #[cfg(unix)] // POSIX path fixtures
         #[test]
         fn stalled_lookup_helper_is_stopped() {
             let mut command = std::process::Command::new("/bin/sleep");

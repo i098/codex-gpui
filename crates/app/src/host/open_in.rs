@@ -1218,6 +1218,7 @@ mod tests {
     use crate::host::{Host, Request, json_body};
     use crate::host_settings::Settings;
 
+    #[cfg(unix)] // POSIX path fixtures
     #[test]
     fn catalog_observes_shared_preferences_and_rejects_invalid_custom_handlers() -> Result<()> {
         #[cfg(target_os = "macos")]
@@ -2136,7 +2137,10 @@ mod launch_tests {
             &handler,
             "#!/bin/sh\ncase \"$2\" in\nstdin) cat > \"$1\";;\nfail) exit 3;;\n*) printf '%s' \"$3\" > \"$1\";;\nesac\n",
         )?;
-        fs::set_permissions(&handler, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
+        fs::set_permissions(
+            &handler,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )?;
         let mut settings = Settings::default();
         settings.write(
             "open-in-target-preferences",
