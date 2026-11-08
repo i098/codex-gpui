@@ -3748,6 +3748,21 @@ impl Render for Composer {
                     card_decoration(&t, narrow)
                 }))
             })
+            // shortcut: Chromium's blur of the 80 px shadow falls off faster at the card sides
+            // beside a side panel (refs/diff, refs/terminal); fitted ref strips cover the 5.5 px
+            // at each side there and paint nothing elsewhere. Drop once the blur matches.
+            .children([true, false].map(|start| {
+                let strip = div().absolute().top(px(9.5));
+                if start {
+                    strip.left(px(-5.5))
+                } else {
+                    strip.right(px(-5.5))
+                }
+                .child(
+                    crate::icon::icon_sized("composer-shadow-side", 5.5, 83., t.text)
+                        .runtime_unless_positioned(),
+                )
+            }))
             // See `docked`: the docked body is a transparent cc layer over the card.
             .child(
                 div()
