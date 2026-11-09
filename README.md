@@ -1,7 +1,7 @@
 # codex-gpui: Codex Desktop in Rust
 codex-gpui is a native, fast, lightweight Codex Desktop in Rust for macOS and Linux, built with [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui). It is an open-source port of OpenAI Codex that drives the real `codex app-server`.
 
-[Build and run](docs/build-and-run.md) · [Architecture](docs/architecture.md) · [Parity](docs/parity.md) · [Contributing](CONTRIBUTING.md) · [Code of conduct](CODE_OF_CONDUCT.md) · [Security](.github/SECURITY.md) · [Changelog](CHANGELOG.md)
+[Setup](setup.md) · [Build and run](docs/build-and-run.md) · [Architecture](docs/architecture.md) · [Parity](docs/parity.md) · [Contributing](CONTRIBUTING.md) · [Code of conduct](CODE_OF_CONDUCT.md) · [Security](.github/SECURITY.md) · [Changelog](CHANGELOG.md)
 
 ## Download
 
@@ -48,6 +48,7 @@ How to reproduce: [docs/BENCHMARKS.md](docs/BENCHMARKS.md)
    cargo run -p app --release
    ```
 
+Step-by-step setup from a clean machine: [setup.md](setup.md).
 Full requirements, flags, environment variables and tests: [Build and run](docs/build-and-run.md).
 
 ## Architecture
