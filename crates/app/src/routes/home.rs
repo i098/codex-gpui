@@ -2,7 +2,7 @@ use crate::host::{Host, Request};
 use crate::*;
 use base64::Engine as _;
 use gpui::Div;
-use ui::screens::home::{LibraryFile, WorkEvent};
+use ui::screens::home::{BROWSE_LIMIT, LibraryFile, WorkEvent};
 
 pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     root.on_action(cx.listener(|this, _: &NewChat, window, cx| this.new_chat(window, cx)))
@@ -206,10 +206,10 @@ impl Root {
 
 /// `Files` menu reads: `POST /files/library` with the `ftn` body for native files, at most
 /// `We` (10) of them; `q` narrows by name.
-fn library_files(host: &dyn Host, query: &str) -> Result<Vec<LibraryFile>> {
+fn library_files(host: &dyn Host, query: &str, limit: usize) -> Result<Vec<LibraryFile>> {
     let identity = host.identity().context("No ChatGPT account")?;
     let q = (!query.is_empty()).then_some(query);
-    let body = json!({"limit": 10, "cursor": null, "state": "ready", "q": q});
+    let body = json!({"limit": limit, "cursor": null, "state": "ready", "q": q});
     let response = crate::usage::http(host, &identity, "POST", "/files/library", Some(body))?;
     Ok(response["items"]
         .as_array()
@@ -284,7 +284,7 @@ impl Root {
                 let query = query.clone();
                 let read = cx.background_spawn({
                     let query = query.clone();
-                    async move { library_files(&*host, &query) }
+                    async move { library_files(&*host, &query, 10) }
                 });
                 let home = self.home.clone();
                 cx.spawn(async move |_, cx| {
@@ -294,6 +294,22 @@ impl Root {
                     home.update(cx, |home, cx| {
                         home.set_library_files(&query, files.ok(), cx)
                     })
+                })
+                .detach();
+            }
+            WorkEvent::LibraryBrowse(query) => {
+                let host = self.host.clone();
+                let query = query.clone();
+                let read = cx.background_spawn({
+                    let query = query.clone();
+                    async move { library_files(&*host, &query, BROWSE_LIMIT) }
+                });
+                let home = self.home.clone();
+                cx.spawn(async move |_, cx| {
+                    let files = read
+                        .await
+                        .inspect_err(|e| eprintln!("library browse: {e:#}"));
+                    home.update(cx, |home, cx| home.set_browse_files(&query, files.ok(), cx))
                 })
                 .detach();
             }

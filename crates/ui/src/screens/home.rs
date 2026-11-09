@@ -20,7 +20,7 @@ static CONTROL_TEXT_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
     std::sync::LazyLock::new(Default::default);
 
 mod work;
-pub use work::{LibraryFile, LibraryLoad, WorkEvent, local_matches};
+pub use work::{BROWSE_LIMIT, LibraryFile, LibraryLoad, WorkEvent, local_matches};
 
 /// Identifies the window whose animations a static capture finishes.
 #[derive(Clone, Copy)]
@@ -1738,10 +1738,12 @@ impl Render for HomeMain {
                 .child(column);
             return div()
                 .size_full()
+                .relative()
                 .flex()
                 .flex_col()
                 .child(toolbar.child(self.chat_work_toggle(&t, window, cx)))
                 .child(crate::composer::drop_target(page, &self.composer, cx))
+                .children(self.browse_dialog(&t, cx))
                 .into_any_element();
         }
         // The page column under the `home-mode-toggle` row is the file drop target.
