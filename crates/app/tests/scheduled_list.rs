@@ -12,11 +12,11 @@ use rusqlite::Connection;
 use std::{fs, path::Path, sync::Arc};
 use ui::screens::sidebar::ListState;
 
-/// The header's `Search scheduled tasks` and the list's `Filter tasks` buttons.
+/// The header's `Search scheduled tasks` and `Filter tasks` buttons.
 const SEARCH: (f32, f32) = (306., 68.);
-const FILTER: (f32, f32) = (304., 147.);
+const FILTER: (f32, f32) = (272., 68.);
 /// The first run row under the selected first task.
-const FIRST_RUN: (f32, f32) = (150., 230.);
+const FIRST_RUN: (f32, f32) = (150., 196.);
 
 fn definition(id: &str, name: &str, status: &str, updated: i64) -> String {
     format!(
