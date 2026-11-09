@@ -15,7 +15,7 @@ jobs:
     steps:
       - name: Install the GitHub CLI
         run: command -v gh >/dev/null || { sudo apt-get update && sudo apt-get install -y --no-install-recommends gh; }
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Create the release
         run: |
           version=$(tools/version.sh)
@@ -44,7 +44,7 @@ jobs:
       CODEX_GPUI_NOTARY_ISSUER: ${{ secrets.CODEX_GPUI_NOTARY_ISSUER }}
       CODEX_GPUI_DMG: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check the tag matches the workspace version
         run: |
           version=$(tools/version.sh)
@@ -109,7 +109,7 @@ jobs:
       CODEX_GPUI_MSIX_PUBLISHER: ${{ secrets.WINDOWS_MSIX_PUBLISHER }}
       PFX_BASE64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Decode the signing certificate
         if: ${{ env.PFX_BASE64 != '' }}
@@ -137,7 +137,7 @@ jobs:
     steps:
       - name: Install the GitHub CLI
         run: command -v gh >/dev/null || { sudo apt-get update && sudo apt-get install -y --no-install-recommends gh; }
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check the signing key is configured
         id: gate
         run: '[[ -n $CODEX_GPUI_UPDATE_PRIVATE_KEY && -n $CODEX_GPUI_UPDATE_PUBLIC_KEY ]] && echo run=1 >>"$GITHUB_OUTPUT" || echo "no update signing key; skipping the Linux build"'
