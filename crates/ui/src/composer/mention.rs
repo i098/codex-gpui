@@ -228,6 +228,74 @@ fn plugin_hits(value: &Value) -> Vec<MentionHit> {
         .collect()
 }
 
+/// A connected plugin of the Work home's `Plugins` picker: its id and display name.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConnectedPlugin {
+    pub id: String,
+    pub title: String,
+}
+
+/// The link of a plugin chip (`[@title](plugin://id)`).
+fn plugin_link(title: &str, id: &str) -> String {
+    format!("[@{title}](plugin://{id})")
+}
+
+impl Composer {
+    /// `plugin/list` for the Work home `Plugins` picker (`connectedPlugins`): the mentionable
+    /// plugins. `None` without an app-server.
+    pub fn connected_plugins(
+        &self,
+        cx: &App,
+    ) -> Option<gpui::Task<anyhow::Result<Vec<ConnectedPlugin>>>> {
+        let bridge = self.bridge.clone()?;
+        let params = json!({ "cwds": self.slash.search.roots });
+        Some(cx.foreground_executor().spawn(async move {
+            let value = bridge.request::<_, Value>("plugin/list", params).await?;
+            Ok(plugin_hits(&value)
+                .into_iter()
+                .map(|hit| ConnectedPlugin {
+                    id: hit.id,
+                    title: hit.title,
+                })
+                .collect())
+        }))
+    }
+
+    /// The plugins the draft's chips mention (`getMentionedPluginIdsKey`).
+    pub fn mentioned_plugins(&self) -> Vec<String> {
+        self.mentions
+            .iter()
+            .filter_map(|m| {
+                let (_, id) = m.link.rsplit_once("](plugin://")?;
+                Some(id.strip_suffix(')')?.to_owned())
+            })
+            .collect()
+    }
+
+    /// The picker's pick: a plugin chip at the caret (`insertMentionAtSelection`).
+    pub fn insert_plugin_mention(&mut self, plugin: &ConnectedPlugin, cx: &mut Context<Self>) {
+        let at = self.snap(self.selected_range.end, None);
+        let link = plugin_link(&plugin.title, &plugin.id);
+        self.insert_mention(at..at, &plugin.title, link, "plugins", cx);
+        cx.notify();
+    }
+
+    /// The picker's uncheck: every chip of plugin `id` goes (`removePluginMentions`).
+    pub fn remove_plugin_mentions(&mut self, id: &str, cx: &mut Context<Self>) {
+        let suffix = format!("](plugin://{id})");
+        while let Some(range) = self
+            .mentions
+            .iter()
+            .find(|m| m.link.ends_with(&suffix))
+            .map(|m| m.range.clone())
+        {
+            let range = self.splice(range, "");
+            self.selected_range = range.start..range.start;
+        }
+        cx.notify();
+    }
+}
+
 impl Composer {
     pub(super) fn toggle_add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if std::mem::take(&mut self.slash.add_mouse_open) || (self.slash.open && self.slash.mention)
@@ -687,7 +755,7 @@ impl Composer {
             }
             None if index < apps => {
                 let plugin = &self.slash.search.plugins[index - plugins];
-                let link = format!("[@{}](plugin://{})", plugin.title, plugin.id);
+                let link = plugin_link(&plugin.title, &plugin.id);
                 (plugin.title.clone(), link, "plugins")
             }
             None if index < files => {
