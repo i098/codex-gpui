@@ -172,7 +172,7 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
     .on_action(cx.listener(
         |this, a: &ui::screens::diff::panel::MoveSideTabToBottom, window, cx| {
             if this.tabs.get(a.0) == Some(&SidePanel::Console) {
-                this.show_terminal(true, window, cx);
+                this.show_terminal(Some(true), window, cx);
             }
         },
     ))
@@ -199,7 +199,7 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
     )
     .on_action(
         cx.listener(|this, _: &OpenInteractiveTerminal, window, cx| {
-            this.show_terminal(false, window, cx)
+            this.show_terminal(None, window, cx)
         }),
     )
     .on_action(cx.listener(|this, _: &EnvironmentAction1, window, cx| {

@@ -1540,14 +1540,7 @@ impl Shell {
                 label: label.into(),
             })
         };
-        let shortcut = |id: &str| {
-            let state = cx.try_global::<screens::settings::keyboard_shortcuts::KeyboardState>()?;
-            let command = screens::settings::keyboard_shortcuts::commands()
-                .iter()
-                .find(|c| c.id == id)?;
-            let keys = state.preferences.keys(command).next()?;
-            Some(screens::settings::keyboard_shortcuts::key_label(keys))
-        };
+        let shortcut = |id| screens::settings::keyboard_shortcuts::shortcut_label(id, cx);
         let pet_shortcut = shortcut("openAvatarOverlay");
         let settings_shortcut = shortcut("settings");
         // `CODEX_MOBILE_SETUP_COMPLETED` picks `Set up mobile` or `Set up remote`; both need
