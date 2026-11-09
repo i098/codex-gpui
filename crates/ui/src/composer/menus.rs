@@ -608,6 +608,39 @@ impl Composer {
                 430.,
                 t.text_tertiary,
             )))
+            .child({
+                let mut row = div()
+                    .id("model-default")
+                    .px(px(8.))
+                    .py(px(5.))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .rounded(px(15.))
+                    .hover(move |s| s.bg(hover))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(text("Default", 13., 18.5714, 430., t.text))
+                            .child(text(
+                                "Recommended set of models",
+                                12.,
+                                16.,
+                                400.,
+                                t.text_tertiary,
+                            )),
+                    );
+                if interactive {
+                    row = row
+                        .track_focus(&self.menu_focus.items[0])
+                        .focus(move |s| s.bg(hover))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.activate_menu_item(0, window, cx)
+                        }));
+                }
+                row
+            })
             .children(self.models.iter().enumerate().map(|(i, m)| {
                 div()
                     .id(("model", i))
@@ -629,10 +662,10 @@ impl Composer {
                         d.child(icon("menu-check", 16., t.text).opacity(0.75))
                     })
                     .when(interactive, |d| {
-                        d.track_focus(&self.menu_focus.items[i])
+                        d.track_focus(&self.menu_focus.items[i + 1])
                             .focus(move |s| s.bg(hover))
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                this.activate_menu_item(i, window, cx)
+                                this.activate_menu_item(i + 1, window, cx)
                             }))
                     })
             }))
