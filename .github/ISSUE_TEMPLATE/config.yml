@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/i098/codex-gpui/wiki
+    about: Read the wiki and README first. Ask usage questions in an issue form only when they show a defect.
+  - name: Report a vulnerability
+    url: https://github.com/i098/codex-gpui/blob/main/.github/SECURITY.md
+    about: Report a vulnerability in private, as the security policy tells. Never open a public issue.
