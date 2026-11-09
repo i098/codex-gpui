@@ -11,6 +11,8 @@ const PICKER_ENTER: Duration = Duration::from_millis(320);
 const PICKER_MOVE: Duration = Duration::from_millis(320);
 /// The simple view's box: 4 px panel padding, the 48 px top row, the 40 px slider row.
 const SIMPLE_VIEW_HEIGHT: f32 = 96.;
+/// The `Default` row at the top of the model list: two lines at 5 px padding.
+const MODEL_DEFAULT_ROW: f32 = 5. + 18.5714 + 16. + 5.;
 /// The Daybreak row under the model list (a 4 px gap and the 28 px row), and the two-line
 /// safety notice under it while Daybreak is on.
 const DAYBREAK_ROW: f32 = 4. + 28.;
@@ -239,8 +241,9 @@ impl Composer {
         let list = shown(f.views[2], advanced)
             .then(|| track(view(f.views[2], 10., self.models_view(t, advanced, cx))));
         let list_height = 8.
-            + 28.
-            + 32. * self.models.len() as f32
+            + 26.5714
+            + MODEL_DEFAULT_ROW
+            + 28.5714 * self.models.len() as f32
             + match (self.daybreak_row(), self.daybreak) {
                 (false, _) => 0.,
                 (true, false) => DAYBREAK_ROW,
