@@ -573,10 +573,7 @@ pub fn running_command_replay(started_at: i64) -> Vec<Event> {
             params["item"]["content"] =
                 json!([{"type": "text", "text": "Run the check again", "text_elements": []}]);
         }
-        events.push(Event::Notification {
-            method: method.into(),
-            params,
-        });
+        events.push(Event::Notification { method, params });
         if let Some(params) = output {
             events.push(Event::Notification {
                 method: "item/commandExecution/outputDelta".into(),
