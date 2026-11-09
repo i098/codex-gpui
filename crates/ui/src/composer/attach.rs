@@ -45,13 +45,19 @@ impl Attachment {
         matches!(self.content, Content::ContextFile)
     }
 
+    fn image_format(path: &Path) -> Option<gpui::ImageFormat> {
+        let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+        gpui::ImageFormat::from_mime_type(&format!("image/{extension}"))
+    }
+
+    fn is_image_path(path: &Path) -> bool {
+        Self::image_format(path).is_some()
+    }
+
     /// A dropped or picked file: an image shows its thumbnail (its bytes stay where they
     /// are), anything else its chip.
     async fn dropped(path: PathBuf, bridge: Option<Arc<Bridge>>) -> Result<Self> {
-        let format = path.extension().and_then(|e| e.to_str()).and_then(|e| {
-            gpui::ImageFormat::from_mime_type(&format!("image/{}", e.to_ascii_lowercase()))
-        });
-        let Some(format) = format else {
+        let Some(format) = Self::image_format(&path) else {
             return Ok(Self::file(path));
         };
         let bytes = match bridge {
@@ -179,6 +185,33 @@ async fn save_text(bridge: Arc<Bridge>, text: String) -> Result<Attachment> {
     Ok(Attachment {
         path,
         content: Content::Text(text),
+        persisted: true,
+    })
+}
+
+/// The original's `createLocalFile`: a file on the app-server's host is copied by `fs/copy`
+/// into a new directory under the attachments root and attached there. When the host cannot
+/// see `source` but this machine can read it, the bytes go over `fs/writeFile` instead.
+async fn copy_file(bridge: Arc<Bridge>, source: PathBuf) -> Result<Attachment> {
+    let name = source
+        .file_name()
+        .context("the file has no name")?
+        .to_owned();
+    let directory = attachments_root()?.join(uuid::Uuid::new_v4().to_string());
+    let path = directory.join(name);
+    let params = json!({ "path": directory, "recursive": true });
+    request(&bridge, "fs/createDirectory", params).await?;
+    let params = json!({ "sourcePath": source, "destinationPath": path });
+    if let Err(copy_error) = request(&bridge, "fs/copy", params).await {
+        let Ok(bytes) = fs::read(&source) else {
+            return Err(copy_error);
+        };
+        let params = json!({ "path": path, "dataBase64": BASE64.encode(bytes) });
+        request(&bridge, "fs/writeFile", params).await?;
+    }
+    Ok(Attachment {
+        path,
+        content: Content::File,
         persisted: true,
     })
 }
@@ -371,9 +404,13 @@ impl Composer {
         for path in paths {
             let bridge = self.bridge.clone();
             let path = path.clone();
-            let save = cx
-                .foreground_executor()
-                .spawn(Attachment::dropped(path, bridge));
+            let is_image = Attachment::is_image_path(&path);
+            let save = cx.foreground_executor().spawn(async move {
+                match bridge {
+                    Some(bridge) if !is_image => copy_file(bridge, path).await,
+                    bridge => Attachment::dropped(path, bridge).await,
+                }
+            });
             self.queue_attachment("image", save, cx);
         }
         self.set_drag_active(false, cx);
@@ -1071,6 +1108,52 @@ mod tests {
                 .iter()
                 .any(|path| path.ends_with("Pasted text.txt"))
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dropped_file_is_copied_on_the_host_into_the_attachments_root() {
+        let recording = tempfile::NamedTempFile::new().unwrap();
+        let rows = [
+            (
+                "fs/createDirectory",
+                json!({"path": "d", "recursive": true}),
+                json!({}),
+            ),
+            (
+                "fs/copy",
+                json!({"sourcePath": "/work/notes.txt", "destinationPath": "x"}),
+                json!({}),
+            ),
+        ];
+        let mut lines = String::new();
+        for (index, (method, params, result)) in rows.into_iter().enumerate() {
+            lines.push_str(&format!(
+                "{}\n{}\n",
+                json!({"dir":"send","msg":{"id":index,"method":method,"params":params}}),
+                json!({"dir":"recv","msg":{"id":index,"result":result}})
+            ));
+        }
+        std::fs::write(recording.path(), lines).unwrap();
+        let (bridge, _) = Bridge::replay(recording.path()).unwrap();
+        let mut cx = gpui::HeadlessAppContext::new(textsys::text_system());
+        let done = Arc::new(Mutex::new(None));
+        let slot = done.clone();
+        let task = cx.foreground_executor().spawn(async move {
+            *slot.lock() = Some(copy_file(Arc::new(bridge), "/work/notes.txt".into()).await);
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while done.lock().is_none() {
+            cx.run_until_parked();
+            assert!(std::time::Instant::now() < deadline, "copy did not finish");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        drop(task);
+        let attachment = done.lock().take().unwrap().unwrap();
+        assert!(attachment.persisted);
+        assert!(matches!(attachment.content, Content::File));
+        assert_eq!(attachment.path.file_name().unwrap(), "notes.txt");
+        assert!(attachment.path.starts_with(attachments_root().unwrap()));
     }
 
     #[test]
