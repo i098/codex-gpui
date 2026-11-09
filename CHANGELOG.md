@@ -12,6 +12,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ### Fixed
 - Open Settings in the main window when Mini or the hotkey window has focus, and from windows without a Settings page (About, plan summary). Before, `⌘,` and `Codex ▸ Settings…` did nothing there.
 - Keep every Changes file card at the width of the panel. A long diff line now scrolls inside its own card; before, the whole file list scrolled sideways, which clipped the other cards on the left and left blank space on the right.
+- Match the side panel's `New tab` page to the original: rows on a soft fill in a two-column grid, the original icons and shortcut chips, a `Side chat` row, and the original row order. `Terminal` now opens a side tab, and its `…` menu holds `Open bottom terminal`.
 
 ## [0.1.2] - 2026-11-08
 

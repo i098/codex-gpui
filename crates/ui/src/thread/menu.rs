@@ -16,7 +16,7 @@ pub(crate) struct Item {
     /// An 18 px app image (`apps/<name>`) at 75 % in the 16 px icon slot.
     pub image: Option<SharedString>,
     /// Shown at the right, as the native menu shows `⌘X`.
-    pub accelerator: Option<&'static str>,
+    pub accelerator: Option<SharedString>,
     /// Overrides the menu subject for this action, such as a spelling suggestion.
     pub payload: Option<SharedString>,
     pub separator: bool,
@@ -138,7 +138,10 @@ impl ContextMenu {
             .filter(|item| !item.separator)
             .map(|item| {
                 text_width(&item.label)
-                    + item.accelerator.map_or(0., |keys| text_width(keys) + 6.)
+                    + item
+                        .accelerator
+                        .as_ref()
+                        .map_or(0., |keys| text_width(keys) + 6.)
                     + if item.icon.is_some() || item.image.is_some() {
                         22.
                     } else {
@@ -333,7 +336,7 @@ impl ContextMenu {
                     )
                     .flex_1(),
                 )
-                .when_some(item.accelerator, |d, keys| {
+                .when_some(item.accelerator.clone(), |d, keys| {
                     d.child(text(keys, 13., 18.5714, 430., t.text_tertiary))
                 })
                 .into_any_element()
@@ -474,7 +477,7 @@ fn selected_text_items(_selection: &str) -> Vec<Item> {
         Item::new("searchWithGoogle", "Search with Google", true),
         Item::separator("separator"),
         Item {
-            accelerator: Some("⌘C"),
+            accelerator: Some("⌘C".into()),
             ..Item::new("copy", "Copy", true)
         },
     ]
