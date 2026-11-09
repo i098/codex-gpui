@@ -1,0 +1,5 @@
+# Run `lefthook install` once per clone to enable these hooks.
+pre-push:
+  commands:
+    fmt:
+      run: cargo fmt --check

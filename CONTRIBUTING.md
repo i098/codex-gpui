@@ -34,6 +34,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
+`lefthook.yml` runs `cargo fmt --check` before every push. Run `lefthook install` once to enable it.
+
 The docs name a focused test for most features; run the tests for the area that you change.
 Many native tests run only on macOS.
 
