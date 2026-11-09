@@ -265,6 +265,7 @@ impl Composer {
     }
 
     /// The simple view's top row (`Speed`, effort title and model, `Reset`) and slider row.
+    #[allow(clippy::too_many_arguments)]
     fn simple_view(
         &self,
         t: &Theme,
