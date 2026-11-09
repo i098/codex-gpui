@@ -11,6 +11,8 @@ const PICKER_ENTER: Duration = Duration::from_millis(320);
 const PICKER_MOVE: Duration = Duration::from_millis(320);
 /// The simple view's box: 4 px panel padding, the 48 px top row, the 40 px slider row.
 const SIMPLE_VIEW_HEIGHT: f32 = 96.;
+/// The `Default` row at the top of the model list: two lines at 5 px padding.
+const MODEL_DEFAULT_ROW: f32 = 5. + 18.5714 + 16. + 5.;
 /// The Daybreak row under the model list (a 4 px gap and the 28 px row), and the two-line
 /// safety notice under it while Daybreak is on.
 const DAYBREAK_ROW: f32 = 4. + 28.;
@@ -239,8 +241,9 @@ impl Composer {
         let list = shown(f.views[2], advanced)
             .then(|| track(view(f.views[2], 10., self.models_view(t, advanced, cx))));
         let list_height = 8.
-            + 28.
-            + 32. * self.models.len() as f32
+            + 26.5714
+            + MODEL_DEFAULT_ROW
+            + 28.5714 * self.models.len() as f32
             + match (self.daybreak_row(), self.daybreak) {
                 (false, _) => 0.,
                 (true, false) => DAYBREAK_ROW,
@@ -608,6 +611,39 @@ impl Composer {
                 430.,
                 t.text_tertiary,
             )))
+            .child({
+                let mut row = div()
+                    .id("model-default")
+                    .px(px(8.))
+                    .py(px(5.))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .rounded(px(15.))
+                    .hover(move |s| s.bg(hover))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(text("Default", 13., 18.5714, 430., t.text))
+                            .child(text(
+                                "Recommended set of models",
+                                12.,
+                                16.,
+                                400.,
+                                t.text_tertiary,
+                            )),
+                    );
+                if interactive {
+                    row = row
+                        .track_focus(&self.menu_focus.items[0])
+                        .focus(move |s| s.bg(hover))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.activate_menu_item(0, window, cx)
+                        }));
+                }
+                row
+            })
             .children(self.models.iter().enumerate().map(|(i, m)| {
                 div()
                     .id(("model", i))
@@ -629,10 +665,10 @@ impl Composer {
                         d.child(icon("menu-check", 16., t.text).opacity(0.75))
                     })
                     .when(interactive, |d| {
-                        d.track_focus(&self.menu_focus.items[i])
+                        d.track_focus(&self.menu_focus.items[i + 1])
                             .focus(move |s| s.bg(hover))
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                this.activate_menu_item(i, window, cx)
+                                this.activate_menu_item(i + 1, window, cx)
                             }))
                     })
             }))

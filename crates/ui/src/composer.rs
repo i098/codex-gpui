@@ -1616,7 +1616,7 @@ impl Composer {
             _ => 0,
         };
         if self.menu == Some(Menu::Models) {
-            self.menu_focus.prepare(self.models.len(), cx);
+            self.menu_focus.prepare(self.models.len() + 1, cx);
         }
         cx.notify();
     }
@@ -2607,7 +2607,7 @@ impl Composer {
             self.menu = Some(menu);
             let count = match menu {
                 Menu::Permissions => permission_menu_rows(&self.permission_rows, cx).len(),
-                Menu::Models => self.models.len(),
+                Menu::Models => self.models.len() + 1,
                 Menu::Effort => 3,
                 Menu::Comments => self.diff_comments.len(),
             };
@@ -2827,7 +2827,14 @@ impl Composer {
                 }
             }
             Some(Menu::Models) => {
-                self.select_model(index);
+                if index == 0 {
+                    (self.model, self.effort) = self.default_selection.clone();
+                    if let Some(f) = self.on_model.clone() {
+                        f(None, cx);
+                    }
+                } else {
+                    self.select_model(index - 1);
+                }
                 self.toggle_menu(Menu::Effort, window, cx);
                 self.picked(cx);
             }
