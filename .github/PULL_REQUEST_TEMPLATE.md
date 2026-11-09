@@ -17,7 +17,7 @@ Closes #
 <!-- Keep every item. Check completed items. Leave an inapplicable item unchecked and tell why beside it. See CONTRIBUTING.md. -->
 
 - [ ] One concern in this pull request.
-- [ ] The title uses the commit format, for example `fix(diff): preserve decoded Changes file paths`.
+- [ ] The title and every commit follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `type(scope): imperative summary`. Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert. Mark a breaking change with `!` or a `BREAKING CHANGE:` footer. Example: `fix(diff): preserve decoded Changes file paths`.
 - [ ] `cargo fmt --check` is clean.
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings` is clean.
 - [ ] `cargo test --workspace` passes.

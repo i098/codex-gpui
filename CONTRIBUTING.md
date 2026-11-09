@@ -51,7 +51,9 @@ Do not edit them by hand; regenerate them as [Regenerate inputs](docs/parity.md#
 ## Commits
 
 Commit subjects use [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/): `type(scope): subject`.
-Use `feat`, `fix`, `test`, `docs`, `refactor`, `ci` or `chore`; the scope is optional.
+Use `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore` or `revert`; the scope is optional.
+Mark a breaking change with `!` after the type or scope, or with a `BREAKING CHANGE:` footer.
+Every commit message and every pull request title follows this rule.
 Write the subject in the imperative, with no period at the end.
 Use the body to tell why the change is necessary.
 
