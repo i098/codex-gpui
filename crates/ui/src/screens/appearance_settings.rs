@@ -19,6 +19,8 @@ const SHARE_PREFIX: &str = "codex-theme-v1:";
 const CODEX: &str = "codex";
 const SANS_SIZE: (&str, f64, f64, f64) = ("host.sansFontSize", 14., 11., 16.);
 const CODE_SIZE: (&str, f64, f64, f64) = ("host.codeFontSize", 12., 8., 24.);
+/// Pages `fontSize`: 12–24 px, default 14.
+pub(super) const PAGES_SIZE: (&str, f64, f64, f64) = ("desktop.pagesFontSize", 14., 12., 24.);
 const MOTION: &str = "host.reduced-motion-preference";
 const DIFF_MARKERS: &str = "host.appearanceDiffMarkerStyle";
 const POINTER: &str = "host.usePointerCursors";
@@ -788,17 +790,17 @@ impl SettingsPane {
     }
 
     /// `Cc` / `wc`: a px number field; out-of-range input restores the saved size.
-    fn size_field(
+    pub(super) fn size_field(
         &mut self,
         (key, default, min, max): (&'static str, f64, f64, f64),
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let value = self.page.read(cx).get(key).as_f64().unwrap_or(default);
-        let label = if key == SANS_SIZE.0 {
-            "UI font size"
-        } else {
-            "Code font size"
+        let label = match key {
+            k if k == SANS_SIZE.0 => "UI font size",
+            k if k == PAGES_SIZE.0 => "Content font size",
+            _ => "Code font size",
         };
         let field = self.text_field(
             "",

@@ -1675,6 +1675,11 @@ impl SettingsPane {
                         self.toggle("host.show-context-window-usage", false, t, window, cx),
                     ),
                     row(
+                        "Show educational tips",
+                        None,
+                        self.toggle("host.show-educational-tips", true, t, window, cx),
+                    ),
+                    row(
                         "Send shortcut",
                         Some("Choose when Enter sends a prompt or inserts a new line"),
                         self.select_menu(
@@ -1721,6 +1726,28 @@ impl SettingsPane {
                             window,
                             cx,
                         ),
+                    ),
+                ],
+            ),
+            (
+                "Pages",
+                vec![
+                    row(
+                        "Smart punctuation",
+                        Some(
+                            "Automatically format quotes, dashes, ellipses, arrows, and math symbols as you type",
+                        ),
+                        self.toggle("desktop.pagesSmartPunctuationEnabled", true, t, window, cx),
+                    ),
+                    row(
+                        "Full width pages",
+                        Some("Use the full page width, just for you"),
+                        self.toggle("desktop.pagesFullWidth", false, t, window, cx),
+                    ),
+                    row(
+                        "Content font size",
+                        Some("Adjust the base size used for pages"),
+                        self.size_field(appearance_settings::PAGES_SIZE, window, cx),
                     ),
                 ],
             ),
