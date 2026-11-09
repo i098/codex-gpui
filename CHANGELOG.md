@@ -6,6 +6,9 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+### Added
+- License the repository under MIT: add `LICENSE` and `CODE_OF_CONDUCT.md`, and set `license = "MIT"` in the workspace manifest.
+
 ### Fixed
 - Open Settings in the main window when Mini or the hotkey window has focus, and from windows without a Settings page (About, plan summary). Before, `⌘,` and `Codex ▸ Settings…` did nothing there.
 - Keep every Changes file card at the width of the panel. A long diff line now scrolls inside its own card; before, the whole file list scrolled sideways, which clipped the other cards on the left and left blank space on the right.

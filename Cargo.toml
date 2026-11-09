@@ -11,7 +11,7 @@ exclude = ["crates/textsys/gpui", "crates/textsys/gpui_apple", "vendor/rrule", "
 # The app version: tools/version.sh prints it and bumps it.
 version = "0.1.2"
 edition = "2024"
-license = "Apache-2.0"
+license = "MIT"
 publish = false
 
 [workspace.dependencies]
