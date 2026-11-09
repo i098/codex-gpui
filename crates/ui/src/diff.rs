@@ -1532,22 +1532,43 @@ impl Render for DiffPanel {
                             d.child(
                                 div()
                                     .relative()
-                                    .flex()
-                                    .flex_col()
                                     .layer()
                                     .child(shapes::decoration(Decoration {
                                         fill: Some(t.surface),
                                         ..Default::default()
                                     }))
-                                    .children(file.visible_hunks().map(|(index, h)| {
-                                        let controls =
-                                            matches!(
-                                                self.source,
-                                                DiffSource::Unstaged | DiffSource::Staged
-                                            ) && h.lines.iter().any(|l| l.kind != Kind::Context);
+                                    // Long lines scroll inside the card, so every card keeps the
+                                    // list's width; vertical wheel deltas go on to the list.
+                                    .child(
                                         div()
-                                            .when(controls, |d| {
-                                                d.child(
+                                            .id(("diff-file-code", i))
+                                            .overflow_x_scroll()
+                                            .restrict_scroll_to_axis()
+                                            .flex()
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .map(|d| {
+                                                        if self.wrap {
+                                                            d.w_full()
+                                                        } else {
+                                                            d.flex_none().min_w_full()
+                                                        }
+                                                    })
+                                                    .children(file.visible_hunks().map(
+                                                        |(index, h)| {
+                                                            let controls = matches!(
+                                                                self.source,
+                                                                DiffSource::Unstaged
+                                                                    | DiffSource::Staged
+                                                            ) && h
+                                                                .lines
+                                                                .iter()
+                                                                .any(|l| l.kind != Kind::Context);
+                                                            div()
+                                                                .when(controls, |d| {
+                                                                    d.child(
                                         div()
                                             .flex()
                                             .justify_end()
@@ -1611,17 +1632,20 @@ impl Render for DiffPanel {
                                                     .child(text("Revert", 12., 20., 430., t.text)),
                                             ),
                                     )
-                                            })
-                                            .child(hunk(
-                                                h,
-                                                (i, index),
-                                                &line_index,
-                                                self,
-                                                code_width,
-                                                window,
-                                                cx,
-                                            ))
-                                    })),
+                                                                })
+                                                                .child(hunk(
+                                                                    h,
+                                                                    (i, index),
+                                                                    &line_index,
+                                                                    self,
+                                                                    code_width,
+                                                                    window,
+                                                                    cx,
+                                                                ))
+                                                        },
+                                                    )),
+                                            ),
+                                    ),
                             )
                         } else {
                             line_index.set(
@@ -1839,7 +1863,7 @@ impl Render for DiffPanel {
                             .flex_1()
                             .min_w_0()
                             .overflow_y_scroll()
-                            .overflow_x_scroll()
+                            .restrict_scroll_to_axis()
                             .track_scroll(&self.scroll)
                             .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
                             .flex()
