@@ -18,7 +18,7 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64, macmini-arm64]
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.pr && format('refs/pull/{0}/head', inputs.pr) || 'main' }}
       # All scratch lives in one /tmp directory that the last step deletes.

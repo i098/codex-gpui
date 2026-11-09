@@ -41,7 +41,7 @@ jobs:
           libvulkan-dev xvfb
       - uses: taiki-e/install-action@sccache
       - run: sudo mkdir -p "$SCCACHE_DIR" && sudo chown "$(id -u):$(id -g)" "$SCCACHE_DIR"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -72,7 +72,7 @@ jobs:
           libvulkan-dev xvfb
       - uses: taiki-e/install-action@sccache
       - run: sudo mkdir -p "$SCCACHE_DIR" && sudo chown "$(id -u):$(id -g)" "$SCCACHE_DIR"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -112,7 +112,7 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
       CARGO_INCREMENTAL: "0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           target: x86_64-pc-windows-msvc
