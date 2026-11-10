@@ -11,6 +11,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Show the composer's `Review hooks` button when hooks of the chat's folder need approval. The button opens the `Review hooks` dialog, which allows all or the selected hooks. Before, these hooks failed with `hook approval required` and the app showed no prompt.
 
 ### Fixed
+- Darken the dark-mode window, main panel and sidebar a little, and let more of the macOS window material show through the sidebar. Light mode does not change. This is an intended difference from the original app.
 - Open Settings in the main window when Mini or the hotkey window has focus, and from windows without a Settings page (About, plan summary). Before, `⌘,` and `Codex ▸ Settings…` did nothing there.
 - Keep every Changes file card at the width of the panel. A long diff line now scrolls inside its own card; before, the whole file list scrolled sideways, which clipped the other cards on the left and left blank space on the right.
 - Match the side panel's `New tab` page to the original: rows on a soft fill in a two-column grid, the original icons and shortcut chips, a `Side chat` row, and the original row order. `Terminal` now opens a side tab, and its `…` menu holds `Open bottom terminal`.
