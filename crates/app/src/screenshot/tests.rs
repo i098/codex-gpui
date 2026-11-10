@@ -86,6 +86,8 @@ fn screenshot_routes_and_discards_stale_results() -> Result<()> {
         use std::io::Write as _;
         for (index, method) in [
             "fs/createDirectory",
+            "fs/copy",
+            "fs/createDirectory",
             "fs/writeFile",
             "fs/writeFile",
             "fs/createDirectory",
