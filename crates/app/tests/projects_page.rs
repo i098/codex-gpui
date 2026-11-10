@@ -59,9 +59,12 @@ fn projects_page_lists_renames_and_opens() -> Result<()> {
     let list = json!({"data": [project(home.path(), "website", "Website", 8 * 24),
                                project(home.path(), "proj", "proj", 12)],
                       "nextCursor": null});
-    // The host's own app-server answers every `project/list` the page and sidebar send.
-    let replies: Vec<Value> = (0..8)
-        .flat_map(|_| exchange("project/list", list.clone()))
+    // The host's own app-server answers `initialize` and every `project/list` the page and
+    // sidebar send.
+    let init = json!({"userAgent": "fixture", "codexHome": home.path(), "platformOs": "macos"});
+    let replies: Vec<Value> = exchange("initialize", init)
+        .into_iter()
+        .chain((0..8).flat_map(|_| exchange("project/list", list.clone())))
         .collect();
     let path = tempfile::NamedTempFile::new()?;
     std::fs::write(
