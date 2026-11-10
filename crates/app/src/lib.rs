@@ -591,6 +591,8 @@ pub struct Root {
     new_chat_memory: Option<features::memories::MemoryPrefs>,
     /// `/memories` switches set on open chats this session.
     thread_memory: HashMap<String, features::memories::MemoryPrefs>,
+    /// The composer folder last listed for `Review hooks`, and its hooks that need approval.
+    hook_review: (String, Vec<Value>),
     /// Signed out: replaces the whole window.
     login: Option<Entity<Login>>,
     logout_pending: bool,
@@ -1146,6 +1148,7 @@ impl Root {
             dialog_to_composer: false,
             new_chat_memory: None,
             thread_memory: HashMap::new(),
+            hook_review: Default::default(),
             login: None,
             logout_pending: false,
             account_email: None,
@@ -4346,6 +4349,10 @@ impl Root {
                 this.delete_task(id.clone(), window, cx);
                 return;
             }
+            if let DialogOutcome::TrustHooks(hooks) = outcome {
+                this.trust_reviewed_hooks(dialog.clone(), hooks.clone(), window, cx);
+                return;
+            }
             if let DialogOutcome::DeleteMemories = outcome {
                 this.delete_memories(dialog.clone(), window, cx);
                 return;
@@ -4416,6 +4423,7 @@ impl Root {
                 this.focus.clone()
             };
             match outcome {
+                DialogOutcome::HookSettings => this.open_settings_section("Hooks", window, cx),
                 DialogOutcome::Dismiss => {
                     this.pending_settings_leave = None;
                     if dialog.read(cx).writing_authorizations().is_some() {
@@ -4524,6 +4532,7 @@ impl Root {
                 | DialogOutcome::CreatePr { .. }
                 | DialogOutcome::DeleteMemories
                 | DialogOutcome::ChatMemories { .. }
+                | DialogOutcome::TrustHooks(_)
                 | DialogOutcome::WritingConnect(_)
                 | DialogOutcome::WritingRetry
                 | DialogOutcome::WritingSample => unreachable!(),
@@ -5110,6 +5119,9 @@ impl Root {
             .is_none_or(|view| view.read(cx).id() != thread.id.as_str())
         {
             self.swap_draft(&thread.id, cx);
+            self.thread_composer
+                .update(cx, |c, cx| c.set_hooks_to_review(0, cx));
+            self.refresh_hook_review(thread.cwd.clone(), self.thread_composer.clone(), cx);
             let daybreak = thread.daybreak_enabled.unwrap_or(false);
             self.thread_composer
                 .update(cx, |c, cx| c.set_daybreak(daybreak, cx));
@@ -5301,6 +5313,15 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         self.qa_work_started = true;
+        // `hooks/list` before `turn/start`, as the original's composer does.
+        if let Some(cwd) = self
+            .conversation(side)
+            .map(|(view, _)| view.read(cx).cwd().to_owned())
+            .or_else(|| self.state.project_root.clone())
+        {
+            let composer = self.composer(cx);
+            self.refresh_hook_review(cwd, composer, cx);
+        }
         if s.shell_command {
             self.send_shell(side, s, window, cx);
             return;

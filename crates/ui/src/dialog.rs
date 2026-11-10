@@ -18,6 +18,8 @@ use std::{
 };
 use theme::{ActiveTheme as _, Theme};
 
+mod hook_review;
+
 fn contains_ignore_ascii_case(text: &str, query: &str) -> bool {
     query.is_empty()
         || text
@@ -166,6 +168,8 @@ pub enum Kind {
     WritingStyle,
     /// `Hook stats` from a finished turn's actions (`hook-stats-dialog`).
     HookStats,
+    /// `Review hooks` from the composer's footer (`HookReviewDialog`).
+    HookReview,
 }
 
 #[derive(Clone)]
@@ -181,6 +185,11 @@ pub enum Outcome {
         use_memories: bool,
         generate: bool,
     },
+    /// `Allow all` or `Allow selected` in `Review hooks`: each hook's key and current hash. The
+    /// dialog stays open until the app reports the result.
+    TrustHooks(Vec<(String, String)>),
+    /// The `settings` link in `Review hooks`: Settings > Hooks.
+    HookSettings,
     DismissAnnouncement(SharedString),
     UseAnnouncedModel {
         model: SharedString,
@@ -337,6 +346,7 @@ pub struct Dialog {
     writing: Option<WritingSetup>,
     memories: Option<ChatMemories>,
     hook_stats: Option<HookStatsForm>,
+    hook_review: Option<hook_review::HookReview>,
     shortcuts: Vec<Shortcut>,
     /// `Rename`: the chat's emoji (the original's `sidebar-thread-metadata` `emoji`), and
     /// whether its `Choose emoji` picker is open.
@@ -386,6 +396,7 @@ impl Dialog {
             writing: None,
             memories: None,
             hook_stats: None,
+            hook_review: None,
             shortcuts: if kind == Kind::Shortcuts {
                 crate::screens::settings::keyboard_shortcuts::active_shortcuts(cx)
             } else {
@@ -1982,6 +1993,7 @@ impl Dialog {
             (Kind::ChatMemories, _) => "Done",
             (Kind::WritingStyle, _) => "Writing style",
             (Kind::HookStats, _) => "Hook stats",
+            (Kind::HookReview, _) => "Review hooks",
             (Kind::ModelAnnouncement, 0) => "Close",
             (Kind::ModelAnnouncement, 1) => "Continue with current model",
             (Kind::ModelAnnouncement, _) => {
@@ -2325,6 +2337,10 @@ impl Dialog {
             cx.stop_propagation();
             return;
         }
+        if self.kind == Kind::HookReview {
+            self.hook_review_key(e, window, cx);
+            return;
+        }
         if self.kind == Kind::HookStats {
             self.hook_stats_key(e, window, cx);
             return;
@@ -2449,7 +2465,7 @@ impl Dialog {
                         }
                     }
                     Kind::DeleteTask => vec![0, 1],
-                    Kind::HookStats => unreachable!("hook stats keys"),
+                    Kind::HookStats | Kind::HookReview => unreachable!("hook dialog keys"),
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
                     Kind::Branches => vec![0, 1],
                     Kind::BranchConflict => vec![1, 2],
@@ -4702,6 +4718,7 @@ impl Render for Dialog {
             Kind::WritingStyle => (480., 600.),
             // `xwideTall`: 680 px wide, min(92vh, 800px) tall.
             Kind::HookStats => (680., 800.),
+            Kind::HookReview => (680., self.hook_review_height()),
             Kind::ModelAnnouncement => (480., 432.),
             Kind::Commit => (420., self.commit_height()),
             Kind::CreatePr => (480., 470. + if self.error.is_some() { 60. } else { 0. }),
@@ -4733,6 +4750,7 @@ impl Render for Dialog {
             Kind::ChatMemories => self.chat_memories_content(t, cx),
             Kind::WritingStyle => self.writing_content(t, cx),
             Kind::HookStats => self.hook_stats_content(t, cx),
+            Kind::HookReview => self.hook_review_content(t, cx),
             Kind::ModelAnnouncement => self.announcement_content(t, cx),
             Kind::Commit => self.commit_content(t, cx),
             Kind::CreatePr => self.git_form_content(t, cx),
@@ -4793,6 +4811,7 @@ impl Render for Dialog {
                         Kind::ChatMemories => "Chat memories".into(),
                         Kind::WritingStyle => "Writing style".into(),
                         Kind::HookStats => "Hook stats".into(),
+                        Kind::HookReview => "Review hooks".into(),
                         Kind::Commit => "Commit or push".into(),
                         Kind::CreatePr => "Create PR".into(),
                         Kind::Branches => "Switch branch".into(),
@@ -4868,7 +4887,7 @@ impl Render for Dialog {
                         30.
                     } else if matches!(
                         self.kind,
-                        Kind::LogOut | Kind::DeleteMemories | Kind::HookStats
+                        Kind::LogOut | Kind::DeleteMemories | Kind::HookStats | Kind::HookReview
                     ) {
                         25.
                     } else {
@@ -4945,7 +4964,10 @@ impl Render for Dialog {
                                     radius: Corners::all(px(
                                         if matches!(
                                             self.kind,
-                                            Kind::LogOut | Kind::DeleteMemories | Kind::HookStats
+                                            Kind::LogOut
+                                                | Kind::DeleteMemories
+                                                | Kind::HookStats
+                                                | Kind::HookReview
                                         ) {
                                             25.
                                         } else {
@@ -4954,7 +4976,10 @@ impl Render for Dialog {
                                     )),
                                     corner: if matches!(
                                         self.kind,
-                                        Kind::LogOut | Kind::DeleteMemories | Kind::HookStats
+                                        Kind::LogOut
+                                            | Kind::DeleteMemories
+                                            | Kind::HookStats
+                                            | Kind::HookReview
                                     ) {
                                         shapes::Corner::Squircle
                                     } else {

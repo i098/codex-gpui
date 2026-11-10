@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - License the repository under MIT: add `LICENSE` and `CODE_OF_CONDUCT.md`, and set `license = "MIT"` in the workspace manifest.
+- Show the composer's `Review hooks` button when hooks of the chat's folder need approval. The button opens the `Review hooks` dialog, which allows all or the selected hooks. Before, these hooks failed with `hook approval required` and the app showed no prompt.
 
 ### Fixed
 - Open Settings in the main window when Mini or the hotkey window has focus, and from windows without a Settings page (About, plan summary). Before, `⌘,` and `Codex ▸ Settings…` did nothing there.
