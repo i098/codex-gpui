@@ -45,6 +45,27 @@ for (const [key, value] of Object.entries(oracle)) {
   if (!byMethod.has("thread/resume")) byMethod.set("thread/resume", []);
   byMethod.get("thread/resume").push({ params: JSON.parse(key.slice(prefix.length)), reply: value.message, notes: [] });
 }
+// MOCK_BACKEND_ORIGIN=<url>: a fake signed-in ChatGPT account for the original desktop app. Token reads
+// return an unsigned JWT with placeholder ids, and account/read routes the backend to that origin
+// (tools/route1/backend-stub.mjs). No real credential exists anywhere in this flow.
+const BACKEND = process.env.MOCK_BACKEND_ORIGIN;
+const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+const FAKE_TOKEN = [b64({ alg: "none", typ: "JWT" }), b64({
+  exp: 4102444800, iat: 1760000000, iss: "https://auth.openai.com", sub: "user-000000000000000000000000",
+  "https://api.openai.com/auth": { chatgpt_account_id: "00000000-0000-4000-8000-000000000000", chatgpt_user_id: "user-000000000000000000000000", user_id: "user-000000000000000000000000", chatgpt_plan_type: "promax", chatgpt_compute_residency: "no_constraint" },
+  "https://api.openai.com/profile": { email: "user@example.com", email_verified: true },
+}), "fake"].join(".");
+// MOCK_THEME=light|dark: the desktop reads its settings from the `desktop` table of config/read (the theme, and the
+// scrubbed home folder that Settings shows as the projectless chat folder).
+const THEME = process.env.MOCK_THEME;
+function fakeAccount(method, params, reply) {
+  const res = reply.result;
+  if (THEME && method === "config/read" && res?.config) return { ...reply, result: { ...res, config: { ...res.config, desktop: { ...res.config.desktop, appearanceTheme: THEME, projectlessWorkspaceRoot: "/Users/user/Documents/Codex" } } } };
+  if (!BACKEND || !res) return reply;
+  if (method === "getAuthStatus" && params?.includeToken) return { ...reply, result: { ...res, authToken: FAKE_TOKEN } };
+  if (method === "account/read" && res.workspaceRouting) return { ...reply, result: { ...res, workspaceRouting: { ...res.workspaceRouting, backendOrigin: BACKEND } } };
+  return reply;
+}
 let signedOut = !!process.env.MOCK_SIGNED_OUT;
 const SIGNED_OUT = {
   getAuthStatus: { authMethod: null, authToken: null, requiresOpenaiAuth: true },
@@ -72,7 +93,10 @@ function pick(method, params) {
   return score(best) < 0 ? null : best;
 }
 
-const out = (m) => process.stdout.write(`${JSON.stringify(m)}\n`);
+// MOCK_REAL_TMP=1: on a Mac /tmp is a link to /private/tmp, and the desktop's git worker reports the real path;
+// the fixtures' project path (/tmp/cgx-mac/proj) must name the same directory.
+const REAL_TMP = process.env.MOCK_REAL_TMP ? (text) => text.replace(/(?<![\w/])\/tmp\/cgx-mac/g, "/private/tmp/cgx-mac") : (text) => text;
+const out = (m) => process.stdout.write(`${REAL_TMP(JSON.stringify(m))}\n`);
 createInterface({ input: process.stdin }).on("line", (line) => {
   let m;
   try {
@@ -89,17 +113,69 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   log("hit ", m.method, JSON.stringify(m.params ?? null).slice(0, 120));
   if (signedOut && SIGNED_OUT[m.method]) return out({ id: m.id, result: SIGNED_OUT[m.method] });
   if (m.method === "account/login/start") signedOut = false;
-  out({ ...adapt(m.params ?? {}, r), id: m.id });
-  for (const n of r.notes) out(n);
+  const turn = m.method === "turn/start" && HOLD ? freshTurn(r, m.params) : r;
+  out({ ...fakeAccount(m.method, m.params, adapt(m.params ?? {}, turn)), id: m.id });
+  // A fresh turn streams: its notifications arrive a little after the reply, as from a running model.
+  const notes = turn.notes.filter((n) => !held(n));
+  if (turn === r) for (const n of notes) out(n);
+  else {
+    // The desktop shows 2 s less than this delay as the turn's duration: the recorded one lasted 17 s ("Worked for 17s").
+    const at = (i) => 300 + 15 * i;
+    const started = at(notes.findIndex((n) => n.method === "turn/started"));
+    notes.forEach((n, i) => setTimeout(() => out(n), n.method === "turn/completed" || n.method === "thread/status/changed" && n.params.status.type === "idle" ? started + 19000 : at(i)));
+  }
 });
+
+// A replayed turn gets new turn and item ids, so the desktop treats it as a new turn of the thread instead of
+// an update of the recorded one (only with MOCK_HOLD_COMMAND).
+function freshTurn(r, { threadId, clientUserMessageId, input }) {
+  const ids = new Set([r.reply.result.turn.id]);
+  for (const n of r.notes) if (n.params?.item?.id) ids.add(n.params.item.id);
+  const rekey = (v) => {
+    let text = JSON.stringify(v);
+    for (const id of ids) text = text.replaceAll(id, `${id}-again`);
+    return JSON.parse(text.replaceAll(/"threadId":"[^"]*"/g, `"threadId":"${threadId}"`));
+  };
+  // The desktop confirms delivery when the user message item carries the id of the message it sent.
+  const own = (n) => {
+    const item = n.params?.item;
+    if (item?.type === "userMessage") Object.assign(item, { clientId: clientUserMessageId, content: input });
+    return n;
+  };
+  // The held command prints its result and keeps running.
+  const output = (n) => {
+    const { item, threadId, turnId } = n.params ?? {};
+    return n.method === "item/started" && item.type === "commandExecution" && item.command.includes(HOLD)
+      ? [n, { method: "item/commandExecution/outputDelta", params: { threadId, turnId, itemId: item.id, delta: "2\n" } }]
+      : [n];
+  };
+  // The recorded times move to now, so the turn lasts as long as the recorded one (17 s) from the desktop's view.
+  const shift = Date.now() - r.notes.find((n) => n.method === "turn/started").emittedAtMs;
+  const retime = (v) => {
+    if (v && typeof v === "object")
+      for (const [k, x] of Object.entries(v)) {
+        if (/^(startedAt|completedAt)$/.test(k) && typeof x === "number") v[k] = x + Math.round(shift / 1000);
+        else if (/^(startedAtMs|completedAtMs|emittedAtMs)$/.test(k) && typeof x === "number") v[k] = x + shift;
+        else retime(x);
+      }
+    return v;
+  };
+  return { ...r, reply: retime(rekey(r.reply)), notes: r.notes.flatMap((n) => output(own(retime(rekey(n))))) };
+}
+
+// MOCK_HOLD_COMMAND=<text>: a replayed command whose text contains <text> never completes, so the thread keeps
+// a running background command (the terminal screen) while its turn still finishes.
+const HOLD = process.env.MOCK_HOLD_COMMAND;
+// account/updated is dropped from replays: the desktop reads it as an account change and retires its app-server manager.
+const held = (n) => n.method === "account/updated" || HOLD && n.method === "item/completed" && n.params.item.type === "commandExecution" && n.params.item.command.includes(HOLD);
 
 // The fixtures were recorded by a scripted client whose list params differ from the desktop's:
 // a page in the other sort direction is reversed, and sub-agent listings (ancestorThreadId) are
-// empty because no fixture thread spawned one.
+// empty because no fixture thread spawned one; no thread is pinned, so section listings are empty too.
 function adapt(p, r) {
   const res = r.reply.result;
   if (!res) return r.reply;
-  if (p.ancestorThreadId) return { ...r.reply, result: { ...res, data: [], nextCursor: null } };
+  if (p.ancestorThreadId || p.sectionId) return { ...r.reply, result: { ...res, data: [], nextCursor: null } };
   const q = r.params ?? {};
   if (Array.isArray(res.data) && p.sortDirection && q.sortDirection && p.sortDirection !== q.sortDirection) return { ...r.reply, result: { ...res, data: [...res.data].reverse() } };
   return r.reply;
