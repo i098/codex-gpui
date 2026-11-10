@@ -2010,6 +2010,14 @@ impl Shell {
         )
         .absolute()
         .size_full();
+        // Customize's sidebar lists every installed plugin; uncached, each hover or scroll
+        // there re-rendered the whole Plugins or Skills page.
+        let main = if self.main.entity_type() == std::any::TypeId::of::<screens::plugins::Page>() {
+            let style = gpui::StyleRefinement::default().size_full();
+            self.main.clone().cached(style).into_any_element()
+        } else {
+            self.main.clone().into_any_element()
+        };
         let panel = div()
             .tab_group()
             .tab_index(3)
@@ -2025,7 +2033,7 @@ impl Shell {
                     .size_full()
                     .flex()
                     .flex_col()
-                    .child(div().flex_1().min_h_0().child(self.main.clone()))
+                    .child(div().flex_1().min_h_0().child(main))
                     .child(
                         div()
                             .h(px(280.))
@@ -2038,7 +2046,7 @@ impl Shell {
                     )
                     .into_any_element()
             } else {
-                self.main.clone().into_any_element()
+                main
             })
             .child(measured);
         if self.main_composited {
