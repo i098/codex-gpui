@@ -77,3 +77,6 @@ gpui_platform = { workspace = true, features = ["test-support"] }
 parking_lot = "0.12"
 parity = { path = "../parity" }
 textsys = { path = "../textsys" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

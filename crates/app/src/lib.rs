@@ -36,6 +36,7 @@ mod diff_preview;
 mod diff_repositories;
 mod diff_watch;
 mod env;
+pub mod fd_limit;
 mod features;
 mod goals;
 pub mod host;
