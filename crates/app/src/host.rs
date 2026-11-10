@@ -3510,6 +3510,32 @@ mod app_server_project_tests {
         Ok(())
     }
 
+    /// The real macOS app-server over `ssh mac`, on an empty throwaway `CODEX_HOME`.
+    #[test]
+    #[ignore = "needs `ssh mac` and the bundled codex CLI"]
+    fn live_app_server_rejects_early_project_list_and_fix_reads_it() -> Result<()> {
+        let spawn = || {
+            let mut cmd = std::process::Command::new("ssh");
+            cmd.args([
+                "mac",
+                "mkdir -p /tmp/cgx-mac/home-n26 && CODEX_HOME=/tmp/cgx-mac/home-n26 \
+                 /Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex app-server",
+            ]);
+            Bridge::spawn(cmd)
+        };
+        let (early, _events) = spawn()?;
+        let error =
+            pollster::block_on(early.request::<_, Value>("project/list", json!({"limit": 100})))
+                .expect_err("the server must reject project/list before initialize");
+        assert!(error.to_string().contains("Not initialized"), "{error:#}");
+        let (bridge, _events) = spawn()?;
+        let home = tempfile::tempdir()?;
+        let projects =
+            pollster::block_on(app_server_projects(&bridge, home.path(), json!({}), false))?;
+        println!("projects: {}", projects.len());
+        Ok(())
+    }
+
     #[test]
     fn editing_appearance_preserves_other_metadata() -> Result<()> {
         let metadata = project_metadata(
