@@ -237,6 +237,13 @@ FLOAT_OVERRIDES = {
     ("dark", "text_alpha_60"): "white_mix(0.6)",
     ("dark", "text_default_nav"): "white_mix(0.85)",
     ("dark", "switch_track"): "white_mix(0.1)",
+    # Darker than the original on purpose (captain 2026-11-10): a darker neutral window and a
+    # more see-through sidebar over the macOS vibrancy. Light keeps the original values.
+    ("dark", "background_surface_under"): "rgba(0x0e0e0eff).into()",
+    ("dark", "surface"): "rgba(0x121212ff).into()",
+    ("dark", "surface_secondary"): "rgba(0x0e0e0eff).into()",
+    ("dark", "page_surface_layout"): "rgba(0x1e1e1eb3).into()",
+    ("dark", "sidebar_background"): "rgba(0x12121280).into()",
     ("light", "sidebar_background"): """
             // oklab(0.999994 0.0000455678 0.0000200868 / 0.65): the float pipeline's ties
             // round up in red and blue; green is two f32 steps under 1 (1 - 2^-23), so it rounds

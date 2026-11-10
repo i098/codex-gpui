@@ -189,7 +189,10 @@ fn mention_keys_chips_and_prompt_replay() -> Result<()> {
                     "run {run} step {i}: list surface differs"
                 );
                 ensure!(
-                    image.get_pixel(x * scale, (bottom + 1) * scale).0[..3] == [24, 24, 24],
+                    // The dark panel surface (18); a faint overlay rounds it to 19 in some steps.
+                    image.get_pixel(x * scale, (bottom + 1) * scale).0[..3]
+                        .iter()
+                        .all(|c| c.abs_diff(18) <= 1),
                     "run {run} step {i}: list bottom edge differs"
                 );
             }

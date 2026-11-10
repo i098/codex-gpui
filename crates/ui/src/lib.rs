@@ -2738,11 +2738,12 @@ mod tests {
 
     #[test]
     fn over_matches_chromium() {
-        let t = Theme::dark();
         let red = |c: Hsla| (Rgba::from(c).r * 255.).round() as u8;
-        // refs/home/dark@1280x832.png: titlebar and rail 36, sidebar 29.
-        assert_eq!(red(layout_color(&t)), 36);
-        assert_eq!(red(over(t.sidebar_background, layout_color(&t))), 29);
+        // refs/home/dark@1280x832.png, from the original's dark tokens: titlebar and rail 36,
+        // sidebar 29.
+        let layout = over(gpui::rgba(0x282828cc).into(), gpui::rgba(0x141414ff).into());
+        assert_eq!(red(layout), 36);
+        assert_eq!(red(over(gpui::rgba(0x181818a6).into(), layout)), 29);
     }
 
     #[test]
