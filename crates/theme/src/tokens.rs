@@ -103,6 +103,8 @@ pub struct Theme {
     pub text_success: Hsla,
     /// `var(--app-color-text-warning)`
     pub text_warning: Hsla,
+    /// `var(--app-color-accent-yellow)`
+    pub accent_yellow: Hsla,
     /// `var(--app-color-icon-primary)`
     pub icon_primary: Hsla,
     /// `var(--app-color-icon-secondary)`
@@ -255,6 +257,7 @@ impl Theme {
             text_error: rgba(0xff6764ff).into(),
             text_success: rgba(0x40c977ff).into(),
             text_warning: rgba(0xff8549ff).into(),
+            accent_yellow: rgba(0xffd240ff).into(),
             icon_primary: rgba(0xffffffe7).into(),
             icon_secondary: rgba(0xffffffb5).into(),
             icon_tertiary: rgba(0xffffff82).into(),
@@ -351,6 +354,7 @@ impl Theme {
             text_error: rgba(0xe02e2aff).into(),
             text_success: rgba(0x00a240ff).into(),
             text_warning: rgba(0xe25507ff).into(),
+            accent_yellow: rgba(0xffc300ff).into(),
             icon_primary: rgba(0x1a1c1fff).into(),
             icon_secondary: rgba(0x1a1c1fb1).into(),
             icon_tertiary: rgba(0x1a1c1f7e).into(),

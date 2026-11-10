@@ -127,6 +127,8 @@ actions!(
         CompleteCommand,
         NextCommand,
         PreviousCommand,
+        /// The footer's `Review hooks` button: the app opens the `Review hooks` dialog.
+        ReviewHooks,
     ]
 );
 
@@ -1068,6 +1070,8 @@ pub struct Composer {
     ide_context: bool,
     /// Plan mode: the next turns run in the `plan` collaboration mode.
     plan: bool,
+    /// `composer.hooks.review.label`: hooks of the thread's folder that cannot run until approved.
+    hooks_to_review: usize,
     /// `collaborationMode/list` masks: each names a `mode` and may preset `model` and
     /// `reasoning_effort`. Empty until the server answers (or when it lacks the method).
     collaboration_modes: Vec<Value>,
@@ -1226,6 +1230,7 @@ impl Composer {
             speed: 0,
             ide_context: true,
             plan: false,
+            hooks_to_review: 0,
             collaboration_modes: Vec::new(),
             permission: Permission::Custom,
             permission_rows: permission_rows(&Value::Null, &Value::Null),
@@ -3025,6 +3030,12 @@ impl Composer {
     /// `Plan mode` (slash command, `@` row) and the footer's `Plan` chip turn it on and off.
     pub fn toggle_plan(&mut self, cx: &mut Context<Self>) {
         self.plan = !self.plan && self.plan_supported();
+        cx.notify();
+    }
+
+    /// The count behind the footer's `Review hooks` button; `0` hides it.
+    pub fn set_hooks_to_review(&mut self, count: usize, cx: &mut Context<Self>) {
+        self.hooks_to_review = count;
         cx.notify();
     }
 }

@@ -17,6 +17,7 @@ mod command_destinations;
 mod copy_directory;
 pub(crate) mod debug;
 pub(crate) mod feedback;
+mod hook_review;
 mod keymap;
 pub(crate) mod memories;
 mod new_tab;
@@ -44,7 +45,10 @@ pub(crate) fn actions(root: Div, owner: &Root, cx: &mut Context<Root>) -> Div {
             copy_directory::actions(
                 thread_menu::actions(
                     command_destinations::actions(
-                        new_tab::actions(crate::windows::actions(root, cx), cx),
+                        new_tab::actions(
+                            hook_review::actions(crate::windows::actions(root, cx), cx),
+                            cx,
+                        ),
                         cx,
                     ),
                     cx,
