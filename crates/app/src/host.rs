@@ -726,6 +726,11 @@ pub(crate) async fn app_server_projects(
     mut state: Value,
     local: bool,
 ) -> Result<Vec<Project>> {
+    // Startup reads projects while `Root::connect` is still sending `initialize`; the server
+    // answers `Not initialized` to any earlier request. `initialize` is shared and idempotent.
+    bridge
+        .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
+        .await?;
     let mut cursor: Option<String> = None;
     let mut seen = HashSet::new();
     let mut projects = serde_json::Map::new();
@@ -3405,11 +3410,69 @@ mod pending_archive_tests {
 mod app_server_project_tests {
     use super::*;
 
+    /// A server that rejects every request until `initialize` + `initialized`, like app-server.
+    fn strict_server(pages: Vec<Value>) -> Result<(Bridge, std::thread::JoinHandle<()>)> {
+        use std::io::{BufRead, Write};
+        let (input, mut response) = std::io::pipe()?;
+        let (requests, output) = std::io::pipe()?;
+        let (bridge, _) = Bridge::from_io(input, output, None);
+        let server = std::thread::spawn(move || {
+            let (mut ready, mut pages) = (false, pages.into_iter());
+            for line in std::io::BufReader::new(requests).lines() {
+                let request: Value = serde_json::from_str(&line.unwrap()).unwrap();
+                let reply = match request["method"].as_str() {
+                    Some("initialize") => json!({"id": request["id"], "result": {
+                        "userAgent": "t", "codexHome": "/h", "platformOs": "macos"}}),
+                    Some("initialized") => {
+                        ready = true;
+                        continue;
+                    }
+                    Some("project/list") if ready => {
+                        json!({"id": request["id"], "result": pages.next().unwrap()})
+                    }
+                    _ => json!({"id": request["id"],
+                        "error": {"code": -32600, "message": "Not initialized"}}),
+                };
+                writeln!(response, "{reply}").unwrap();
+            }
+        });
+        Ok((bridge, server))
+    }
+
+    #[test]
+    fn projects_read_before_connect_finishes_waits_for_initialize() -> Result<()> {
+        let page = json!({"data": [{"id": "p", "name": "p", "roots": [{"path": "/r/p"}],
+            "createdAt": 1, "updatedAt": 2}], "nextCursor": null});
+        let (bridge, server) = strict_server(vec![page])?;
+        let home = tempfile::tempdir()?;
+        let projects =
+            pollster::block_on(app_server_projects(&bridge, home.path(), json!({}), false))?;
+        assert_eq!(projects.len(), 1);
+        drop(bridge);
+        server.join().unwrap();
+        Ok(())
+    }
+
     #[test]
     fn server_pages_preserve_order_and_remote_paths() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let fixture = directory.path().join("projects.jsonl");
         let mut records = String::new();
+        for (dir, msg) in [
+            (
+                "send",
+                json!({"id": 100, "method": "initialize", "params": {
+                "clientInfo": {"name": "codex-gpui", "title": null, "version": env!("CARGO_PKG_VERSION")},
+                "capabilities": {"experimentalApi": true, "requestAttestation": false, "requiredHumanApproval": true}}}),
+            ),
+            (
+                "recv",
+                json!({"id": 100, "result": {"userAgent": "t", "codexHome": "/h", "platformOs": "macos"}}),
+            ),
+        ] {
+            records.push_str(&json!({"dir": dir, "msg": msg}).to_string());
+            records.push('\n');
+        }
         for (index, id) in ["second", "first"].iter().enumerate() {
             for (dir, msg) in [
                 (
