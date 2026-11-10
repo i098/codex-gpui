@@ -1,7 +1,9 @@
 //! Raises the open-file soft limit so the `codex app-server` child and its hooks inherit a usable one.
 
-const TARGET: u64 = 10240;
-const WARN_BELOW: u64 = 4096;
+#[cfg(unix)]
+const TARGET: libc::rlim_t = 10240;
+#[cfg(unix)]
+const WARN_BELOW: libc::rlim_t = 4096;
 
 /// Raises `RLIMIT_NOFILE` soft to `min(hard, 10240)` and logs when the result is under 4096.
 #[cfg(unix)]
@@ -18,9 +20,9 @@ pub fn raise() {
         ));
         return;
     }
-    let wanted = (limit.rlim_max as u64).min(TARGET);
-    if (limit.rlim_cur as u64) < wanted {
-        limit.rlim_cur = wanted as libc::rlim_t;
+    let wanted = limit.rlim_max.min(TARGET);
+    if limit.rlim_cur < wanted {
+        limit.rlim_cur = wanted;
         // SAFETY: `limit` is a valid rlimit with soft <= hard.
         if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) } != 0 {
             crate::logging::write(&format!(
@@ -41,14 +43,13 @@ pub fn raise() {
 pub fn raise() {}
 
 #[cfg(unix)]
-fn current_soft() -> Option<u64> {
+fn current_soft() -> Option<libc::rlim_t> {
     let mut limit = libc::rlimit {
         rlim_cur: 0,
         rlim_max: 0,
     };
     // SAFETY: `limit` is a valid, writable rlimit.
-    (unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } == 0)
-        .then_some(limit.rlim_cur as u64)
+    (unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } == 0).then_some(limit.rlim_cur)
 }
 
 #[cfg(all(test, unix))]
@@ -64,6 +65,6 @@ mod tests {
             unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
             0
         );
-        assert!(limit.rlim_cur as u64 >= (limit.rlim_max as u64).min(super::TARGET));
+        assert!(limit.rlim_cur >= limit.rlim_max.min(super::TARGET));
     }
 }
