@@ -1136,7 +1136,7 @@ mod tests {
         }
         std::fs::write(recording.path(), lines).unwrap();
         let (bridge, _) = Bridge::replay(recording.path()).unwrap();
-        let mut cx = gpui::HeadlessAppContext::new(textsys::text_system());
+        let cx = gpui::HeadlessAppContext::new(textsys::text_system());
         let done = Arc::new(Mutex::new(None));
         let slot = done.clone();
         let task = cx.foreground_executor().spawn(async move {
