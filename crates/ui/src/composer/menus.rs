@@ -295,10 +295,20 @@ impl Composer {
                         .child(icon(name, 16., color)),
                 )
         };
-        let bolt = if self.speed > 0 {
-            t.accent
-        } else {
-            t.text_tertiary
+        // `ultra` is the slider's maximum (`isMax`): `--color-chart-purple` replaces
+        // `--color-chart-blue` on the effort label, an enabled speed and the track fill.
+        let max = self.displayed_effort() == "ultra";
+        let purple: Hsla = gpui::rgb(match t.appearance {
+            Appearance::Dark => 0xad7bf9,
+            Appearance::Light => 0x924ff7,
+        })
+        .into();
+        let blue = t.accent;
+        // `_FastModeToggle`'s text color, which the bolt paints with.
+        let bolt = match (self.speed, max) {
+            (0, _) => t.text_tertiary,
+            (_, true) => purple,
+            _ => blue,
         };
         let header = div()
             .relative()
@@ -307,7 +317,7 @@ impl Composer {
             .flex()
             .justify_center()
             .child(
-                corner("fast-mode", "composer-bolt", bolt)
+                corner("fast-mode", speed_icon(self.speed), bolt)
                     .left_0()
                     .when(interactive, |d| {
                         d.track_focus(&self.menu_focus.items[SPEED_ITEM])
@@ -355,7 +365,7 @@ impl Composer {
                                 14.,
                                 20.,
                                 500.,
-                                t.accent,
+                                if max { purple } else { blue },
                             ))
                             .child(
                                 div()
@@ -441,23 +451,20 @@ impl Composer {
                             vec![shadow(t.border, 0., 0., 0.5, true)],
                         )))
                         .when(f.thumb > 0., |d| {
-                            d.child(
-                                div()
-                                    .absolute()
-                                    .left_0()
-                                    .top_0()
-                                    .h_full()
-                                    .w(px(thumb_x))
-                                    .child(shapes::decoration(shapes::Decoration {
-                                        radius: Corners {
-                                            top_left: px(12.),
-                                            bottom_left: px(12.),
-                                            ..Corners::all(px(0.))
-                                        },
-                                        fill: Some(t.accent),
-                                        ..Default::default()
-                                    })),
-                            )
+                            let fill = div().absolute().left_0().top_0().h_full().w(px(thumb_x));
+                            d.child(if max {
+                                fill.overflow_hidden().children(max_fill(blue, purple))
+                            } else {
+                                fill.child(shapes::decoration(shapes::Decoration {
+                                    radius: Corners {
+                                        top_left: px(12.),
+                                        bottom_left: px(12.),
+                                        ..Corners::all(px(0.))
+                                    },
+                                    fill: Some(blue),
+                                    ..Default::default()
+                                }))
+                            })
                         })
                         .children((0..efforts.len()).map(|i| {
                             let color = if i as f32 <= f.thumb + 1e-3 {
@@ -527,6 +534,8 @@ impl Composer {
                                 )
                                 .children(efforts.iter().enumerate().map(|(i, effort)| {
                                     let effort = effort.clone();
+                                    let dragged = effort.clone();
+                                    let state = state.clone();
                                     div()
                                         .id(("effort", i))
                                         .absolute()
@@ -539,6 +548,23 @@ impl Composer {
                                             this.picked(cx);
                                             cx.notify();
                                         }))
+                                        // A drag that started on the slider selects each
+                                        // stop it crosses, as Radix `onValueChange`.
+                                        // shortcut: the stop zones take the pointer only
+                                        // over the slider, so a drag that leaves it keeps
+                                        // the last stop; upgrade to pointer capture if needed.
+                                        .on_mouse_move(cx.listener(
+                                            move |this, e: &MouseMoveEvent, _, cx| {
+                                                if e.dragging()
+                                                    && state.read(cx).pressed
+                                                    && this.displayed_effort() != dragged
+                                                {
+                                                    this.effort = Some(dragged.clone());
+                                                    this.picked(cx);
+                                                    cx.notify();
+                                                }
+                                            },
+                                        ))
                                 }))
                         }),
                 ),
@@ -940,5 +966,63 @@ impl Composer {
         })
         .with_priority(1)
         .into_any_element()
+    }
+}
+
+/// The Speed toggle's icon per [`SPEEDS`] item, as the original's `p8e`: `bolt-light-16`
+/// for Standard, `bolt-fill-light-16` for Fast, `UltrafastIcon` for Ultrafast.
+fn speed_icon(speed: usize) -> &'static str {
+    match speed {
+        0 => "composer-bolt",
+        1 => "composer-bolt-fill",
+        _ => "composer-ultrafast",
+    }
+}
+
+/// `_Fill_tex4u` at the maximum stop: `_Mask`'s `linear-gradient(90deg, color-mix(in srgb,
+/// blue 60%, purple), purple 55%, color-mix(in srgb, purple 72%, blue))` over the 230 px
+/// track, as two two-stop pieces (gpui gradients take two stops).
+/// shortcut: no `_Canvas` WebGL shimmer (luminosity blend) or 2 s reveal; port them if the
+/// animated maximum is wanted.
+fn max_fill(blue: Hsla, purple: Hsla) -> [Div; 2] {
+    let mix = |a: Hsla, p: f32, b: Hsla| -> Hsla {
+        let (a, b) = (gpui::Rgba::from(a), gpui::Rgba::from(b));
+        gpui::Rgba {
+            r: a.r * p + b.r * (1. - p),
+            g: a.g * p + b.g * (1. - p),
+            b: a.b * p + b.b * (1. - p),
+            a: 1.,
+        }
+        .into()
+    };
+    let mid = 230. * 0.55;
+    let piece = |left: f32, width: f32, from: Hsla, to: Hsla| {
+        div()
+            .absolute()
+            .top_0()
+            .h_full()
+            .left(px(left))
+            .w(px(width))
+            .bg(gpui::linear_gradient(
+                90.,
+                gpui::linear_color_stop(from, 0.),
+                gpui::linear_color_stop(to, 1.),
+            ))
+    };
+    [
+        piece(0., mid, mix(blue, 0.6, purple), purple).rounded_l(px(12.)),
+        piece(mid, 230. - mid, purple, mix(purple, 0.72, blue)),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::speed_icon;
+
+    #[test]
+    fn speed_icon_follows_the_speed_mode() {
+        assert_eq!(speed_icon(0), "composer-bolt");
+        assert_eq!(speed_icon(1), "composer-bolt-fill");
+        assert_eq!(speed_icon(2), "composer-ultrafast");
     }
 }
