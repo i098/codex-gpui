@@ -17,6 +17,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Match the side panel's `New tab` page to the original: rows on a soft fill in a two-column grid, the original icons and shortcut chips, a `Side chat` row, and the original row order. `Terminal` now opens a side tab, and its `…` menu holds `Open bottom terminal`.
 - Make the composer effort slider follow a drag stop by stop, and fill the track with the original's blue-to-purple gradient at the Ultra stop, with a purple effort label. Paint the Speed bolt in the toggle's color (gray for Standard, blue for a speed, purple at Ultra) and show the outline, filled or double bolt for Standard, Fast and Ultrafast, as the original does.
 - Stop the Customize sidebar from lagging with many installed plugins. A hover or scroll in the sidebar now renders the sidebar again, not the whole Plugins or Skills page.
+- Let the thread show through the 32 px fade above the composer, as in the original. Before, the fade painted a solid bar that cut off the transcript and the `Scroll to bottom` button above the composer.
 
 ## [0.1.2] - 2026-11-08
 
