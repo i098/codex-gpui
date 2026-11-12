@@ -9,7 +9,7 @@ exclude = ["crates/textsys/gpui", "crates/textsys/gpui_apple", "vendor/rrule", "
 
 [workspace.package]
 # The app version: tools/version.sh prints it and bumps it.
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 license = "MIT"
 publish = false

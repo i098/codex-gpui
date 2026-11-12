@@ -6,6 +6,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-12
+
 ### Added
 - Parity gate: dark rows render with the original app's dark neutrals, because the dark references come from the original; the shipped theme keeps the darker dark neutrals (#1481). Closes #1484.
 - License the repository under MIT: add `LICENSE` and `CODE_OF_CONDUCT.md`, and set `license = "MIT"` in the workspace manifest.
