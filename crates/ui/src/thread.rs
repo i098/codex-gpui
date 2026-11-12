@@ -3154,7 +3154,8 @@ impl Render for ThreadView {
         .top_0()
         .left_0()
         .size_full();
-        // Fade above the composer's surface band (`-top-8`, `to top`).
+        // Fade above the composer's surface band (`-top-8`, `to top`): translucent, so the
+        // transcript scrolled under it shows through.
         let surface_color = t.surface;
         // The band's gradient is rastered into the thread page's layer. Beside a docked bottom
         // panel that layer is one tile tall: the original shows no 510 px row wrap (one captured
@@ -3169,7 +3170,7 @@ impl Render for ThreadView {
                 let scale = window.scale_factor();
                 gradient_image(
                     &[(surface_color, 0.), (clear, 1.)],
-                    surface_color,
+                    clear,
                     (f32::from(bounds.size.width), f32::from(bounds.size.height)),
                     (
                         0.,
