@@ -78,11 +78,26 @@ fn headless(assets: Arc<dyn AssetSource>) -> HeadlessAppContext {
     cx
 }
 
+/// The original app's dark neutrals, before the intentionally darker app theme (PR 1481). The
+/// dark references come from the original, so the gate compares with these values; the shipped
+/// theme keeps the darker ones.
+fn reference_dark() -> theme::Theme {
+    let rgba = |c| gpui::rgba(c).into();
+    theme::Theme {
+        background_surface_under: rgba(0x141414ff),
+        surface: rgba(0x181818ff),
+        page_surface_layout: rgba(0x282828cc),
+        sidebar_background: rgba(0x181818a6),
+        surface_secondary: rgba(0x141414ff),
+        ..theme::Theme::dark()
+    }
+}
+
 fn render_in(cx: &mut HeadlessAppContext, case: &Case, w: u32, h: u32) -> Result<RgbaImage> {
     cx.update(|cx| {
         cx.set_global(match case.theme {
             "light" => theme::Theme::light(),
-            _ => theme::Theme::dark(),
+            _ => reference_dark(),
         })
     });
     let window = cx.open_window(size(px(w as f32), px(h as f32)), |window, cx| {

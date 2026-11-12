@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Parity gate: dark rows render with the original app's dark neutrals, because the dark references come from the original; the shipped theme keeps the darker dark neutrals (#1481). Closes #1484.
 - License the repository under MIT: add `LICENSE` and `CODE_OF_CONDUCT.md`, and set `license = "MIT"` in the workspace manifest.
 - Show the composer's `Review hooks` button when hooks of the chat's folder need approval. The button opens the `Review hooks` dialog, which allows all or the selected hooks. Before, these hooks failed with `hook approval required` and the app showed no prompt.
 
