@@ -209,11 +209,11 @@ impl Theme {
     pub fn dark() -> Self {
         Self {
             appearance: Appearance::Dark,
-            background_surface_under: rgba(0x0e0e0eff).into(),
-            surface: rgba(0x121212ff).into(),
-            page_surface_layout: rgba(0x1e1e1eb3).into(),
-            sidebar_background: rgba(0x12121280).into(),
-            surface_secondary: rgba(0x0e0e0eff).into(),
+            background_surface_under: rgba(0x141414ff).into(),
+            surface: rgba(0x181818ff).into(),
+            page_surface_layout: rgba(0x282828cc).into(),
+            sidebar_background: rgba(0x181818a6).into(),
+            surface_secondary: rgba(0x141414ff).into(),
             surface_tertiary: rgba(0x282828ff).into(),
             surface_elevated: rgba(0x363636f5).into(),
             surface_elevated_secondary: rgba(0x2d2d2dff).into(),
