@@ -359,7 +359,7 @@ General	Default speed
 General	Standard
 General	The fastest available responses for latency-sensitive work
 General	Ultrafast
-General	Suggested prompts
+General	Homepage suggestions
 General	Suggest what to do next by searching project files and connected apps
 General	Enable ambient suggestions
 General	By default, ChatGPT can read and edit files in its workspace. It can ask for additional access when needed
@@ -385,7 +385,7 @@ General	How to use Daybreak
 General	Daybreak Red
 General	Choose where the terminal shortcut and environment actions open terminal tabs
 General	Default terminal location
-General	Start new tasks with Chat and content in a single tab strip
+General	Open content tabs in full view in new chats
 General	Full view by default
 General	Try new desktop features and receive early app updates
 General	Desktop app beta features
@@ -404,8 +404,8 @@ General	Plugins
 General	Start new chats outside of any project
 General	Default to standalone chat
 General	Prevent sleep while running
-General	The location where tasks started outside of projects store their data by default.
-General	Projectless task folder
+General	The location where chats started outside of projects store their data by default.
+General	Projectless chat folder
 General	Compress local chat history
 General	Where files and folders open by default
 General	Default file open destination
@@ -417,7 +417,7 @@ General	Third-party notices for bundled dependencies
 General	Open source licenses
 General	Animate conversation rails with system audio. Audio is processed on your device, never saved or uploaded.
 General	Audio visualizer
-General	Let Codex fire confetti in the app when you ask!
+General	Show confetti in the app when you ask!
 General	Confetti cannon
 General	Toys
 Git	Start /review in the current chat when possible or launch a separate review chat

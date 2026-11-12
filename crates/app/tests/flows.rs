@@ -127,11 +127,12 @@ const FLOWS: &[(&str, Flow)] = &[
     ("view_changes_opens_panel", view_changes_opens_panel),
     ("thread_card_focus_ring", thread_card_focus_ring),
     ("diff_file_header_toggle", diff_file_header_toggle),
+    // As the capture does: `View changes` opens the file without "all expanded".
     ("parity_diff", || {
         parity_flow("diff", |fx| {
-            open_changes(fx)?;
-            // The reference shows the file collapsed.
-            fx.click((panel_left(fx.size.0) + 100., 111.))
+            fx.click(fx.at("home", "Add a subtract")?)?;
+            fx.wait_thread(SUBTRACT)?;
+            fx.click(fx.at("thread", "View changes")?)
         })
     }),
     ("background_terminal_tab", background_terminal_tab),
@@ -1443,10 +1444,13 @@ fn open_terminal(fx: &mut Fx) -> Result<()> {
             params: line["msg"]["params"].clone(),
         })
         .collect();
-    let mut events = ui::screens::terminal::running_command_replay();
+    let mut events =
+        ui::screens::terminal::running_command_replay(ui::screens::terminal::FOLLOW_UP_AT);
     ensure!(status.len() == 2, "recorded active and idle statuses");
     events.insert(0, status[0].clone());
     events.push(status[1].clone());
+    // Running until the idle status (last); unread from `turn/completed` (the replay's last).
+    let n = events.len();
     for (index, event) in events.into_iter().enumerate() {
         fx.root.update(&mut fx.cx, |r, cx| r.on_event(event, cx));
         fx.cx.run_until_parked();
@@ -1457,7 +1461,7 @@ fn open_terminal(fx: &mut Fx) -> Result<()> {
                 r.shell().read(cx).attention,
             )
         });
-        let expected = (index < 5, index >= 4, index >= 4);
+        let expected = (index < n - 1, index >= n - 2, index >= n - 2);
         ensure!(
             observed == expected,
             "Terminal event {index}: running/unread/attention {observed:?}, expected {expected:?}"

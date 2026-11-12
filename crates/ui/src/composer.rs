@@ -366,21 +366,28 @@ fn permission_menu_rows<'a>(rows: &'a [PermissionRow], cx: &App) -> Vec<&'a Perm
         .collect()
 }
 
-/// The selected host's `enabled-reasoning-efforts` setting; `None` keeps [`ENABLED_EFFORTS`].
+/// The selected host's `enabled-reasoning-efforts` setting (`None`: unset) and whether a
+/// ChatGPT account is signed in.
 #[derive(Default)]
-pub struct EnabledEfforts(pub Option<Vec<String>>);
+pub struct EnabledEfforts {
+    pub setting: Option<Vec<String>>,
+    pub chatgpt: bool,
+}
 
 impl gpui::Global for EnabledEfforts {}
 
 impl EnabledEfforts {
     /// The slider never shows `persistent`, as the original's `i2a`, and always shows the
-    /// locked `low`..`xhigh`.
+    /// locked `low`..`xhigh`. Unset, a ChatGPT account shows only those (26.1029: its
+    /// `reasoningEffortVisibility.enabled` defaults to them), others [`ENABLED_EFFORTS`].
+    /// shortcut: the account's saved `reasoningEffortVisibility` is not read from the backend;
+    /// fetch it when the port gets that client.
     fn allows(&self, effort: &str) -> bool {
         effort != "persistent"
             && (ENABLED_EFFORTS[..4].contains(&effort)
-                || match &self.0 {
+                || match &self.setting {
                     Some(enabled) => enabled.iter().any(|e| e == effort),
-                    None => ENABLED_EFFORTS.contains(&effort),
+                    None => !self.chatgpt && ENABLED_EFFORTS.contains(&effort),
                 })
     }
 }
@@ -1089,6 +1096,8 @@ pub struct Composer {
     add_focus: FocusHandle,
     permissions_focus: FocusHandle,
     model_focus: FocusHandle,
+    /// The effort slider (`SliderKeyboardControl`), which the open model picker focuses.
+    slider_focus: Entity<crate::focus::ControlFocus>,
     dictate_focus: FocusHandle,
     send_focus: FocusHandle,
     comments_focus: FocusHandle,
@@ -1244,6 +1253,9 @@ impl Composer {
             add_focus: cx.focus_handle().tab_stop(true),
             permissions_focus: cx.focus_handle().tab_stop(true),
             model_focus: cx.focus_handle().tab_stop(true),
+            slider_focus: gpui::AppContext::new(cx, |cx| {
+                crate::focus::ControlFocus::new(cx.focus_handle())
+            }),
             dictate_focus: cx.focus_handle().tab_stop(true),
             send_focus: cx.focus_handle().tab_stop(true),
             comments_focus: cx.focus_handle().tab_stop(true),
@@ -2309,12 +2321,11 @@ impl Composer {
         self.restore_text(crate::screens::diff::panel::comments::prompt_body(text), cx);
     }
 
-    /// Open the model picker (`Select effort`), as `⌘⇧M`-style commands and the menu do.
-    pub fn open_model_picker(&mut self, cx: &mut Context<Self>) {
-        self.menu = Some(Menu::Effort);
-        self.menu_focus.prepare(3, cx);
-        self.menu_focus.trigger = self.model_focus.clone();
-        cx.notify();
+    /// Opens the model picker as after typing the draft (the parity capture): the slider's
+    /// focus ring shows, as Chromium's `:focus-visible` keeps it after keyboard input.
+    pub fn open_model_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_menu(Menu::Effort, window, cx);
+        self.slider_focus.read(cx).show_ring();
     }
 
     fn current_model(&self) -> Option<&ModelOption> {
@@ -2622,7 +2633,13 @@ impl Composer {
                 Menu::Comments => self.comments_focus.clone(),
                 _ => self.model_focus.clone(),
             };
-            self.menu_focus.content.focus(window, cx);
+            // The model picker focuses its slider on open (`[data-reasoning-slider]`).
+            if menu == Menu::Effort {
+                let slider = self.slider_focus.read(cx).handle.clone();
+                slider.focus(window, cx);
+            } else {
+                self.menu_focus.content.focus(window, cx);
+            }
             cx.notify();
         }
     }
@@ -3257,9 +3274,8 @@ pub(crate) fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -
 }
 
 /// Width the original's popper positions the effort menu with, centered on the model button:
-/// in refs/composer its 256 px box sits 1.19 px left of the button's center, snapped to
-/// device px.
-const EFFORT_MENU_SLOT: f32 = 258.5;
+/// in the 26.1029 refs/composer its 256 px box centers on the button, snapped to device px.
+const EFFORT_MENU_SLOT: f32 = 256.;
 
 impl Render for Composer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3732,6 +3748,21 @@ impl Render for Composer {
                     card_decoration(&t, narrow)
                 }))
             })
+            // shortcut: Chromium's blur of the 80 px shadow falls off faster at the card sides
+            // beside a side panel (refs/diff, refs/terminal); fitted ref strips cover the 5.5 px
+            // at each side there and paint nothing elsewhere. Drop once the blur matches.
+            .children([true, false].map(|start| {
+                let strip = div().absolute().top(px(9.5));
+                if start {
+                    strip.left(px(-5.5))
+                } else {
+                    strip.right(px(-5.5))
+                }
+                .child(
+                    crate::icon::icon_sized("composer-shadow-side", 5.5, 83., t.text)
+                        .runtime_unless_positioned(),
+                )
+            }))
             // See `docked`: the docked body is a transparent cc layer over the card.
             .child(
                 div()
@@ -3974,13 +4005,17 @@ mod tests {
             "supportedReasoningEfforts": supported,
         }))
         .unwrap();
-        let efforts = |enabled: Option<&[&str]>| {
-            let enabled = EnabledEfforts(enabled.map(|e| e.iter().map(|&e| e.into()).collect()));
-            model_efforts(&model, &enabled)
+        let efforts = |enabled: Option<&[&str]>, chatgpt: bool| {
+            let setting = enabled.map(|e| e.iter().map(|&e| e.into()).collect());
+            model_efforts(&model, &EnabledEfforts { setting, chatgpt })
         };
-        assert_eq!(efforts(None), ["low", "medium", "high", "xhigh", "ultra"]);
         assert_eq!(
-            efforts(Some(&["max", "persistent"])),
+            efforts(None, false),
+            ["low", "medium", "high", "xhigh", "ultra"]
+        );
+        assert_eq!(efforts(None, true), ["low", "medium", "high", "xhigh"]);
+        assert_eq!(
+            efforts(Some(&["max", "persistent"]), true),
             ["low", "medium", "high", "xhigh", "max"]
         );
     }

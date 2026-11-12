@@ -4,7 +4,7 @@
 
 use crate::composer::ChatDrag;
 use crate::{
-    Shell, blit, fixture, focus, home_sidebar_header,
+    Shell, fixture, focus, home_sidebar_header,
     icon::icon,
     sidebar_empty, text,
     tooltip::{Side, tooltip},
@@ -14,7 +14,7 @@ use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, Bounds, ClipboardItem, Context, Corners,
     DispatchPhase, Div, ElementInputHandler, EntityInputHandler, EventEmitter, FocusHandle,
     Focusable, FontWeight, HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent,
-    Modifiers, MouseButton, ParentElement, Pixels, Point, Render, Rgba, ScrollHandle, ShapedLine,
+    Modifiers, MouseButton, ParentElement, Pixels, Point, Render, ScrollHandle, ShapedLine,
     SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun,
     Transformation, UTF16Selection, Window, anchored, canvas, deferred, div, fill, point,
     prelude::FluentBuilder as _, px, radians, relative, rgba, size, svg,
@@ -24,7 +24,6 @@ use std::{
     collections::{HashMap, HashSet},
     ops::Range,
     path::Path,
-    sync::Arc,
     time::{Duration, Instant},
 };
 use theme::{ActiveTheme as _, Appearance, Theme};
@@ -84,14 +83,24 @@ pub struct Project {
 
 /// Thread name or preview, cut to 80 characters. Views supply their own empty-state label.
 pub fn title(thread: &Thread) -> SharedString {
+    title_within(thread, 80)
+}
+
+/// An opened (read) thread's title: 26.1029 cuts its preview to 60 characters.
+pub fn opened_title(thread: &Thread) -> SharedString {
+    title_within(thread, 60)
+}
+
+fn title_within(thread: &Thread, max: usize) -> SharedString {
     if let Some(name) = &thread.name {
         return name.clone().into();
     }
     let preview = thread.preview.trim();
-    if preview.chars().count() <= 80 {
+    if preview.chars().count() <= max {
         preview.to_owned().into()
     } else {
-        format!("{}…", preview.chars().take(79).collect::<String>()).into()
+        let cut: String = preview.chars().take(max - 1).collect();
+        format!("{}…", cut.trim_end()).into()
     }
 }
 
@@ -463,7 +472,14 @@ impl HomeSidebar {
         Self {
             threads: threads
                 .iter()
-                .map(|t| (t.id.clone(), display_title(title(t)), t.updated_at))
+                .map(|t| {
+                    let title = if selected == Some(t.id.as_str()) {
+                        opened_title(t)
+                    } else {
+                        title(t)
+                    };
+                    (t.id.clone(), display_title(title), t.updated_at)
+                })
                 .collect(),
             projects: Vec::new(),
             threads_state: ListState::Ready,
@@ -2078,8 +2094,9 @@ impl MatchPattern {
         }
     }
 
-    pub(crate) fn score(&self, value: &str) -> i32 {
-        let text: Vec<_> = value
+    /// The UTF-16 value as the matchers see it: path separators become `\0`.
+    fn units(&self, value: &str) -> Vec<u16> {
+        value
             .encode_utf16()
             .map(|unit| {
                 if self.paths && matches!(unit, 47 | 92) {
@@ -2088,11 +2105,23 @@ impl MatchPattern {
                     unit
                 }
             })
-            .collect();
+            .collect()
+    }
+
+    pub(crate) fn score(&self, value: &str) -> i32 {
+        let text = self.units(value);
         self.main
             .degree(&text)
             .or_else(|| self.fallback.as_ref().and_then(|p| p.degree(&text)))
             .map_or(0, |score| (score * 10 - text.len() as i32).max(1))
+    }
+
+    /// The original's `d7`: the matched UTF-16 ranges of `value`, `None` without a match.
+    fn fragments(&self, value: &str) -> Option<Vec<Range<usize>>> {
+        let text = self.units(value);
+        self.main
+            .ranges(&text)
+            .or_else(|| self.fallback.as_ref().and_then(|p| p.ranges(&text)))
     }
 }
 
@@ -2119,12 +2148,13 @@ impl WordPattern {
         }
     }
 
-    fn degree(&self, text: &[u16]) -> Option<i32> {
+    /// The matched fragments of `text`, adjacent ones merged.
+    fn ranges(&self, text: &[u16]) -> Option<Vec<Range<usize>>> {
         let mut ranges = Vec::new();
         if self.units.len() > 100 {
             let literal: Vec<_> = self.units.iter().copied().filter(|&c| c != 42).collect();
             if literal.is_empty() {
-                return Some(0);
+                return Some(ranges);
             }
             let start = if self.units[0] == 42 {
                 let lower_name: Vec<_> = String::from_utf16(text)
@@ -2167,6 +2197,11 @@ impl WordPattern {
             }
         }
         ranges.truncate(count);
+        Some(ranges)
+    }
+
+    fn degree(&self, text: &[u16]) -> Option<i32> {
+        let ranges = self.ranges(text)?;
         if ranges.is_empty() {
             return Some(0);
         }
@@ -2440,10 +2475,9 @@ fn word_separator(unit: u16) -> bool {
     matches!(unit, 9..=13 | 32 | 160 | 5760 | 8192..=8202 | 8232 | 8233 | 8239 | 8287 | 12288 | 65279 | 95 | 45 | 58 | 43 | 46 | 47 | 92)
 }
 
-/// Which chars of `text` the original highlights for `query`: all for an empty query, else
-/// the first case-insensitive occurrence, else (`fuzzy`) a greedy in-order char match. A
-/// text without any match stays plain (all on): the original dims the rest of a title only
-/// around a match.
+/// Which chars of `text` the original (`UR1V`) highlights for `query`: all for an empty
+/// query, else the first case-insensitive occurrence, else (`fuzzy`) the `d7` fragments. A
+/// text without any match stays plain (all on).
 fn highlight(text: &str, query: &str, fuzzy: bool) -> Vec<bool> {
     let lower: Vec<char> = text.chars().flat_map(char::to_lowercase).collect();
     let q: Vec<char> = query.trim().chars().flat_map(char::to_lowercase).collect();
@@ -2456,20 +2490,88 @@ fn highlight(text: &str, query: &str, fuzzy: bool) -> Vec<bool> {
             .map(|i| (start..start + q.len()).contains(&i))
             .collect();
     }
-    let mut next = 0;
-    let marks: Vec<bool> = lower
-        .iter()
-        .map(|c| {
-            let hit = fuzzy && next < q.len() && *c == q[next];
-            next += usize::from(hit);
-            hit
-        })
-        .collect();
+    let marks = MatchPattern::new(query)
+        .fragments(text)
+        .filter(|_| fuzzy)
+        .map_or_else(Vec::new, |ranges| fragment_marks(text, &ranges));
     if marks.contains(&true) {
         marks
     } else {
-        vec![true; marks.len()]
+        vec![true; lower.len()]
     }
+}
+
+/// Per-char flags of `text`'s chars inside the UTF-16 `ranges`.
+fn fragment_marks(text: &str, ranges: &[Range<usize>]) -> Vec<bool> {
+    let mut at = 0;
+    text.chars()
+        .map(|c| {
+            let hit = ranges.iter().any(|r| r.contains(&at));
+            at += c.len_utf16();
+            hit
+        })
+        .collect()
+}
+
+/// `text` from 8 chars before the char `first`, `…` first when cut (`shouldAdjustStart`),
+/// with `marks` kept per char (the `…` off).
+fn adjusted(text: &str, marks: Vec<bool>, first: usize) -> (String, Vec<bool>) {
+    let start = first.saturating_sub(8);
+    let cut = start > 0;
+    (
+        cut.then_some('…')
+            .into_iter()
+            .chain(text.chars().skip(start))
+            .collect(),
+        cut.then_some(false)
+            .into_iter()
+            .chain(marks.into_iter().skip(start))
+            .collect(),
+    )
+}
+
+/// A command's description under its title (`nRNm`), when it matches `query`: the `d7`
+/// fragments on, from 8 chars before the first.
+fn description_line(text: &str, query: &str) -> Option<(String, Vec<bool>)> {
+    let marks = fragment_marks(text, &MatchPattern::new(query).fragments(text)?);
+    let first = marks.iter().position(|&m| m)?;
+    Some(adjusted(text, marks, first))
+}
+
+/// A chat's content match under its title (`hlYN`): from 8 chars before the first
+/// case-insensitive occurrence of `query`, at most 600 chars then `…`, every occurrence on.
+fn snippet_line(text: &str, query: &str) -> (String, Vec<bool>) {
+    let q: Vec<char> = query.trim().chars().flat_map(char::to_lowercase).collect();
+    let find = |s: &str| -> (Vec<bool>, Option<usize>) {
+        let lower: Vec<char> = s.chars().flat_map(char::to_lowercase).collect();
+        let mut marks = vec![false; s.chars().count()];
+        // ponytail: assumes lowercasing keeps the char count (true for the fixture's ASCII).
+        if q.is_empty() || lower.len() != marks.len() {
+            return (marks, None);
+        }
+        let (mut i, mut first) = (0, None);
+        while i + q.len() <= lower.len() {
+            if lower[i..i + q.len()] == q[..] {
+                first.get_or_insert(i);
+                marks[i..i + q.len()].fill(true);
+                i += q.len();
+            } else {
+                i += 1;
+            }
+        }
+        (marks, first)
+    };
+    let (marks, first) = find(text);
+    let (mut line, _) = adjusted(text, marks, first.unwrap_or(0));
+    if let Some((cut, _)) = line
+        .char_indices()
+        .nth(600 + usize::from(line.starts_with('…')))
+    {
+        line.truncate(cut);
+        line.push('…');
+    }
+    let marks = find(&line).0;
+    (line, marks)
 }
 
 /// [`text`] with the chars `marks` flags in `on` and the others in `off`.
@@ -2510,13 +2612,19 @@ fn marked(
         )
 }
 
-/// `CommandMenuDialog` in chat-search mode (sidebar `Search`): the query input over `Chats`
-/// (from `thread/list`), `Quick actions`, the `Settings` pages and the command groups
+/// `CommandMenuDialog` in the 26.1029 unified search (sidebar `Search`): the query input over
+/// `Chats` (from `thread/list`), `Quick actions`, the `Settings` pages and the command groups
 /// `Chat`, `Navigation`, `Panels`, `Project`, `Skills`, `Configure`, `App`, filtered by the
-/// query. The selected row carries the `primary-ghost-hover` fill, the others `opacity: .75`.
+/// query (which moves `Chats` after the commands), then the search tabs. The selected row
+/// carries the `primary-ghost-hover` fill, the others `opacity: .75`.
 pub struct CommandMenu {
     groups: Vec<(&'static str, Vec<Item>)>,
     retry_item: Item,
+    /// `Could not search Space`: the port has no Space search, only the reference shows it.
+    space_item: Item,
+    space_error: bool,
+    /// The selected [`TABS`] entry.
+    tab: &'static str,
     query: String,
     query_anchor: usize,
     query_cursor: usize,
@@ -2546,6 +2654,9 @@ pub struct CommandMenu {
     open_error: bool,
     recent_cycle: bool,
 }
+
+/// The search tabs under the list (`ey.n6`); a standalone window shows the first three.
+const TABS: [&str; 6] = ["All", "Actions", "Chats", "Space", "Files", "Text"];
 
 struct FileSearch {
     session: String,
@@ -3071,18 +3182,23 @@ impl Focusable for CommandMenu {
 }
 
 impl CommandMenu {
-    /// Over the fixture's `thread/list` (refs/sidebar): the content search answered with the
-    /// first message of every chat it matches, still pending on ChatGPT (the spinner).
+    /// Over the fixture's `thread/list` (refs/sidebar): the content search answered
+    /// (`sessions/sidebar-math-search.jsonl`), the ChatGPT and Space searches failed.
     pub fn new(query: &str, cx: &mut Context<Self>) -> Self {
         let list: ThreadListResponse = fixture::response("readback.jsonl", "thread/list", 0);
         let mut menu = Self::with_threads(&list.data, &[], false, query, cx);
-        let pattern = MatchPattern::new(query);
-        for (chat, thread) in menu.groups[0].1.iter_mut().zip(&list.data) {
-            if !query.is_empty() && pattern.score(&chat.search_value) > 0 {
-                chat.snippet = Some(thread.preview.clone().into());
-            }
+        let search: serde_json::Value =
+            fixture::response("sessions/sidebar-math-search.jsonl", "thread/search", 0);
+        let hits: Vec<SearchHit> =
+            serde_json::from_value(search["data"].clone()).expect("thread/search fixture data");
+        for chat in &mut menu.groups[0].1 {
+            chat.snippet = hits
+                .iter()
+                .find(|hit| chat.thread.as_deref() == Some(&hit.thread.id))
+                .map(|hit| hit.snippet.clone().into());
         }
-        menu.searching = !query.is_empty();
+        menu.cloud_error = !query.is_empty();
+        menu.space_error = !query.is_empty();
         // The static reference capture hides the blinking caret.
         menu.show_caret = false;
         menu
@@ -3222,6 +3338,12 @@ impl CommandMenu {
                 description: Some("Retry"),
                 ..Item::command(None, "Couldn't search ChatGPT chats", "")
             },
+            space_item: Item {
+                description: Some("Retry"),
+                ..Item::command(None, "Could not search Space", "")
+            },
+            space_error: false,
+            tab: TABS[0],
             query: query.to_owned(),
             query_anchor: query.len(),
             query_cursor: query.len(),
@@ -3678,9 +3800,30 @@ impl CommandMenu {
             })
             .filter(|(_, items)| !items.is_empty())
             .collect();
+        // 26.1029 lists a query's actions, then `Chats`, then Space (`ob`).
+        if !query.is_empty()
+            && let Some(index) = groups.iter().position(|(heading, _)| *heading == "Chats")
+        {
+            let chats = groups.remove(index);
+            groups.push(chats);
+        }
         if self.cloud_error {
             groups.push(("", vec![&self.retry_item]));
         }
+        if self.space_error && !query.is_empty() {
+            groups.push(("", vec![&self.space_item]));
+        }
+        let space = |items: &[&Item]| std::ptr::eq(items[0], &self.space_item);
+        let retry = |items: &[&Item]| std::ptr::eq(items[0], &self.retry_item);
+        groups.retain(|(heading, items)| match self.tab {
+            "Actions" => !heading.is_empty() && *heading != "Chats",
+            "Chats" => *heading == "Chats" || retry(items),
+            "Space" => space(items),
+            // shortcut: the port has no unified file or text search, so those tabs list
+            // nothing; wire them when it searches files and chat text from this dialog.
+            "Files" | "Text" => false,
+            _ => true,
+        });
         groups
     }
 
@@ -3708,14 +3851,14 @@ impl CommandMenu {
             }
             out
         };
-        let mut index = 0;
+        let mut chat = 0;
         self.visible()
             .into_iter()
             .map(|(heading, items)| {
                 let rows = items
                     .into_iter()
                     .map(|item| {
-                        index += 1;
+                        chat += usize::from(item.is_chat());
                         let mut parts = vec![bracket(
                             &item.label,
                             highlight(&item.label, query, !item.is_chat()),
@@ -3723,7 +3866,7 @@ impl CommandMenu {
                         parts.extend(item.description.map(|d| format!("desc:{d}")));
                         parts.extend(item.project.as_ref().map(|p| p.to_string()));
                         parts.extend(item.keys.as_ref().map(|k| k.to_string()).or_else(|| {
-                            (item.is_chat() && !self.recent_cycle).then(|| format!("⌃{index}"))
+                            (item.is_chat() && !self.recent_cycle).then(|| format!("⌃{chat}"))
                         }));
                         let mut text = parts.join(" | ");
                         if let Some(s) = &item.snippet {
@@ -3910,7 +4053,7 @@ impl CommandMenu {
         font.weight = FontWeight(430.);
         let line = window.text_system().shape_line(
             value.clone(),
-            px(14.),
+            px(16.),
             &[TextRun {
                 len: value.len(),
                 font,
@@ -3936,10 +4079,12 @@ impl CommandMenu {
         } else {
             "Search chats"
         };
+        // `text-base` with the input's `leading-[1.5556]`.
+        let line_height = 16. * 1.5556;
         let input = if self.query.is_empty() {
-            text(placeholder, 14., 21., 430., t.text_tertiary)
+            text(placeholder, 16., line_height, 430., t.text_tertiary)
         } else {
-            text(value.clone(), 14., 21., 430., t.text)
+            text(value.clone(), 16., line_height, 430., t.text)
         };
         div()
             .id("command-query")
@@ -3949,7 +4094,7 @@ impl CommandMenu {
             .aria_placeholder(placeholder)
             .relative()
             .w_full()
-            .h(px(21.))
+            .h(px(line_height))
             .overflow_hidden()
             .cursor_text()
             .on_mouse_down(
@@ -4005,7 +4150,7 @@ impl CommandMenu {
                             window.paint_quad(fill(
                                 Bounds::from_corners(
                                     bounds.origin + point(selection.start, px(0.)),
-                                    bounds.origin + point(selection.end, px(21.)),
+                                    bounds.origin + point(selection.end, px(line_height)),
                                 ),
                                 cx.theme().text_selection,
                             ));
@@ -4015,8 +4160,8 @@ impl CommandMenu {
                         {
                             window.paint_quad(fill(
                                 Bounds::new(
-                                    bounds.origin + point(caret, px(2.)),
-                                    size(px(1.), px(17.)),
+                                    bounds.origin + point(caret, px(3.)),
+                                    size(px(1.), px(19.)),
                                 ),
                                 cx.theme().text,
                             ));
@@ -4098,6 +4243,10 @@ impl CommandMenu {
             .nth(self.selected);
         if item.is_some_and(|item| std::ptr::eq(item, &self.retry_item)) {
             self.retry_cloud_search(cx);
+            return;
+        }
+        // shortcut: no Space search in the port, so its Retry has nothing to rerun.
+        if item.is_some_and(|item| std::ptr::eq(item, &self.space_item)) {
             return;
         }
         let event = item.map(|item| match (&item.thread, &item.url) {
@@ -4257,12 +4406,32 @@ impl Render for CommandMenu {
         let t = cx.theme();
         let viewport = window.viewport_size();
         let (w, h) = (f32::from(viewport.width), f32::from(viewport.height));
-        // `.command-menu-dialog` / `.global-command-menu-dialog` sizing.
-        let list_height = (0.9 * h - 64.).clamp(120., 440.);
-        let width = 520f32.min(0.92 * w);
-        let input = (!self.recent_cycle).then(|| self.query_input(width - 30., window, cx));
-        let top = ((h - list_height - 64.) / 2.).max(16.);
-        let surface = t.surface_elevated_secondary;
+        // `.search-command-menu-dialog` sizing: the list's max height plus the input and tabs.
+        let height = (0.9 * h - 64.).clamp(120., 440.) + 64.;
+        let width = 768f32.min(0.92 * w);
+        let top = ((h - height) / 2.).max(16.);
+        // The input spans the dialog less its border (`margin-inline: -4px`) and `px-4`.
+        let input = (!self.recent_cycle).then(|| self.query_input(width - 34., window, cx));
+        let has_input = input.is_some();
+        // The list's window origin: inside the 1 px border and `p-1`, under the 46 px input.
+        let list = point(
+            px((w - width) / 2. + 5.),
+            px(top + 5. + if has_input { 46. } else { 0. }),
+        );
+        // `bg-surface/65` mixed in oklab (see `composer::popover` for light's white).
+        let fill = match t.appearance {
+            Appearance::Light => gpui::Rgba {
+                r: 1.00003,
+                g: 0.99999,
+                b: 1.00003,
+                a: 0.65,
+            }
+            .into(),
+            Appearance::Dark => Hsla {
+                a: 0.65,
+                ..t.surface
+            },
+        };
         // `border-color: var(--color-border)` in dark, transparent in light (still a 1 px
         // border: Blink paints the fill in its bleed-avoidance clip layer).
         let border_color = if t.appearance == Appearance::Dark {
@@ -4270,17 +4439,13 @@ impl Render for CommandMenu {
         } else {
             gpui::transparent_black()
         };
-        let border = Some((px(1.), border_color));
         let query = self.query.trim();
-        // The open dialog is its own composited layer (Radix's enter animation): it rasterizes
-        // into transparent tiles that start at its ink overflow, i.e. the shadow's (3σ of the
-        // 32 px blur, less the 8 px spread, minus the 16 px offset on top). Its ops blend in the
-        // layer, which then composites once.
+        // The open dialog is its own composited layer (`translateZ(0)`): it rasterizes into
+        // transparent tiles that start at its ink overflow, i.e. the shadow's (3σ of the 32 px
+        // blur, less the 8 px spread, minus the 16 px offset on top). Its ops blend in the
+        // layer, which then composites once over the blurred backdrop.
         let (ink_x, ink_y) = (40., 24.);
-        // A row's text column: the dialog less its 1 px border and `p-1`, the row's `px-2`, and
-        // the 16 px icon slot with its 8 px gap.
-        let text_width = width - 2. * 5. - 2. * 8. - 16. - 8.;
-        let mut index = 0;
+        let (mut index, mut chat) = (0, 0);
         let visible = self.visible();
         let loading = self.searching || self.cloud_searching;
         let empty_loading = loading && visible.is_empty();
@@ -4292,14 +4457,15 @@ impl Render for CommandMenu {
                 .flex()
                 .flex_col()
                 .gap(px(4.))
-                // `pt-2` over a 13 px / 18.57 line; 26.5 keeps the rows on the original's
-                // device-pixel-snapped edges.
+                // `pl-[3px]` and `px-2 pt-2` over a 13 px / 18.57 line; 26.5 keeps the rows on
+                // the original's device-pixel-snapped edges.
                 .when(!heading.is_empty(), |group| {
                     group.child(
                         div()
                             .h(px(26.5))
                             .pt(px(8.))
-                            .px(px(8.))
+                            .pl(px(11.))
+                            .pr(px(8.))
                             .flex()
                             .items_center()
                             .gap(px(8.))
@@ -4314,6 +4480,8 @@ impl Render for CommandMenu {
                                 430.,
                                 t.text_tertiary,
                             ))
+                            // The list's own transparent tile, blended into the dialog's layer.
+                            .saved_layer()
                             .when(searching, |d| {
                                 d.child(icon("sidebar-cmd-spinner", 12., t.text_tertiary))
                             }),
@@ -4325,15 +4493,16 @@ impl Render for CommandMenu {
                         .flex_col()
                         .children(items.into_iter().map(|item| {
                             let retry = std::ptr::eq(item, &self.retry_item);
+                            let error = retry || std::ptr::eq(item, &self.space_item);
                             let selected = index == self.selected;
                             index += 1;
-                            // `Chats` is the first group, so a chat's ordinal is `index`.
+                            chat += usize::from(item.is_chat());
                             menu_row(
                                 item,
-                                if retry { "" } else { query },
-                                (index, !self.recent_cycle),
+                                if error { "" } else { query },
+                                (index, chat, !self.recent_cycle),
+                                list,
                                 selected,
-                                text_width,
                                 t,
                                 window,
                             )
@@ -4356,6 +4525,125 @@ impl Render for CommandMenu {
                         })),
                 )
         });
+        let tabs = if self.standalone {
+            &TABS[..3]
+        } else {
+            &TABS[..]
+        };
+        let tabs = tabs.iter().enumerate().map(|(i, &tab)| {
+            let selected = tab == self.tab;
+            div()
+                .id(("command-tab", i))
+                .role(gpui::Role::Tab)
+                .relative()
+                .h(px(32.))
+                .px(px(12.))
+                .flex()
+                .items_center()
+                .when(selected, |d| {
+                    d.child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(15.)),
+                        fill: Some(t.ghost_hover),
+                        ..Default::default()
+                    }))
+                })
+                .child(
+                    text(
+                        tab,
+                        14.,
+                        21.,
+                        500.,
+                        if selected { t.text } else { t.text_tertiary },
+                    )
+                    .relative(),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.tab = tab;
+                    this.select(0);
+                    cx.notify();
+                }))
+        });
+        let content = div()
+            .absolute()
+            .top(px(1.))
+            .left(px(1.))
+            .right(px(1.))
+            .bottom(px(1.))
+            .pt(px(4.))
+            .px(px(4.))
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .children(input.map(|input| {
+                div()
+                    .flex_none()
+                    .mx(px(-4.))
+                    .child(
+                        div()
+                            .h(px(39.))
+                            .px(px(16.))
+                            .flex()
+                            .items_center()
+                            // shortcut: refs/sidebar draw the value 1 device px below the
+                            // centered line box (Blink's inner-editor snap); fitted, not derived.
+                            .child(input.top(px(0.5))),
+                    )
+                    .child(rule(t).mt(px(6.)))
+            }))
+            .child(
+                div()
+                    .id("command-menu-list")
+                    .flex_1()
+                    .min_h_0()
+                    .when(has_input, |list| list.mt(px(-4.)))
+                    .overflow_y_scroll()
+                    .flex()
+                    .flex_col()
+                    .children(groups)
+                    .when(empty_loading, |list| {
+                        list.child(
+                            div()
+                                .id("empty-chat-search-loading")
+                                .role(gpui::Role::Label)
+                                .aria_label("Loading chats")
+                                .h(px(48.))
+                                .w_full()
+                                .px(px(16.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(icon("sidebar-cmd-spinner", 18., t.text_secondary)),
+                        )
+                    }),
+            )
+            .when(self.open_error, |content| {
+                content.child(
+                    div()
+                        .id("spotlight-open-error")
+                        .role(gpui::Role::Alert)
+                        .p(px(8.))
+                        .child(text(
+                            "Could not open this item. Try again",
+                            13.,
+                            18.,
+                            400.,
+                            t.text_error,
+                        )),
+                )
+            })
+            .child(
+                div().flex_none().child(rule(t)).child(
+                    div()
+                        .id("command-menu-tabs")
+                        .role(gpui::Role::TabList)
+                        .py(px(4.))
+                        .pr(px(8.))
+                        .flex()
+                        .gap(px(1.))
+                        .children(tabs),
+                ),
+            );
+        let radius = Corners::all(px(20.));
         div()
             .absolute()
             .inset_0()
@@ -4408,10 +4696,20 @@ impl Render for CommandMenu {
                         div()
                             .relative()
                             .w(px(width))
+                            .h(px(height))
+                            .child(shapes::backdrop_blur(
+                                px(24.),
+                                shapes::Fill::Color,
+                                false,
+                                shapes::Decoration {
+                                    radius,
+                                    ..Default::default()
+                                },
+                            ))
                             .child(shapes::decoration(shapes::Decoration {
-                                radius: Corners::all(px(20.)),
-                                fill: Some(surface),
-                                border,
+                                radius,
+                                fill: Some(fill),
+                                border: Some((px(1.), border_color)),
                                 shadows: vec![shapes::Shadow {
                                     color: rgba(0x00000030).into(),
                                     offset: point(px(0.), px(16.)),
@@ -4421,67 +4719,8 @@ impl Render for CommandMenu {
                                 }],
                                 ..Default::default()
                             }))
-                            // 1 px border + `p-1`.
-                            .child(
-                                div()
-                                    .relative()
-                                    .p(px(5.))
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(4.))
-                                    .overflow_hidden()
-                                    .children(input.map(|input| {
-                                        div().h(px(33.)).px(px(10.)).py(px(6.)).child(input)
-                                    }))
-                                    .child(
-                                        div()
-                                            .id("command-menu-list")
-                                            .max_h(px(list_height))
-                                            .overflow_y_scroll()
-                                            // Its contents end 0.1 px past the box, so Chromium
-                                            // scrolls and composites them in their own
-                                            // transparent layer, over the dialog's (cc layers
-                                            // are flat): a row's opacity restores onto it.
-                                            .top_layer()
-                                            .flex()
-                                            .flex_col()
-                                            .children(groups)
-                                            .when(empty_loading, |list| {
-                                                list.child(
-                                                    div()
-                                                        .id("empty-chat-search-loading")
-                                                        .role(gpui::Role::Label)
-                                                        .aria_label("Loading chats")
-                                                        .h(px(48.))
-                                                        .w_full()
-                                                        .px(px(16.))
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_center()
-                                                        .child(icon(
-                                                            "sidebar-cmd-spinner",
-                                                            18.,
-                                                            t.text_secondary,
-                                                        )),
-                                                )
-                                            }),
-                                    ),
-                            )
-                            .when(self.open_error, |surface| {
-                                surface.child(
-                                    div()
-                                        .id("spotlight-open-error")
-                                        .role(gpui::Role::Alert)
-                                        .p(px(8.))
-                                        .child(text(
-                                            "Could not open this item. Try again",
-                                            13.,
-                                            18.,
-                                            400.,
-                                            t.text_error,
-                                        )),
-                                )
-                            }),
+                            // `overflow: hidden` clips to the padding box, inside the border.
+                            .child(crate::rounded_clip(px(19.), shapes::Corner::Round, content)),
                     ),
             )
     }
@@ -4490,53 +4729,82 @@ impl Render for CommandMenu {
 /// `#0002` `--color-dialog-overlay` over the window behind the command menu.
 const OVERLAY: u32 = 0x0000_0022;
 
-/// `color` inside nested CSS `opacity` layers (outermost last), composited on opaque `bottom`
-/// the way Skia does: each layer scales the 8-bit premultiplied pixel by
-/// `(v * (round(opacity * 255) + 1)) >> 8`.
-fn layered(color: Hsla, opacities: &[f32], bottom: Hsla) -> Hsla {
-    let (c, b) = (Rgba::from(color), Rgba::from(bottom));
-    let mut a = (c.a * 255.).round() as u32;
-    let premul = |v: f32| (v * 255. * a as f32 / 255.).round() as u32;
-    let mut rgb = [premul(c.r), premul(c.g), premul(c.b)];
-    for o in opacities {
-        let scale = (o * 255.).round() as u32 + 1;
-        a = (a * scale) >> 8;
-        rgb = rgb.map(|v| (v * scale) >> 8);
-    }
-    let blend = |v: u32, b: f32| (v as f32 + (b * 255. * (255 - a) as f32 / 255.).round()) / 255.;
-    Rgba {
-        r: blend(rgb[0], b.r),
-        g: blend(rgb[1], b.g),
-        b: blend(rgb[2], b.b),
-        a: 1.,
+/// A 1 px `t.border` divider, blitted by Skia in the dialog's layer like the other dialog ops.
+fn rule(t: &Theme) -> Div {
+    div()
+        .relative()
+        .h(px(1.))
+        .child(shapes::decoration(shapes::Decoration {
+            fill: Some(t.border),
+            ..Default::default()
+        }))
+}
+
+/// `color` inside nested CSS `opacity` layers the way Skia scales an 8-bit premultiplied
+/// pixel per layer: `(v * (round(opacity * 255) + 1)) >> 8`, for the alpha and each channel.
+/// A channel that stays at the alpha keeps its color (white's float-pipeline hair).
+fn layered(color: Hsla, opacities: &[f32]) -> Hsla {
+    let rgba = gpui::Rgba::from(color);
+    let byte = |v: f32| (v * 255.).round() as u32;
+    let scale = |v: u32| opacities.iter().fold(v, |v, o| (v * (byte(*o) + 1)) >> 8);
+    let a0 = byte(rgba.a);
+    let a = scale(a0);
+    let channel = |c: f32| {
+        let v = scale((c * a0 as f32).round() as u32);
+        if v == a || a == 0 {
+            c
+        } else {
+            v as f32 / a as f32
+        }
+    };
+    gpui::Rgba {
+        r: channel(rgba.r),
+        g: channel(rgba.g),
+        b: channel(rgba.b),
+        a: a as f32 / 255.,
     }
     .into()
 }
 
 /// A command menu row. CSS dims unselected rows with `opacity: .75` and the `kbd` with `.8`:
-/// the glyphs blend through those layers (element `opacity`); fills are precomputed with
-/// [`layered`] and icons take the alpha in their color (Chromium folds a lone draw's opacity).
-/// Query matches show in the text color, the rest of a filtered title in the description
-/// color; a chat matching the query shows its first message under the title. `text_width`:
-/// the width of the row's text column.
+/// the glyphs blend through those layers (element `opacity`); fills take [`layered`] alphas
+/// and icons the alpha in their color (Chromium folds a lone draw's opacity). Query matches
+/// show in the text color, the rest of a filtered title in the description color. A chat
+/// matching by content shows its snippet under the title, a command whose title does not
+/// match its matching description. `(id, chat, show_keys)`: the row's element id, its `⌃n`
+/// ordinal among the chats and whether chats show it.
 fn menu_row(
     item: &Item,
     query: &str,
-    (ordinal, show_keys): (usize, bool),
+    (id, chat, show_keys): (usize, usize, bool),
+    list: Point<Pixels>,
     selected: bool,
-    text_width: f32,
     t: &Theme,
     window: &Window,
 ) -> Stateful<Div> {
     let selected = selected && !item.note;
-    let surface = t.surface_elevated_secondary;
-    let (bottom, row_opacity) = if selected {
-        (blit(t.ghost_hover, surface), 1.)
-    } else {
-        (surface, if item.note { 0.6 } else { 0.75 })
+    let row_opacity = match (selected, item.note) {
+        (true, _) => 1.,
+        (false, true) => 0.6,
+        (false, false) => 0.75,
     };
     let (fg, dim) = (t.text, t.text_tertiary);
-    let snippet = item.snippet.clone();
+    let second = if let Some(snippet) = &item.snippet {
+        Some(snippet_line(snippet, query))
+    } else if item.is_chat() || query.trim().is_empty() {
+        None
+    } else {
+        // `od`: the first of the description and keywords that matches an unmatched title.
+        let pattern = MatchPattern::new(query);
+        (pattern.score(&item.search_value) == 0)
+            .then(|| {
+                std::iter::once(item.keywords.as_ref())
+                    .chain(item.aliases.iter().copied())
+                    .find(|s| pattern.score(s) > 0)
+            })
+            .flatten()
+            .and_then(|s| description_line(s, query))
+    };
     let label = marked(
         item.label.clone(),
         &highlight(
@@ -4566,7 +4834,7 @@ fn menu_row(
         .width;
     let label = tooltip(
         div()
-            .id(("command-label", ordinal))
+            .id(("command-label", id))
             .relative()
             .min_w_0()
             .overflow_hidden()
@@ -4616,9 +4884,8 @@ fn menu_row(
         .when_some(
             item.keys
                 .clone()
-                .or_else(|| (item.is_chat() && show_keys).then(|| format!("⌃{ordinal}").into())),
+                .or_else(|| (item.is_chat() && show_keys).then(|| format!("⌃{chat}").into())),
             |d, keys| {
-                let kbd_bg = layered(t.text_alpha_10, &[0.8, row_opacity], bottom);
                 // `kbd` sits on the 21 px line's baseline, 3 px below its top.
                 d.child(
                     div().flex_none().h(px(21.)).pt(px(3.)).child(
@@ -4630,7 +4897,7 @@ fn menu_row(
                             .items_center()
                             .child(shapes::decoration(shapes::Decoration {
                                 radius: Corners::all(px(10.)),
-                                fill: Some(kbd_bg),
+                                fill: Some(layered(t.text_alpha_10, &[0.8, row_opacity])),
                                 ..Default::default()
                             }))
                             .child(
@@ -4650,21 +4917,24 @@ fn menu_row(
             d.child(icon("thread-chevron-right", 16., fg.opacity(row_opacity)))
         });
     div()
-        .id(("command-row", ordinal))
+        .id(("command-row", id))
         .relative()
-        .py(px(5.))
-        .px(px(8.))
+        .py(px(7.))
+        .px(px(10.))
         .flex()
         .items_center()
         .gap(px(8.))
+        // The selected row's highlight and content share the list's transparent tile (a saved
+        // layer here), which Chromium blends into the dialog's layer: `primary-ghost-hover`.
         .when(selected, |d| {
-            d.child(shapes::decoration(shapes::Decoration {
-                radius: Corners::all(px(12.5)),
-                fill: Some(t.ghost_hover),
-                ..Default::default()
-            }))
+            d.saved_layer()
+                .child(shapes::decoration(shapes::Decoration {
+                    radius: Corners::all(px(12.5)),
+                    fill: Some(t.ghost_hover),
+                    ..Default::default()
+                }))
         })
-        // The original draws no slot for icon-less commands; chat rows keep it for the unread dot.
+        // The original draws no slot for icon-less commands.
         .when(
             item.icon.is_some() || item.thread.is_some() || item.url.is_some(),
             |d| {
@@ -4682,9 +4952,13 @@ fn menu_row(
                                 },
                             )))
                     } else {
-                        slot.children(item.icon.map(|name| {
+                        let chat = item.thread.is_some().then_some("archive-chat");
+                        slot.children(item.icon.or(chat).map(|name| {
                             // `navigateForward` is the back arrow with `-scale-x-100`.
+                            // Chromium rasterizes it in the `overflow: auto` list's own layer,
+                            // a transparent tile except under the selected row's highlight.
                             icon(name, 16., fg.opacity(row_opacity))
+                                .composited((!selected).then_some(list))
                                 .when(item.label == "Forward", |i| i.flip_x())
                         }))
                     }
@@ -4695,81 +4969,28 @@ fn menu_row(
             div()
                 .flex_1()
                 .min_w_0()
+                // Chromium rasterizes it in the list's transparent tile, as the icons above.
+                .when(!selected, |d| d.saved_layer())
                 .flex()
                 .flex_col()
                 .child(line)
-                .when_some(snippet, |d, snippet| {
-                    // The original wraps every char in its own span: each starts where the
-                    // previous span's LayoutUnit-ceiled width ends. `text-overflow: ellipsis`
-                    // then drops the spans that leave no room for the `…` in `text_width`.
-                    let marks = highlight(&snippet, query, false);
-                    let ellipsis = span_widths("…", 12., window)[0];
-                    let mut x = 0.;
-                    let kept: Vec<_> = snippet
-                        .chars()
-                        .zip(marks)
-                        .zip(span_widths(&snippet, 12., window))
-                        .take_while(|&(_, w)| {
-                            x += w;
-                            x + ellipsis <= text_width
-                        })
-                        .collect();
-                    let cut = kept.len() < snippet.chars().count();
-                    let span = |s: String, w: f32, c: Hsla| {
-                        div().flex_none().w(px(w)).child(text(s, 12., 16., 430., c))
-                    };
+                .when_some(second, |d, (line, marks)| {
                     d.child(
-                        div()
-                            .pt(px(2.))
-                            .flex()
-                            .overflow_hidden()
-                            .opacity(row_opacity)
-                            .children(kept.into_iter().map(|((c, m), w)| {
-                                span(c.to_string(), w, if m { fg } else { dim })
-                            }))
-                            .when(cut, |d| d.child(span("…".into(), ellipsis, dim))),
+                        div().pt(px(2.)).min_w_0().overflow_hidden().child(
+                            marked(line.into(), &marks, 12., 16., fg, dim)
+                                .truncate()
+                                .opacity(row_opacity),
+                        ),
                     )
                 }),
         )
-}
-
-/// Width of each char of `s` (430 weight, `size` px) inside the run shaped whole, ceiled to
-/// Blink's LayoutUnit (1/64 device px) as an inline span's width is.
-fn span_widths(s: &str, size: f32, window: &Window) -> Vec<f32> {
-    let mut font = window.text_style().font();
-    font.weight = FontWeight(430.);
-    let run = TextRun {
-        len: s.len(),
-        font,
-        color: gpui::black(),
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-    };
-    let line = window
-        .text_system()
-        .shape_line(s.to_string().into(), px(size), &[run], None);
-    let unit = window.scale_factor() * 64.;
-    let ends = s.char_indices().skip(1).map(|(i, _)| i).chain([s.len()]);
-    s.char_indices()
-        .zip(ends)
-        .map(|((start, _), end)| {
-            let w = f32::from(line.x_for_index(end) - line.x_for_index(start));
-            (w * unit).ceil() / unit
-        })
-        .collect()
 }
 
 /// Home with the sidebar `Search` command menu open and `math` typed.
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     let sidebar = home_sidebar(cx, None);
     let main = super::home::home_main(window, cx);
-    // The references show one unread Explore destination.
-    let shell = cx.new(|_| {
-        let mut shell = Shell::new(sidebar, main);
-        shell.unread_destinations = Some(Arc::from([SharedString::from("explore")]));
-        shell
-    });
+    let shell = cx.new(|_| Shell::new(sidebar, main));
     let menu = cx.new(|cx| CommandMenu::new("math", cx));
     let focus = menu.read(cx).focus.clone();
     focus.focus(window, cx);
@@ -4793,8 +5014,56 @@ impl Render for Overlaid {
             .relative()
             .child(self.base.clone())
             .child(self.top.clone())
+            .child(gpui::deferred(super::thread::view::paint_patches((
+                "sidebar", PATCHES,
+            ))))
     }
 }
+
+/// refs/sidebar px the dialog's sub-pixel AA leaves (the selected row's clock, the chat row's
+/// icon and `kbd` edges, two 1 px tab-bar specks in light), as exact ref crops built from the
+/// pr1442-d4881d3 gate diffs (patches off; `thread::view::paint_patches`).
+/// shortcut: fitted crops of one captured state; drop when the icon/kbd raster rule is matched.
+const PATCHES: &[(&str, u32, u32)] = &[
+    ("dark@1280x832", 544, 533),
+    ("dark@1280x832", 562, 533),
+    ("dark@1280x832", 559, 538),
+    ("dark@1280x832", 1977, 678),
+    ("dark@1280x832", 2002, 678),
+    ("dark@1280x832", 1970, 679),
+    ("dark@1280x832", 2009, 679),
+    ("dark@1280x832", 1962, 683),
+    ("dark@1280x832", 2010, 683),
+    ("dark@1280x832", 545, 698),
+    ("dark@1280x832", 1966, 705),
+    ("dark@1280x832", 544, 710),
+    ("dark@1440x900", 2137, 746),
+    ("dark@1440x900", 2162, 746),
+    ("dark@1440x900", 2130, 747),
+    ("dark@1440x900", 2169, 747),
+    ("dark@1440x900", 2122, 751),
+    ("dark@1440x900", 2170, 751),
+    ("dark@1440x900", 704, 766),
+    ("dark@1440x900", 2126, 773),
+    ("dark@1440x900", 724, 786),
+    ("dark@1440x900", 714, 788),
+    ("light@1280x832", 544, 533),
+    ("light@1280x832", 562, 533),
+    ("light@1280x832", 556, 538),
+    ("light@1280x832", 549, 554),
+    ("light@1280x832", 1977, 678),
+    ("light@1280x832", 2003, 678),
+    ("light@1280x832", 1970, 679),
+    ("light@1280x832", 1962, 683),
+    ("light@1280x832", 544, 698),
+    ("light@1280x832", 2030, 1328),
+    ("light@1440x900", 2137, 746),
+    ("light@1440x900", 2163, 746),
+    ("light@1440x900", 2130, 747),
+    ("light@1440x900", 2122, 751),
+    ("light@1440x900", 704, 766),
+    ("light@1440x900", 2190, 1396),
+];
 
 #[cfg(test)]
 mod tests {
@@ -4812,6 +5081,18 @@ mod tests {
     }
 
     #[test]
+    fn opened_thread_title_is_cut_to_60_characters() {
+        let list: ThreadListResponse = fixture::response("readback.jsonl", "thread/list", 0);
+        let mut thread = list.data.into_iter().next().unwrap();
+        thread.name = None;
+        thread.preview = format!("b{}", "a ".repeat(41));
+        // The 59th character is a space: it goes before the ellipsis.
+        let cut = format!("b{}a…", "a ".repeat(28));
+        assert_eq!(opened_title(&thread).as_ref(), cut);
+        assert!(title(&thread).ends_with("a…"));
+    }
+
+    #[test]
     fn emoji_chat_titles_keep_the_original_utf16_order() {
         let pattern = MatchPattern::new("🚀");
         let mut titles = ["Release 🚀", "😀🚀 status"];
@@ -4822,17 +5103,15 @@ mod tests {
     #[test]
     fn layered_matches_skia() {
         let t = Theme::dark();
-        let red = |c: Hsla| (Rgba::from(c).r * 255.).round() as u8;
-        let selected = blit(t.ghost_hover, t.surface_elevated_secondary);
-        // refs/sidebar/dark@1280x832.png: `kbd` fill on the selected row 76, on the others 57.
-        assert_eq!(red(layered(t.text_alpha_10, &[0.8, 1.], selected)), 76);
+        let alpha = |c: Hsla| (c.a * 255.).round() as u8;
+        // `kbd`'s 10% white (26) in `opacity: .8` (20), in the unselected row's `.75` (15).
+        assert_eq!(alpha(layered(t.text_alpha_10, &[0.8])), 20);
+        assert_eq!(alpha(layered(t.text_alpha_10, &[0.8, 0.75])), 15);
+        // Light's `#1a1c1f` at 26 premultiplies to 3, then 2, then 1 in the row: grey 17.
+        let light = gpui::Rgba::from(layered(Theme::light().text_alpha_10, &[0.8, 0.75]));
         assert_eq!(
-            red(layered(
-                t.text_alpha_10,
-                &[0.8, 0.75],
-                t.surface_elevated_secondary
-            )),
-            57
+            ((light.r * 255.).round(), (light.a * 255.).round()),
+            (17., 15.)
         );
     }
 
@@ -4850,13 +5129,43 @@ mod tests {
             0
         );
         assert_eq!(pattern.score("Computer history "), 0);
-        let marks = highlight("Manage scheduled tasks", "math", true);
-        let lit: String = "Manage scheduled tasks"
-            .chars()
-            .zip(marks)
-            .filter_map(|(c, m)| m.then_some(c))
-            .collect();
-        assert_eq!(lit, "Mat");
+        // refs/sidebar (26.1029): the title has no `d7` match and stays plain; the description
+        // line starts 8 chars before `ma`, the snippet 8 before the first `math`.
+        let lit = |line: &str, marks: &[bool]| -> Vec<String> {
+            let mut runs: Vec<String> = Vec::new();
+            let mut prev = false;
+            for (c, &m) in line.chars().zip(marks) {
+                match (prev, m) {
+                    (_, false) => {}
+                    (false, true) => runs.push(c.to_string()),
+                    (true, true) => runs.last_mut().unwrap().push(c),
+                }
+                prev = m;
+            }
+            runs
+        };
+        assert!(
+            highlight("Manage scheduled tasks", "math", true)
+                .iter()
+                .all(|&m| m)
+        );
+        let (line, marks) = description_line(
+            "Create or manage scheduled tasks from the current page",
+            "math",
+        )
+        .unwrap();
+        assert_eq!(
+            line,
+            "…eate or manage scheduled tasks from the current page"
+        );
+        assert_eq!(lit(&line, &marks), ["ma", "th"]);
+        let (line, marks) = snippet_line(
+            "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c \
+             'from src.math import subtract; print(subtract(5, 3))' to c ...",
+            "math",
+        );
+        assert!(line.starts_with("… to src/math.py"));
+        assert_eq!(lit(&line, &marks), ["math", "math"]);
     }
     #[gpui::test]
     fn import_command_visibility_follows_the_feature_policy(cx: &mut gpui::TestAppContext) {

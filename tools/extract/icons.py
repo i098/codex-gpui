@@ -32,7 +32,7 @@ NAMES = {
     "e06d40d7cb": "chevron-down-medium",
     "8c95f6018f": "bell",
     "1e0845ea5b": "search",
-    "ff6e9568f5": "bell-unread",
+    "84d1b67a2a": "bell-unread",  # 26.1029; circle fill var(--accent-icon) set to #2c67c5 by hand
     "ff58624875": "new-chat",
     "fb6a94331e": "arrow-left",  # Back; Forward is the same glyph mirrored (-scale-x-100)
     "d3e3e867e7": "sidebar",
@@ -84,6 +84,9 @@ NAMES = {
     "c9e426407c": "settings-worktrees",
     "76d8980617": "chevron-down",
     "cc1b800935": "pencil",
+    # Mobile setup features (26.1029)
+    "cad0be165a": "mobile-notifications",
+    "7fd15be3f3": "mobile-start",
 }
 
 DROP = re.compile(r'\s(?:class|role|focusable|aria-[\w-]+|data-[\w-]+)="[^"]*"')

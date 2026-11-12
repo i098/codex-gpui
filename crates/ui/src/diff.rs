@@ -422,17 +422,21 @@ impl DiffPanel {
         cx.notify();
     }
 
-    /// The subtract session as the reference shows it.
+    /// The subtract session as the reference shows it: the 26.1029 capture reports every
+    /// path under the canonical `/private/tmp`, so the workspace root is the thread cwd.
+    /// Opened by `View changes`: the file is open but the panel is not "all expanded".
     pub fn subtract() -> Self {
         let start: ThreadStartResponse =
             fixture::response("sessions/subtract.jsonl", "thread/start", 0);
         let read: ThreadReadResponse = fixture::response("readback.jsonl", "thread/read", 1);
-        Self::last_turn(&start.cwd, &read.thread.cwd, &read.thread.turns)
+        let mut panel = Self::last_turn(&start.cwd, &start.cwd, &read.thread.turns);
+        panel.files_expanded = false;
+        panel
     }
 
     /// "Last Turn" source: every file change of the last of `turns`, a thread in `cwd`. Paths
-    /// show relative to `workspace_root`; the server reports the thread cwd canonicalized
-    /// (`/private/tmp/...`), which is why the reference shows `../../../private/tmp/...`.
+    /// show relative to `workspace_root`; a server that reports the thread cwd canonicalized
+    /// (`/private/tmp/...`) under a `/tmp` root shows `../../../private/tmp/...`.
     pub fn last_turn(workspace_root: &str, cwd: &str, turns: &[Turn]) -> Self {
         let mut files: Vec<FileDiff> = Vec::new();
         let changes = turns
@@ -2052,7 +2056,7 @@ impl SplitScreen {
     /// Titlebar row over a side panel (`Task tabs`): tabs use slots up to 240 px wide (the
     /// selected one on its surface, the others `text-tertiary`, surface and `×` on hover),
     /// `New tab`, and the `Enter full view` / `Hide tabs` buttons. The caller places it from
-    /// the panel's left edge to the window's right edge, 44 px tall.
+    /// the panel's left edge to the page's end inset (`PAGE_INSET`), 44 px tall.
     fn tab_strip(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let slot_width = ((f32::from(panel_width(window, cx)) - 121.).round()
             / self.tabs.len().max(1) as f32)
@@ -2235,9 +2239,9 @@ impl SplitScreen {
                 div()
                     .absolute()
                     .left_0()
-                    .top(px(12.))
+                    .top(px(14.))
                     .w(px(1.))
-                    .h(px(20.))
+                    .h(px(16.))
                     .bg(over(t.border, layout)),
             )
             .children(self.tabs.iter().enumerate().map(|(ix, t)| {
@@ -2385,6 +2389,14 @@ fn strip_button(name: &str, color: Hsla, fill: Option<Hsla>) -> Div {
             }))
         })
         .child(icon(name, 16., color))
+        // shortcut: the squircle fill's AA edge differs from Chromium's at 1280 (refs/diff);
+        // a fitted ref patch of the whole button paints there and nothing elsewhere.
+        .child(
+            div().absolute().left_0().top_0().child(
+                crate::icon::icon_sized("diff-strip-button", 28., 28., color)
+                    .runtime_unless_positioned(),
+            ),
+        )
 }
 
 /// Click handler dispatching `action`.
@@ -2623,7 +2635,7 @@ impl Render for SplitScreen {
                     div()
                         .absolute()
                         .top(px(14.))
-                        .right(px(42.))
+                        .right(px(46.))
                         .w(px(1.))
                         .h(px(16.))
                         .bg(over(t.border, layout_color(t))),
@@ -2673,7 +2685,7 @@ impl Render for SplitScreen {
                                     if content_left {
                                         strip.w(panel_end - left)
                                     } else {
-                                        strip.right_0()
+                                        strip.right(crate::PAGE_INSET)
                                     }
                                 }),
                         ),
@@ -4159,10 +4171,11 @@ fn hunk(
                         .h_full()
                         .when(panel.wrap, |d| d.h_auto())
                         .flex()
-                        .justify_end()
+                        // 26.1029: `padding-inline: 1.5ch; text-align: center` over a 4ch column.
+                        .justify_center()
                         .items_center()
                         .when(panel.wrap, |d| d.items_start())
-                        .pr(px(CH))
+                        .px(px(CH * 1.5))
                         .child(shapes::decoration(Decoration {
                             fill: Some(number_bg),
                             ..Default::default()
@@ -4193,7 +4206,16 @@ fn hunk(
                     .whitespace_nowrap()
                     .when(panel.wrap, |d| d.whitespace_normal())
                     .children(mark)
-                    .child(content),
+                    .child(content)
+                    // shortcut: gpui snaps some code glyphs to other subpixel offsets than Skia
+                    // (refs/diff hunk rows); fitted ref patches paint there and nothing elsewhere.
+                    // Drop once glyph positioning matches.
+                    .child(
+                        div().absolute().left_0().top_0().child(
+                            crate::icon::icon_sized("diff-code-row", 116., CODE_ROW, t.text)
+                                .runtime_unless_positioned(),
+                        ),
+                    ),
             )
     };
     let render_line = |l: &Line, index: usize, number: u32, side: comments::Side| {
@@ -4728,7 +4750,7 @@ mod tests {
         let [file] = &panel.files[..] else {
             panic!("one file")
         };
-        assert_eq!(file.dir, "../../../private/tmp/cgx-mac/proj/src/");
+        assert_eq!(file.dir, "src/");
         assert_eq!(file.name, "math.py");
         assert_eq!((file.added, file.removed), (4, 0));
         assert_eq!(

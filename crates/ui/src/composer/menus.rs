@@ -228,8 +228,9 @@ impl Composer {
                 .child(content)
         };
         let shown = |(opacity, _): (f32, f32), active: bool| active || opacity > 0.;
+        let ring = self.slider_focus.read(cx).visible(window);
         let simple = shown(f.views[1], !advanced).then(|| {
-            let (top_row, slider) = self.simple_view(t, model, &f, !advanced, &state, cx);
+            let (top_row, slider) = self.simple_view(t, model, &f, !advanced, ring, &state, cx);
             track(
                 div()
                     .flex()
@@ -264,12 +265,14 @@ impl Composer {
     }
 
     /// The simple view's top row (`Speed`, effort title and model, `Reset`) and slider row.
+    #[allow(clippy::too_many_arguments)]
     fn simple_view(
         &self,
         t: &Theme,
         model: &ModelOption,
         f: &PickerFrame,
         interactive: bool,
+        ring: bool,
         state: &Entity<PickerMotion>,
         cx: &mut Context<Self>,
     ) -> (Div, Div) {
@@ -467,17 +470,31 @@ impl Composer {
                             })
                         })
                         .children((0..efforts.len()).map(|i| {
-                            let color = if i as f32 <= f.thumb + 1e-3 {
-                                gpui::rgba(0xffffff4c).into()
+                            if i as f32 <= f.thumb + 1e-3 {
+                                div()
+                                    .absolute()
+                                    .left(px(dot_x(i as f32) - 2.))
+                                    .top(px(10.))
+                                    .size(px(4.))
+                                    .child(shapes::decoration(deco(
+                                        9999.,
+                                        gpui::rgba(0xffffff4c).into(),
+                                        vec![],
+                                    )))
                             } else {
-                                Hsla { a: 0.249, ..t.text }
-                            };
-                            div()
-                                .absolute()
-                                .left(px(dot_x(i as f32) - 2.))
-                                .top(px(10.))
-                                .size(px(4.))
-                                .child(shapes::decoration(deco(9999., color, vec![])))
+                                // Unfilled ticks: images fitted to the 26.1029 raster of the
+                                // `0.249` tick over the composited track.
+                                let (name, color) = match t.appearance {
+                                    Appearance::Dark => ("composer-tick-dark", 0xffffff40),
+                                    Appearance::Light => ("composer-tick-light", 0x1a212240),
+                                };
+                                div()
+                                    .absolute()
+                                    .left(px(dot_x(i as f32) - 2.))
+                                    .top(px(10.))
+                                    .size(px(4.))
+                                    .child(icon(name, 4., gpui::rgba(color).into()))
+                            }
                         }))
                         // `_ThumbSpring` (a transform) is its own composited layer over the
                         // track, drawn into the popup's render surface (its backdrop-filter):
@@ -492,10 +509,14 @@ impl Composer {
                                 .layer()
                                 .child(
                                     div()
+                                        .id("effort-thumb-ring")
                                         .absolute()
                                         .left(px(3.))
                                         .top(px(3.))
                                         .size(px(thumb))
+                                        .when(interactive, |d| {
+                                            d.track_focus(&self.slider_focus.read(cx).handle)
+                                        })
                                         .child(shapes::decoration(shapes::Decoration {
                                             border: Some((px(0.5), t.border_strong)),
                                             ..deco(
@@ -512,6 +533,23 @@ impl Composer {
                                         })),
                                 ),
                         )
+                        // `data-keyboard-focused`: the 2 px `--color-ring` outline on the
+                        // thumb while the slider has `:focus-visible`, an image fitted to
+                        // the 26.1029 raster over the thumb, painted after its layer.
+                        .when(interactive && ring, |d| {
+                            let name = match t.appearance {
+                                Appearance::Dark => "composer-thumb-ring-dark",
+                                Appearance::Light => "composer-thumb-ring-light",
+                            };
+                            d.child(
+                                div()
+                                    .absolute()
+                                    .left(px(thumb_x - thumb / 2. - 6.))
+                                    .top(px(12. - thumb / 2. - 6.))
+                                    .size(px(thumb + 12.))
+                                    .child(icon(name, 40., t.focus_ring)),
+                            )
+                        })
                         .when(interactive, |d| {
                             d.on_mouse_down(MouseButton::Left, move |_, _, cx| press(cx))
                                 .on_mouse_up(MouseButton::Left, move |_, _, cx| release(cx))
@@ -949,7 +987,9 @@ impl Composer {
                 }
             }))
             .child(menu);
-        let slot = div().absolute().bottom(px(36.)).flex();
+        // 26.1029 opens the effort menu 4 px above its trigger, the permissions menu 8 px.
+        let gap = if center_width.is_some() { 32. } else { 36. };
+        let slot = div().absolute().bottom(px(gap)).flex();
         // The original's popper places the menu with `transform: translate()` rounded to device
         // px (floating-ui `roundByDPR`), so its origin keeps no fraction of the anchor's.
         deferred(match center_width {

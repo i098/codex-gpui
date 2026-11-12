@@ -383,7 +383,7 @@ fn reasoning_submenu_writes_the_picked_effort() -> Result<()> {
     fx.keys("enter")?;
     shot(&mut fx, "reasoning-submenu")?;
     ensure!(
-        rows(&fx)? == ["Light", "Medium", "High", "Extra High", "Ultra"],
+        rows(&fx)? == ["Light", "Medium", "High", "Extra High"],
         "{:?}",
         rows(&fx)?
     );
