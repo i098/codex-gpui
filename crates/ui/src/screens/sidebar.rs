@@ -5070,6 +5070,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn codex_recents_skip_chatgpt_workspace_chats() {
+        let list: ThreadListResponse = fixture::response("readback.jsonl", "thread/list", 0);
+        let mut threads = list.data;
+        threads[0].cwd = "/Users/x/Documents/ChatGPT/Subliminal".into();
+        threads[1].cwd = "/Users/x/Documents/Codex/2026-10-14/chat".into();
+        let mut sidebar = HomeSidebar::new(&threads, None);
+        let shown = |s: &HomeSidebar| s.recents().map(|r| r.0.clone()).collect::<Vec<_>>();
+        assert!(!shown(&sidebar).contains(&threads[0].id));
+        assert!(shown(&sidebar).contains(&threads[1].id));
+        sidebar.mode = 0;
+        assert!(shown(&sidebar).contains(&threads[0].id));
+    }
+
+    #[test]
     fn empty_recent_thread_keeps_a_label_without_changing_its_title() {
         let list: ThreadListResponse = fixture::response("readback.jsonl", "thread/list", 0);
         let mut thread = list.data.into_iter().next().unwrap();
