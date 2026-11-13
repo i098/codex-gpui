@@ -6,6 +6,12 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-13
+
+### Fixed
+- Keep ChatGPT chats out of the sidebar's Codex `Recents` list (#1491).
+- Release workflow: re-run a tag, find the macOS signing identity, and fix the Windows upload shell (#1489).
+
 ## [0.1.3] - 2026-11-12
 
 ### Added
