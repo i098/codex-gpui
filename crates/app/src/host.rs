@@ -2182,6 +2182,14 @@ impl Host for LocalHost {
                     .context("missing environment path")?,
             )?,
             "codex-worktrees" => self.worktrees()?,
+            "thread-worktree-info" => git::thread_worktree_info(&params)?,
+            "move-thread-to-local" | "move-thread-to-worktree" => {
+                let mut params = params.clone();
+                params["toLocal"] = json!(endpoint == "move-thread-to-local");
+                git::move_thread(&params, &self.home.join("worktrees"))?
+            }
+            "rollback-thread-move" => git::rollback_move(&params)?,
+            "restore-worktree" => git::restore_thread_worktree(&params)?,
             "worktree-delete" => {
                 self.delete_worktree(params["worktree"].as_str().context("missing worktree")?)?
             }
