@@ -87,6 +87,10 @@ fn open_files(fx: &mut Fx, names: &[&str]) -> Result<()> {
 
 #[test]
 fn tab_menu_closes_tabs_to_the_right_and_the_others() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        println!("tab_menu: the Metal replay requires macOS");
+        return Ok(());
+    }
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
     fx.click(fx.at("home", "Add a subtract")?)?;
     fx.wait_thread(SUBTRACT)?;
