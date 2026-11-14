@@ -162,8 +162,7 @@ impl Root {
                                     )
                                 })
                                 .await;
-                            view.update(cx, |view, cx| view.set_local_files(accessible, cx))
-                                .ok();
+                            view.update(cx, |view, cx| view.set_local_files(accessible, cx));
                         })
                         .detach();
                     }
