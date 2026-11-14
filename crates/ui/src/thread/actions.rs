@@ -549,6 +549,7 @@ pub(super) fn action_row(
     toggle_menu: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     hover_menu: impl Fn(&bool, &mut Window, &mut App) + 'static,
     hooks: Option<super::HookStats>,
+    completed_goal: Option<&Value>,
     focus: &TurnFocus,
     t: &Theme,
 ) -> Div {
@@ -665,6 +666,26 @@ pub(super) fn action_row(
                 Side::Top,
             )
         }))
+        .children(completed_goal.map(|goal| {
+            let duration =
+                crate::screens::profile::duration(goal["timeUsedSeconds"].as_f64().unwrap_or(0.));
+            div()
+                .id("goal-achieved")
+                .ml(px(6.))
+                .h(px(20.))
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .child(div().h(px(12.)).w(px(1.)).bg(t.border))
+                .child(icon("mention-goal", 16., t.text_tertiary))
+                .child(text(
+                    format!("Goal achieved in {duration}"),
+                    12.,
+                    20.,
+                    430.,
+                    t.text_tertiary,
+                ))
+        }))
         .children(sent_at.map(|time| {
             let mut stamp = div()
                 .ml(px(6.))
@@ -684,6 +705,28 @@ pub(super) fn action_row(
 }
 
 impl ThreadView {
+    /// Keeps the completed goal on its final turn after `thread/goal/cleared`.
+    pub fn record_goal(&mut self, goal: &Value, cx: &mut Context<Self>) -> bool {
+        if goal["status"] != "complete" {
+            self.completed_goal = None;
+            cx.notify();
+            return false;
+        }
+        let Some(turn) = self.turns.last() else {
+            return false;
+        };
+        if self
+            .completed_goal
+            .as_ref()
+            .is_some_and(|(_, old)| old == goal)
+        {
+            return false;
+        }
+        self.completed_goal = Some((turn.id.clone(), goal.clone()));
+        cx.notify();
+        true
+    }
+
     pub(super) fn toggle_turn_menu(
         &mut self,
         turn_id: &str,
