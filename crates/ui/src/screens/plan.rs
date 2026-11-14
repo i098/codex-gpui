@@ -228,7 +228,7 @@ impl Render for PlanView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     fn turns(value: Value) -> Vec<Turn> {
         serde_json::from_value(value).unwrap()
