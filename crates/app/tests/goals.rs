@@ -19,6 +19,7 @@ fn goal_commands_preserve_drafts_and_show_server_state() -> Result<()> {
     })?;
     let goal = json!({"threadId": common::GREETING, "objective": "Ship the native app", "status": "paused"});
     lines.extend(exchange("thread/goal/get", json!({"goal": goal})));
+    lines.extend(exchange("thread/goal/get", json!({"goal": goal})));
     let mut active = goal.clone();
     active["status"] = "active".into();
     lines.extend(exchange("thread/goal/set", json!({"goal": active})));
@@ -98,6 +99,119 @@ fn goal_commands_preserve_drafts_and_show_server_state() -> Result<()> {
                 .any(|title| title.as_ref() == "No goal for this chat")
         })
     })?;
+    Ok(())
+}
+
+#[test]
+fn goal_mode_keeps_a_failed_draft_and_completion_survives_clear() -> Result<()> {
+    let mut lines = script(None, |_| {})?;
+    lines.extend(common::refusal(
+        "thread/goal/set",
+        "Goal service unavailable",
+    ));
+    let goal = json!({
+        "objective": "Ship the native app",
+        "status": "active",
+        "timeUsedSeconds": 65,
+        "updatedAt": 1792083600,
+    });
+    lines.extend(exchange("thread/goal/set", json!({"goal": goal})));
+    lines.extend(exchange("thread/goal/clear", json!({"cleared": true})));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.keys("cmd-1")?;
+    fx.wait_thread(common::GREETING)?;
+    #[cfg(target_os = "macos")]
+    fx.shot()?
+        .save(std::env::temp_dir().join("cgx-goal-before.png"))?;
+    fx.focus_composer()?;
+    fx.type_text("@goal")?;
+    fx.keys("enter")?;
+    ensure!(
+        fx.read(|root, cx| root
+            .composer(cx)
+            .read(cx)
+            .placeholder()
+            .starts_with("Describe your goal")),
+        "Goal mode must use the goal placeholder"
+    );
+    #[cfg(target_os = "macos")]
+    fx.shot()?
+        .save(std::env::temp_dir().join("cgx-goal-mode.png"))?;
+    fx.type_text("Ship the native app")?;
+    fx.keys("enter")?;
+    fx.wait("goal failure", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|text| text.contains("Goal service unavailable"))
+        })
+    })?;
+    ensure!(
+        fx.composer_text()? == "Ship the native app",
+        "A failed goal must retain its draft"
+    );
+    fx.keys("enter")?;
+    fx.wait("goal saved", |fx| {
+        fx.composer_text().is_ok_and(|text| text.is_empty())
+    })?;
+    ensure!(
+        fx.read(|root, cx| root.composer(cx).read(cx).placeholder() == "Work with Codex"),
+        "Saving the goal must restore the normal placeholder"
+    );
+    #[cfg(target_os = "macos")]
+    fx.shot()?
+        .save(std::env::temp_dir().join("cgx-goal-active.png"))?;
+    let mut complete = goal;
+    complete["status"] = "complete".into();
+    for method in [
+        "thread/goal/updated",
+        "thread/goal/cleared",
+        "thread/goal/updated",
+    ] {
+        let params = if method.ends_with("cleared") {
+            json!({"threadId": common::GREETING})
+        } else {
+            json!({"threadId": common::GREETING, "goal": complete})
+        };
+        fx.root.update(&mut fx.cx, |root, cx| {
+            root.on_event(
+                bridge::Event::Notification {
+                    method: method.into(),
+                    params,
+                },
+                cx,
+            )
+        });
+    }
+    fx.wait("automatic goal clear", |fx| {
+        fx.sent().is_ok_and(|requests| {
+            requests
+                .iter()
+                .any(|request| request["method"] == "thread/goal/clear")
+        })
+    })?;
+    let requests = fx.sent()?;
+    ensure!(
+        requests
+            .iter()
+            .filter(|request| request["method"] == "thread/goal/clear")
+            .count()
+            == 1,
+        "A repeated completion after clear must not clear the goal twice"
+    );
+    ensure!(
+        requests
+            .iter()
+            .filter(|request| request["method"] == "thread/goal/set")
+            .all(
+                |request| request["params"]["objective"] == "Ship the native app"
+                    && request["params"]["origin"] == "user"
+            ),
+        "Goal mode must send the draft objective with user origin"
+    );
+    #[cfg(target_os = "macos")]
+    fx.shot()?
+        .save(std::env::temp_dir().join("cgx-goal-achieved.png"))?;
     Ok(())
 }
 

@@ -473,6 +473,43 @@ impl Composer {
                         None,
                         crate::tooltip::Side::Top,
                     ))
+            })
+            .when(self.slash.goal_mode.is_some(), |d| {
+                d.child(div().h(px(16.)).w(px(1.)).bg(t.border.opacity(0.7)))
+                    .child(crate::tooltip::tooltip(
+                        pill("goal-mode", t)
+                            .group("goal-mode")
+                            .role(gpui::Role::Button)
+                            .aria_label("Clear goal")
+                            .tab_index(0)
+                            .focus_visible(crate::focus::trigger_focus)
+                            .px(px(6.))
+                            .gap(px(4.))
+                            .child(
+                                div()
+                                    .group_hover("goal-mode", |s| s.hidden())
+                                    .child(footer_icon("mention-goal", t.text_tertiary)),
+                            )
+                            .child(
+                                div()
+                                    .hidden()
+                                    .group_hover("goal-mode", |s| s.block())
+                                    .child(footer_icon("close", t.text_tertiary)),
+                            )
+                            .when(self.footer_width > SM_WIDTH, |d| {
+                                d.child(text("Goal", 13., 18., 400., t.text_tertiary))
+                            })
+                            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                    this.set_goal_mode(false, cx);
+                                    cx.stop_propagation();
+                                }
+                            }))
+                            .on_click(cx.listener(|this, _, _, cx| this.set_goal_mode(false, cx))),
+                        "Clear goal",
+                        None,
+                        crate::tooltip::Side::Top,
+                    ))
             });
         let send = div()
             .id("send")

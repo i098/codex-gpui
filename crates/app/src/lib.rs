@@ -5297,6 +5297,9 @@ impl Root {
         } else {
             self.navigate(route, window, cx);
         }
+        self.thread_composer
+            .update(cx, |composer, cx| composer.set_goal(None, cx));
+        self.goal_command(&ui::composer::SlashCommand::RefreshGoal, window, cx);
     }
 
     /// A thread composer, the open chat's or a side chat's (`side`): `turn/start` on its
@@ -7966,8 +7969,7 @@ impl Root {
                         .is_some_and(|id| self.state.route == Route::Thread(id.to_owned())) =>
                 {
                     let goal = params.get("goal").filter(|goal| !goal.is_null()).cloned();
-                    self.thread_composer
-                        .update(cx, |composer, cx| composer.set_goal(goal, cx));
+                    self.update_goal(goal, cx);
                 }
                 "account/updated" if self.ready => {
                     self.destination_load = None;

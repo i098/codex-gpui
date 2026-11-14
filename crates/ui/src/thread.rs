@@ -281,6 +281,7 @@ pub struct ThreadView {
     todo_plans: HashMap<String, Vec<(String, String)>>,
     /// Each turn's `hook/started` and `hook/completed` runs.
     hook_runs: HashMap<String, Vec<HookRun>>,
+    completed_goal: Option<(String, Value)>,
     patch_output: HashMap<String, String>,
     /// A turn's `Undo`, `View changes`, copy and fork focus handles. They belong to the view,
     /// not to its place in the element tree: the view moves when a side panel opens, and a
@@ -848,6 +849,7 @@ impl ThreadView {
             manual_compacted: HashSet::new(),
             todo_plans: HashMap::new(),
             hook_runs: HashMap::new(),
+            completed_goal: None,
             patch_output: HashMap::new(),
             turn_focus: RefCell::default(),
             mcp_images: RefCell::default(),
@@ -2598,7 +2600,21 @@ impl ThreadView {
                 .and_then(|runs| HookStats::new(runs));
             return col.when(!self.embedded, |col| {
                 col.child(action_row(
-                    last, &group, answer, sent_at, menu, rate, toggle, hover, hooks, &focus, t,
+                    last,
+                    &group,
+                    answer,
+                    sent_at,
+                    menu,
+                    rate,
+                    toggle,
+                    hover,
+                    hooks,
+                    self.completed_goal
+                        .as_ref()
+                        .filter(|(id, _)| *id == turn.id)
+                        .map(|(_, goal)| goal),
+                    &focus,
+                    t,
                 ))
             });
         }

@@ -6,6 +6,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+### Added
+- Show the thread goal above the composer, set a goal with the Goal mode, and mark the final response when the goal completes (#868).
 ### Fixed
 - Parity gate: the Mac run prints the free space and removes the `/tmp/cgx-parity.*` scratch directories an earlier run left behind, so it no longer fails with `No space left on device`.
 

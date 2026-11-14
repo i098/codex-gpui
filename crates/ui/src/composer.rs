@@ -1723,6 +1723,11 @@ impl Composer {
         if self.thread_id != id {
             self.thread_id = id.to_owned();
             self.reset_apps();
+            self.slash.goal_tick = None;
+            self.slash.goal = None;
+            if let Some(placeholder) = self.slash.goal_mode.take() {
+                self.placeholder = placeholder;
+            }
         }
     }
 
@@ -2426,6 +2431,10 @@ impl Composer {
         }
         if self.slash.open {
             self.activate_slash(window, cx);
+            return;
+        }
+        if self.slash.goal_mode.is_some() {
+            self.send_goal(window, cx);
             return;
         }
         if self.edit_pending || (!self.running && self.current_model().is_none()) {
@@ -3845,7 +3854,8 @@ impl Render for Composer {
         // The queued-follow-up tray (`bg-surface-elevated-secondary`, border-x border-t) sits
         // on the card's top edge, 13 px inside its sides; rows (handle, text, Steer, Delete,
         // `…` actions) have a 32 px height and a 1 px gap.
-        let tray = (!self.queued.is_empty()).then(|| {
+        let goal = self.goal_row(&t, cx);
+        let tray = (goal.is_some() || !self.queued.is_empty()).then(|| {
             div()
                 .mx(px(13.))
                 .border_t_1()
@@ -3856,6 +3866,7 @@ impl Render for Composer {
                 .flex()
                 .flex_col()
                 .gap(px(1.))
+                .children(goal)
                 .when(self.queue_paused(), |d| {
                     d.child(
                         div()
