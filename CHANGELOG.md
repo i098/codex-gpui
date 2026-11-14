@@ -6,6 +6,9 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+### Added
+- Side tab right-click menu: `Close other tabs` and `Close tabs to the right`; closed tabs can be reopened with `⌘⇧T` (#839).
+
 ## [0.1.4] - 2026-11-13
 
 ### Fixed

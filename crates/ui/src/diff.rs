@@ -1960,6 +1960,15 @@ pub struct OpenNewSideTab;
 #[action(namespace = ui, no_json)]
 pub struct MoveSideTabToBottom(pub usize);
 
+/// A tab menu's `Close other tabs` (`right_only` false) and `Close tabs to the right`:
+/// the tab kept is the strip index.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = ui, no_json)]
+pub struct CloseSideTabs {
+    pub keep: usize,
+    pub right_only: bool,
+}
+
 fn side_tab_icon(name: &'static str, index: usize, color: Hsla) -> gpui::AnyElement {
     let icon = icon(name, 16., color);
     if name != "sidebar-cmd-spinner" {
@@ -2016,6 +2025,12 @@ impl SplitScreen {
         let split = self.layout == WorkspaceLayout::Split;
         let left = content_left(cx);
         let mut items = vec![
+            Item::new("close-others", "Close other tabs", self.tabs.len() > 1),
+            Item::new(
+                "close-right",
+                "Close tabs to the right",
+                ix + 1 < self.tabs.len(),
+            ),
             Item::new("move-left", "Move to left pane", split && !left),
             Item::new("move-right", "Move to right pane", split && left),
         ];
@@ -2043,6 +2058,12 @@ impl SplitScreen {
             "move-left" | "move-right" => {
                 cx.set_global(ContentLeft(id == "move-left"));
                 window.refresh();
+            }
+            "close-others" | "close-right" => {
+                if let Ok(keep) = tab.parse() {
+                    let right_only = id == "close-right";
+                    window.dispatch_action(Box::new(CloseSideTabs { keep, right_only }), cx);
+                }
             }
             "move-bottom" => {
                 if let Ok(ix) = tab.parse() {

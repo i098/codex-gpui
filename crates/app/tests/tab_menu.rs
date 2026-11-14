@@ -1,12 +1,14 @@
 //! PANEL-21: `⌘⇧T` reopens the last closed side tab, and a tab's right-click menu moves the
-//! panel to the left pane and back, as the original's `tab-context-menu` does.
+//! panel to the left pane and back, as the original's `tab-context-menu` does. The menu's
+//! `Close other tabs` and `Close tabs to the right` close through `close_side`, so `⌘⇧T`
+//! brings the tabs back.
 mod common;
 
 use anyhow::{Result, ensure};
 use app::SidePanel;
 use common::*;
 use std::path::Path;
-use ui::screens::diff::panel::{CloseSideTab, OpenFile, content_left};
+use ui::screens::diff::panel::{CloseSideTab, CloseSideTabs, OpenFile, content_left};
 
 #[test]
 fn proxy() {
@@ -63,5 +65,68 @@ fn tab_menu_moves_panes_and_reopens_closed_tab() -> Result<()> {
         "panel did not move back"
     );
     println!("tab_menu: shots in {}", proof.display());
+    Ok(())
+}
+
+/// The strip's slots start 8 px into the panel (1280 - 4 - 664 px wide): 620 px, then 860 px
+/// for two 240 px slots.
+const TABS: [&str; 3] = ["math.py", "other.py", "third.py"];
+
+fn open_files(fx: &mut Fx, names: &[&str]) -> Result<()> {
+    let src = Path::new(CWD).join("src");
+    std::fs::create_dir_all(&src)?;
+    for name in names {
+        std::fs::write(src.join(name), "def add(a, b):\n    return a + b\n")?;
+        fx.action(Box::new(OpenFile {
+            path: format!("src/{name}"),
+            line: None,
+        }))?;
+    }
+    fx.wait("file tabs", |fx| fx.read(|r, _| !r.side_tabs().is_empty()))
+}
+
+#[test]
+fn tab_menu_closes_tabs_to_the_right_and_the_others() -> Result<()> {
+    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
+    fx.click(fx.at("home", "Add a subtract")?)?;
+    fx.wait_thread(SUBTRACT)?;
+
+    // Right-click the first tab, then take the menu's first row, `Close other tabs`.
+    open_files(&mut fx, &TABS[..2])?;
+    fx.wait("two file tabs", |fx| {
+        fx.read(|r, _| r.side_tabs().len() == 2)
+    })?;
+    let first = fx.read(|r, _| r.side_tabs()[0]);
+    fx.right_click((650., 22.))?;
+    fx.keys("down")?;
+    fx.keys("enter")?;
+    ensure!(
+        fx.read(|r, _| r.side_tabs() == [first]),
+        "Close other tabs kept the wrong tab: {:?}",
+        fx.read(|r, _| r.side_tabs().to_vec())
+    );
+
+    // `⌘⇧T` gives the closed tab back, as `Reopen closed tab` does.
+    fx.keys("cmd-shift-t")?;
+    ensure!(
+        fx.read(|r, _| r.side_tabs().len() == 2),
+        "cmd-shift-t did not reopen the closed tab"
+    );
+
+    // `Close tabs to the right` of the first of three tabs keeps the ones on its left.
+    open_files(&mut fx, &TABS)?;
+    fx.wait("three file tabs", |fx| {
+        fx.read(|r, _| r.side_tabs().len() == 3)
+    })?;
+    let kept = fx.read(|r, _| r.side_tabs()[0]);
+    fx.action(Box::new(CloseSideTabs {
+        keep: 0,
+        right_only: true,
+    }))?;
+    ensure!(
+        fx.read(|r, _| r.side_tabs() == [kept]),
+        "Close tabs to the right kept the wrong tabs: {:?}",
+        fx.read(|r, _| r.side_tabs().to_vec())
+    );
     Ok(())
 }
