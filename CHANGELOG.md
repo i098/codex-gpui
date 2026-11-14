@@ -6,6 +6,9 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+### Added
+- Open a browser page's `target=_blank` and `window.open` requests in a new browser tab (#831).
+
 ## [0.1.4] - 2026-11-13
 
 ### Fixed

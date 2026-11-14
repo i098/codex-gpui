@@ -173,6 +173,16 @@ impl BrowserTab {
                     }
                     continue;
                 }
+                #[cfg(target_os = "macos")]
+                if let page::PageChange::NewWindow(url) = change {
+                    let opened = tab.update_in(cx, |_, window, cx| {
+                        window.dispatch_action(Box::new(OpenBrowserTab(Some(url.into()))), cx)
+                    });
+                    if opened.is_err() {
+                        break;
+                    }
+                    continue;
+                }
                 if tab
                     .update(cx, |tab, cx| tab.page_changed(change, cx))
                     .is_err()
