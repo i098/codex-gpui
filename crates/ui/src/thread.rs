@@ -3570,6 +3570,7 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::FileChange { id, .. }
         | ThreadItem::ImageGeneration { id, .. }
         | ThreadItem::DynamicToolCall { id, .. }
+        | ThreadItem::HookPrompt { id, .. }
         | ThreadItem::ContextCompaction { id }
         | ThreadItem::WebSearch { id, .. }
         | ThreadItem::CollabAgentToolCall { id, .. }
