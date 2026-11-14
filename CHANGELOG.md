@@ -6,6 +6,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+### Added
+- Open a browser page's `target=_blank` and `window.open` requests in a new browser tab (#831).
 ### Fixed
 - Parity gate: the Mac run prints the free space and removes the `/tmp/cgx-parity.*` scratch directories an earlier run left behind, so it no longer fails with `No space left on device`.
 

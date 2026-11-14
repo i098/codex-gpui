@@ -19,6 +19,10 @@ pub(super) enum PageChange {
     Finished,
     /// The main-frame load failed.
     Failed(LoadError),
+    /// The page asked for a new window (`target=_blank`, `window.open`); the owner opens
+    /// the address in a new browser tab.
+    #[cfg(target_os = "macos")]
+    NewWindow(Url),
     /// A right-click outside editable text and selections, in page (viewport) pixels; the
     /// owner shows the page context menu there.
     #[cfg(target_os = "macos")]
