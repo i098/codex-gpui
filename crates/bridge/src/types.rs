@@ -191,6 +191,12 @@ pub enum ThreadItem {
         /// `inProgress` | `completed` | `failed`
         status: String,
     },
+    /// A prompt a hook injected into the turn.
+    HookPrompt {
+        id: String,
+        #[serde(default)]
+        fragments: Vec<HookPromptFragment>,
+    },
     ContextCompaction {
         id: String,
     },
@@ -234,6 +240,12 @@ pub enum ThreadItem {
     },
     #[serde(other)]
     Other,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookPromptFragment {
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
