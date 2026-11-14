@@ -106,7 +106,7 @@ impl ui::screens::settings::storage::StoragePort for ServerStorage {
         cx: &gpui::App,
     ) -> ui::screens::settings::storage::Reply<anyhow::Result<Vec<bridge::storage::Entry>>> {
         let bridge = bridge(cx);
-        Box::pin(async move { bridge::storage::inventory(&bridge?).await })
+        Box::pin(async move { bridge::storage::inventory(&*bridge?).await })
     }
 
     fn delete_selected(
@@ -121,7 +121,7 @@ impl ui::screens::settings::storage::StoragePort for ServerStorage {
         let bridge = bridge(cx);
         Box::pin(async move {
             bridge::storage::delete_selected(
-                &bridge?,
+                &*bridge?,
                 &reviewed,
                 &selected,
                 &usage,
