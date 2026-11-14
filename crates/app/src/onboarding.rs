@@ -150,6 +150,22 @@ impl Root {
                             }),
                         }
                     }
+                    OnboardingEvent::RequestLocalFiles(folders) => {
+                        let (view, folders) = (view.clone(), folders.clone());
+                        let home = crate::env::home();
+                        cx.spawn_in(window, async move |_, cx| {
+                            let accessible = cx
+                                .background_spawn(async move {
+                                    home.map_or_else(
+                                        || vec![false],
+                                        |home| folder_access(&home, &folders),
+                                    )
+                                })
+                                .await;
+                            view.update(cx, |view, cx| view.set_local_files(accessible, cx));
+                        })
+                        .detach();
+                    }
                 }
             },
         )
@@ -404,6 +420,20 @@ fn create_project(documents: &Path) -> Result<PathBuf> {
     unreachable!()
 }
 
+/// Opens each folder in order; on macOS the first read raises the system's folder-access prompt.
+/// Stops at the first folder it cannot open, as the original's `requestLocalFilesAccess` loop does.
+fn folder_access(home: &Path, folders: &[&str]) -> Vec<bool> {
+    let mut accessible = Vec::new();
+    for folder in folders {
+        let open = std::fs::read_dir(home.join(folder)).is_ok();
+        accessible.push(open);
+        if !open {
+            break;
+        }
+    }
+    accessible
+}
+
 fn successful_response(response: &Value) -> Result<()> {
     let response = response.get("value").unwrap_or(response);
     ensure!(
@@ -434,6 +464,18 @@ mod tests {
         assert_eq!(first.file_name().unwrap(), "New project");
         assert_eq!(second.file_name().unwrap(), "New project 2");
         assert_eq!(std::fs::read_to_string(first.join("keep"))?, "existing");
+        Ok(())
+    }
+
+    #[test]
+    fn folder_access_stops_at_the_first_folder_it_cannot_open() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        std::fs::create_dir(home.path().join("Desktop"))?;
+        std::fs::create_dir(home.path().join("Downloads"))?;
+        let folders = ui::screens::onboarding::FOLDERS;
+        assert_eq!(folder_access(home.path(), &folders), [true, false]);
+        std::fs::create_dir(home.path().join("Documents"))?;
+        assert_eq!(folder_access(home.path(), &folders), [true, true, true]);
         Ok(())
     }
 }
