@@ -322,7 +322,6 @@ for line in sys.stdin:
         );
         Ok(())
     }
-
     #[test]
     fn existing_pull_request_pushes_changes_with_consent() -> Result<()> {
         let (temp, host) = pr_fixture(r#"[{"url":"https://github.com/example/project/pull/1"}]"#)?;
@@ -367,7 +366,6 @@ for line in sys.stdin:
         assert_eq!(status["all"]["files"], 0);
         Ok(())
     }
-
     #[test]
     fn compare_encodes_branch_names_as_one_path_segment() -> Result<()> {
         let (temp, host) = pr_fixture(
