@@ -6,6 +6,9 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+### Added
+- Show the thread goal above the composer, set a goal with the Goal mode, and mark the final response when the goal completes (#868).
+
 ## [0.1.4] - 2026-11-13
 
 ### Fixed

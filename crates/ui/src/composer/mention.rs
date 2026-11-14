@@ -335,7 +335,10 @@ impl Composer {
         let docked = self.docked;
         let plan = self.plan_supported();
         let actions = ACTIONS.iter().enumerate().filter(move |(_, a)| {
-            !(a.home_only && docked) && a.id != "appshot" && (plan || a.id != "plan-mode")
+            !(a.home_only && docked)
+                && a.id != "appshot"
+                && (a.id != "goal" || docked)
+                && (plan || a.id != "plan-mode")
         });
         if !self.slash.open || self.slash.search.plugins_token != Some(self.slash.range.start) {
             self.slash.search.plugins_token = Some(self.slash.range.start);
@@ -716,7 +719,7 @@ impl Composer {
 
     /// Enter, Tab or a click on the highlighted row. `Files and folders` opens the picker; a
     /// skill or a file becomes a chip followed by a space, the list closes; `Plan mode` toggles
-    /// plan mode; `Sketch` opens the canvas. ponytail: goal and project belong to their own rows.
+    /// plan mode; `Sketch` opens the canvas; `Goal` makes the next send set the chat's goal.
     pub(super) fn activate_mention(&mut self, index: usize, cx: &mut Context<Self>) {
         let plugins = self.plugins_start();
         let apps = self.apps_start();
@@ -733,7 +736,7 @@ impl Composer {
                 cx.notify();
                 return;
             }
-            Some(action) if action.id == "plan-mode" || action.id == "sketch" => {
+            Some(action) if matches!(action.id, "plan-mode" | "sketch" | "goal") => {
                 self.cancel_dictation(cx);
                 let range = self.splice(self.slash.range.clone(), "");
                 self.selected_range = range.start..range.start;
@@ -742,6 +745,8 @@ impl Composer {
                 self.end_search(cx);
                 if action.id == "sketch" {
                     self.open_sketch(cx);
+                } else if action.id == "goal" {
+                    self.set_goal_mode(true, cx);
                 } else {
                     self.toggle_plan(cx);
                 }
