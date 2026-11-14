@@ -89,9 +89,7 @@ impl PlanView {
         {
             let load = port.load(&thread_id, key, cx);
             cx.spawn(async move |this, cx| {
-                let Ok((path, file)) = load.await else {
-                    return;
-                };
+                let (path, file) = load.await?;
                 this.update(cx, |this, cx| {
                     // A saved edit wins over the item's text, as reopening the original's
                     // `PLAN.md` does.
