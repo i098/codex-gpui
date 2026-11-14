@@ -136,6 +136,8 @@ impl ui::screens::settings::storage::StoragePort for ServerStorage {
 pub(crate) fn install_services(cx: &mut gpui::App) {
     if !cx.has_global::<ui::screens::plan::PlanService>() {
         cx.set_global(ui::screens::plan::PlanService(std::rc::Rc::new(ServerPlan)));
+    }
+    if !cx.has_global::<ui::screens::settings::storage::StorageService>() {
         cx.set_global(ui::screens::settings::storage::StorageService(
             std::rc::Rc::new(ServerStorage),
         ));
