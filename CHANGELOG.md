@@ -9,6 +9,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ### Added
 - Show the thread goal above the composer, set a goal with the Goal mode, and mark the final response when the goal completes (#868).
 ### Fixed
+- Show installed plugin logos in the Customize sidebar, with theme-aware images and app icons when no plugin logo is available (#1505).
 - Parity gate: the Mac run prints the free space and removes the `/tmp/cgx-parity.*` scratch directories an earlier run left behind, so it no longer fails with `No space left on device`.
 
 ## [0.1.4] - 2026-11-13
