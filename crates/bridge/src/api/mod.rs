@@ -3,6 +3,7 @@
 
 mod account;
 mod config;
+mod fs;
 mod notification;
 mod request;
 mod thread;

@@ -1,11 +1,11 @@
-use super::{AppServer, SettingsPage};
+use super::SettingsPage;
 use crate::{
     confirmation::{Confirmation, Outcome},
     icon::icon,
     text,
     toast::{Toast, Toaster},
 };
-use bridge::storage::{self, Candidate, Entry, Usage};
+use bridge::storage::{self, Candidate, CleanupResult, Entry, Usage};
 use gpui::{
     App, AppContext as _, BorrowAppContext as _, Context, Entity, FocusHandle, Global,
     InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render,
@@ -14,7 +14,9 @@ use gpui::{
 };
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
+    future::Future,
+    pin::Pin,
+    rc::Rc,
     sync::{Arc, LazyLock},
 };
 use theme::{ActiveTheme as _, Appearance};
@@ -270,8 +272,38 @@ impl IntoElement for UsageBar {
     }
 }
 
+pub type Reply<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+
+/// What the app provides to the storage page. Implementations resolve the live server
+/// connection when called.
+pub trait StoragePort {
+    fn supports_cleanup(&self, cx: &App) -> Reply<bool>;
+    /// Measures the Codex home, publishing `(usage, completed steps)` as each step ends.
+    fn measure(
+        &self,
+        publish: Box<dyn FnMut(Usage, usize) + Send>,
+        cx: &App,
+    ) -> Reply<anyhow::Result<()>>;
+    fn inventory(&self, cx: &App) -> Reply<anyhow::Result<Vec<Entry>>>;
+    fn delete_selected(
+        &self,
+        reviewed: Vec<Candidate>,
+        selected: HashSet<String>,
+        usage: Usage,
+        cutoff: i64,
+        archived_only: bool,
+        cx: &App,
+    ) -> Reply<anyhow::Result<CleanupResult>>;
+}
+
+/// The app's [`StoragePort`]; without one the page reports the scan as failed.
+#[derive(Clone)]
+pub struct StorageService(pub Rc<dyn StoragePort>);
+
+impl Global for StorageService {}
+
 pub struct StoragePage {
-    bridge: Option<Arc<bridge::Bridge>>,
+    port: Option<Rc<dyn StoragePort>>,
     settings: Entity<SettingsPage>,
     usage: Option<Usage>,
     completed: usize,
@@ -312,7 +344,9 @@ impl StoragePage {
         .detach();
         Self {
             settings,
-            bridge: cx.try_global::<AppServer>().map(|server| server.0.clone()),
+            port: cx
+                .try_global::<StorageService>()
+                .map(|service| service.0.clone()),
             usage: None,
             completed: 0,
             started: false,
@@ -351,31 +385,24 @@ impl StoragePage {
         self.scanning = true;
         self.completed = 0;
         self.error = false;
-        let Some(bridge) = self.bridge.clone() else {
+        let Some(port) = self.port.clone() else {
             self.scanning = false;
             self.error = true;
             return;
         };
         let (sender, receiver) = async_channel::unbounded();
+        let supported = port.supports_cleanup(cx);
+        let publish = {
+            let sender = sender.clone();
+            Box::new(move |usage, completed| {
+                let _ = sender.try_send(Measurement::Progress(usage, completed));
+            })
+        };
+        let measure = port.measure(publish, cx);
         cx.background_spawn(async move {
-            let supported = storage::supports_cleanup(&bridge).await;
+            let supported = supported.await;
             let _ = sender.try_send(Measurement::Supported(supported));
-            let result = async {
-                let info = bridge
-                    .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
-                    .await?;
-                storage::measure(
-                    &bridge,
-                    &PathBuf::from(info.codex_home),
-                    |usage, completed| {
-                        let _ = sender.try_send(Measurement::Progress(usage, completed));
-                    },
-                )
-                .await?;
-                Ok::<_, anyhow::Error>(())
-            }
-            .await
-            .map_err(|error| error.to_string());
+            let result = measure.await.map_err(|error| error.to_string());
             let _ = sender.send(Measurement::Done(result, supported)).await;
         })
         .detach();
@@ -440,14 +467,15 @@ impl StoragePage {
         if cx.global::<CleanupState>().deleting {
             return;
         }
-        let Some(bridge) = self.bridge.clone() else {
+        let Some(port) = self.port.clone() else {
             return;
         };
+        let inventory = port.inventory(cx);
         self.loading_review = true;
         self.review_error = false;
         self.return_focus = window.focused(cx);
         cx.spawn(async move |this, cx| {
-            let result = storage::inventory(&bridge).await;
+            let result = inventory.await;
             let _ = this.update(cx, |this, cx| {
                 this.loading_review = false;
                 match result {
@@ -517,7 +545,7 @@ impl StoragePage {
     }
 
     fn delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(bridge) = self.bridge.clone() else {
+        let Some(port) = self.port.clone() else {
             return;
         };
         let (Some(review), Some(usage)) = (self.review.take(), self.usage.clone()) else {
@@ -532,16 +560,16 @@ impl StoragePage {
         let progress = toaster.update(cx, |toaster, cx| {
             toaster.push_persistent(Toast::info("Deleting chats"), cx)
         });
+        let deletion = port.delete_selected(
+            review.rows,
+            review.selected,
+            usage,
+            review.cutoff,
+            review.archived_only,
+            cx,
+        );
         cx.spawn(async move |_this, cx| {
-            let result = storage::delete_selected(
-                &bridge,
-                &review.rows,
-                &review.selected,
-                &usage,
-                review.cutoff,
-                review.archived_only,
-            )
-            .await;
+            let result = deletion.await;
             let toast = match result {
                 Ok(result) => {
                     let message = format!(
