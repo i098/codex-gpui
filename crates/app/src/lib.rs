@@ -3777,6 +3777,33 @@ impl Root {
         self.sync(window, cx);
     }
 
+    /// `Close other tabs` / `Close tabs to the right` of tab `keep`: each goes through
+    /// `close_side`, so it can be reopened and a dirty file tab saves first.
+    fn close_tabs(
+        &mut self,
+        keep: usize,
+        right_only: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(kept) = self.tabs.get(keep).copied() else {
+            return;
+        };
+        let doomed: Vec<_> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(ix, tab)| **tab != kept && (!right_only || *ix > keep))
+            .map(|(_, tab)| *tab)
+            .collect();
+        for tab in doomed {
+            self.close_side(tab, window, cx);
+        }
+        if self.tabs.contains(&kept) && self.side != Some(kept) {
+            self.set_side(kept, window, cx);
+        }
+    }
+
     /// `Reopen closed tab` (`⌘⇧T`): the last closed tab whose content the thread still has
     /// (a browser tab reloads its address), selected.
     fn reopen_closed_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
