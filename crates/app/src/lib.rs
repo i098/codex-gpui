@@ -2360,10 +2360,13 @@ impl Root {
                 .ok()
                 .filter(|pr| !pr.is_null())
         });
+        let info_cwd = cwd.clone();
         let read = cx.background_spawn(async move {
             let repository = git_call(&*lookup, "git-commit-status", json!({"cwd": cwd}))
                 .and_then(|status| commit_repository(&status, true, String::new()))
                 .map_err(|error| error.to_string());
+            let missing = git_call(&*lookup, "thread-worktree-info", json!({"cwd": info_cwd}))
+                .is_ok_and(|info| info["missing"] == true);
             let projectless = lookup
                 .fetch(&host::Request::post(
                     "get-global-state",
@@ -2375,10 +2378,10 @@ impl Root {
                         .as_array()
                         .is_some_and(|ids| ids.iter().any(|id| id == thread_id.as_str()))
                 });
-            (repository, projectless)
+            (repository, projectless, missing)
         });
         self.git_status_load = Some(cx.spawn(async move |this, cx| {
-            let (repository, projectless) = read.await;
+            let (repository, projectless, missing) = read.await;
             this.update(cx, |this, cx| {
                 if this.thread.as_ref() != Some(&thread) || !Arc::ptr_eq(&host, &this.host) {
                     return;
@@ -2386,6 +2389,7 @@ impl Root {
                 thread.update(cx, |view, cx| {
                     view.set_git_repository(Some(repository), cx);
                     view.set_projectless(projectless, cx);
+                    view.set_worktree_missing(missing, cx);
                 });
                 this.sync_git_availability(cx);
             })
@@ -2400,26 +2404,6 @@ impl Root {
         }));
     }
 
-    fn sync_git_availability(&self, cx: &mut Context<Self>) {
-        if let Some(menu) = &self.command_menu {
-            let available = self.git_busy.is_none()
-                && self
-                    .thread
-                    .as_ref()
-                    .is_some_and(|view| view.read(cx).git_command_available());
-            menu.update(cx, |menu, cx| menu.set_git_available(available, cx));
-        }
-    }
-
-    fn set_git_phase(&mut self, phase: Option<&'static str>, cx: &mut Context<Self>) {
-        self.git_busy = phase;
-        if let Some(thread) = &self.thread {
-            thread.update(cx, |view, cx| view.set_git_phase(phase, cx));
-        }
-        self.sync_git_availability(cx);
-    }
-
-    /// Both original header actions open the form, including a push with no local changes.
     fn pull_request_action(
         &mut self,
         action: GitAction,
@@ -2540,6 +2524,205 @@ impl Root {
         .detach();
     }
 
+    fn open_handoff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.git_busy.is_some() || self.has_dialog() {
+            return;
+        }
+        let Some(thread) = self.thread.clone() else {
+            return;
+        };
+        let cwd = thread.read(cx).cwd().to_owned();
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            let params = json!({"cwd": cwd});
+            let info = git_call(&*host, "thread-worktree-info", params.clone())?;
+            anyhow::ensure!(info["worktree"] == true, "This thread is already local");
+            let status = git_call(&*host, "git-commit-status", params)?;
+            Ok::<_, anyhow::Error>((
+                info["localRoot"].as_str().unwrap_or_default().to_owned(),
+                status["branch"].as_str().unwrap_or_default().to_owned(),
+                host.projects()?
+                    .into_iter()
+                    .filter_map(|project| project.root.map(|root| root.to_string()))
+                    .collect(),
+            ))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = read.await;
+            this.update_in(cx, |this, window, cx| {
+                if this.thread.as_ref() != Some(&thread) {
+                    return;
+                }
+                match result {
+                    Ok((workspace, branch, workspaces)) => {
+                        let dialog =
+                            cx.new(|cx| Dialog::handoff(workspace, branch, workspaces, cx));
+                        this.show_dialog(dialog, window, cx);
+                    }
+                    Err(error) => this.toast(Toast::danger(error.to_string()), cx),
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn move_thread_checkout(
+        &mut self,
+        destination: Option<(String, String, bool)>,
+        restore: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.git_busy.is_some() {
+            return;
+        }
+        let Some(thread) = self.thread.clone() else {
+            return;
+        };
+        let view = thread.read(cx);
+        if view
+            .turns()
+            .iter()
+            .any(|turn| turn.status == TurnStatus::InProgress)
+        {
+            self.toast(
+                Toast::danger("Stop the running turn before moving this thread"),
+                cx,
+            );
+            return;
+        }
+        let id = view.id().to_owned();
+        let cwd = view.cwd().to_owned();
+        thread.update(cx, |view, cx| view.set_worktree_status(None, cx));
+        let host = self.host.clone();
+        let bridge = self.bridge.clone();
+        let to_local = destination.is_some();
+        self.set_git_phase(
+            Some(if restore {
+                "Restoring worktree…"
+            } else if to_local {
+                "Attaching worktree…"
+            } else {
+                "Creating worktree…"
+            }),
+            cx,
+        );
+        let thread_id = id.clone();
+        let prepare = cx.background_spawn(async move {
+            let mut params = json!({"cwd": cwd, "conversationId": thread_id, "toLocal": to_local});
+            let endpoint = if restore {
+                let roots: Vec<_> = host
+                    .projects()?
+                    .into_iter()
+                    .filter_map(|project| project.root.map(|root| root.to_string()))
+                    .collect();
+                params["candidateRoots"] = json!(roots);
+                "restore-worktree"
+            } else if let Some((workspace, branch, bring)) = destination {
+                params["workspace"] = json!(workspace);
+                params["branch"] = json!(branch);
+                params["bringChanges"] = json!(bring);
+                "move-thread-to-local"
+            } else {
+                "move-thread-to-worktree"
+            };
+            git_call(&*host, endpoint, params)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                let moved = prepare.await?;
+                this.update(cx, |this, cx| {
+                    this.set_git_phase(Some("Attaching worktree…"), cx)
+                })?;
+                let cwd = moved["cwd"]
+                    .as_str()
+                    .context("Move did not return a workspace")?;
+                let resumed: Result<ThreadReadResponse> = bridge
+                    .request("thread/resume", json!({"threadId": id, "cwd": cwd}))
+                    .await;
+                let resumed = resumed.and_then(|resumed| {
+                    anyhow::ensure!(
+                        std::path::Path::new(&resumed.thread.cwd) == std::path::Path::new(cwd),
+                        "The app-server did not move the thread to the requested workspace"
+                    );
+                    Ok(resumed)
+                });
+                match resumed {
+                    Ok(resumed) => Ok(resumed),
+                    Err(error) => {
+                        if !restore {
+                            let host = this.read_with(cx, |this, _| this.host.clone())?;
+                            cx.background_executor()
+                                .spawn(
+                                    async move { git_call(&*host, "rollback-thread-move", moved) },
+                                )
+                                .await
+                                .context("Thread resume and checkout rollback failed")?;
+                        }
+                        Err(error)
+                    }
+                }
+            }
+            .await;
+            this.update_in(cx, |this, window, cx| {
+                this.set_git_phase(None, cx);
+                thread.update(cx, |view, cx| {
+                    view.set_worktree_status(
+                        result
+                            .as_ref()
+                            .err()
+                            .is_some_and(|error| format!("{error:#}").contains("Setup script"))
+                            .then_some("Checkout created; setup failed"),
+                        cx,
+                    )
+                });
+                match result {
+                    Ok(read) => {
+                        this.dialog = None;
+                        this.add_thread(&read.thread, cx);
+                        this.show_thread(read.thread, window, cx);
+                        if !to_local && let Some(thread) = &this.thread {
+                            thread.update(cx, |view, cx| {
+                                view.set_worktree_status(Some("Checkout created"), cx)
+                            });
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(dialog) = &this.dialog {
+                            dialog.update(cx, |dialog, cx| {
+                                dialog.schedule_result(error.to_string(), cx)
+                            });
+                        }
+                        this.toast(Toast::danger(error.to_string()), cx);
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn sync_git_availability(&self, cx: &mut Context<Self>) {
+        if let Some(menu) = &self.command_menu {
+            let available = self.git_busy.is_none()
+                && self
+                    .thread
+                    .as_ref()
+                    .is_some_and(|view| view.read(cx).git_command_available());
+            menu.update(cx, |menu, cx| menu.set_git_available(available, cx));
+        }
+    }
+
+    fn set_git_phase(&mut self, phase: Option<&'static str>, cx: &mut Context<Self>) {
+        self.git_busy = phase;
+        if let Some(thread) = &self.thread {
+            thread.update(cx, |view, cx| view.set_git_phase(phase, cx));
+        }
+        self.sync_git_availability(cx);
+    }
+
+    /// Both original header actions open the form, including a push with no local changes.
     fn open_git_form(&mut self, kind: DialogKind, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.thread.clone() else {
             return;
@@ -4318,6 +4501,7 @@ impl Root {
                 | DialogKind::Branches
                 | DialogKind::CreateBranch
                 | DialogKind::CreatePr
+                | DialogKind::Handoff
         );
         if git_dialog
             && dialog.read(cx).kind() != DialogKind::Branches
@@ -4376,6 +4560,10 @@ impl Root {
             }
             if let DialogOutcome::CreatePr { title, body, base, draft, commit_changes, open_browser } = outcome {
                 this.create_pr(dialog.clone(), json!({"title": title, "body": body, "base": base, "draft": draft, "commitChanges": commit_changes}), *open_browser, window, cx);
+                return;
+            }
+            if let DialogOutcome::Handoff { workspace, branch, bring_changes } = outcome {
+                this.move_thread_checkout(Some((workspace.clone(), branch.clone(), *bring_changes)), false, window, cx);
                 return;
             }
             if let DialogOutcome::CheckoutBranch { name, create } = outcome {
@@ -4531,6 +4719,7 @@ impl Root {
                 | DialogOutcome::CheckoutBranch { .. }
                 | DialogOutcome::CommitBeforeCheckout
                 | DialogOutcome::CreatePr { .. }
+                | DialogOutcome::Handoff { .. }
                 | DialogOutcome::DeleteMemories
                 | DialogOutcome::ChatMemories { .. }
                 | DialogOutcome::TrustHooks(_)
@@ -4799,6 +4988,7 @@ impl Root {
                 "Feedback" => window.dispatch_action(Box::new(OpenFeedback), cx),
                 "Codex Micro setup" => window.dispatch_action(Box::new(OpenMobileSetup), cx),
                 "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
+                "Create PR" => self.open_create_pr(window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 "Log out" => window.dispatch_action(Box::new(LogOut), cx),
                 "Profile" => {
@@ -5282,6 +5472,9 @@ impl Root {
                 | GitAction::AddPrToChat
                 | GitAction::CompareBranch
                 | GitAction::RepairPr => this.pull_request_action(*action, window, cx),
+                GitAction::HandOff => this.open_handoff(window, cx),
+                GitAction::MoveToWorktree => this.move_thread_checkout(None, false, window, cx),
+                GitAction::RestoreWorktree => this.move_thread_checkout(None, true, window, cx),
             },
         )
         .detach();

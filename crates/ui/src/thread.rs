@@ -89,6 +89,9 @@ pub enum GitAction {
     AddPrToChat,
     CompareBranch,
     RepairPr,
+    MoveToWorktree,
+    HandOff,
+    RestoreWorktree,
 }
 
 impl gpui::EventEmitter<GitAction> for ThreadView {}
@@ -233,6 +236,7 @@ pub struct ThreadView {
     git_repository: Option<Result<crate::dialog::CommitRepository, String>>,
     git_phase: Option<&'static str>,
     pull_request: Option<Value>,
+    worktree_missing: bool,
     worktree_status: Option<&'static str>,
     git_actions: Option<(gpui::FocusHandle, Option<usize>)>,
     /// The open More actions menu under a turn: its turn id and focus.
@@ -461,6 +465,11 @@ impl ThreadView {
         cx.notify();
     }
 
+    pub fn set_worktree_missing(&mut self, missing: bool, cx: &mut Context<Self>) {
+        self.worktree_missing = missing;
+        cx.notify();
+    }
+
     pub fn set_worktree_status(&mut self, status: Option<&'static str>, cx: &mut Context<Self>) {
         self.worktree_status = status;
         cx.notify();
@@ -479,7 +488,7 @@ impl ThreadView {
             .as_deref()
     }
 
-    pub fn git_action_rows(&self) -> [(&'static str, Option<&'static str>); 11] {
+    pub fn git_action_rows(&self) -> [(&'static str, Option<&'static str>); 13] {
         let (commit, push) = match &self.git_repository {
             None => (Some("Loading diff…"), Some("Loading push status…")),
             Some(Err(_)) => (
@@ -529,6 +538,8 @@ impl ThreadView {
                 "Repair",
                 self.pull_request.is_none().then_some("No pull request"),
             ),
+            ("Move to worktree", self.git_phase),
+            ("Hand off", self.git_phase),
             (
                 "Open in GitHub",
                 self.pull_request.is_none().then_some("No pull request"),
@@ -595,7 +606,9 @@ impl ThreadView {
             7 => GitAction::AddPrToChat,
             8 => GitAction::CompareBranch,
             9 => GitAction::RepairPr,
-            10 => GitAction::OpenPrInBrowser,
+            10 => GitAction::MoveToWorktree,
+            11 => GitAction::HandOff,
+            12 => GitAction::OpenPrInBrowser,
             _ => GitAction::OpenForm,
         });
     }
@@ -802,6 +815,7 @@ impl ThreadView {
             git_repository: None,
             git_phase: None,
             pull_request: None,
+            worktree_missing: false,
             worktree_status: None,
             git_actions: None,
             turn_menu: None,
@@ -3308,61 +3322,25 @@ impl Render for ThreadView {
                             .flex()
                             .flex_col()
                             .gap(px(12.))
-                            .when_some(self.git_phase, |d, phase| {
-                                d.child(text(phase, 14., 20., 400., t.text_secondary))
+                            .when(self.worktree_missing, |d| {
+                                d.child(div().flex().gap(px(12.)).p(px(12.)).border_1().border_color(t.border)
+                                    .child(text("Worktree cleaned up · Current working directory missing", 14., 20., 400., t.text))
+                                    .child(div().id("restore-worktree").role(gpui::Role::Button).aria_label("Restore worktree").tab_index(0)
+                                        .child(text("Restore worktree", 14., 20., 500., t.text))
+                                        .on_click(cx.listener(|_, _, _, cx| cx.emit(GitAction::RestoreWorktree))))
+                                    .child(div().id("retry-worktree").role(gpui::Role::Button).aria_label("Retry").tab_index(0)
+                                        .child(text("Retry", 14., 20., 500., t.text))
+                                        .on_click(cx.listener(|_, _, _, cx| cx.emit(GitAction::Refresh)))))
                             })
-                            .when_some(self.worktree_status, |d, status| {
-                                d.child(text(status, 14., 20., 400., t.text))
+                            .when_some(self.git_phase, |d, phase| d.child(text(phase, 14., 20., 400., t.text_secondary)))
+                            .when_some(self.worktree_status, |d, status| d.child(text(status, 14., 20., 400., t.text)))
+                            .when_some(self.git_repository.as_ref().and_then(|result| result.as_ref().ok()), |d, repo| {
+                                d.child(div().id("thread-git-summary").role(gpui::Role::Button).aria_label("Branch changes and pull request actions")
+                                    .tab_index(0).flex().gap(px(12.)).p(px(8.)).rounded(px(8.)).border_1().border_color(t.border)
+                                    .child(text(format!("{} · {} files · +{} −{}", repo.branch.as_deref().unwrap_or("Detached HEAD"), repo.all.files, repo.all.additions, repo.all.deletions), 13., 20., 400., t.text_secondary))
+                                    .child(text(if self.pull_request.is_some() { "View PR" } else { "Create pull request" }, 13., 20., 500., t.text))
+                                    .on_click(cx.listener(|view, _, window, cx| view.open_git_actions(false, window, cx))))
                             })
-                            .when_some(
-                                self.git_repository
-                                    .as_ref()
-                                    .and_then(|result| result.as_ref().ok()),
-                                |d, repo| {
-                                    d.child(
-                                        div()
-                                            .id("thread-git-summary")
-                                            .role(gpui::Role::Button)
-                                            .aria_label("Branch changes and pull request actions")
-                                            .tab_index(0)
-                                            .flex()
-                                            .gap(px(12.))
-                                            .p(px(8.))
-                                            .rounded(px(8.))
-                                            .border_1()
-                                            .border_color(t.border)
-                                            .child(text(
-                                                format!(
-                                                    "{} · {} files · +{} −{}",
-                                                    repo.branch
-                                                        .as_deref()
-                                                        .unwrap_or("Detached HEAD"),
-                                                    repo.all.files,
-                                                    repo.all.additions,
-                                                    repo.all.deletions
-                                                ),
-                                                13.,
-                                                20.,
-                                                400.,
-                                                t.text_secondary,
-                                            ))
-                                            .child(text(
-                                                if self.pull_request.is_some() {
-                                                    "View PR"
-                                                } else {
-                                                    "Create pull request"
-                                                },
-                                                13.,
-                                                20.,
-                                                500.,
-                                                t.text,
-                                            ))
-                                            .on_click(cx.listener(|view, _, window, cx| {
-                                                view.open_git_actions(false, window, cx)
-                                            })),
-                                    )
-                                },
-                            )
                             .children(turns)
                             .on_children_prepainted(measure),
                     )
