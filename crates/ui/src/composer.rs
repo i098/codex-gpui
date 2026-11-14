@@ -2997,6 +2997,13 @@ impl Composer {
         SERVICE_TIERS[self.speed]
     }
 
+    /// Picks a speed (an index into [`SPEEDS`]) without opening the menu, as the Home Fast
+    /// mode banner's `Enable now` does after writing `service_tier`.
+    pub fn set_speed(&mut self, speed: usize, cx: &mut Context<Self>) {
+        self.speed = speed;
+        cx.notify();
+    }
+
     /// The server's `collaborationMode/list` answer; its presets drive the turn settings and
     /// the plan-mode entries.
     pub fn set_collaboration_modes(&mut self, response: &Value, cx: &mut Context<Self>) {

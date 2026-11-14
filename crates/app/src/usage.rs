@@ -133,6 +133,7 @@ pub fn on_event(event: &bridge::Event, cx: &mut App) {
 /// Host-settings keys of the original's persisted atoms.
 const RESET_DISMISSALS: &str = "rate-limit-reset-home-announcement-dismissal-by-account-id";
 const SUBAGENTS_SEEN: &str = "has-seen-multi-agent-composer-banner";
+const FAST_MODE_SEEN: &str = "has-seen-fast-mode-home-banner";
 const DAY_MS: i64 = 86_400_000;
 
 fn now_ms() -> i64 {
@@ -146,12 +147,16 @@ fn now_ms() -> i64 {
 ///   reports none below that; the default `remainingThresholdPercent` 20 always holds then),
 ///   and `account` did not dismiss it in the last 24 hours;
 /// - subagents: `experimentalFeature/list` loaded, `multi_agent` is not enabled, and the
-///   banner was never tried or dismissed.
+///   banner was never tried or dismissed;
+/// - fast mode: a ChatGPT account, no `service_tier` picked yet, and the banner was never
+///   enabled or dismissed. The original also waits for its personalized estimate; app-server
+///   has no rollout metrics for one, so the title and `Enable now` alone decide it.
 fn home_banner(
     limits: Option<&Limits>,
     account: Option<&str>,
     settings: &serde_json::Map<String, Value>,
     features: &Value,
+    config: &Value,
     now_ms: i64,
 ) -> Option<ui::screens::home::HomeBanner> {
     let reset = limits.is_some_and(|limits| {
@@ -175,10 +180,15 @@ fn home_banner(
                 .iter()
                 .any(|feature| feature["name"] == "multi_agent" && feature["enabled"] == true)
         });
+    let fast = settings.get(FAST_MODE_SEEN) != Some(&json!(true))
+        && account.is_some()
+        && config["service_tier"].is_null();
     if reset {
         Some(ui::screens::home::HomeBanner::RateLimitReset)
+    } else if subagents {
+        Some(ui::screens::home::HomeBanner::Subagents)
     } else {
-        subagents.then_some(ui::screens::home::HomeBanner::Subagents)
+        fast.then_some(ui::screens::home::HomeBanner::FastMode)
     }
 }
 
@@ -189,6 +199,7 @@ impl Root {
         let (bridge, host) = (self.bridge.clone(), self.host.clone());
         let local = self.host_id == "local";
         let settings = settings_snapshot(cx);
+        let config = self.config.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             let limits = bridge
                 .request::<_, Limits>("account/rateLimits/read", json!({}))
@@ -211,6 +222,7 @@ impl Root {
                 account.as_deref(),
                 &settings,
                 &features,
+                &config,
                 now_ms(),
             );
             this.update(cx, |this, cx| {
@@ -225,7 +237,7 @@ impl Root {
     }
 
     /// A banner's `×`: the reset banner stays hidden 24 hours for this account; the
-    /// subagents banner for good.
+    /// subagents and Fast mode banners for good.
     pub(crate) fn dismiss_home_banner(
         &self,
         banner: ui::screens::home::HomeBanner,
@@ -234,6 +246,9 @@ impl Root {
         match banner {
             ui::screens::home::HomeBanner::Subagents => {
                 save_setting(SUBAGENTS_SEEN, json!(true), cx)
+            }
+            ui::screens::home::HomeBanner::FastMode => {
+                save_setting(FAST_MODE_SEEN, json!(true), cx)
             }
             ui::screens::home::HomeBanner::RateLimitReset => {
                 let host = self.host.clone();
@@ -275,6 +290,27 @@ impl Root {
         composer.update(cx, |composer, cx| {
             composer.set_text("Spawn a subagent to explore this repo.", cx)
         });
+        self.home.update(cx, |home, cx| {
+            home.banner = None;
+            cx.notify();
+        });
+    }
+
+    /// Fast mode banner `Enable now`: pick the Fast (`priority`) service tier as `/fast` does,
+    /// mark the banner seen, and move the Home composer to Fast for the next turn.
+    pub(crate) fn enable_fast_mode(&mut self, cx: &mut Context<Self>) {
+        self.write_config(
+            "config/batchWrite",
+            json!({
+                "edits": [{"keyPath": "service_tier", "value": "priority", "mergeStrategy": "upsert"}],
+                "filePath": null, "expectedVersion": null, "reloadUserConfig": true,
+            }),
+            cx,
+            |config| config["service_tier"] = json!("priority"),
+        );
+        save_setting(FAST_MODE_SEEN, json!(true), cx);
+        let composer = self.home.read(cx).composer.clone();
+        composer.update(cx, |composer, cx| composer.set_speed(1, cx));
         self.home.update(cx, |home, cx| {
             home.banner = None;
             cx.notify();
@@ -1351,23 +1387,31 @@ mod tests {
         let off = json!({"data": [{"name": "multi_agent", "enabled": false}]});
         let on = json!({"data": [{"name": "multi_agent", "enabled": true}]});
         let none = serde_json::Map::new();
+        let unset = json!({});
         let now = 10 * DAY_MS;
         let banner =
             |limits: &Limits, settings: &serde_json::Map<String, Value>, features: &Value| {
-                home_banner(Some(limits), Some("acct"), settings, features, now)
+                home_banner(Some(limits), Some("acct"), settings, features, &unset, now)
             };
         assert_eq!(
             banner(&limits(90., 1), &none, &on),
             Some(HomeBanner::RateLimitReset)
         );
-        // Below 90% used, or no reset left: no reset banner.
-        assert_eq!(banner(&limits(89.9, 1), &none, &on), None);
-        assert_eq!(banner(&limits(99., 0), &none, &on), None);
+        // Below 90% used, or no reset left: no reset banner, so Fast mode takes the slot.
+        assert_eq!(
+            banner(&limits(89.9, 1), &none, &on),
+            Some(HomeBanner::FastMode)
+        );
+        assert_eq!(
+            banner(&limits(99., 0), &none, &on),
+            Some(HomeBanner::FastMode)
+        );
         // The reset banner outranks the subagents banner.
         assert_eq!(
             banner(&limits(95., 1), &none, &off),
             Some(HomeBanner::RateLimitReset)
         );
+        // The subagents banner outranks Fast mode.
         assert_eq!(
             banner(&limits(10., 1), &none, &off),
             Some(HomeBanner::Subagents)
@@ -1383,7 +1427,7 @@ mod tests {
         };
         assert_eq!(
             banner(&limits(95., 1), &dismissed(now - DAY_MS + 1), &on),
-            None
+            Some(HomeBanner::FastMode)
         );
         assert_eq!(
             banner(&limits(95., 1), &dismissed(now - DAY_MS), &on),
@@ -1395,6 +1439,7 @@ mod tests {
                 Some("other"),
                 &dismissed(now),
                 &on,
+                &unset,
                 now
             ),
             Some(HomeBanner::RateLimitReset)
@@ -1402,8 +1447,35 @@ mod tests {
         // Subagents: hidden once seen, and while the feature list did not load.
         let mut seen = serde_json::Map::new();
         seen.insert(SUBAGENTS_SEEN.into(), json!(true));
-        assert_eq!(banner(&limits(10., 1), &seen, &off), None);
-        assert_eq!(banner(&limits(10., 1), &none, &Value::Null), None);
+        assert_eq!(
+            banner(&limits(10., 1), &seen, &off),
+            Some(HomeBanner::FastMode)
+        );
+        assert_eq!(
+            banner(&limits(10., 1), &none, &Value::Null),
+            Some(HomeBanner::FastMode)
+        );
+        // Fast mode: gone once its banner was seen, and once a service tier is picked.
+        let mut fast_seen = serde_json::Map::new();
+        fast_seen.insert(FAST_MODE_SEEN.into(), json!(true));
+        assert_eq!(banner(&limits(10., 1), &fast_seen, &on), None);
+        let picked = json!({"service_tier": "priority"});
+        assert_eq!(
+            home_banner(
+                Some(&limits(10., 1)),
+                Some("acct"),
+                &none,
+                &on,
+                &picked,
+                now
+            ),
+            None
+        );
+        // Fast mode needs a ChatGPT account.
+        assert_eq!(
+            home_banner(Some(&limits(10., 1)), None, &none, &on, &unset, now),
+            None
+        );
     }
 
     #[test]
