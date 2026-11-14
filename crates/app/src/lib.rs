@@ -2360,10 +2360,13 @@ impl Root {
                 .ok()
                 .filter(|pr| !pr.is_null())
         });
+        let info_cwd = cwd.clone();
         let read = cx.background_spawn(async move {
             let repository = git_call(&*lookup, "git-commit-status", json!({"cwd": cwd}))
                 .and_then(|status| commit_repository(&status, true, String::new()))
                 .map_err(|error| error.to_string());
+            let missing = git_call(&*lookup, "thread-worktree-info", json!({"cwd": info_cwd}))
+                .is_ok_and(|info| info["missing"] == true);
             let projectless = lookup
                 .fetch(&host::Request::post(
                     "get-global-state",
@@ -2375,10 +2378,10 @@ impl Root {
                         .as_array()
                         .is_some_and(|ids| ids.iter().any(|id| id == thread_id.as_str()))
                 });
-            (repository, projectless)
+            (repository, projectless, missing)
         });
         self.git_status_load = Some(cx.spawn(async move |this, cx| {
-            let (repository, projectless) = read.await;
+            let (repository, projectless, missing) = read.await;
             this.update(cx, |this, cx| {
                 if this.thread.as_ref() != Some(&thread) || !Arc::ptr_eq(&host, &this.host) {
                     return;
@@ -2386,6 +2389,7 @@ impl Root {
                 thread.update(cx, |view, cx| {
                     view.set_git_repository(Some(repository), cx);
                     view.set_projectless(projectless, cx);
+                    view.set_worktree_missing(missing, cx);
                 });
                 this.sync_git_availability(cx);
             })
