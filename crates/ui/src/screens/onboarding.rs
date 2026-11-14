@@ -36,6 +36,28 @@ impl Page {
     }
 }
 
+/// The home folders the original's Local files capability asks for, in its order.
+pub const FOLDERS: [&str; 3] = ["Desktop", "Documents", "Downloads"];
+
+/// `electron.onboarding.capabilitiesSetup.localFiles.folderDescription` for the folders that
+/// still need access; no folder left names all three, as the original's `other` branch does.
+fn folder_description(missing: &[&str]) -> String {
+    match missing {
+        [one] => format!("Work with files in {one}"),
+        [one, two] => format!("Work with files in {one} and {two}"),
+        _ => "Work with files in Desktop, Documents, and Downloads".into(),
+    }
+}
+
+/// One capability row's status, `Sd` and `sf` in the original.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Status {
+    Available,
+    SettingUp,
+    Enabled,
+    Incomplete,
+}
+
 #[derive(Clone, Debug)]
 pub struct Project {
     pub root: String,
@@ -90,6 +112,8 @@ pub enum OnboardingEvent {
     CreateProject,
     OpenImport(Completion),
     FirstRunComplete,
+    /// Ask the host for access to these `FOLDERS`, in order; answer with `set_local_files`.
+    RequestLocalFiles(Vec<&'static str>),
 }
 impl EventEmitter<OnboardingEvent> for Onboarding {}
 
@@ -108,6 +132,7 @@ enum Action {
     Import,
     NotNow,
     Reload,
+    LocalFiles,
 }
 
 const ROLES: &[(&str, &str)] = &[
@@ -130,6 +155,7 @@ enum State {
     Roles,
     Import,
     Workspace,
+    Capabilities,
     Error,
     FirstRun(usize),
 }
@@ -152,6 +178,10 @@ pub struct Onboarding {
     busy: bool,
     error: Option<String>,
     confirmation: Option<Entity<Confirmation>>,
+    /// Which `FOLDERS` the host reported accessible.
+    folders: [bool; 3],
+    local_files_pending: bool,
+    local_files_failed: bool,
 }
 
 impl Onboarding {
@@ -183,6 +213,9 @@ impl Onboarding {
             busy: false,
             error: None,
             confirmation: None,
+            folders: [false; 3],
+            local_files_pending: false,
+            local_files_failed: false,
         }
     }
     pub fn page(&self) -> Page {
@@ -264,6 +297,38 @@ impl Onboarding {
         self.busy = busy;
         cx.notify();
     }
+    /// The host's answer to `RequestLocalFiles`: one flag per requested folder, stopping at the
+    /// first folder it could not open.
+    pub fn set_local_files(&mut self, accessible: Vec<bool>, cx: &mut Context<Self>) {
+        let missing = self.missing_folders();
+        for (folder, accessible) in missing.iter().zip(&accessible) {
+            if let Some(index) = FOLDERS.iter().position(|value| value == folder) {
+                self.folders[index] = *accessible;
+            }
+        }
+        self.local_files_pending = false;
+        self.local_files_failed = !self.missing_folders().is_empty();
+        cx.notify();
+    }
+    fn missing_folders(&self) -> Vec<&'static str> {
+        FOLDERS
+            .iter()
+            .zip(self.folders)
+            .filter(|(_, accessible)| !accessible)
+            .map(|(folder, _)| *folder)
+            .collect()
+    }
+    fn local_files_status(&self) -> Status {
+        if self.local_files_pending {
+            Status::SettingUp
+        } else if self.folders.iter().all(|accessible| *accessible) {
+            Status::Enabled
+        } else if self.local_files_failed {
+            Status::Incomplete
+        } else {
+            Status::Available
+        }
+    }
     fn completion(&self, skipped: bool) -> Completion {
         Completion {
             roles: if skipped {
@@ -297,13 +362,13 @@ impl Onboarding {
             }
             Action::Continue => match self.state {
                 State::Roles if !self.roles.is_empty() => {
-                    if self.import_available {
-                        self.state = State::Import;
+                    self.state = if self.import_available {
+                        State::Import
                     } else {
-                        self.complete(false, cx);
-                    }
+                        State::Capabilities
+                    };
                 }
-                State::Import => self.complete(false, cx),
+                State::Import | State::Capabilities => self.complete(false, cx),
                 State::Workspace if !self.roots.is_empty() => self.complete(false, cx),
                 State::FirstRun(index) if index < 3 => self.state = State::FirstRun(index + 1),
                 State::FirstRun(_) => {
@@ -327,7 +392,10 @@ impl Onboarding {
             }
             Action::Suggestions => self.suggestions = !self.suggestions,
             Action::Skip => {
-                if self.page == Page::Welcome {
+                // The original skips this step without asking and keeps the chosen roles.
+                if matches!(self.state, State::Capabilities) {
+                    self.complete(false, cx);
+                } else if self.page == Page::Welcome {
                     self.complete(true, cx);
                 } else {
                     let dialog = cx.new(|cx| {
@@ -392,7 +460,16 @@ impl Onboarding {
                 self.error = None;
                 cx.emit(OnboardingEvent::OpenImport(self.completion(false)));
             }
-            Action::NotNow => self.complete(false, cx),
+            Action::NotNow => self.state = State::Capabilities,
+            Action::LocalFiles => {
+                if matches!(
+                    self.local_files_status(),
+                    Status::Available | Status::Incomplete
+                ) {
+                    self.local_files_pending = true;
+                    cx.emit(OnboardingEvent::RequestLocalFiles(self.missing_folders()));
+                }
+            }
         }
         cx.notify();
     }
@@ -422,7 +499,7 @@ impl Onboarding {
                     State::Roles => self.roles.is_empty(),
                     State::Workspace => self.roots.is_empty(),
                     State::Loading | State::Error => true,
-                    State::Import | State::FirstRun(_) => false,
+                    State::Import | State::Capabilities | State::FirstRun(_) => false,
                 });
         let border = t.border;
         let (background, foreground) = if primary {
@@ -644,6 +721,155 @@ impl Onboarding {
             .child(
                 self.button("onboarding-skip", "Skip", Action::Skip, false, window, cx)
                     .mt(px(12.)),
+            )
+    }
+    /// `_d` and `vd` in the original: the introduction, then a card of capability rows.
+    fn capabilities_view(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
+        let status = self.local_files_status();
+        let detail = match status {
+            Status::SettingUp => "Setting up…".into(),
+            _ => folder_description(&self.missing_folders()),
+        };
+        let on = status == Status::Enabled;
+        let disabled = matches!(status, Status::SettingUp | Status::Enabled);
+        let handle = focus::handle("onboarding-local-files", 0, window, cx);
+        let toggle = focus::ring(
+            crate::screens::settings::switch("onboarding-local-files", on, disabled, &t)
+                .relative()
+                .role(gpui::Role::Switch)
+                .aria_label("Local files")
+                .aria_toggled(if on {
+                    gpui::Toggled::True
+                } else {
+                    gpui::Toggled::False
+                })
+                .aria_disabled(disabled)
+                .on_click(
+                    cx.listener(|this, _, window, cx| this.action(Action::LocalFiles, window, cx)),
+                )
+                .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                        this.action(Action::LocalFiles, window, cx);
+                        cx.stop_propagation();
+                    }
+                })),
+            &handle,
+            Theme::RADIUS_FULL,
+            px(2.),
+            cx,
+        );
+        let row =
+            div()
+                .min_w_0()
+                .px(px(16.))
+                .py(px(6.))
+                .flex()
+                .items_center()
+                .gap(px(16.))
+                .child(
+                    div()
+                        .size(px(44.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(icon("folder", 24., t.text)),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .child(text("Local files", 18., 24., 400., t.text))
+                        .child(div().role(gpui::Role::Status).child(
+                            text(detail, 16., 20., 400., t.text_tertiary).whitespace_normal(),
+                        )),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .items_end()
+                        .gap(px(8.))
+                        .child(toggle)
+                        .when(status == Status::Incomplete, |column| {
+                            column.child(
+                                self.button(
+                                    "onboarding-local-files-retry",
+                                    "Retry",
+                                    Action::LocalFiles,
+                                    false,
+                                    window,
+                                    cx,
+                                )
+                                .h(px(28.))
+                                .px(px(10.)),
+                            )
+                        }),
+                );
+        let card = div()
+            .w_full()
+            .overflow_hidden()
+            .rounded(px(24.))
+            .border_1()
+            .border_color(t.border)
+            .bg(t.surface)
+            .child(
+                div()
+                    .px(px(16.))
+                    .py(px(12.))
+                    .border_b_1()
+                    .border_color(t.border)
+                    .child(text(
+                        "Give ChatGPT access to your computer",
+                        16.,
+                        20.,
+                        500.,
+                        t.text,
+                    )),
+            )
+            .child(div().py(px(10.)).flex().flex_col().child(row));
+        div()
+            .w(px(616.))
+            .max_w_full()
+            .p(px(40.))
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .child(
+                text(
+                    "Let ChatGPT use your apps, browser, files, and work history to understand what you’re working on and help you get things done with less explaining",
+                    18.,
+                    28.,
+                    400.,
+                    t.text,
+                )
+                .whitespace_normal(),
+            )
+            .child(card)
+            .child(
+                div()
+                    .mt(px(16.))
+                    .flex()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(self.button(
+                        "onboarding-capabilities-skip",
+                        "Skip",
+                        Action::Skip,
+                        false,
+                        window,
+                        cx,
+                    ))
+                    .child(self.button(
+                        "onboarding-capabilities-continue",
+                        "Continue",
+                        Action::Continue,
+                        true,
+                        window,
+                        cx,
+                    )),
             )
     }
     fn close_project_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -966,6 +1192,7 @@ impl Render for Onboarding {
             State::Roles=>self.role_view(window,cx),
             State::Workspace=>self.workspace_view(window,cx),
             State::FirstRun(index)=>self.first_run_view(index,window,cx),
+            State::Capabilities=>self.capabilities_view(window,cx),
             State::Import=>div().w(px(640.)).max_w_full().p(px(40.)).flex().flex_col().gap(px(24.))
                 .child(text("Import work from other AI apps",28.,34.,400.,t.text))
                 .child(text("Before we get started, would you like to bring over your work from other AI apps? You can review your setup, projects, and chats before importing.",18.,28.,400.,t.text).whitespace_normal())
@@ -1018,6 +1245,29 @@ mod tests {
         assert_eq!(value.representative_role(), None);
         value.roles = vec!["marketing".into()];
         assert_eq!(value.work_mode(), "non_coding");
+    }
+
+    #[test]
+    fn local_files_asks_only_for_folders_still_missing() {
+        assert_eq!(
+            folder_description(&["Desktop", "Downloads"]),
+            "Work with files in Desktop and Downloads"
+        );
+        assert_eq!(
+            folder_description(&[]),
+            "Work with files in Desktop, Documents, and Downloads"
+        );
+        let mut app = gpui::HeadlessAppContext::new(textsys::text_system());
+        let view = app.new(|cx| Onboarding::new(Page::Onboarding, true, None, cx));
+        view.update(&mut app, |view, cx| {
+            assert_eq!(view.local_files_status(), Status::Available);
+            // The host stops at the first folder it cannot open.
+            view.set_local_files(vec![true, false], cx);
+            assert_eq!(view.local_files_status(), Status::Incomplete);
+            assert_eq!(view.missing_folders(), ["Documents", "Downloads"]);
+            view.set_local_files(vec![true, true], cx);
+            assert_eq!(view.local_files_status(), Status::Enabled);
+        });
     }
 
     #[test]

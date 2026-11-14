@@ -6,6 +6,9 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+### Added
+- Add the onboarding capabilities step with its `Local files` row: it asks for access to `Desktop`, `Documents` and `Downloads` in order, shows `Setting up…` while the request runs, `Setup incomplete` with `Retry` when a folder stays closed, and goes on to the app with `Continue` or `Skip`. Before, onboarding went straight from the role step to the app (#994).
+
 ## [0.1.4] - 2026-11-13
 
 ### Fixed
