@@ -3,8 +3,8 @@
 
 use super::*;
 use crate::focus;
-use gpui::{Div, Stateful};
-use theme::Theme;
+use gpui::{AnyElement, Div, Stateful, StyledImage as _};
+use theme::{Appearance, Theme};
 
 pub struct Nav {
     page: Entity<Page>,
@@ -21,7 +21,7 @@ impl Nav {
         &self,
         id: SharedString,
         label: SharedString,
-        glyph: &'static str,
+        leading: AnyElement,
         selected: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -42,11 +42,7 @@ impl Nav {
                 .rounded(Theme::RADIUS_LG)
                 .when(selected, |d| d.bg(t.list_hover))
                 .when(!selected, |d| d.hover(|d| d.bg(t.list_hover)))
-                .child(icon(
-                    glyph,
-                    16.,
-                    if selected { t.icon_primary } else { t.text },
-                ))
+                .child(leading)
                 .child(text(label, 14., 21., 430., t.text).truncate()),
             &handle,
             Theme::RADIUS_LG,
@@ -72,7 +68,16 @@ impl Nav {
         self.row(
             format!("customize-{}", tab.label()).into(),
             tab.label().into(),
-            glyph,
+            icon(
+                glyph,
+                16.,
+                if selected {
+                    cx.theme().icon_primary
+                } else {
+                    cx.theme().text
+                },
+            )
+            .into_any_element(),
             selected,
             window,
             cx,
@@ -109,10 +114,37 @@ impl Nav {
                 let key_page = page.clone();
                 let selected = plugin.clone();
                 let key_selected = plugin.clone();
+                let t = cx.theme();
+                let fallback_color = t.text;
+                let glyph = move || icon("plugins", 16., fallback_color).into_any_element();
+                let leading = logo(
+                    &plugin.summary,
+                    self.page
+                        .read(cx)
+                        .data
+                        .apps
+                        .value()
+                        .map_or(&[], Vec::as_slice),
+                    t.appearance == Appearance::Dark,
+                )
+                .map(|path| {
+                    let source: gpui::ImageSource = if Path::new(path).is_absolute() {
+                        PathBuf::from(path).into()
+                    } else {
+                        path.to_owned().into()
+                    };
+                    gpui::img(source)
+                        .size(px(16.))
+                        .flex_none()
+                        .object_fit(gpui::ObjectFit::Contain)
+                        .with_fallback(glyph)
+                        .into_any_element()
+                })
+                .unwrap_or_else(glyph);
                 self.row(
                     format!("customize-installed-{}", plugin.id()).into(),
                     plugin.title().to_owned().into(),
-                    "plugins",
+                    leading,
                     false,
                     window,
                     cx,
@@ -205,5 +237,99 @@ impl Render for Nav {
                         .children(installed)
                     }),
             )
+    }
+}
+
+fn pick<'a>(v: &'a Value, light: [&str; 2], dark_keys: [&str; 2], dark: bool) -> Option<&'a str> {
+    let first = |keys: [&str; 2]| {
+        keys.into_iter()
+            .find_map(|key| v[key].as_str().filter(|s| !s.is_empty()))
+    };
+    let (light, dark_logo) = (first(light), first(dark_keys));
+    if dark {
+        dark_logo.or(light)
+    } else {
+        light.or(dark_logo)
+    }
+}
+
+fn logo<'a>(plugin: &'a Value, apps: &'a [Value], dark: bool) -> Option<&'a str> {
+    let interface = &plugin["interface"];
+    if let Some(path) = pick(
+        interface,
+        ["logo", "logoUrl"],
+        ["logoDark", "logoUrlDark"],
+        dark,
+    ) {
+        return Some(path);
+    }
+    // shortcut: match unique app names until plugin/list exposes canonical app IDs.
+    let name = interface["displayName"]
+        .as_str()
+        .or_else(|| plugin["name"].as_str())?;
+    let mut matches = apps.iter().filter(|app| {
+        app["name"]
+            .as_str()
+            .is_some_and(|app_name| app_name.eq_ignore_ascii_case(name))
+    });
+    let app = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    pick(
+        app,
+        ["iconUrl", "iconUrl"],
+        ["iconUrlDark", "iconUrlDark"],
+        dark,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn selects_themed_plugin_logos_before_app_icons() {
+        let plugin = json!({"name": "github", "interface": {
+            "displayName": "GitHub", "logo": "/plugins/github/light.png",
+            "logoDark": "/plugins/github/dark.png"
+        }});
+        let apps = [json!({"id": "github-app", "name": "GitHub",
+            "iconUrl": "https://example.com/app.png"})];
+        assert_eq!(
+            logo(&plugin, &apps, false),
+            Some("/plugins/github/light.png")
+        );
+        assert_eq!(logo(&plugin, &apps, true), Some("/plugins/github/dark.png"));
+        let dark_only = json!({"interface": {"logoUrlDark": "https://example.com/dark.png"}});
+        assert_eq!(
+            logo(&dark_only, &[], false),
+            Some("https://example.com/dark.png")
+        );
+    }
+
+    #[test]
+    fn uses_only_a_matching_app_and_rejects_ambiguous_names() {
+        let plugin = json!({"name": "linear", "interface": {"displayName": "Linear", "logo": ""}});
+        let apps = [
+            json!({"id": "other", "name": "Other", "iconUrl": "https://example.com/other.png"}),
+            json!({"id": "linear-app", "name": "Linear", "iconUrl": "https://example.com/light.png",
+                "iconUrlDark": "https://example.com/dark.png"}),
+        ];
+        assert_eq!(
+            logo(&plugin, &apps, true),
+            Some("https://example.com/dark.png")
+        );
+        assert_eq!(
+            logo(&plugin, &apps, false),
+            Some("https://example.com/light.png")
+        );
+        assert_eq!(logo(&plugin, &apps[..1], false), None);
+        assert_eq!(
+            logo(&plugin, &[apps[1].clone(), apps[1].clone()], false),
+            None
+        );
+        assert_eq!(logo(&json!({}), &apps, false), None);
     }
 }
