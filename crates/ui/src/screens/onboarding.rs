@@ -759,55 +759,59 @@ impl Onboarding {
             px(2.),
             cx,
         );
-        let row =
-            div()
-                .min_w_0()
-                .px(px(16.))
-                .py(px(6.))
-                .flex()
-                .items_center()
-                .gap(px(16.))
-                .child(
-                    div()
-                        .size(px(44.))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(icon("folder", 24., t.text)),
-                )
-                .child(
-                    div()
-                        .min_w_0()
-                        .flex_1()
-                        .child(text("Local files", 18., 24., 400., t.text))
-                        .child(div().role(gpui::Role::Status).child(
-                            text(detail, 16., 20., 400., t.text_tertiary).whitespace_normal(),
-                        )),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .flex()
-                        .flex_col()
-                        .items_end()
-                        .gap(px(8.))
-                        .child(toggle)
-                        .when(status == Status::Incomplete, |column| {
-                            column.child(
-                                self.button(
-                                    "onboarding-local-files-retry",
-                                    "Retry",
-                                    Action::LocalFiles,
-                                    false,
-                                    window,
-                                    cx,
-                                )
-                                .h(px(28.))
-                                .px(px(10.)),
+        let row = div()
+            .min_w_0()
+            .px(px(16.))
+            .py(px(6.))
+            .flex()
+            .items_center()
+            .gap(px(16.))
+            .child(
+                div()
+                    .size(px(44.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("folder", 24., t.text)),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .child(text("Local files", 18., 24., 400., t.text))
+                    .child(
+                        div()
+                            .id("onboarding-local-files-status")
+                            .role(gpui::Role::Status)
+                            .child(
+                                text(detail, 16., 20., 400., t.text_tertiary).whitespace_normal(),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .items_end()
+                    .gap(px(8.))
+                    .child(toggle)
+                    .when(status == Status::Incomplete, |column| {
+                        column.child(
+                            self.button(
+                                "onboarding-local-files-retry",
+                                "Retry",
+                                Action::LocalFiles,
+                                false,
+                                window,
+                                cx,
                             )
-                        }),
-                );
+                            .h(px(28.))
+                            .px(px(10.)),
+                        )
+                    }),
+            );
         let card = div()
             .w_full()
             .overflow_hidden()
