@@ -2,19 +2,33 @@
 //! finished plan as an editable document, saved like the original to
 //! `$CODEX_HOME/plans/<thread>/<plan item>/PLAN.md`.
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use bridge::types::{ThreadItem, Turn, TurnStatus};
 use gpui::{
     App, Context, Entity, Focusable as _, IntoElement, ParentElement, Render, SharedString, Styled,
     Window, div, prelude::*, px,
 };
-use serde_json::{Value, json};
+use std::{future::Future, pin::Pin, rc::Rc};
 use theme::{ActiveTheme as _, Theme};
 
 use crate::composer::Composer;
-use crate::screens::settings::AppServer;
 use crate::screens::thread::view::ThreadView;
 use crate::text;
+
+pub type Reply<T> = Pin<Box<dyn Future<Output = anyhow::Result<T>>>>;
+
+/// What the app provides to the plan tab. Implementations resolve the live server
+/// connection when called.
+pub trait PlanPort {
+    /// The plan's `PLAN.md` path and, when one was saved, its text.
+    fn load(&self, thread_id: &str, key: &str, cx: &App) -> Reply<(String, Option<String>)>;
+    fn save(&self, path: &str, content: &str, cx: &App) -> Reply<()>;
+}
+
+/// The app's [`PlanPort`]; without one the tab edits but cannot save.
+#[derive(Clone)]
+pub struct PlanService(pub Rc<dyn PlanPort>);
+
+impl gpui::Global for PlanService {}
 
 /// The newest plan item of a finished turn: `(item id, text)`, as the original's
 /// `latestPlan` skips the running turn.
@@ -69,24 +83,15 @@ impl PlanView {
         cx.observe(&editor, |_, _, cx| cx.notify()).detach();
         window.focus(&editor.focus_handle(cx), cx);
         let thread_id = thread.read(cx).id().to_owned();
-        if let Some(server) = cx.try_global::<AppServer>() {
-            let bridge = server.0.clone();
-            let key = key.to_owned();
+        if let Some(port) = cx
+            .try_global::<PlanService>()
+            .map(|service| service.0.clone())
+        {
+            let load = port.load(&thread_id, key, cx);
             cx.spawn(async move |this, cx| {
-                let home = bridge
-                    .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
-                    .await?
-                    .codex_home;
-                let path = format!(
-                    "{}/plans/{thread_id}/{key}/PLAN.md",
-                    home.trim_end_matches('/')
-                );
-                let file = bridge
-                    .request::<_, Value>("fs/readFile", json!({ "path": path }))
-                    .await
-                    .ok()
-                    .and_then(|file| BASE64.decode(file["dataBase64"].as_str()?).ok())
-                    .and_then(|bytes| String::from_utf8(bytes).ok());
+                let Ok((path, file)) = load.await else {
+                    return;
+                };
                 this.update(cx, |this, cx| {
                     // A saved edit wins over the item's text, as reopening the original's
                     // `PLAN.md` does.
@@ -125,35 +130,23 @@ impl PlanView {
     }
 
     fn save(&mut self, cx: &mut Context<Self>) {
-        let (Some(path), Some(server)) = (self.path.clone(), cx.try_global::<AppServer>()) else {
+        let (Some(path), Some(port)) = (
+            self.path.clone(),
+            cx.try_global::<PlanService>()
+                .map(|service| service.0.clone()),
+        ) else {
             return;
         };
         if self.saving || !self.dirty(cx) {
             return;
         }
-        let bridge = server.0.clone();
         let content = self.editor.read(cx).field_text().to_owned();
+        let write = port.save(&path, &content, cx);
         self.saving = true;
         self.error = None;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let dir = path.trim_end_matches("/PLAN.md");
-            let written = async {
-                bridge
-                    .request::<_, Value>(
-                        "fs/createDirectory",
-                        json!({ "path": dir, "recursive": true }),
-                    )
-                    .await?;
-                let data = BASE64.encode(&content);
-                bridge
-                    .request::<_, Value>(
-                        "fs/writeFile",
-                        json!({ "path": path, "dataBase64": data }),
-                    )
-                    .await
-            }
-            .await;
+            let written = write.await;
             this.update(cx, |this, cx| {
                 this.saving = false;
                 match written {
@@ -237,6 +230,7 @@ impl Render for PlanView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn turns(value: Value) -> Vec<Turn> {
         serde_json::from_value(value).unwrap()
