@@ -1009,6 +1009,17 @@ fn item_row(item: &ThreadItem, live: bool) -> Option<Row> {
                 .extend(revised_prompt.clone().filter(|p| !p.trim().is_empty()));
             r
         }
+        ThreadItem::HookPrompt { id, fragments } => {
+            let mut r = row(id, "settings-hooks", "Hook prompt".to_owned());
+            r.detail.extend(
+                fragments
+                    .iter()
+                    .map(|f| f.text.trim())
+                    .filter(|text| !text.is_empty())
+                    .map(str::to_owned),
+            );
+            r
+        }
         ThreadItem::ImageView { id, path } => {
             // `localConversation.imageView.summary`.
             let mut r = row(id, "diff-file-image", "Viewed an image".to_owned());
@@ -2112,6 +2123,19 @@ mod tests {
             row_label(search(json!({"type": "other"})), false),
             "Searched the web"
         );
+    }
+
+    #[test]
+    fn hook_prompt_shows_its_fragments() {
+        let row = item_row(
+            &serde_json::from_value(json!({"type": "hookPrompt", "id": "h",
+                "fragments": [{"text": "ran the formatter"}, {"text": " "}]}))
+            .unwrap(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(row.label, "Hook prompt");
+        assert_eq!(row.detail, ["ran the formatter"]);
     }
 
     #[test]
