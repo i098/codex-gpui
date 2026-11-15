@@ -161,11 +161,15 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
         cx.listener(|this, _: &CloseWholeWindow, window, cx| this.close_whole_window(window, cx)),
     )
     .on_action(cx.listener(|this, _: &CloseOtherSideTabs, window, cx| {
-        if let Some(side) = this.side {
-            this.tabs.retain(|tab| *tab == side);
-            this.sync(window, cx);
+        if let Some(keep) = this.tabs.iter().position(|t| Some(*t) == this.side) {
+            this.close_tabs(keep, false, window, cx);
         }
     }))
+    .on_action(cx.listener(
+        |this, a: &ui::screens::diff::panel::CloseSideTabs, window, cx| {
+            this.close_tabs(a.keep, a.right_only, window, cx);
+        },
+    ))
     .on_action(
         cx.listener(|this, _: &ReopenClosedTab, window, cx| this.reopen_closed_tab(window, cx)),
     )
