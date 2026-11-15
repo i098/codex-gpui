@@ -36,6 +36,11 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             }),
         )
         .on_action(
+            cx.listener(|this, _: &ui::screens::home::EnableFastMode, _, cx| {
+                this.enable_fast_mode(cx)
+            }),
+        )
+        .on_action(
             cx.listener(|this, a: &ui::screens::home::DismissBanner, _, cx| {
                 this.dismiss_home_banner(a.0, cx)
             }),
