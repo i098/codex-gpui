@@ -46,6 +46,8 @@ actions!(
         SeeResets,
         /// Subagents banner: `Try now` enables `features.multi_agent`.
         TryMultiAgent,
+        /// Fast mode banner: `Enable now` sets the Fast (`priority`) service tier.
+        EnableFastMode,
         ClearProject,
         SetupWindowsSandboxElevated,
         SetupWindowsSandboxUnelevated
@@ -57,6 +59,7 @@ actions!(
 pub enum HomeBanner {
     RateLimitReset,
     Subagents,
+    FastMode,
 }
 
 /// A banner's dismiss `×`: remember it so the banner stays hidden.
@@ -313,6 +316,14 @@ impl HomeMain {
                 "Try now",
                 "Dismiss subagent banner",
             ),
+            // The original's body is a personalized time-saved estimate from the desktop's
+            // rollout metrics, which app-server does not expose; the title and CTA stand alone.
+            Some(HomeBanner::FastMode) => (
+                "Enable Fast mode",
+                "",
+                "Enable now",
+                "Dismiss Fast mode banner",
+            ),
             None => (
                 "Try ChatGPT Voice",
                 "Orchestrate tasks, connect tools, and explore code",
@@ -339,7 +350,9 @@ impl HomeMain {
                     .flex_1()
                     .min_w_0()
                     .child(text(title, 14., 20., 500., t.text))
-                    .child(text(body, 13., 18., 400., t.text_tertiary)),
+                    .when(!body.is_empty(), |copy| {
+                        copy.child(text(body, 13., 18., 400., t.text_tertiary))
+                    }),
             )
             .child(
                 focus::ring(
@@ -364,6 +377,9 @@ impl HomeMain {
                     }
                     Some(HomeBanner::Subagents) => {
                         window.dispatch_action(Box::new(TryMultiAgent), cx)
+                    }
+                    Some(HomeBanner::FastMode) => {
+                        window.dispatch_action(Box::new(EnableFastMode), cx)
                     }
                     None => window.dispatch_action(Box::new(crate::StartVoiceChat), cx),
                 }),
