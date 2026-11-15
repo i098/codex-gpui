@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Side tab right-click menu: `Close other tabs` and `Close tabs to the right`; closed tabs can be reopened with `⌘⇧T` (#839).
+- Add the onboarding capabilities step with its `Local files` row: it asks for access to `Desktop`, `Documents` and `Downloads` in order, shows `Setting up…` while the request runs, `Setup incomplete` with `Retry` when a folder stays closed, and goes on to the app with `Continue` or `Skip`. Before, onboarding went straight from the role step to the app (#994).
 - Show the thread goal above the composer, set a goal with the Goal mode, and mark the final response when the goal completes (#868).
 ### Fixed
 - Show installed plugin logos in the Customize sidebar, with theme-aware images and app icons when no plugin logo is available (#1505).

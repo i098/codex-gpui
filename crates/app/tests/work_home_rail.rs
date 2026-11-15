@@ -96,6 +96,14 @@ fn tap(fx: &mut Fx, id: &str) -> Result<()> {
     fx.click(at)
 }
 
+/// Runs the app until Home's account banner loaded: it shifts the layout, so a menu opened
+/// before it arrives moves under the next click.
+fn banner_loaded(fx: &mut Fx) -> Result<()> {
+    fx.wait("home banner", |fx| {
+        fx.read(|root, cx| root.home().read(cx).banner.is_some())
+    })
+}
+
 /// Draws frames until `id` stops moving: a menu follows its trigger one frame late.
 fn settle(fx: &mut Fx, id: &str) -> Result<()> {
     let mut last = center(fx, id)?;
@@ -150,6 +158,7 @@ fn files_menu_reads_searches_and_attaches_library_files() -> Result<()> {
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
     fx.keys("ctrl-2")?;
+    banner_loaded(&mut fx)?;
 
     // A failed read shows `Couldn't load Library files`; the request is the original's body.
     tap(&mut fx, FILES)?;
@@ -209,6 +218,7 @@ fn browse_all_opens_the_library_dialog_and_adds_picked_files() -> Result<()> {
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
     fx.keys("ctrl-2")?;
+    banner_loaded(&mut fx)?;
     tap(&mut fx, FILES)?;
     fx.wait("recent files", |fx| {
         matches!(files(fx).2, LibraryLoad::Ready(_))
@@ -253,6 +263,7 @@ fn plugins_picker_mentions_connected_plugins() -> Result<()> {
     }
     let mut fx = Fx::scripted(lines)?;
     fx.keys("ctrl-2")?;
+    banner_loaded(&mut fx)?;
     let loaded = |fx: &Fx| {
         fx.read(|root, cx| {
             let plugins = &root.home().read(cx).work.plugins;
