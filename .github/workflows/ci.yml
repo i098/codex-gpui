@@ -29,9 +29,9 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_INCREMENTAL: "0"
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
-      # Local-disk sccache on the runner; no network backend.
+      # The runner containers start empty, so a local-disk sccache never hit; use the GitHub cache.
       RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: /var/cache/sccache-codex-gpui
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       # apt-get update costs 30 s or more; skip it when every package is present.
       - run: |
@@ -42,8 +42,7 @@ jobs:
           dpkg-query -W $pkgs >/dev/null 2>&1 || {
             sudo apt-get update && sudo apt-get install -y --no-install-recommends $pkgs
           }
-      - uses: taiki-e/install-action@sccache
-      - run: sudo mkdir -p "$SCCACHE_DIR" && sudo chown "$(id -u):$(id -g)" "$SCCACHE_DIR"
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -63,9 +62,9 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
       CARGO_INCREMENTAL: "0"
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
-      # Local-disk sccache on the runner; no network backend.
+      # The runner containers start empty, so a local-disk sccache never hit; use the GitHub cache.
       RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: /var/cache/sccache-codex-gpui
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       # apt-get update costs 30 s or more; skip it when every package is present.
       - run: |
@@ -76,8 +75,7 @@ jobs:
           dpkg-query -W $pkgs >/dev/null 2>&1 || {
             sudo apt-get update && sudo apt-get install -y --no-install-recommends $pkgs
           }
-      - uses: taiki-e/install-action@sccache
-      - run: sudo mkdir -p "$SCCACHE_DIR" && sudo chown "$(id -u):$(id -g)" "$SCCACHE_DIR"
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
