@@ -73,10 +73,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-      # main has no Cargo workspace yet; the checks start once Cargo.toml lands.
-      - if: hashFiles('Cargo.toml') != ''
-        run: cargo fmt --check
+          components: clippy
+      # fmt runs in the quick job. main has no Cargo workspace yet; the checks start once Cargo.toml lands.
       - if: hashFiles('Cargo.toml') != ''
         run: cargo clippy --workspace --all-targets -- -D warnings
       - if: hashFiles('Cargo.toml') != ''
