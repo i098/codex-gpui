@@ -9,7 +9,7 @@ publish.workspace = true
 anyhow.workspace = true
 async-channel = "2"
 async-lock = "3"
-base64 = "0.22"
+base64 = "0.23"
 parking_lot = "0.12"
 polling = "3"
 rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }

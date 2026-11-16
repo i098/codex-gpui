@@ -8,7 +8,7 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-channel = "2"
-base64 = "0.22"
+base64 = "0.23"
 bridge = { path = "../bridge" }
 chrono = { version = "0.4", default-features = false, features = ["alloc", "clock"] }
 gpui.workspace = true

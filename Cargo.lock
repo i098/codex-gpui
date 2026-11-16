@@ -197,7 +197,7 @@ version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-channel",
- "base64 0.22.1",
+ "base64 0.23.1",
  "block2 0.6.2",
  "bridge",
  "chrono",
@@ -763,7 +763,7 @@ dependencies = [
  "anyhow",
  "async-channel",
  "async-lock",
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "futures-lite",
  "log",
@@ -6026,7 +6026,7 @@ name = "shapes"
 version = "0.1.4"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64 0.23.1",
  "gpui",
  "gpui_platform",
  "image",
@@ -6983,7 +6983,7 @@ version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-channel",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bridge",
  "chrono",
  "gpui",
