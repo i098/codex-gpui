@@ -36,6 +36,7 @@ mod diff_preview;
 mod diff_repositories;
 mod diff_watch;
 mod env;
+pub mod fd_limit;
 mod features;
 mod goals;
 pub mod host;
@@ -591,6 +592,8 @@ pub struct Root {
     new_chat_memory: Option<features::memories::MemoryPrefs>,
     /// `/memories` switches set on open chats this session.
     thread_memory: HashMap<String, features::memories::MemoryPrefs>,
+    /// The composer folder last listed for `Review hooks`, and its hooks that need approval.
+    hook_review: (String, Vec<Value>),
     /// Signed out: replaces the whole window.
     login: Option<Entity<Login>>,
     logout_pending: bool,
@@ -1146,6 +1149,7 @@ impl Root {
             dialog_to_composer: false,
             new_chat_memory: None,
             thread_memory: HashMap::new(),
+            hook_review: Default::default(),
             login: None,
             logout_pending: false,
             account_email: None,
@@ -1460,7 +1464,7 @@ impl Root {
                     });
                 let models: Vec<Model> =
                     catalog.data.into_iter().map(|entry| entry.model).collect();
-                settings_configuration::sync_enabled_efforts(cx);
+                settings_configuration::sync_enabled_efforts(this.chatgpt_account, cx);
                 let mut composers = this.thread_composers();
                 composers.push(this.home.read(cx).composer.clone());
                 for composer in composers {
@@ -2356,10 +2360,13 @@ impl Root {
                 .ok()
                 .filter(|pr| !pr.is_null())
         });
+        let info_cwd = cwd.clone();
         let read = cx.background_spawn(async move {
             let repository = git_call(&*lookup, "git-commit-status", json!({"cwd": cwd}))
                 .and_then(|status| commit_repository(&status, true, String::new()))
                 .map_err(|error| error.to_string());
+            let missing = git_call(&*lookup, "thread-worktree-info", json!({"cwd": info_cwd}))
+                .is_ok_and(|info| info["missing"] == true);
             let projectless = lookup
                 .fetch(&host::Request::post(
                     "get-global-state",
@@ -2371,10 +2378,10 @@ impl Root {
                         .as_array()
                         .is_some_and(|ids| ids.iter().any(|id| id == thread_id.as_str()))
                 });
-            (repository, projectless)
+            (repository, projectless, missing)
         });
         self.git_status_load = Some(cx.spawn(async move |this, cx| {
-            let (repository, projectless) = read.await;
+            let (repository, projectless, missing) = read.await;
             this.update(cx, |this, cx| {
                 if this.thread.as_ref() != Some(&thread) || !Arc::ptr_eq(&host, &this.host) {
                     return;
@@ -2382,6 +2389,7 @@ impl Root {
                 thread.update(cx, |view, cx| {
                     view.set_git_repository(Some(repository), cx);
                     view.set_projectless(projectless, cx);
+                    view.set_worktree_missing(missing, cx);
                 });
                 this.sync_git_availability(cx);
             })
@@ -2396,26 +2404,6 @@ impl Root {
         }));
     }
 
-    fn sync_git_availability(&self, cx: &mut Context<Self>) {
-        if let Some(menu) = &self.command_menu {
-            let available = self.git_busy.is_none()
-                && self
-                    .thread
-                    .as_ref()
-                    .is_some_and(|view| view.read(cx).git_command_available());
-            menu.update(cx, |menu, cx| menu.set_git_available(available, cx));
-        }
-    }
-
-    fn set_git_phase(&mut self, phase: Option<&'static str>, cx: &mut Context<Self>) {
-        self.git_busy = phase;
-        if let Some(thread) = &self.thread {
-            thread.update(cx, |view, cx| view.set_git_phase(phase, cx));
-        }
-        self.sync_git_availability(cx);
-    }
-
-    /// Both original header actions open the form, including a push with no local changes.
     fn pull_request_action(
         &mut self,
         action: GitAction,
@@ -2536,6 +2524,205 @@ impl Root {
         .detach();
     }
 
+    fn open_handoff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.git_busy.is_some() || self.has_dialog() {
+            return;
+        }
+        let Some(thread) = self.thread.clone() else {
+            return;
+        };
+        let cwd = thread.read(cx).cwd().to_owned();
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            let params = json!({"cwd": cwd});
+            let info = git_call(&*host, "thread-worktree-info", params.clone())?;
+            anyhow::ensure!(info["worktree"] == true, "This thread is already local");
+            let status = git_call(&*host, "git-commit-status", params)?;
+            Ok::<_, anyhow::Error>((
+                info["localRoot"].as_str().unwrap_or_default().to_owned(),
+                status["branch"].as_str().unwrap_or_default().to_owned(),
+                host.projects()?
+                    .into_iter()
+                    .filter_map(|project| project.root.map(|root| root.to_string()))
+                    .collect(),
+            ))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = read.await;
+            this.update_in(cx, |this, window, cx| {
+                if this.thread.as_ref() != Some(&thread) {
+                    return;
+                }
+                match result {
+                    Ok((workspace, branch, workspaces)) => {
+                        let dialog =
+                            cx.new(|cx| Dialog::handoff(workspace, branch, workspaces, cx));
+                        this.show_dialog(dialog, window, cx);
+                    }
+                    Err(error) => this.toast(Toast::danger(error.to_string()), cx),
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn move_thread_checkout(
+        &mut self,
+        destination: Option<(String, String, bool)>,
+        restore: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.git_busy.is_some() {
+            return;
+        }
+        let Some(thread) = self.thread.clone() else {
+            return;
+        };
+        let view = thread.read(cx);
+        if view
+            .turns()
+            .iter()
+            .any(|turn| turn.status == TurnStatus::InProgress)
+        {
+            self.toast(
+                Toast::danger("Stop the running turn before moving this thread"),
+                cx,
+            );
+            return;
+        }
+        let id = view.id().to_owned();
+        let cwd = view.cwd().to_owned();
+        thread.update(cx, |view, cx| view.set_worktree_status(None, cx));
+        let host = self.host.clone();
+        let bridge = self.bridge.clone();
+        let to_local = destination.is_some();
+        self.set_git_phase(
+            Some(if restore {
+                "Restoring worktree…"
+            } else if to_local {
+                "Attaching worktree…"
+            } else {
+                "Creating worktree…"
+            }),
+            cx,
+        );
+        let thread_id = id.clone();
+        let prepare = cx.background_spawn(async move {
+            let mut params = json!({"cwd": cwd, "conversationId": thread_id, "toLocal": to_local});
+            let endpoint = if restore {
+                let roots: Vec<_> = host
+                    .projects()?
+                    .into_iter()
+                    .filter_map(|project| project.root.map(|root| root.to_string()))
+                    .collect();
+                params["candidateRoots"] = json!(roots);
+                "restore-worktree"
+            } else if let Some((workspace, branch, bring)) = destination {
+                params["workspace"] = json!(workspace);
+                params["branch"] = json!(branch);
+                params["bringChanges"] = json!(bring);
+                "move-thread-to-local"
+            } else {
+                "move-thread-to-worktree"
+            };
+            git_call(&*host, endpoint, params)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                let moved = prepare.await?;
+                this.update(cx, |this, cx| {
+                    this.set_git_phase(Some("Attaching worktree…"), cx)
+                })?;
+                let cwd = moved["cwd"]
+                    .as_str()
+                    .context("Move did not return a workspace")?;
+                let resumed: Result<ThreadReadResponse> = bridge
+                    .request("thread/resume", json!({"threadId": id, "cwd": cwd}))
+                    .await;
+                let resumed = resumed.and_then(|resumed| {
+                    anyhow::ensure!(
+                        std::path::Path::new(&resumed.thread.cwd) == std::path::Path::new(cwd),
+                        "The app-server did not move the thread to the requested workspace"
+                    );
+                    Ok(resumed)
+                });
+                match resumed {
+                    Ok(resumed) => Ok(resumed),
+                    Err(error) => {
+                        if !restore {
+                            let host = this.read_with(cx, |this, _| this.host.clone())?;
+                            cx.background_executor()
+                                .spawn(
+                                    async move { git_call(&*host, "rollback-thread-move", moved) },
+                                )
+                                .await
+                                .context("Thread resume and checkout rollback failed")?;
+                        }
+                        Err(error)
+                    }
+                }
+            }
+            .await;
+            this.update_in(cx, |this, window, cx| {
+                this.set_git_phase(None, cx);
+                thread.update(cx, |view, cx| {
+                    view.set_worktree_status(
+                        result
+                            .as_ref()
+                            .err()
+                            .is_some_and(|error| format!("{error:#}").contains("Setup script"))
+                            .then_some("Checkout created; setup failed"),
+                        cx,
+                    )
+                });
+                match result {
+                    Ok(read) => {
+                        this.dialog = None;
+                        this.add_thread(&read.thread, cx);
+                        this.show_thread(read.thread, window, cx);
+                        if !to_local && let Some(thread) = &this.thread {
+                            thread.update(cx, |view, cx| {
+                                view.set_worktree_status(Some("Checkout created"), cx)
+                            });
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(dialog) = &this.dialog {
+                            dialog.update(cx, |dialog, cx| {
+                                dialog.schedule_result(error.to_string(), cx)
+                            });
+                        }
+                        this.toast(Toast::danger(error.to_string()), cx);
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn sync_git_availability(&self, cx: &mut Context<Self>) {
+        if let Some(menu) = &self.command_menu {
+            let available = self.git_busy.is_none()
+                && self
+                    .thread
+                    .as_ref()
+                    .is_some_and(|view| view.read(cx).git_command_available());
+            menu.update(cx, |menu, cx| menu.set_git_available(available, cx));
+        }
+    }
+
+    fn set_git_phase(&mut self, phase: Option<&'static str>, cx: &mut Context<Self>) {
+        self.git_busy = phase;
+        if let Some(thread) = &self.thread {
+            thread.update(cx, |view, cx| view.set_git_phase(phase, cx));
+        }
+        self.sync_git_availability(cx);
+    }
+
+    /// Both original header actions open the form, including a push with no local changes.
     fn open_git_form(&mut self, kind: DialogKind, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.thread.clone() else {
             return;
@@ -3773,6 +3960,33 @@ impl Root {
         self.sync(window, cx);
     }
 
+    /// `Close other tabs` / `Close tabs to the right` of tab `keep`: each goes through
+    /// `close_side`, so it can be reopened and a dirty file tab saves first.
+    fn close_tabs(
+        &mut self,
+        keep: usize,
+        right_only: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(kept) = self.tabs.get(keep).copied() else {
+            return;
+        };
+        let doomed: Vec<_> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(ix, tab)| **tab != kept && (!right_only || *ix > keep))
+            .map(|(_, tab)| *tab)
+            .collect();
+        for tab in doomed {
+            self.close_side(tab, window, cx);
+        }
+        if self.tabs.contains(&kept) && self.side != Some(kept) {
+            self.set_side(kept, window, cx);
+        }
+    }
+
     /// `Reopen closed tab` (`⌘⇧T`): the last closed tab whose content the thread still has
     /// (a browser tab reloads its address), selected.
     fn reopen_closed_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -4314,6 +4528,7 @@ impl Root {
                 | DialogKind::Branches
                 | DialogKind::CreateBranch
                 | DialogKind::CreatePr
+                | DialogKind::Handoff
         );
         if git_dialog
             && dialog.read(cx).kind() != DialogKind::Branches
@@ -4346,6 +4561,10 @@ impl Root {
                 this.delete_task(id.clone(), window, cx);
                 return;
             }
+            if let DialogOutcome::TrustHooks(hooks) = outcome {
+                this.trust_reviewed_hooks(dialog.clone(), hooks.clone(), window, cx);
+                return;
+            }
             if let DialogOutcome::DeleteMemories = outcome {
                 this.delete_memories(dialog.clone(), window, cx);
                 return;
@@ -4368,6 +4587,10 @@ impl Root {
             }
             if let DialogOutcome::CreatePr { title, body, base, draft, commit_changes, open_browser } = outcome {
                 this.create_pr(dialog.clone(), json!({"title": title, "body": body, "base": base, "draft": draft, "commitChanges": commit_changes}), *open_browser, window, cx);
+                return;
+            }
+            if let DialogOutcome::Handoff { workspace, branch, bring_changes } = outcome {
+                this.move_thread_checkout(Some((workspace.clone(), branch.clone(), *bring_changes)), false, window, cx);
                 return;
             }
             if let DialogOutcome::CheckoutBranch { name, create } = outcome {
@@ -4416,6 +4639,7 @@ impl Root {
                 this.focus.clone()
             };
             match outcome {
+                DialogOutcome::HookSettings => this.open_settings_section("Hooks", window, cx),
                 DialogOutcome::Dismiss => {
                     this.pending_settings_leave = None;
                     if dialog.read(cx).writing_authorizations().is_some() {
@@ -4522,8 +4746,10 @@ impl Root {
                 | DialogOutcome::CheckoutBranch { .. }
                 | DialogOutcome::CommitBeforeCheckout
                 | DialogOutcome::CreatePr { .. }
+                | DialogOutcome::Handoff { .. }
                 | DialogOutcome::DeleteMemories
                 | DialogOutcome::ChatMemories { .. }
+                | DialogOutcome::TrustHooks(_)
                 | DialogOutcome::WritingConnect(_)
                 | DialogOutcome::WritingRetry
                 | DialogOutcome::WritingSample => unreachable!(),
@@ -4789,6 +5015,7 @@ impl Root {
                 "Feedback" => window.dispatch_action(Box::new(OpenFeedback), cx),
                 "Codex Micro setup" => window.dispatch_action(Box::new(OpenMobileSetup), cx),
                 "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
+                "Create PR" => self.open_create_pr(window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 "Log out" => window.dispatch_action(Box::new(LogOut), cx),
                 "Profile" => {
@@ -5110,6 +5337,9 @@ impl Root {
             .is_none_or(|view| view.read(cx).id() != thread.id.as_str())
         {
             self.swap_draft(&thread.id, cx);
+            self.thread_composer
+                .update(cx, |c, cx| c.set_hooks_to_review(0, cx));
+            self.refresh_hook_review(thread.cwd.clone(), self.thread_composer.clone(), cx);
             let daybreak = thread.daybreak_enabled.unwrap_or(false);
             self.thread_composer
                 .update(cx, |c, cx| c.set_daybreak(daybreak, cx));
@@ -5269,6 +5499,9 @@ impl Root {
                 | GitAction::AddPrToChat
                 | GitAction::CompareBranch
                 | GitAction::RepairPr => this.pull_request_action(*action, window, cx),
+                GitAction::HandOff => this.open_handoff(window, cx),
+                GitAction::MoveToWorktree => this.move_thread_checkout(None, false, window, cx),
+                GitAction::RestoreWorktree => this.move_thread_checkout(None, true, window, cx),
             },
         )
         .detach();
@@ -5284,6 +5517,9 @@ impl Root {
         } else {
             self.navigate(route, window, cx);
         }
+        self.thread_composer
+            .update(cx, |composer, cx| composer.set_goal(None, cx));
+        self.goal_command(&ui::composer::SlashCommand::RefreshGoal, window, cx);
     }
 
     /// A thread composer, the open chat's or a side chat's (`side`): `turn/start` on its
@@ -5301,6 +5537,15 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         self.qa_work_started = true;
+        // `hooks/list` before `turn/start`, as the original's composer does.
+        if let Some(cwd) = self
+            .conversation(side)
+            .map(|(view, _)| view.read(cx).cwd().to_owned())
+            .or_else(|| self.state.project_root.clone())
+        {
+            let composer = self.composer(cx);
+            self.refresh_hook_review(cwd, composer, cx);
+        }
         if s.shell_command {
             self.send_shell(side, s, window, cx);
             return;
@@ -7944,8 +8189,7 @@ impl Root {
                         .is_some_and(|id| self.state.route == Route::Thread(id.to_owned())) =>
                 {
                     let goal = params.get("goal").filter(|goal| !goal.is_null()).cloned();
-                    self.thread_composer
-                        .update(cx, |composer, cx| composer.set_goal(goal, cx));
+                    self.update_goal(goal, cx);
                 }
                 "account/updated" if self.ready => {
                     self.destination_load = None;
@@ -8236,8 +8480,12 @@ impl Root {
         self.activity_access.account = account.and_then(|account| account.account.clone());
         self.refresh_activity_access(cx);
         self.account_email = account.and_then(chatgpt_email);
-        self.chatgpt_account =
+        let chatgpt =
             account.is_some_and(|account| matches!(account.account, Some(Account::Chatgpt { .. })));
+        if chatgpt != self.chatgpt_account {
+            self.chatgpt_account = chatgpt;
+            settings_configuration::efforts_saved(self, cx);
+        }
         let profile = account.and_then(|account| match &account.account {
             Some(Account::Chatgpt { email, .. }) => Some(ui::ProfileAccount::Chatgpt(
                 email.clone().map(SharedString::from),

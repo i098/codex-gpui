@@ -440,7 +440,7 @@ fn configuration_efforts_and_open_config_follow_the_host() -> Result<()> {
     drain(&mut fx)?;
     if let Some(rows) = reasoning_rows(&mut fx)? {
         ensure!(
-            rows == ["Light", "Medium", "High", "Extra High", "Ultra"],
+            rows == ["Light", "Medium", "High", "Extra High"],
             "{rows:?}"
         );
     }
@@ -485,7 +485,7 @@ fn configuration_efforts_and_open_config_follow_the_host() -> Result<()> {
     fx.wait("saved efforts", |fx| {
         host_value(fx, "enabled-reasoning-efforts") == json!(["max"])
     })?;
-    let published = fx.read(|_, cx| cx.global::<ui::composer::EnabledEfforts>().0.clone());
+    let published = fx.read(|_, cx| cx.global::<ui::composer::EnabledEfforts>().setting.clone());
     ensure!(published == Some(vec!["max".to_owned()]), "{published:?}");
     if let Some(rows) = reasoning_rows(&mut fx)? {
         ensure!(

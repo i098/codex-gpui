@@ -371,6 +371,13 @@ pub(super) fn modifier_accelerator(modifiers: Modifiers) -> String {
     .join("+")
 }
 
+/// The label of the first key bound to the command `id` (`⌘T`), or `None` when unbound.
+pub fn shortcut_label(id: &str, cx: &App) -> Option<String> {
+    let state = cx.try_global::<KeyboardState>()?;
+    let command = COMMANDS.iter().find(|c| c.id == id)?;
+    state.preferences.keys(command).next().map(key_label)
+}
+
 pub fn key_label(accelerator: &str) -> String {
     accelerator
         .split_whitespace()

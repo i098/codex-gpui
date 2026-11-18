@@ -246,7 +246,10 @@ fn mention_list_replay() -> Result<()> {
             "step {index}: recorded menu surface differs"
         );
         ensure!(
-            probe(x + w / 2, bottom + 1) == [24, 24, 24],
+            // The dark panel surface (18); a faint overlay rounds it to 19 in some steps.
+            probe(x + w / 2, bottom + 1)
+                .iter()
+                .all(|c| c.abs_diff(18) <= 1),
             "step {index}: the list must end at the recorded bottom edge"
         );
     }

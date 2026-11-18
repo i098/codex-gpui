@@ -135,7 +135,7 @@ impl Root {
         let before = self
             .terminal_panel()
             .map_or(0, |panel| panel.read(cx).sessions.len());
-        self.show_terminal(false, window, cx);
+        self.show_terminal(None, window, cx);
         let Some(panel) = self.terminal_panel().cloned() else {
             return;
         };
@@ -190,7 +190,7 @@ async fn shell_command(
 pub struct Terminals {
     panels: HashMap<String, Entity<TerminalPanel>>,
     /// The bottom panel is shown (the terminal may live in the side panel instead).
-    visible: bool,
+    pub(crate) visible: bool,
 }
 
 pub(crate) fn source_directories(state: Option<&Value>, thread: &str, cwd: &str) -> Vec<String> {
@@ -817,10 +817,11 @@ impl Root {
     }
 
     /// Opens the route's terminal panel (a shell in its first tab) and shows it in the bottom
-    /// panel, or in the side panel when the user's default location is not the bottom.
+    /// panel (`Some(true)`), the side panel (`Some(false)`), or where the user's default
+    /// location puts it (`None`).
     pub(crate) fn show_terminal(
         &mut self,
-        force_bottom: bool,
+        bottom: Option<bool>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -848,12 +849,13 @@ impl Root {
         {
             panel.update(cx, |panel, cx| panel.open(cx));
         }
-        let bottom = force_bottom
-            || !matches!(self.state.route, Route::Thread(_))
-            || self.config["desktop"]["defaultTerminalLocation"]
-                .as_str()
-                .unwrap_or("bottom")
-                == "bottom";
+        let bottom = bottom.unwrap_or_else(|| {
+            !matches!(self.state.route, Route::Thread(_))
+                || self.config["desktop"]["defaultTerminalLocation"]
+                    .as_str()
+                    .unwrap_or("bottom")
+                    == "bottom"
+        });
         self.terminal.visible = bottom;
         if bottom {
             if self.side == Some(SidePanel::Console) {
@@ -889,7 +891,7 @@ impl Root {
             return;
         };
         let command = format!("{command}\r").into_bytes();
-        self.show_terminal(false, window, cx);
+        self.show_terminal(None, window, cx);
         if let Some(panel) = self.terminal_panel().cloned() {
             panel.update(cx, |panel, _| {
                 let active = panel.active;
@@ -930,7 +932,7 @@ impl Root {
             self.sync_terminal(cx);
             self.composer(cx).focus_handle(cx).focus(window, cx);
         } else {
-            self.show_terminal(true, window, cx);
+            self.show_terminal(Some(true), window, cx);
         }
     }
 

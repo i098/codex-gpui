@@ -15,9 +15,8 @@ pub(super) enum Token {
     String,
     Comment,
     Literal,
-    Parameter,
+    Variable,
     Punctuation,
-    Operator,
 }
 
 impl Token {
@@ -28,9 +27,8 @@ impl Token {
             Self::String => (0x83d197, 0x3a843f),
             Self::Comment => (0xb9b9b9, 0x4f4f4f),
             Self::Literal => (0xf1a275, 0xac4f23),
-            Self::Parameter => (0xfa994c, 0xbd5800),
+            Self::Variable => (0xfa994c, 0xbd5800),
             Self::Punctuation => (0x999999, 0x666666),
-            Self::Operator => (0x6dcbf4, 0x0071ea),
         };
         let color: Hsla = rgb(if theme.appearance == Appearance::Dark {
             dark
@@ -47,40 +45,56 @@ impl Token {
 
 pub(super) type Mark = (Range<usize>, Token);
 static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(two_face::syntax::extra_no_newlines);
-static TOKENS: [Token; 8] = [
+static TOKENS: [Token; 7] = [
     Token::Keyword,
     Token::Name,
     Token::String,
     Token::Comment,
     Token::Literal,
-    Token::Parameter,
+    Token::Variable,
     Token::Punctuation,
-    Token::Operator,
 ];
 static THEME: LazyLock<SyntaxTheme> = LazyLock::new(|| {
     SyntaxTheme {
-    settings: ThemeSettings {
-        foreground: Some(Color { r: 0, g: 0, b: 0, a: 255 }),
-        ..Default::default()
-    },
-    scopes: [
-        ("keyword, storage", 1),
-        ("entity.name.function, entity.name.class, entity.name.type, storage.type.function.python, keyword.declaration.function.python, storage.type.class.python", 2),
-        ("string", 3),
-        ("comment", 4),
-        ("constant, support.function, support.type", 5),
-        ("variable.parameter", 6),
-        ("punctuation", 7),
-        ("keyword.operator", 8),
-    ].into_iter().map(|(scope, code)| ThemeItem {
-        scope: scope.parse().expect("fixed syntax scopes"),
-        style: StyleModifier {
-            foreground: Some(Color { r: code, g: 0, b: 0, a: 255 }),
+        settings: ThemeSettings {
+            foreground: Some(Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            }),
             ..Default::default()
         },
-    }).collect(),
-    ..Default::default()
-}
+        // 26.1029 colors parameters and operators like punctuation and other names as variables.
+        scopes: [
+            ("keyword, storage", 1),
+            (
+                "entity.name.function, entity.name.class, entity.name.type",
+                2,
+            ),
+            ("string", 3),
+            ("comment", 4),
+            ("constant, support.function, support.type", 5),
+            // Python nests `meta.generic-name` inside `entity.name.function`; the name wins.
+            ("meta.generic-name - entity.name, variable.other", 6),
+            ("punctuation, keyword.operator, variable.parameter", 7),
+        ]
+        .into_iter()
+        .map(|(scope, code)| ThemeItem {
+            scope: scope.parse().expect("fixed syntax scopes"),
+            style: StyleModifier {
+                foreground: Some(Color {
+                    r: code,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                }),
+                ..Default::default()
+            },
+        })
+        .collect(),
+        ..Default::default()
+    }
 });
 
 fn line(highlighter: &mut HighlightLines<'_>, text: &str) -> Vec<Mark> {
@@ -185,10 +199,19 @@ mod tests {
             "math.py",
             "@@ -0,0 +1,2 @@\n+def subtract(a, b):\n+    return a - b\n",
         );
-        let definition = &python.hunks[0].lines[0];
-        assert!(definition.syntax.iter().any(
-            |(range, token)| *token == Token::Name && &definition.text[range.clone()] == "def"
-        ));
+        let token = |line: usize, text: &str| {
+            let line = &python.hunks[0].lines[line];
+            let at = line.text.find(text).unwrap();
+            line.syntax
+                .iter()
+                .find(|(range, _)| range.contains(&at))
+                .map(|(_, token)| *token)
+        };
+        assert_eq!(token(0, "def"), Some(Token::Keyword));
+        assert_eq!(token(0, "subtract"), Some(Token::Name));
+        assert_eq!(token(0, "a,"), Some(Token::Punctuation));
+        assert_eq!(token(1, "a "), Some(Token::Variable));
+        assert_eq!(token(1, "-"), Some(Token::Punctuation));
         let text = FileDiff::patch("notes.txt", "@@ -0,0 +1 @@\n+def return class 12\n");
         assert!(text.hunks[0].lines[0].syntax.is_empty());
     }

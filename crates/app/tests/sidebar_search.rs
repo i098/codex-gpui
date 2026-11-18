@@ -22,6 +22,31 @@ fn cloud_success() -> Value {
     }}}})
 }
 
+/// Moves the selection from the first row down to the first one `pick` accepts (its
+/// heading, index in the group and recorder text): 26.1029 lists commands before `Chats`.
+fn select_row(fx: &mut Fx, pick: impl Fn(&str, usize, &str) -> bool) -> Result<()> {
+    let menu = fx
+        .read(|root, _| root.command_menu().cloned())
+        .context("menu")?;
+    let index = fx
+        .read(|_, cx| {
+            menu.read(cx)
+                .describe()
+                .into_iter()
+                .flat_map(|(heading, rows)| {
+                    rows.into_iter()
+                        .enumerate()
+                        .map(move |(i, (text, _))| (heading, i, text))
+                })
+                .position(|(heading, i, text)| pick(heading, i, &text))
+        })
+        .context("row to select")?;
+    for _ in 0..index {
+        fx.keys("down")?;
+    }
+    Ok(())
+}
+
 #[test]
 fn local_results_survive_cloud_failure_and_retry_stays_in_the_menu() -> Result<()> {
     let mut fx = Fx::with(
@@ -103,13 +128,15 @@ fn cloud_results_preserve_local_selection_and_open_their_canonical_destination()
     ensure!(fx.read(|_, cx| menu.read(cx).search_pending()) == (false, false));
     fx.reference_shot()?
         .save(std::env::temp_dir().join("sidebar-cloud-results.png"))?;
+    select_row(&mut fx, |_, _, row| row.starts_with("Add a subtract"))?;
     fx.keys("enter")?;
     fx.wait_thread(SUBTRACT)?;
 
     fx.click(common::SEARCH)?;
     fx.type_text("math")?;
     fx.advance(ui::screens::sidebar::SEARCH_DEBOUNCE)?;
-    fx.keys("up enter")?;
+    select_row(&mut fx, |_, _, row| row.contains("A cloud"))?;
+    fx.keys("enter")?;
     ensure!(
         fx.cx.take_opened_url().as_deref() == Some("https://chatgpt.com/c/cloud%2Fchat"),
         "the cloud result did not open its encoded ChatGPT destination"
@@ -147,9 +174,7 @@ fn a_cloud_reply_does_not_displace_the_selected_ninth_local_chat() -> Result<()>
     fx.click(common::SEARCH)?;
     fx.type_text("math")?;
     fx.advance(ui::screens::sidebar::SEARCH_DEBOUNCE)?;
-    for _ in 0..8 {
-        fx.keys("down")?;
-    }
+    select_row(&mut fx, |heading, i, _| heading == "Chats" && i == 8)?;
     *host.response.lock().unwrap() = cloud_success();
     fx.advance(Duration::from_secs(1))?;
     fx.keys("enter")?;

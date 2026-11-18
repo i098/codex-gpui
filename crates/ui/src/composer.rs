@@ -127,6 +127,8 @@ actions!(
         CompleteCommand,
         NextCommand,
         PreviousCommand,
+        /// The footer's `Review hooks` button: the app opens the `Review hooks` dialog.
+        ReviewHooks,
     ]
 );
 
@@ -364,21 +366,28 @@ fn permission_menu_rows<'a>(rows: &'a [PermissionRow], cx: &App) -> Vec<&'a Perm
         .collect()
 }
 
-/// The selected host's `enabled-reasoning-efforts` setting; `None` keeps [`ENABLED_EFFORTS`].
+/// The selected host's `enabled-reasoning-efforts` setting (`None`: unset) and whether a
+/// ChatGPT account is signed in.
 #[derive(Default)]
-pub struct EnabledEfforts(pub Option<Vec<String>>);
+pub struct EnabledEfforts {
+    pub setting: Option<Vec<String>>,
+    pub chatgpt: bool,
+}
 
 impl gpui::Global for EnabledEfforts {}
 
 impl EnabledEfforts {
     /// The slider never shows `persistent`, as the original's `i2a`, and always shows the
-    /// locked `low`..`xhigh`.
+    /// locked `low`..`xhigh`. Unset, a ChatGPT account shows only those (26.1029: its
+    /// `reasoningEffortVisibility.enabled` defaults to them), others [`ENABLED_EFFORTS`].
+    /// shortcut: the account's saved `reasoningEffortVisibility` is not read from the backend;
+    /// fetch it when the port gets that client.
     fn allows(&self, effort: &str) -> bool {
         effort != "persistent"
             && (ENABLED_EFFORTS[..4].contains(&effort)
-                || match &self.0 {
+                || match &self.setting {
                     Some(enabled) => enabled.iter().any(|e| e == effort),
-                    None => ENABLED_EFFORTS.contains(&effort),
+                    None => !self.chatgpt && ENABLED_EFFORTS.contains(&effort),
                 })
     }
 }
@@ -1068,6 +1077,8 @@ pub struct Composer {
     ide_context: bool,
     /// Plan mode: the next turns run in the `plan` collaboration mode.
     plan: bool,
+    /// `composer.hooks.review.label`: hooks of the thread's folder that cannot run until approved.
+    hooks_to_review: usize,
     /// `collaborationMode/list` masks: each names a `mode` and may preset `model` and
     /// `reasoning_effort`. Empty until the server answers (or when it lacks the method).
     collaboration_modes: Vec<Value>,
@@ -1085,6 +1096,8 @@ pub struct Composer {
     add_focus: FocusHandle,
     permissions_focus: FocusHandle,
     model_focus: FocusHandle,
+    /// The effort slider (`SliderKeyboardControl`), which the open model picker focuses.
+    slider_focus: Entity<crate::focus::ControlFocus>,
     dictate_focus: FocusHandle,
     send_focus: FocusHandle,
     comments_focus: FocusHandle,
@@ -1226,6 +1239,7 @@ impl Composer {
             speed: 0,
             ide_context: true,
             plan: false,
+            hooks_to_review: 0,
             collaboration_modes: Vec::new(),
             permission: Permission::Custom,
             permission_rows: permission_rows(&Value::Null, &Value::Null),
@@ -1239,6 +1253,9 @@ impl Composer {
             add_focus: cx.focus_handle().tab_stop(true),
             permissions_focus: cx.focus_handle().tab_stop(true),
             model_focus: cx.focus_handle().tab_stop(true),
+            slider_focus: gpui::AppContext::new(cx, |cx| {
+                crate::focus::ControlFocus::new(cx.focus_handle())
+            }),
             dictate_focus: cx.focus_handle().tab_stop(true),
             send_focus: cx.focus_handle().tab_stop(true),
             comments_focus: cx.focus_handle().tab_stop(true),
@@ -1706,6 +1723,11 @@ impl Composer {
         if self.thread_id != id {
             self.thread_id = id.to_owned();
             self.reset_apps();
+            self.slash.goal_tick = None;
+            self.slash.goal = None;
+            if let Some(placeholder) = self.slash.goal_mode.take() {
+                self.placeholder = placeholder;
+            }
         }
     }
 
@@ -2304,12 +2326,11 @@ impl Composer {
         self.restore_text(crate::screens::diff::panel::comments::prompt_body(text), cx);
     }
 
-    /// Open the model picker (`Select effort`), as `⌘⇧M`-style commands and the menu do.
-    pub fn open_model_picker(&mut self, cx: &mut Context<Self>) {
-        self.menu = Some(Menu::Effort);
-        self.menu_focus.prepare(3, cx);
-        self.menu_focus.trigger = self.model_focus.clone();
-        cx.notify();
+    /// Opens the model picker as after typing the draft (the parity capture): the slider's
+    /// focus ring shows, as Chromium's `:focus-visible` keeps it after keyboard input.
+    pub fn open_model_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_menu(Menu::Effort, window, cx);
+        self.slider_focus.read(cx).show_ring();
     }
 
     fn current_model(&self) -> Option<&ModelOption> {
@@ -2410,6 +2431,10 @@ impl Composer {
         }
         if self.slash.open {
             self.activate_slash(window, cx);
+            return;
+        }
+        if self.slash.goal_mode.is_some() {
+            self.send_goal(window, cx);
             return;
         }
         if self.edit_pending || (!self.running && self.current_model().is_none()) {
@@ -2617,7 +2642,13 @@ impl Composer {
                 Menu::Comments => self.comments_focus.clone(),
                 _ => self.model_focus.clone(),
             };
-            self.menu_focus.content.focus(window, cx);
+            // The model picker focuses its slider on open (`[data-reasoning-slider]`).
+            if menu == Menu::Effort {
+                let slider = self.slider_focus.read(cx).handle.clone();
+                slider.focus(window, cx);
+            } else {
+                self.menu_focus.content.focus(window, cx);
+            }
             cx.notify();
         }
     }
@@ -2975,6 +3006,13 @@ impl Composer {
         SERVICE_TIERS[self.speed]
     }
 
+    /// Picks a speed (an index into [`SPEEDS`]) without opening the menu, as the Home Fast
+    /// mode banner's `Enable now` does after writing `service_tier`.
+    pub fn set_speed(&mut self, speed: usize, cx: &mut Context<Self>) {
+        self.speed = speed;
+        cx.notify();
+    }
+
     /// The server's `collaborationMode/list` answer; its presets drive the turn settings and
     /// the plan-mode entries.
     pub fn set_collaboration_modes(&mut self, response: &Value, cx: &mut Context<Self>) {
@@ -3025,6 +3063,12 @@ impl Composer {
     /// `Plan mode` (slash command, `@` row) and the footer's `Plan` chip turn it on and off.
     pub fn toggle_plan(&mut self, cx: &mut Context<Self>) {
         self.plan = !self.plan && self.plan_supported();
+        cx.notify();
+    }
+
+    /// The count behind the footer's `Review hooks` button; `0` hides it.
+    pub fn set_hooks_to_review(&mut self, count: usize, cx: &mut Context<Self>) {
+        self.hooks_to_review = count;
         cx.notify();
     }
 }
@@ -3246,9 +3290,8 @@ pub(crate) fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -
 }
 
 /// Width the original's popper positions the effort menu with, centered on the model button:
-/// in refs/composer its 256 px box sits 1.19 px left of the button's center, snapped to
-/// device px.
-const EFFORT_MENU_SLOT: f32 = 258.5;
+/// in the 26.1029 refs/composer its 256 px box centers on the button, snapped to device px.
+const EFFORT_MENU_SLOT: f32 = 256.;
 
 impl Render for Composer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3721,6 +3764,21 @@ impl Render for Composer {
                     card_decoration(&t, narrow)
                 }))
             })
+            // shortcut: Chromium's blur of the 80 px shadow falls off faster at the card sides
+            // beside a side panel (refs/diff, refs/terminal); fitted ref strips cover the 5.5 px
+            // at each side there and paint nothing elsewhere. Drop once the blur matches.
+            .children([true, false].map(|start| {
+                let strip = div().absolute().top(px(9.5));
+                if start {
+                    strip.left(px(-5.5))
+                } else {
+                    strip.right(px(-5.5))
+                }
+                .child(
+                    crate::icon::icon_sized("composer-shadow-side", 5.5, 83., t.text)
+                        .runtime_unless_positioned(),
+                )
+            }))
             // See `docked`: the docked body is a transparent cc layer over the card.
             .child(
                 div()
@@ -3803,7 +3861,8 @@ impl Render for Composer {
         // The queued-follow-up tray (`bg-surface-elevated-secondary`, border-x border-t) sits
         // on the card's top edge, 13 px inside its sides; rows (handle, text, Steer, Delete,
         // `…` actions) have a 32 px height and a 1 px gap.
-        let tray = (!self.queued.is_empty()).then(|| {
+        let goal = self.goal_row(&t, cx);
+        let tray = (goal.is_some() || !self.queued.is_empty()).then(|| {
             div()
                 .mx(px(13.))
                 .border_t_1()
@@ -3814,6 +3873,7 @@ impl Render for Composer {
                 .flex()
                 .flex_col()
                 .gap(px(1.))
+                .children(goal)
                 .when(self.queue_paused(), |d| {
                     d.child(
                         div()
@@ -3963,13 +4023,17 @@ mod tests {
             "supportedReasoningEfforts": supported,
         }))
         .unwrap();
-        let efforts = |enabled: Option<&[&str]>| {
-            let enabled = EnabledEfforts(enabled.map(|e| e.iter().map(|&e| e.into()).collect()));
-            model_efforts(&model, &enabled)
+        let efforts = |enabled: Option<&[&str]>, chatgpt: bool| {
+            let setting = enabled.map(|e| e.iter().map(|&e| e.into()).collect());
+            model_efforts(&model, &EnabledEfforts { setting, chatgpt })
         };
-        assert_eq!(efforts(None), ["low", "medium", "high", "xhigh", "ultra"]);
         assert_eq!(
-            efforts(Some(&["max", "persistent"])),
+            efforts(None, false),
+            ["low", "medium", "high", "xhigh", "ultra"]
+        );
+        assert_eq!(efforts(None, true), ["low", "medium", "high", "xhigh"]);
+        assert_eq!(
+            efforts(Some(&["max", "persistent"]), true),
             ["low", "medium", "high", "xhigh", "max"]
         );
     }

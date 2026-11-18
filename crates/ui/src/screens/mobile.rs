@@ -6,9 +6,9 @@ use super::connections::{self, Action, ConnectionsState};
 use crate::{EmptySidebar, Shell, icon, text};
 use gpui::{
     AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity, Hsla,
-    InteractiveElement as _, IntoElement, ParentElement, Pixels, Render, RenderImage, SharedString,
-    Stateful, StatefulInteractiveElement as _, Styled, Transformation, Window, actions, canvas,
-    div, point, prelude::FluentBuilder as _, px, radians, rgb, size,
+    InteractiveElement as _, IntoElement, ParentElement, Pixels, Render, RenderImage, Stateful,
+    StatefulInteractiveElement as _, Styled, Transformation, Window, actions, canvas, div, point,
+    prelude::FluentBuilder as _, px, radians, rgb, size,
 };
 use image::{Frame, Rgba, RgbaImage};
 use shapes::Corner::Squircle;
@@ -53,11 +53,7 @@ pub enum SetupStep {
 
 pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     let (shell, _) = shell(cx);
-    // The references show one unread Explore destination.
-    shell.update(cx, |shell, _| {
-        shell.can_go_back = true;
-        shell.unread_destinations = Some(Arc::from([SharedString::from("explore")]));
-    });
+    shell.update(cx, |shell, _| shell.can_go_back = true);
     shell.into()
 }
 
@@ -872,7 +868,7 @@ impl Render for MobileSetupPage {
                             t,
                         )))
                         .child(divider(feature(
-                            "mobile-chat",
+                            "mobile-notifications",
                             "Stay in the loop",
                             "Get notified when ChatGPT finishes a task or needs your attention",
                             t,
@@ -880,7 +876,7 @@ impl Render for MobileSetupPage {
                         .child(feature(
                             "mobile-start",
                             "Start something new",
-                            "Just send a message to start a task on your desktop",
+                            "Just send a message to start a chat on your desktop",
                             t,
                         )),
                 )

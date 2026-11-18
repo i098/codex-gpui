@@ -45,10 +45,10 @@ SSH = ["-o", "ControlMaster=auto", "-o", f"ControlPath={WORK}/cm-%r@%h", "-o",
 MARGIN = 0.2  # distance of the fitted value from a rounding boundary, in 8-bit units
 # Glyphs (any asset name) that crates/shapes rasterizes at runtime to the ref's exact pixels at
 # every ref use, in the screens' own layers (full parity run with no fitted images): no image.
-RUNTIME = {"chevron-down-small", "composer-model", "diff-file-python", "diff-jump-to-file",
-           "diff-more", "diff-open-in", "diff-show-files", "scheduled-filled",
-           "sidebar-cmd-spinner", "thread-chevron-right", "thread-copy", "thread-fork",
-           "thread-lang-python", "thread-project", "thread-rate", "thread-read-aloud"}
+RUNTIME = {"bell-unread", "chevron-down-small", "composer-model", "diff-file-python",
+           "diff-jump-to-file", "diff-more", "diff-open-in", "diff-show-files", "mobile-notifications",
+           "scheduled-filled", "sidebar-cmd-spinner", "thread-chevron-right", "thread-copy",
+           "thread-fork", "thread-lang-python", "thread-project", "thread-rate", "thread-read-aloud"}
 # Glyphs fitted over a background that varies by 1 level under the box (the send button's
 # circle): its uncovered pixels count as background. Elsewhere such a variation is a layer
 # effect (a fade mask) that a plain blend does not reproduce, so those uses are skipped.

@@ -16,6 +16,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 use theme::Theme;
 
+mod browse;
+pub use browse::BROWSE_LIMIT;
+
 /// The local Work limit (`47185920`): larger files and files of unknown size stay disabled.
 const LOCAL_FILE_LIMIT: u64 = 45 * 1024 * 1024;
 /// `Ge`: skeleton rows while the files load.
@@ -59,6 +62,9 @@ pub enum WorkEvent {
     AttachLibraryFile(LibraryFile),
     /// `Browse all plugins`: open the plugin directory.
     BrowsePlugins,
+    /// Read the dialog's recent or matching Library files (up to `BROWSE_LIMIT`); answer with
+    /// [`HomeMain::set_browse_files`].
+    LibraryBrowse(String),
 }
 
 impl EventEmitter<WorkEvent> for HomeMain {}
@@ -88,6 +94,7 @@ pub struct PluginsMenu {
 
 pub struct WorkControls {
     pub files: FilesMenu,
+    pub browse: browse::BrowseDialog,
     pub plugins: PluginsMenu,
     pub run_open: bool,
 }
@@ -128,6 +135,7 @@ impl WorkControls {
                 pending: Vec::new(),
                 debounce: None,
             },
+            browse: browse::BrowseDialog::new(cx),
             plugins: PluginsMenu {
                 open: false,
                 search: plugins_search,
@@ -367,6 +375,13 @@ impl HomeMain {
             }
         };
         let owner = cx.entity();
+        let browse_owner = owner.clone();
+        let browse = menu_row(("work-files-browse", 0), "books", "Browse all".into(), t)
+            .role(gpui::Role::MenuItem)
+            .child(icon("chevron-right", 16., t.text_tertiary))
+            .on_click(move |_, window, cx| {
+                browse_owner.update(cx, |main, cx| main.open_browse(window, cx))
+            });
         let popup = crate::composer::popover(t, 280., |d| {
             d.child(search_row(&menu.search, t))
                 .child(separator(t))
@@ -377,6 +392,8 @@ impl HomeMain {
                         .overflow_y_scroll()
                         .child(list),
                 )
+                .child(separator(t))
+                .child(browse)
         })
         .id("work-files-menu")
         .debug_selector(|| "work-files-menu".into())

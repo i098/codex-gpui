@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use ui::screens::home::{
-    DismissSuggestion, HomeBanner, ReloadAccount, TryMultiAgent, UseSuggestion,
+    DismissSuggestion, EnableFastMode, HomeBanner, ReloadAccount, TryMultiAgent, UseSuggestion,
 };
 use ui::screens::hotkey::Mode;
 
@@ -276,6 +276,45 @@ fn subagents_banner_try_now_enables_multi_agent() -> Result<()> {
         fx.read(|root, cx| root.home().read(cx).banner.is_none()),
         "banner stayed after Try now"
     );
+    Ok(())
+}
+
+#[test]
+fn fast_mode_banner_enable_now_sets_the_priority_tier() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    let mut lines = script(None, |_| {})?;
+    // `multi_agent` already enabled keeps the subagents banner out of the slot.
+    lines.extend(exchange(
+        "experimentalFeature/list",
+        json!({"data":[{"name":"multi_agent","enabled":true}],"nextCursor":null}),
+    ));
+    let (mut fx, _host) = boot(lines)?;
+    fx.wait("fast mode banner", |fx| {
+        fx.read(|root, cx| root.home().read(cx).banner == Some(HomeBanner::FastMode))
+    })?;
+    capture(&mut fx, "fast-mode-banner")?;
+    fx.action(Box::new(EnableFastMode))?;
+    fx.wait("service_tier write", |fx| {
+        fx.sent().is_ok_and(|sent| {
+            sent.iter().any(|message| {
+                message["method"] == "config/batchWrite"
+                    && message["params"]["edits"][0]["keyPath"] == "service_tier"
+                    && message["params"]["edits"][0]["value"] == "priority"
+            })
+        })
+    })?;
+    ensure!(
+        fx.read(|root, cx| root.home().read(cx).composer.read(cx).service_tier())
+            == Some("priority"),
+        "Enable now must pick the Fast tier"
+    );
+    ensure!(
+        fx.read(|root, cx| root.home().read(cx).banner.is_none()),
+        "banner stayed after Enable now"
+    );
+    capture(&mut fx, "fast-mode-enabled")?;
     Ok(())
 }
 

@@ -522,7 +522,7 @@ impl Composer {
             ("paste", "Paste", "⌘V", true),
         ] {
             items.push(Item {
-                accelerator: Some(keys),
+                accelerator: Some(keys.into()),
                 ..Item::new(id, label, enabled)
             });
         }

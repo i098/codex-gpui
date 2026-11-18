@@ -8,7 +8,7 @@ use objc2_foundation::{MainThreadMarker, NSError, NSString, ns_string};
 use objc2_web_kit::{WKNavigation, WKNavigationDelegate, WKWebView};
 use url::Url;
 use wry::dpi::{LogicalPosition, LogicalSize};
-use wry::{PageLoadEvent, Rect, WebView, WebViewBuilder, WebViewExtMacOS as _};
+use wry::{NewWindowResponse, PageLoadEvent, Rect, WebView, WebViewBuilder, WebViewExtMacOS as _};
 
 use super::{LoadError, PageChange, PageState};
 
@@ -59,6 +59,7 @@ impl WebPage {
         let on_title = changed.clone();
         let on_load = changed.clone();
         let on_menu = changed.clone();
+        let on_window = changed.clone();
         let view = WebViewBuilder::new()
             .with_visible(false)
             // `Started` fires once the navigation commits: the URL has changed.
@@ -70,6 +71,16 @@ impl WebPage {
             })
             .with_document_title_changed_handler(move |_| {
                 let _ = on_title.try_send(PageChange::Changed);
+            })
+            // The page gets no window of its own: its address opens in a new tab.
+            .with_new_window_req_handler(move |url, _| {
+                if let Some(url) = Url::parse(&url)
+                    .ok()
+                    .filter(|url| matches!(url.scheme(), "http" | "https"))
+                {
+                    let _ = on_window.try_send(PageChange::NewWindow(url));
+                }
+                NewWindowResponse::Deny
             })
             .with_initialization_script(CONTEXT_MENU_SCRIPT)
             .with_ipc_handler(move |request| {

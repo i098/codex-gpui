@@ -23,6 +23,8 @@ while IFS= read -r line; do
   esac
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
   case "$line" in
+    *'"method":"initialize"'*) printf '{"id":%s,"result":{"userAgent":"fixture","codexHome":"%s","platformOs":"unix"}}\n' "$id" "${STATE%/*}" ;;
+    *'"method":"initialized"'*) ;;
     *'"model/list"'*) printf '{"id":%s,"result":{"data":%s}}\n' "$id" "$MODELS" ;;
     *'"config/read"'*) config=$CONFIG; [ ! -f "$CONFIG_FILE" ] || config=$(cat "$CONFIG_FILE"); printf '{"id":%s,"result":{"config":%s}}\n' "$id" "$config" ;;
     *'"configRequirements/read"'*) [ -z "$FAIL_REQUIREMENTS" ] || { printf '{"id":%s,"error":{"code":-32000,"message":"requirements unavailable"}}\n' "$id"; continue; }; printf '{"id":%s,"result":{"requirements":%s}}\n' "$id" "$REQUIREMENTS" ;;

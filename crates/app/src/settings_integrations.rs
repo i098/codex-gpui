@@ -794,7 +794,14 @@ async fn execute_server_action(
     Ok(None)
 }
 
-async fn trust_hooks(bridge: &Bridge, hooks: &[(String, String)], roots: &[String]) -> Result<()> {
+/// `trust_hooks`'s error when another config layer keeps a trusted hook untrusted.
+pub(crate) const HOOKS_OVERRIDDEN: &str = "Another config layer overrides these hook settings and must be changed before approval can take effect";
+
+pub(crate) async fn trust_hooks(
+    bridge: &Bridge,
+    hooks: &[(String, String)],
+    roots: &[String],
+) -> Result<()> {
     ensure!(!hooks.is_empty(), "No hooks selected for trust");
     let edits = hooks
         .iter()
@@ -819,10 +826,7 @@ async fn trust_hooks(bridge: &Bridge, hooks: &[(String, String)], roots: &[Strin
                     && hook["currentHash"] == *hash
                     && hook["trustStatus"] == "trusted"
             });
-        ensure!(
-            trusted,
-            "Another config layer overrides these hook settings and must be changed before approval can take effect"
-        );
+        ensure!(trusted, HOOKS_OVERRIDDEN);
     }
     Ok(())
 }

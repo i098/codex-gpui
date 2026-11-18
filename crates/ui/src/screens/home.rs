@@ -20,7 +20,7 @@ static CONTROL_TEXT_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
     std::sync::LazyLock::new(Default::default);
 
 mod work;
-pub use work::{LibraryFile, LibraryLoad, WorkEvent, local_matches};
+pub use work::{BROWSE_LIMIT, LibraryFile, LibraryLoad, WorkEvent, local_matches};
 
 /// Identifies the window whose animations a static capture finishes.
 #[derive(Clone, Copy)]
@@ -46,6 +46,8 @@ actions!(
         SeeResets,
         /// Subagents banner: `Try now` enables `features.multi_agent`.
         TryMultiAgent,
+        /// Fast mode banner: `Enable now` sets the Fast (`priority`) service tier.
+        EnableFastMode,
         ClearProject,
         SetupWindowsSandboxElevated,
         SetupWindowsSandboxUnelevated
@@ -57,6 +59,7 @@ actions!(
 pub enum HomeBanner {
     RateLimitReset,
     Subagents,
+    FastMode,
 }
 
 /// A banner's dismiss `×`: remember it so the banner stays hidden.
@@ -313,6 +316,14 @@ impl HomeMain {
                 "Try now",
                 "Dismiss subagent banner",
             ),
+            // The original's body is a personalized time-saved estimate from the desktop's
+            // rollout metrics, which app-server does not expose; the title and CTA stand alone.
+            Some(HomeBanner::FastMode) => (
+                "Enable Fast mode",
+                "",
+                "Enable now",
+                "Dismiss Fast mode banner",
+            ),
             None => (
                 "Try ChatGPT Voice",
                 "Orchestrate tasks, connect tools, and explore code",
@@ -339,7 +350,9 @@ impl HomeMain {
                     .flex_1()
                     .min_w_0()
                     .child(text(title, 14., 20., 500., t.text))
-                    .child(text(body, 13., 18., 400., t.text_tertiary)),
+                    .when(!body.is_empty(), |copy| {
+                        copy.child(text(body, 13., 18., 400., t.text_tertiary))
+                    }),
             )
             .child(
                 focus::ring(
@@ -364,6 +377,9 @@ impl HomeMain {
                     }
                     Some(HomeBanner::Subagents) => {
                         window.dispatch_action(Box::new(TryMultiAgent), cx)
+                    }
+                    Some(HomeBanner::FastMode) => {
+                        window.dispatch_action(Box::new(EnableFastMode), cx)
                     }
                     None => window.dispatch_action(Box::new(crate::StartVoiceChat), cx),
                 }),
@@ -566,27 +582,15 @@ pub fn home_main(window: &mut Window, cx: &mut App) -> AnyView {
     cx.new(|cx| HomeMain::new(window, cx)).into()
 }
 
-/// The Home sidebar and `main` in the shell, with the references' unread Explore destination.
+/// The Home sidebar and `main` in the shell.
 pub fn shell(main: AnyView, cx: &mut App) -> AnyView {
     let sidebar = super::sidebar::home_sidebar(cx, None);
-    cx.new(|_| {
-        let mut shell = Shell::new(sidebar, main);
-        shell.unread_destinations = Some(std::sync::Arc::from([SharedString::from("explore")]));
-        shell
-    })
-    .into()
+    cx.new(|_| Shell::new(sidebar, main)).into()
 }
 
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     let main = home_main(window, cx);
-    let sidebar = super::sidebar::home_sidebar(cx, None);
-    // The references show one unread Explore destination.
-    cx.new(|_| {
-        let mut shell = Shell::new(sidebar, main);
-        shell.unread_destinations = Some(std::sync::Arc::from([SharedString::from("explore")]));
-        shell
-    })
-    .into()
+    shell(main, cx)
 }
 
 fn open_folder_key(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {
@@ -1319,23 +1323,41 @@ fn utility_bar(
     let finished = animation_finished(window, cx);
     div().mx(px(13.)).pb(px(20.)).mb(px(-24.)).child(
         div()
-            .px(px(4.))
+            .px(px(6.))
             .pb(px(4.))
             .relative()
-            // `_attached_1hrlq`: `--radius-2xl` top corners, `--codex-corner-shape`.
-            .child(shapes::decoration(shapes::Decoration {
-                radius: Corners {
-                    top_left: px(20.),
-                    top_right: px(20.),
-                    ..Corners::all(px(0.))
-                },
-                corner: shapes::Corner::Squircle,
-                fill: Some(t.composer_action_bar),
-                ..Default::default()
-            }))
+            // `_item`'s round `--radius-2xl` top corners, under the `_attached_1hrlq` rail's
+            // `overflow: clip` squircle (`--codex-corner-shape`), whose box runs 20 px lower.
+            .child(crate::rounded_clip(
+                px(20.),
+                shapes::Corner::Squircle,
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .bottom(px(-20.))
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .bottom(px(20.))
+                            .child(shapes::decoration(shapes::Decoration {
+                                radius: Corners {
+                                    top_left: px(20.),
+                                    top_right: px(20.),
+                                    ..Corners::all(px(0.))
+                                },
+                                fill: Some(t.composer_action_bar),
+                                ..Default::default()
+                            })),
+                    ),
+            ))
             // The mask covers the viewport, not the translated scroll contents.
             .child(
-                div().py(px(3.)).child(
+                div().py(px(4.)).child(
                     div()
                         .mx(px(-2.))
                         .relative()
@@ -1711,7 +1733,6 @@ impl Render for HomeMain {
                 self.suggestions_loading || !self.suggestions.is_empty(),
                 |column| column.child(self.suggestions(&t, window, cx)),
             );
-        let toolbar = div().flex_none().h(px(46.));
         if chat {
             // `_Hero`: `min-block-size: var(--home-composer-top)`, `max(0px, 42svh - 44px)`
             // (the toolbar inset), `items-end`, 24 px above and 22 px below the headline; the
@@ -1738,13 +1759,20 @@ impl Render for HomeMain {
                 .child(column);
             return div()
                 .size_full()
+                .relative()
                 .flex()
                 .flex_col()
-                .child(toolbar.child(self.chat_work_toggle(&t, window, cx)))
+                .child(
+                    div()
+                        .flex_none()
+                        .h(px(46.))
+                        .child(self.chat_work_toggle(&t, window, cx)),
+                )
                 .child(crate::composer::drop_target(page, &self.composer, cx))
+                .children(self.browse_dialog(&t, cx))
                 .into_any_element();
         }
-        // The page column under the `home-mode-toggle` row is the file drop target.
+        // The page column is the file drop target.
         let page = div()
             .flex_1()
             .min_h_0()
@@ -1808,8 +1836,6 @@ impl Render for HomeMain {
             .size_full()
             .flex()
             .flex_col()
-            // `home-mode-toggle` toolbar row.
-            .child(toolbar)
             .child(crate::composer::drop_target(page, &self.composer, cx))
             .into_any_element()
     }

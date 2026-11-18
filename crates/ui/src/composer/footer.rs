@@ -401,6 +401,40 @@ impl Composer {
                         }),
                 )
             })
+            .when(self.hooks_to_review > 0, |d| {
+                // `ComposerHookReview`: a ghost square with a 6 px yellow dot at its top right.
+                let count = self.hooks_to_review;
+                d.child(crate::tooltip::tooltip(
+                    pill("review-hooks", t)
+                        .role(gpui::Role::Button)
+                        .aria_label("Review hooks")
+                        .tab_index(0)
+                        .focus_visible(crate::focus::trigger_focus)
+                        .relative()
+                        .w(px(28.))
+                        .justify_center()
+                        .child(footer_icon("composer-hooks", t.text_tertiary))
+                        .child(
+                            div()
+                                .absolute()
+                                .top(px(4.))
+                                .right(px(4.))
+                                .size(px(6.))
+                                .rounded_full()
+                                .bg(t.accent_yellow),
+                        )
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(ReviewHooks), cx)
+                        }),
+                    if count == 1 {
+                        "Review hooks · 1 needs approval".to_owned()
+                    } else {
+                        format!("Review hooks · {count} need approval")
+                    },
+                    None,
+                    crate::tooltip::Side::Top,
+                ))
+            })
             .when(self.plan && !self.chat, |d| {
                 // `composer.planModeIndicator`: a divider, then a chip whose click turns plan
                 // mode off; hovering swaps its icon for the close icon.
@@ -436,6 +470,43 @@ impl Composer {
                             })
                             .on_click(cx.listener(|this, _, _, cx| this.toggle_plan(cx))),
                         "Create a plan",
+                        None,
+                        crate::tooltip::Side::Top,
+                    ))
+            })
+            .when(self.slash.goal_mode.is_some(), |d| {
+                d.child(div().h(px(16.)).w(px(1.)).bg(t.border.opacity(0.7)))
+                    .child(crate::tooltip::tooltip(
+                        pill("goal-mode", t)
+                            .group("goal-mode")
+                            .role(gpui::Role::Button)
+                            .aria_label("Clear goal")
+                            .tab_index(0)
+                            .focus_visible(crate::focus::trigger_focus)
+                            .px(px(6.))
+                            .gap(px(4.))
+                            .child(
+                                div()
+                                    .group_hover("goal-mode", |s| s.hidden())
+                                    .child(footer_icon("mention-goal", t.text_tertiary)),
+                            )
+                            .child(
+                                div()
+                                    .hidden()
+                                    .group_hover("goal-mode", |s| s.block())
+                                    .child(footer_icon("close", t.text_tertiary)),
+                            )
+                            .when(self.footer_width > SM_WIDTH, |d| {
+                                d.child(text("Goal", 13., 18., 400., t.text_tertiary))
+                            })
+                            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                    this.set_goal_mode(false, cx);
+                                    cx.stop_propagation();
+                                }
+                            }))
+                            .on_click(cx.listener(|this, _, _, cx| this.set_goal_mode(false, cx))),
+                        "Clear goal",
                         None,
                         crate::tooltip::Side::Top,
                     ))

@@ -7,11 +7,35 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
-- License the repository under MIT: add `LICENSE` and `CODE_OF_CONDUCT.md`, and set `license = "MIT"` in the workspace manifest.
+- Open a browser page's `target=_blank` and `window.open` requests in a new browser tab (#831).
+- Side tab right-click menu: `Close other tabs` and `Close tabs to the right`; closed tabs can be reopened with `⌘⇧T` (#839).
+- Add the onboarding capabilities step with its `Local files` row: it asks for access to `Desktop`, `Documents` and `Downloads` in order, shows `Setting up…` while the request runs, `Setup incomplete` with `Retry` when a folder stays closed, and goes on to the app with `Continue` or `Skip`. Before, onboarding went straight from the role step to the app (#994).
+- Show the thread goal above the composer, set a goal with the Goal mode, and mark the final response when the goal completes (#868).
+### Fixed
+- Show installed plugin logos in the Customize sidebar, with theme-aware images and app icons when no plugin logo is available (#1505).
+- Parity gate: the Mac run prints the free space and removes the `/tmp/cgx-parity.*` scratch directories an earlier run left behind, so it no longer fails with `No space left on device`.
+
+## [0.1.4] - 2026-11-13
 
 ### Fixed
+- Keep ChatGPT chats out of the sidebar's Codex `Recents` list (#1491).
+- Release workflow: re-run a tag, find the macOS signing identity, and fix the Windows upload shell (#1489).
+
+## [0.1.3] - 2026-11-12
+
+### Added
+- Parity gate: dark rows render with the original app's dark neutrals, because the dark references come from the original; the shipped theme keeps the darker dark neutrals (#1481). Closes #1484.
+- License the repository under MIT: add `LICENSE` and `CODE_OF_CONDUCT.md`, and set `license = "MIT"` in the workspace manifest.
+- Show the composer's `Review hooks` button when hooks of the chat's folder need approval. The button opens the `Review hooks` dialog, which allows all or the selected hooks. Before, these hooks failed with `hook approval required` and the app showed no prompt.
+
+### Fixed
+- Darken the dark-mode window, main panel and sidebar a little, and let more of the macOS window material show through the sidebar. Light mode does not change. This is an intended difference from the original app.
 - Open Settings in the main window when Mini or the hotkey window has focus, and from windows without a Settings page (About, plan summary). Before, `⌘,` and `Codex ▸ Settings…` did nothing there.
 - Keep every Changes file card at the width of the panel. A long diff line now scrolls inside its own card; before, the whole file list scrolled sideways, which clipped the other cards on the left and left blank space on the right.
+- Match the side panel's `New tab` page to the original: rows on a soft fill in a two-column grid, the original icons and shortcut chips, a `Side chat` row, and the original row order. `Terminal` now opens a side tab, and its `…` menu holds `Open bottom terminal`.
+- Make the composer effort slider follow a drag stop by stop, and fill the track with the original's blue-to-purple gradient at the Ultra stop, with a purple effort label. Paint the Speed bolt in the toggle's color (gray for Standard, blue for a speed, purple at Ultra) and show the outline, filled or double bolt for Standard, Fast and Ultrafast, as the original does.
+- Stop the Customize sidebar from lagging with many installed plugins. A hover or scroll in the sidebar now renders the sidebar again, not the whole Plugins or Skills page.
+- Let the thread show through the 32 px fade above the composer, as in the original. Before, the fade painted a solid bar that cut off the transcript and the `Scroll to bottom` button above the composer.
 
 ## [0.1.2] - 2026-11-08
 
@@ -20,6 +44,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Publish the macOS arm64 zip and a `.dmg` with each release, built on the self-hosted Apple-silicon runner (replaces the universal zip).
 - Add a Performance section to the README with measured start time, memory, CPU, size and scroll figures against the original Codex app.
 - Add a Performance section to the README with start time, memory, CPU and size figures against the original Codex app, re-measured with n=5 interleaved runs and split by thread state. `tools/bench/run.sh` reproduces the start, memory and CPU rows on a Mac.
+- Add `Files`, `Plugins` and the run-location button to the Work home rail. `Files` lists the recent Library files (`POST /files/library`), searches them by name after a 300 ms debounce, and attaches a picked file (45 MiB at most) to the composer. `Plugins` lists the connected plugins (`plugin/list`), inserts or removes their mention chips, and opens the plugin directory from `Connect plugins` ▸ `Browse all plugins`. The run-location menu (`Where should this chat run?`) keeps Work on this computer; `In the cloud` is disabled.
+- Add `Browse all` to the Work home `Files` menu. It opens the `Add from Library` dialog: search the Library (up to 50 files), switch between list and grid, `Upload files`, pick files (`{count} selected`) and `Add to chat`. It has loading, `Unable to load Library files` with `Retry`, `No recent files yet` and `No matching files` states.
 - Show the green `Awaiting approval` pill and the blue dot on a sidebar chat row while its thread waits for an approval (`thread/status/changed` with the `waitingOnApproval` active flag); both go when the flag clears or the thread goes idle.
 - Open a thread's latest plan in its own window (the original's `/plan-summary` page): Command-click Thread summary ▸ `Plan`. The window draws the plan with the thread's markdown in a `Plan` card; a plain click still opens the `Plan` side panel tab.
 - Add `Files`, `Plugins` and the run-location button to the Work home rail. `Files` lists the recent Library files (`POST /files/library`), searches them by name after a 300 ms debounce, and attaches a picked file (45 MiB at most) to the composer. `Plugins` lists the connected plugins (`plugin/list`), inserts or removes their mention chips, and opens the plugin directory from `Connect plugins` ▸ `Browse all plugins`. The run-location menu (`Where should this chat run?`) keeps Work on this computer; `In the cloud` is disabled.

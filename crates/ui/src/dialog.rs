@@ -18,6 +18,8 @@ use std::{
 };
 use theme::{ActiveTheme as _, Theme};
 
+mod hook_review;
+
 fn contains_ignore_ascii_case(text: &str, query: &str) -> bool {
     query.is_empty()
         || text
@@ -158,6 +160,7 @@ pub enum Kind {
     Branches,
     CreateBranch,
     CreatePr,
+    Handoff,
     BranchConflict,
     DiscardInstructions,
     DeleteMemories,
@@ -166,6 +169,8 @@ pub enum Kind {
     WritingStyle,
     /// `Hook stats` from a finished turn's actions (`hook-stats-dialog`).
     HookStats,
+    /// `Review hooks` from the composer's footer (`HookReviewDialog`).
+    HookReview,
 }
 
 #[derive(Clone)]
@@ -181,6 +186,11 @@ pub enum Outcome {
         use_memories: bool,
         generate: bool,
     },
+    /// `Allow all` or `Allow selected` in `Review hooks`: each hook's key and current hash. The
+    /// dialog stays open until the app reports the result.
+    TrustHooks(Vec<(String, String)>),
+    /// The `settings` link in `Review hooks`: Settings > Hooks.
+    HookSettings,
     DismissAnnouncement(SharedString),
     UseAnnouncedModel {
         model: SharedString,
@@ -230,6 +240,11 @@ pub enum Outcome {
         draft: bool,
         commit_changes: bool,
         open_browser: bool,
+    },
+    Handoff {
+        workspace: String,
+        branch: String,
+        bring_changes: bool,
     },
     CommitBeforeCheckout,
     WritingSample,
@@ -293,6 +308,7 @@ struct GitForm {
     draft: bool,
     commit_changes: bool,
     open_browser: bool,
+    workspaces: Vec<String>,
 }
 
 /// The `Chat memories` switches. `Use memories` is fixed once the chat has started.
@@ -337,6 +353,7 @@ pub struct Dialog {
     writing: Option<WritingSetup>,
     memories: Option<ChatMemories>,
     hook_stats: Option<HookStatsForm>,
+    hook_review: Option<hook_review::HookReview>,
     shortcuts: Vec<Shortcut>,
     /// `Rename`: the chat's emoji (the original's `sidebar-thread-metadata` `emoji`), and
     /// whether its `Choose emoji` picker is open.
@@ -386,6 +403,7 @@ impl Dialog {
             writing: None,
             memories: None,
             hook_stats: None,
+            hook_review: None,
             shortcuts: if kind == Kind::Shortcuts {
                 crate::screens::settings::keyboard_shortcuts::active_shortcuts(cx)
             } else {
@@ -1537,6 +1555,24 @@ impl Dialog {
         }
     }
 
+    pub fn handoff(
+        workspace: String,
+        branch: String,
+        workspaces: Vec<String>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            query: branch,
+            git_form: GitForm {
+                title: workspace,
+                workspaces,
+                commit_changes: true,
+                ..Default::default()
+            },
+            ..Self::new(Kind::Handoff, cx)
+        }
+    }
+
     /// `Commit or push` for the repository `repo` describes.
     pub fn commit(repo: CommitRepository, cx: &mut Context<Self>) -> Self {
         let form = CommitForm {
@@ -1982,6 +2018,7 @@ impl Dialog {
             (Kind::ChatMemories, _) => "Done",
             (Kind::WritingStyle, _) => "Writing style",
             (Kind::HookStats, _) => "Hook stats",
+            (Kind::HookReview, _) => "Review hooks",
             (Kind::ModelAnnouncement, 0) => "Close",
             (Kind::ModelAnnouncement, 1) => "Continue with current model",
             (Kind::ModelAnnouncement, _) => {
@@ -2007,6 +2044,10 @@ impl Dialog {
             (Kind::CreatePr, 4) => "Commit and push local changes",
             (Kind::CreatePr, 5) => "Open PR in browser",
             (Kind::CreatePr, _) => "Create PR",
+            (Kind::Handoff, 0) => "Branch name",
+            (Kind::Handoff, 1) => "Workspace",
+            (Kind::Handoff, 4) => "Bring changes back",
+            (Kind::Handoff, _) => "Hand off",
             (Kind::Commit, 0) => "Commit message",
             (Kind::Commit, 1) => "Include unstaged changes",
             (Kind::Commit, 2) => "Commit to",
@@ -2039,10 +2080,11 @@ impl Dialog {
                 | Kind::Branches
                 | Kind::CreateBranch
                 | Kind::CreatePr
+                | Kind::Handoff
         ) && self.selected == 0)
             || (self.kind == Kind::ScheduleTask && self.selected == 4)
             || (self.kind == Kind::Commit && self.selected == 3)
-            || (matches!(self.kind, Kind::CreatePr) && self.selected == 1)
+            || (matches!(self.kind, Kind::CreatePr | Kind::Handoff) && self.selected == 1)
             || (self.kind == Kind::CreatePr && self.selected == 2)
     }
 
@@ -2056,7 +2098,7 @@ impl Dialog {
 
     fn input(&mut self) -> &mut String {
         match (self.kind, self.selected) {
-            (Kind::CreatePr, 1) => &mut self.git_form.title,
+            (Kind::CreatePr | Kind::Handoff, 1) => &mut self.git_form.title,
             (Kind::CreatePr, 2) => &mut self.git_form.base,
             (Kind::ScheduleTask, 4) => &mut self.schedule_time,
             (Kind::Commit, 3) => &mut self.form_mut().branch_name,
@@ -2224,7 +2266,7 @@ impl Dialog {
                 self.git_form.draft = !self.git_form.draft;
                 cx.notify();
             }
-            (Kind::CreatePr, 4) => {
+            (Kind::CreatePr | Kind::Handoff, 4) => {
                 self.git_form.commit_changes = !self.git_form.commit_changes;
                 cx.notify();
             }
@@ -2244,7 +2286,16 @@ impl Dialog {
                 });
                 cx.notify();
             }
-            (Kind::CreatePr, _) => {}
+            (Kind::Handoff, 6) => {
+                self.saving = true;
+                cx.emit(Outcome::Handoff {
+                    workspace: self.git_form.title.clone(),
+                    branch: self.query.clone(),
+                    bring_changes: self.git_form.commit_changes,
+                });
+                cx.notify();
+            }
+            (Kind::CreatePr | Kind::Handoff, _) => {}
             (Kind::Commit, 1) => {
                 let form = self.form_mut();
                 form.include_unstaged = !form.include_unstaged;
@@ -2322,6 +2373,31 @@ impl Dialog {
     fn key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &e.keystroke;
         if self.saving {
+            cx.stop_propagation();
+            return;
+        }
+        if self.kind == Kind::HookReview {
+            self.hook_review_key(e, window, cx);
+            return;
+        }
+        if self.kind == Kind::Handoff
+            && self.selected == 1
+            && matches!(k.key.as_str(), "up" | "down")
+        {
+            let form = &mut self.git_form;
+            if !form.workspaces.is_empty() {
+                let count = form.workspaces.len();
+                let next = form
+                    .workspaces
+                    .iter()
+                    .position(|path| path == &form.title)
+                    .map_or_else(
+                        || if k.key == "up" { count - 1 } else { 0 },
+                        |current| (current + if k.key == "up" { count - 1 } else { 1 }) % count,
+                    );
+                form.title = form.workspaces[next].clone();
+                cx.notify();
+            }
             cx.stop_propagation();
             return;
         }
@@ -2449,12 +2525,13 @@ impl Dialog {
                         }
                     }
                     Kind::DeleteTask => vec![0, 1],
-                    Kind::HookStats => unreachable!("hook stats keys"),
+                    Kind::HookStats | Kind::HookReview => unreachable!("hook dialog keys"),
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
                     Kind::Branches => vec![0, 1],
                     Kind::BranchConflict => vec![1, 2],
                     Kind::Commit => self.commit_tab_order(),
                     Kind::CreatePr => vec![1, 0, 2, 3, 4, 5, 6],
+                    Kind::Handoff => vec![0, 1, 4, 6],
                     _ => vec![0, 1, 2],
                 };
                 let count = order.len();
@@ -3952,59 +4029,73 @@ impl Dialog {
     }
 
     fn git_form_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let pr = self.kind == Kind::CreatePr;
         let mut content = div().p(px(20.)).flex().flex_col().gap(px(12.)).child(text(
-            "Create PR",
+            if pr { "Create PR" } else { "Hand off" },
             20.,
             28.,
             600.,
             t.text,
         ));
-        content = content
-            .child(self.git_field(1, "Title", &self.git_form.title, t, cx))
-            .child(
-                self.editor(
-                    "pr-description",
-                    "Description",
-                    "Description (empty = generated)",
+        if pr {
+            content = content
+                .child(self.git_field(1, "Title", &self.git_form.title, t, cx))
+                .child(
+                    self.editor(
+                        "pr-description",
+                        "Description",
+                        "Description (empty = generated)",
+                        t,
+                        cx,
+                    )
+                    .h(px(80.))
+                    .border_1()
+                    .border_color(t.border)
+                    .rounded(px(8.))
+                    .p(px(8.)),
+                )
+                .child(self.git_field(2, "Base branch", &self.git_form.base, t, cx))
+                .child(text(
+                    format!(
+                        "{} → {}",
+                        if self.git_form.base.is_empty() {
+                            "Default branch"
+                        } else {
+                            &self.git_form.base
+                        },
+                        self.git_form.head
+                    ),
+                    13.,
+                    20.,
+                    400.,
+                    t.text_secondary,
+                ))
+                .child(self.git_toggle(3, "Create draft PR", self.git_form.draft, t, cx))
+                .child(self.git_toggle(
+                    4,
+                    "Commit and push local changes",
+                    self.git_form.commit_changes,
                     t,
                     cx,
-                )
-                .h(px(80.))
-                .border_1()
-                .border_color(t.border)
-                .rounded(px(8.))
-                .p(px(8.)),
-            )
-            .child(self.git_field(2, "Base branch", &self.git_form.base, t, cx))
-            .child(text(
-                format!(
-                    "{} → {}",
-                    if self.git_form.base.is_empty() {
-                        "Default branch"
-                    } else {
-                        &self.git_form.base
-                    },
-                    self.git_form.head
-                ),
-                13.,
-                20.,
-                400.,
-                t.text_secondary,
-            ))
-            .child(self.git_toggle(3, "Create draft PR", self.git_form.draft, t, cx))
-            .child(self.git_toggle(
-                4,
-                "Commit and push local changes",
-                self.git_form.commit_changes,
-                t,
-                cx,
-            ))
-            .child(self.git_toggle(5, "Open PR in browser", self.git_form.open_browser, t, cx));
+                ))
+                .child(self.git_toggle(5, "Open PR in browser", self.git_form.open_browser, t, cx));
+        } else {
+            content = content
+                .child(self.git_field(0, "Branch name", &self.query, t, cx))
+                .child(self.git_field(1, "Workspace", &self.git_form.title, t, cx))
+                .child(self.git_toggle(
+                    4,
+                    "Bring changes back",
+                    self.git_form.commit_changes,
+                    t,
+                    cx,
+                ));
+        }
         content
             .when_some(self.error.as_ref(), |content, error| {
                 content.child(text(error.clone(), 13., 20., 400., t.text).whitespace_normal())
             })
-            .child(self.button(6, "Create PR", 130., t, cx))
+            .child(self.button(6, if pr { "Create PR" } else { "Hand off" }, 130., t, cx))
     }
 }
 
@@ -4702,9 +4793,11 @@ impl Render for Dialog {
             Kind::WritingStyle => (480., 600.),
             // `xwideTall`: 680 px wide, min(92vh, 800px) tall.
             Kind::HookStats => (680., 800.),
+            Kind::HookReview => (680., self.hook_review_height()),
             Kind::ModelAnnouncement => (480., 432.),
             Kind::Commit => (420., self.commit_height()),
             Kind::CreatePr => (480., 470. + if self.error.is_some() { 60. } else { 0. }),
+            Kind::Handoff => (480., 280. + if self.error.is_some() { 60. } else { 0. }),
             Kind::Branches => (
                 300.,
                 152. + self.branch_names().len().min(8) as f32 * 34.
@@ -4733,9 +4826,10 @@ impl Render for Dialog {
             Kind::ChatMemories => self.chat_memories_content(t, cx),
             Kind::WritingStyle => self.writing_content(t, cx),
             Kind::HookStats => self.hook_stats_content(t, cx),
+            Kind::HookReview => self.hook_review_content(t, cx),
             Kind::ModelAnnouncement => self.announcement_content(t, cx),
             Kind::Commit => self.commit_content(t, cx),
-            Kind::CreatePr => self.git_form_content(t, cx),
+            Kind::CreatePr | Kind::Handoff => self.git_form_content(t, cx),
             Kind::Branches | Kind::CreateBranch | Kind::BranchConflict => {
                 self.branch_content(t, cx)
             }
@@ -4793,8 +4887,10 @@ impl Render for Dialog {
                         Kind::ChatMemories => "Chat memories".into(),
                         Kind::WritingStyle => "Writing style".into(),
                         Kind::HookStats => "Hook stats".into(),
+                        Kind::HookReview => "Review hooks".into(),
                         Kind::Commit => "Commit or push".into(),
                         Kind::CreatePr => "Create PR".into(),
+                        Kind::Handoff => "Hand off".into(),
                         Kind::Branches => "Switch branch".into(),
                         Kind::CreateBranch => "Create and checkout branch".into(),
                         Kind::BranchConflict => "Commit changes to switch branch".into(),
@@ -4868,7 +4964,7 @@ impl Render for Dialog {
                         30.
                     } else if matches!(
                         self.kind,
-                        Kind::LogOut | Kind::DeleteMemories | Kind::HookStats
+                        Kind::LogOut | Kind::DeleteMemories | Kind::HookStats | Kind::HookReview
                     ) {
                         25.
                     } else {
@@ -4945,7 +5041,10 @@ impl Render for Dialog {
                                     radius: Corners::all(px(
                                         if matches!(
                                             self.kind,
-                                            Kind::LogOut | Kind::DeleteMemories | Kind::HookStats
+                                            Kind::LogOut
+                                                | Kind::DeleteMemories
+                                                | Kind::HookStats
+                                                | Kind::HookReview
                                         ) {
                                             25.
                                         } else {
@@ -4954,7 +5053,10 @@ impl Render for Dialog {
                                     )),
                                     corner: if matches!(
                                         self.kind,
-                                        Kind::LogOut | Kind::DeleteMemories | Kind::HookStats
+                                        Kind::LogOut
+                                            | Kind::DeleteMemories
+                                            | Kind::HookStats
+                                            | Kind::HookReview
                                     ) {
                                         shapes::Corner::Squircle
                                     } else {

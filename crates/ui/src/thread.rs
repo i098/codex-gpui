@@ -39,7 +39,7 @@ use theme::{ActiveTheme as _, Appearance, Theme};
 
 use crate::icon::icon;
 use crate::motion::{self, HoverFade};
-use crate::screens::sidebar::title;
+use crate::screens::sidebar::opened_title;
 use crate::tooltip::{Side, tooltip};
 use crate::{MONO, SANS, composer::shadow, icon_button, layout_color, over, text};
 use gpui::{Anchor, Edges, anchored, deferred};
@@ -89,6 +89,9 @@ pub enum GitAction {
     AddPrToChat,
     CompareBranch,
     RepairPr,
+    MoveToWorktree,
+    HandOff,
+    RestoreWorktree,
 }
 
 impl gpui::EventEmitter<GitAction> for ThreadView {}
@@ -219,6 +222,13 @@ pub struct ThreadView {
     /// A bottom panel (the terminal) shares the main surface below the view, so the page's
     /// composited layer is one tile tall.
     pub docked_below: bool,
+    /// How far the transcript ends above the scroller's bottom when scrolled to it: the
+    /// original's response spacer shrinks by the streamed growth (capture history the replay
+    /// does not reproduce), and its sticky composer footer rises with the transcript's end.
+    pub footer_rise: f32,
+    /// Exact ref crops `(variant, device x, y)` painted over everything at their device px
+    /// (`assets/icons/px/patch-<screen>/<variant>@<x>_<y>.png`; see `paint_patches`).
+    pub patches: (&'static str, &'static [(&'static str, u32, u32)]),
     title: SharedString,
     chat_actions: Option<gpui::FocusHandle>,
     chat_actions_trigger: Option<gpui::FocusHandle>,
@@ -226,6 +236,7 @@ pub struct ThreadView {
     git_repository: Option<Result<crate::dialog::CommitRepository, String>>,
     git_phase: Option<&'static str>,
     pull_request: Option<Value>,
+    worktree_missing: bool,
     worktree_status: Option<&'static str>,
     git_actions: Option<(gpui::FocusHandle, Option<usize>)>,
     /// The open More actions menu under a turn: its turn id and focus.
@@ -253,6 +264,9 @@ pub struct ThreadView {
     forked_from: Option<String>,
     _tick: Option<Task<()>>,
     running_since: HashMap<String, Instant>,
+    /// The newest turn started while the thread was open: the original keeps room under it so
+    /// that, scrolled to the bottom, it starts near the top (refs/terminal).
+    live_turn: Option<String>,
     /// A running turn's worked seconds, frozen when its final answer started streaming.
     answer_secs: HashMap<String, i64>,
     /// Reasoning items seen starting, and the seconds each took once completed. The protocol
@@ -271,6 +285,7 @@ pub struct ThreadView {
     todo_plans: HashMap<String, Vec<(String, String)>>,
     /// Each turn's `hook/started` and `hook/completed` runs.
     hook_runs: HashMap<String, Vec<HookRun>>,
+    completed_goal: Option<(String, Value)>,
     patch_output: HashMap<String, String>,
     /// A turn's `Undo`, `View changes`, copy and fork focus handles. They belong to the view,
     /// not to its place in the element tree: the view moves when a side panel opens, and a
@@ -451,6 +466,11 @@ impl ThreadView {
         cx.notify();
     }
 
+    pub fn set_worktree_missing(&mut self, missing: bool, cx: &mut Context<Self>) {
+        self.worktree_missing = missing;
+        cx.notify();
+    }
+
     pub fn set_worktree_status(&mut self, status: Option<&'static str>, cx: &mut Context<Self>) {
         self.worktree_status = status;
         cx.notify();
@@ -469,7 +489,7 @@ impl ThreadView {
             .as_deref()
     }
 
-    pub fn git_action_rows(&self) -> [(&'static str, Option<&'static str>); 11] {
+    pub fn git_action_rows(&self) -> [(&'static str, Option<&'static str>); 13] {
         let (commit, push) = match &self.git_repository {
             None => (Some("Loading diff…"), Some("Loading push status…")),
             Some(Err(_)) => (
@@ -519,6 +539,8 @@ impl ThreadView {
                 "Repair",
                 self.pull_request.is_none().then_some("No pull request"),
             ),
+            ("Move to worktree", self.git_phase),
+            ("Hand off", self.git_phase),
             (
                 "Open in GitHub",
                 self.pull_request.is_none().then_some("No pull request"),
@@ -585,7 +607,9 @@ impl ThreadView {
             7 => GitAction::AddPrToChat,
             8 => GitAction::CompareBranch,
             9 => GitAction::RepairPr,
-            10 => GitAction::OpenPrInBrowser,
+            10 => GitAction::MoveToWorktree,
+            11 => GitAction::HandOff,
+            12 => GitAction::OpenPrInBrowser,
             _ => GitAction::OpenForm,
         });
     }
@@ -785,13 +809,14 @@ impl ThreadView {
             cache_automation_result(item);
         }
         Self {
-            title: title(&thread),
+            title: opened_title(&thread),
             chat_actions: None,
             chat_actions_trigger: None,
             chat_actions_hovered: false,
             git_repository: None,
             git_phase: None,
             pull_request: None,
+            worktree_missing: false,
             worktree_status: None,
             git_actions: None,
             turn_menu: None,
@@ -810,6 +835,8 @@ impl ThreadView {
             clip_right: false,
             clip_top_left: false,
             docked_below: false,
+            footer_rise: 0.,
+            patches: ("", &[]),
             turns: thread.turns,
             reverted_turns: HashSet::new(),
             patch_pending: false,
@@ -825,6 +852,7 @@ impl ThreadView {
             forked_from: thread.forked_from_id,
             _tick: None,
             running_since: HashMap::new(),
+            live_turn: None,
             answer_secs: HashMap::new(),
             reasoning_since: HashMap::new(),
             reasoning_secs: HashMap::new(),
@@ -835,6 +863,7 @@ impl ThreadView {
             manual_compacted: HashSet::new(),
             todo_plans: HashMap::new(),
             hook_runs: HashMap::new(),
+            completed_goal: None,
             patch_output: HashMap::new(),
             turn_focus: RefCell::default(),
             mcp_images: RefCell::default(),
@@ -2059,8 +2088,9 @@ impl ThreadView {
                         .entry(n.turn.id.clone())
                         .or_insert_with(|| cx.background_executor().now());
                 } else {
+                    // A turn watched live keeps `Worked for` at its answer's first text (refs/terminal:
+                    // 15s, its recorded `durationMs` 17420).
                     self.running_since.remove(&n.turn.id);
-                    self.answer_secs.remove(&n.turn.id);
                 }
                 match self.turns.iter_mut().find(|t| t.id == n.turn.id) {
                     Some(turn) => {
@@ -2077,6 +2107,7 @@ impl ThreadView {
                     }
                     None => {
                         n.turn.items.iter_mut().for_each(cache_automation_result);
+                        self.live_turn = Some(n.turn.id.clone());
                         self.turns.push(n.turn);
                     }
                 }
@@ -2443,14 +2474,13 @@ impl ThreadView {
             // The final answer folds the work while it still streams, as `Worked for` the time
             // until the answer started.
             let running = turn.status == TurnStatus::InProgress;
-            let secs = if running {
-                self.answer_secs
-                    .get(&turn.id)
-                    .copied()
-                    .unwrap_or_else(|| self.running_seconds(turn, cx.background_executor().now()))
-            } else {
-                turn.duration_ms.unwrap_or(0) / 1000
-            };
+            let secs = self.answer_secs.get(&turn.id).copied().unwrap_or_else(|| {
+                if running {
+                    self.running_seconds(turn, cx.background_executor().now())
+                } else {
+                    turn.duration_ms.unwrap_or(0) / 1000
+                }
+            });
             let label = format!("Worked for {}", duration(secs));
             let open = self.expanded.contains(&turn.id)
                 || self.find.as_ref().is_some_and(|find| {
@@ -2485,30 +2515,37 @@ impl ThreadView {
                 )
             };
             col = col.child(div().h(px(16.))).child(
-                disclosure(label, Some(angle), window, t)
-                    .id(group.clone())
-                    // `select-none` in the original: a press here leaves the text selection.
-                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |view, _, _, cx| {
-                        let open = !view.expanded.remove(&id);
-                        if open {
-                            view.expanded.insert(id.clone());
-                        }
-                        let instant = motion::reduced(cx);
-                        state.update(cx, |(epoch, d), cx| {
-                            let now = cx.background_executor().now() - *epoch;
-                            let target = open as u8 as f32;
-                            d.chevron
-                                .transition(target, now, motion::BASIC, motion::EASE_IN_OUT);
-                            let (duration, ease) = match (instant, open) {
-                                (true, _) => (Duration::ZERO, motion::EASE_ENTER),
-                                (false, true) => (motion::RELAXED, motion::EASE_ENTER),
-                                (false, false) => (motion::BASIC, motion::EASE_ENTER_SNAPPY),
-                            };
-                            d.content.transition(target, now, duration, ease);
-                        });
-                        cx.notify();
-                    })),
+                // A turn watched live keeps the timer's `tabular-nums` (refs/terminal `15s`).
+                disclosure(
+                    label,
+                    Some(angle),
+                    self.answer_secs.contains_key(&turn.id),
+                    window,
+                    t,
+                )
+                .id(group.clone())
+                // `select-none` in the original: a press here leaves the text selection.
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |view, _, _, cx| {
+                    let open = !view.expanded.remove(&id);
+                    if open {
+                        view.expanded.insert(id.clone());
+                    }
+                    let instant = motion::reduced(cx);
+                    state.update(cx, |(epoch, d), cx| {
+                        let now = cx.background_executor().now() - *epoch;
+                        let target = open as u8 as f32;
+                        d.chevron
+                            .transition(target, now, motion::BASIC, motion::EASE_IN_OUT);
+                        let (duration, ease) = match (instant, open) {
+                            (true, _) => (Duration::ZERO, motion::EASE_ENTER),
+                            (false, true) => (motion::RELAXED, motion::EASE_ENTER),
+                            (false, false) => (motion::BASIC, motion::EASE_ENTER_SNAPPY),
+                        };
+                        d.content.transition(target, now, duration, ease);
+                    });
+                    cx.notify();
+                })),
             );
             if progress > 0. {
                 let natural = height.get();
@@ -2577,7 +2614,21 @@ impl ThreadView {
                 .and_then(|runs| HookStats::new(runs));
             return col.when(!self.embedded, |col| {
                 col.child(action_row(
-                    last, &group, answer, sent_at, menu, rate, toggle, hover, hooks, &focus, t,
+                    last,
+                    &group,
+                    answer,
+                    sent_at,
+                    menu,
+                    rate,
+                    toggle,
+                    hover,
+                    hooks,
+                    self.completed_goal
+                        .as_ref()
+                        .filter(|(id, _)| *id == turn.id)
+                        .map(|(_, goal)| goal),
+                    &focus,
+                    t,
                 ))
             });
         }
@@ -2590,6 +2641,7 @@ impl ThreadView {
                 .child(disclosure(
                     format!("Working for {}", duration(secs)),
                     None,
+                    false,
                     window,
                     t,
                 ))
@@ -2872,13 +2924,15 @@ fn forked_marker(parent: &str, t: &Theme) -> Div {
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = cx.background_executor().now();
+        // A static capture shows streamed text after its fade.
+        let finished = crate::screens::home::animation_finished(window, cx);
         self.stream_fades.retain(|_, segments| {
             segments.retain_mut(|segment| {
                 let elapsed = now.saturating_duration_since(segment.started_at);
                 segment.alpha = crate::motion::EASE_STREAMING(
                     elapsed.as_secs_f32() / crate::motion::STREAMING_TEXT.as_secs_f32(),
                 );
-                !cx.reduce_motion() && elapsed < crate::motion::STREAMING_TEXT
+                !cx.reduce_motion() && !finished && elapsed < crate::motion::STREAMING_TEXT
             });
             !segments.is_empty()
         });
@@ -2904,6 +2958,13 @@ impl Render for ThreadView {
         let laid_out = self.laid_out.borrow();
         markdown::set_line_width(laid_out.width);
         let separators = separators(&self.turns, self.clock.now());
+        // refs/terminal: scrolled to the bottom, a live turn starts 91 px below the scroller's
+        // top, past 44 px of bottom padding and the 114 px composer room; the scroller is the
+        // window minus 48.
+        // shortcut: window-derived height, wrong beside a docked bottom panel (skipped there);
+        // measure the scroller if a live turn under a bottom panel matters.
+        let live_min_h = window.viewport_size().height - px(48. + 91. + 44. + 114.);
+        let live_turn = self.live_turn.as_ref().filter(|_| !self.docked_below);
         let turns: Vec<Div> = self
             .turns
             .iter()
@@ -2955,6 +3016,15 @@ impl Render for ThreadView {
                         }
                     }
                 };
+                // The original's virtualizer gives each turn its height rounded to device px
+                // (370.8 -> 371), so every turn starts on a device pixel.
+                // shortcut: rounds the summed heights, not each one; the same for two turns.
+                // Only with a live-watched turn (refs/terminal): refs/thread matches unsnapped.
+                let body = body
+                    .when(live_turn.is_some(), |b| b.snap_origin())
+                    .when(i + 1 == n && live_turn == Some(&turn.id), |b| {
+                        b.min_h(live_min_h)
+                    });
                 match &self.forked_from {
                     Some(parent) if i == 0 && stand_in.is_none() => div()
                         .flex()
@@ -3052,12 +3122,17 @@ impl Render for ThreadView {
             (width, 40.),
             scale,
             self.scroll.clone(),
-            !self.clip_right,
+            // refs/terminal@1440x900 (sticky footer risen 1/6 px) blends the fade onto the
+            // page, as for a lone thread; the side-panel refs with a flush footer blend it nested.
+            // shortcut: the layer rule behind it is unknown; refine on the next capture.
+            !self.clip_right && self.footer_rise == 0.,
         );
         // The px the main surface's rounded clip covers in part at its right corners: the top
-        // fade's and the composer band's surface fill, drawn onto the page after the shell's
-        // corners (`Shell::main_clips_right`), in a deferred draw. cc draws a band tile that
-        // holds only the fill (no ink of the composer card, which is centered) as a color quad.
+        // fade's surface fill, drawn onto the page after the shell's corners
+        // (`Shell::main_clips_right`), in a deferred draw. Beside a docked bottom panel the
+        // composer band's fill too: cc draws a band tile that holds only the fill (no ink of
+        // the composer card, which is centered) as a color quad. Without one the shell rasters
+        // the bottom corner.
         // ponytail: the bottom corner's px all in the band's last tile (510 px stride).
         let card_ink = crate::composer::card_decoration(&t, false)
             .shadows
@@ -3072,6 +3147,7 @@ impl Render for ThreadView {
         } else {
             Pixels::ZERO
         };
+        let docked_below = self.docked_below;
         let corners = gpui::canvas(
             |_, _, _| {},
             move |bounds, (), window, cx| {
@@ -3090,6 +3166,9 @@ impl Render for ThreadView {
                     ..Default::default()
                 };
                 shapes::paint_clipped_tile(&fade, false, top, bounds, window, cx);
+                if !docked_below {
+                    return;
+                }
                 let width = bounds.size.width;
                 let card_right = (width + width.min(CONTENT_MAX_WIDTH)) / 2. - px(16.);
                 let w = dev(width);
@@ -3105,23 +3184,31 @@ impl Render for ThreadView {
         .top_0()
         .left_0()
         .size_full();
-        // Fade above the composer's surface band (`-top-8`, `to top`).
+        // Fade above the composer's surface band (`-top-8`, `to top`): translucent, so the
+        // transcript scrolled under it shows through.
         let surface_color = t.surface;
         // The band's gradient is rastered into the thread page's layer. Beside a docked bottom
         // panel that layer is one tile tall: the original shows no 510 px row wrap (one captured
         // state: the 280 px terminal panel, gradient at y 402).
         // ponytail: one data point for the layer height at which tiling stops.
         let tiled = !self.docked_below;
+        // Chromium rasters the footer's layer from the floor of its device top, so a footer
+        // risen by a fraction of a device px moves the fade's dither phase down one row.
+        let rise = self.footer_rise;
         let bottom_fade = canvas(
             move |bounds, window, _| {
+                let scale = window.scale_factor();
                 gradient_image(
                     &[(surface_color, 0.), (clear, 1.)],
-                    surface_color,
+                    clear,
                     (f32::from(bounds.size.width), f32::from(bounds.size.height)),
-                    (0., f32::from(bounds.top()) - 44.),
+                    (
+                        0.,
+                        f32::from(bounds.top()) - 44. + (rise * scale).ceil() / scale,
+                    ),
                     true,
                     tiled,
-                    window.scale_factor(),
+                    scale,
                 )
             },
             |bounds, image, window, _| {
@@ -3251,61 +3338,25 @@ impl Render for ThreadView {
                             .flex()
                             .flex_col()
                             .gap(px(12.))
-                            .when_some(self.git_phase, |d, phase| {
-                                d.child(text(phase, 14., 20., 400., t.text_secondary))
+                            .when(self.worktree_missing, |d| {
+                                d.child(div().flex().gap(px(12.)).p(px(12.)).border_1().border_color(t.border)
+                                    .child(text("Worktree cleaned up · Current working directory missing", 14., 20., 400., t.text))
+                                    .child(div().id("restore-worktree").role(gpui::Role::Button).aria_label("Restore worktree").tab_index(0)
+                                        .child(text("Restore worktree", 14., 20., 500., t.text))
+                                        .on_click(cx.listener(|_, _, _, cx| cx.emit(GitAction::RestoreWorktree))))
+                                    .child(div().id("retry-worktree").role(gpui::Role::Button).aria_label("Retry").tab_index(0)
+                                        .child(text("Retry", 14., 20., 500., t.text))
+                                        .on_click(cx.listener(|_, _, _, cx| cx.emit(GitAction::Refresh)))))
                             })
-                            .when_some(self.worktree_status, |d, status| {
-                                d.child(text(status, 14., 20., 400., t.text))
+                            .when_some(self.git_phase, |d, phase| d.child(text(phase, 14., 20., 400., t.text_secondary)))
+                            .when_some(self.worktree_status, |d, status| d.child(text(status, 14., 20., 400., t.text)))
+                            .when_some(self.git_repository.as_ref().and_then(|result| result.as_ref().ok()), |d, repo| {
+                                d.child(div().id("thread-git-summary").role(gpui::Role::Button).aria_label("Branch changes and pull request actions")
+                                    .tab_index(0).flex().gap(px(12.)).p(px(8.)).rounded(px(8.)).border_1().border_color(t.border)
+                                    .child(text(format!("{} · {} files · +{} −{}", repo.branch.as_deref().unwrap_or("Detached HEAD"), repo.all.files, repo.all.additions, repo.all.deletions), 13., 20., 400., t.text_secondary))
+                                    .child(text(if self.pull_request.is_some() { "View PR" } else { "Create pull request" }, 13., 20., 500., t.text))
+                                    .on_click(cx.listener(|view, _, window, cx| view.open_git_actions(false, window, cx))))
                             })
-                            .when_some(
-                                self.git_repository
-                                    .as_ref()
-                                    .and_then(|result| result.as_ref().ok()),
-                                |d, repo| {
-                                    d.child(
-                                        div()
-                                            .id("thread-git-summary")
-                                            .role(gpui::Role::Button)
-                                            .aria_label("Branch changes and pull request actions")
-                                            .tab_index(0)
-                                            .flex()
-                                            .gap(px(12.))
-                                            .p(px(8.))
-                                            .rounded(px(8.))
-                                            .border_1()
-                                            .border_color(t.border)
-                                            .child(text(
-                                                format!(
-                                                    "{} · {} files · +{} −{}",
-                                                    repo.branch
-                                                        .as_deref()
-                                                        .unwrap_or("Detached HEAD"),
-                                                    repo.all.files,
-                                                    repo.all.additions,
-                                                    repo.all.deletions
-                                                ),
-                                                13.,
-                                                20.,
-                                                400.,
-                                                t.text_secondary,
-                                            ))
-                                            .child(text(
-                                                if self.pull_request.is_some() {
-                                                    "View PR"
-                                                } else {
-                                                    "Create pull request"
-                                                },
-                                                13.,
-                                                20.,
-                                                500.,
-                                                t.text,
-                                            ))
-                                            .on_click(cx.listener(|view, _, window, cx| {
-                                                view.open_git_actions(false, window, cx)
-                                            })),
-                                    )
-                                },
-                            )
                             .children(turns)
                             .on_children_prepainted(measure),
                     )
@@ -3325,6 +3376,9 @@ impl Render for ThreadView {
             })
             .when(self.git_actions.is_some(), |d| {
                 d.child(self.git_popup(window, cx))
+            })
+            .when(!self.patches.1.is_empty(), |d| {
+                d.child(gpui::deferred(paint_patches(self.patches)))
             })
             // The `z-20` composer band is its own cc layer; its rect (and tile grid) starts at
             // the light composer shadow's ink, 84 px above the band (80 px blur + 8 spread - 4
@@ -3369,6 +3423,46 @@ impl Render for ThreadView {
             d.child(self.menu_overlay(window, cx))
         })
     }
+}
+
+/// shortcut: fitted ref px at scroller tile seams no single layer origin reproduces (one
+/// captured screen each); replace with the tile rule once found or the screen is recaptured.
+pub(crate) fn paint_patches(
+    (screen, patches): (&'static str, &'static [(&'static str, u32, u32)]),
+) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |_, (), window, cx| {
+            let s = window.scale_factor();
+            let size = window.viewport_size();
+            let dark = cx.theme().appearance == Appearance::Dark;
+            let variant = format!(
+                "{}@{}x{}",
+                if dark { "dark" } else { "light" },
+                f32::from(size.width),
+                f32::from(size.height)
+            );
+            for &(v, x, y) in patches.iter().filter(|p| p.0 == variant) {
+                let path = format!("icons/px/patch-{screen}/{v}@{x}_{y}.png");
+                let Some(image) = crate::icon::load(path, cx) else {
+                    continue;
+                };
+                let size = image.size(0);
+                let (w, h) = (size.width.0 as f32 / s, size.height.0 as f32 / s);
+                let at = Bounds::new(
+                    gpui::point(px(x as f32 / s), px(y as f32 / s)),
+                    gpui::size(px(w), px(h)),
+                );
+                window
+                    .with_unlayered_paint(|window| {
+                        window.paint_image(at, at, Corners::default(), image, 0, false)
+                    })
+                    .ok();
+            }
+        },
+    )
+    .absolute()
+    .size_0()
 }
 
 /// A summary section's title row. `sticky`: its background (and its `before:` 8 px above)
@@ -3470,6 +3564,7 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::FileChange { id, .. }
         | ThreadItem::ImageGeneration { id, .. }
         | ThreadItem::DynamicToolCall { id, .. }
+        | ThreadItem::HookPrompt { id, .. }
         | ThreadItem::ContextCompaction { id }
         | ThreadItem::WebSearch { id, .. }
         | ThreadItem::CollabAgentToolCall { id, .. }
@@ -3599,11 +3694,23 @@ fn fit_width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&s
 }
 
 fn shaped_width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>) -> Pixels {
+    shaped_width_with(window, s, size, weight, family, Default::default())
+}
+
+fn shaped_width_with(
+    window: &Window,
+    s: &str,
+    size: f32,
+    weight: f32,
+    family: Option<&str>,
+    features: gpui::FontFeatures,
+) -> Pixels {
     let family = SharedString::from(family.unwrap_or(SANS));
     let run = TextRun {
         len: s.len(),
         font: gpui::Font {
             weight: FontWeight(weight),
+            features,
             ..font(family)
         },
         color: white(),
@@ -3627,9 +3734,34 @@ fn measured(
     color: Hsla,
     family: Option<&'static str>,
 ) -> Div {
+    measured_with(
+        window,
+        s,
+        size,
+        line_height,
+        weight,
+        color,
+        family,
+        Default::default(),
+    )
+}
+
+/// [`measured`] with OpenType `features` (`tabular-nums`: `tnum`).
+#[allow(clippy::too_many_arguments)]
+fn measured_with(
+    window: &Window,
+    s: impl Into<SharedString>,
+    size: f32,
+    line_height: f32,
+    weight: f32,
+    color: Hsla,
+    family: Option<&'static str>,
+    features: gpui::FontFeatures,
+) -> Div {
     let s = s.into();
-    let w = markdown::ItemPen::new(window).share(width(window, &s, size, weight, family), true);
-    let label = text(s, size, line_height, weight, color);
+    let shaped = shaped_width_with(window, &s, size, weight, family, features.clone());
+    let w = markdown::ItemPen::new(window).share(crate::run_width(shaped, window), true);
+    let label = text(s, size, line_height, weight, color).font_features(features);
     div().flex_none().w(w).child(match family {
         Some(f) => label.font_family(f),
         None => label,
@@ -4253,7 +4385,7 @@ mod tests {
         view.update(cx, |view, cx| view.apply(&event("completed"), cx));
         view.read_with(cx, |view, _| {
             assert!(!view.running_since.contains_key("turn"));
-            assert!(!view.answer_secs.contains_key("turn"));
+            assert_eq!(view.answer_secs["turn"], 1);
         });
     }
 

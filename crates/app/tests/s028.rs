@@ -76,7 +76,7 @@ fn check_find(fx: &mut Fx, expected: &Value) -> Result<()> {
         (bar["x"].as_u64().context("bar x")? + bar["w"].as_u64().context("bar width")? / 2) as u32;
     let y = bar["y"].as_u64().context("bar y")? as u32 + 3;
     ensure!(
-        image.get_pixel(x * scale, y * scale).0[..3] == [20, 20, 20],
+        image.get_pixel(x * scale, y * scale).0[..3] == [14, 14, 14],
         "find bar must use the recorded surface"
     );
     for mark in marks {

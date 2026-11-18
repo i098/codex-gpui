@@ -37,6 +37,25 @@
     if (rect.width > 0 && rect.height > 0) nodes.push(node);
     else if (el.tagName === "svg") return;
     if (el.tagName === "svg") return;
+    // An input's value has no text node: measure it in a copy of the field (same box and
+    // styles) laid out the way Blink lays out the field's inner editor.
+    const field = el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && /^(text|search|email|url|tel|number)$/.test(el.type));
+    if (field && el.value.trim() && rect.width > 0 && rect.height > 0) {
+      const copy = document.createElement("div");
+      for (const k of cs) copy.style.setProperty(k, cs.getPropertyValue(k));
+      Object.assign(copy.style, { position: "fixed", left: `${rect.x}px`, top: `${rect.y}px`, margin: "0", boxSizing: "border-box", width: `${rect.width}px`, height: `${rect.height}px`, overflow: "hidden" });
+      if (el.tagName === "INPUT") Object.assign(copy.style, { display: "flex", alignItems: "center", whiteSpace: "pre" });
+      else Object.assign(copy.style, { display: "block", whiteSpace: "pre-wrap" });
+      const span = document.createElement("span");
+      span.textContent = el.value;
+      copy.append(span);
+      document.body.append(copy);
+      const range = document.createRange();
+      range.selectNodeContents(span);
+      for (const tr of range.getClientRects())
+        if (tr.width && tr.height) texts.push({ node: id, text: el.value.trim().slice(0, 200), rect: r4(new DOMRect(tr.x - el.scrollLeft, tr.y - el.scrollTop, tr.width, tr.height)), font: `${cs.fontWeight} ${cs.fontSize}/${cs.lineHeight} ${cs.fontFamily}`, color: cs.color });
+      copy.remove();
+    }
     for (const c of el.childNodes) {
       if (c.nodeType === 3 && c.textContent.trim()) {
         const range = document.createRange();

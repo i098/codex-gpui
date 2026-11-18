@@ -92,7 +92,7 @@ fn recorded_thread_find_query_and_navigation() -> Result<()> {
             ensure!(!fx.composer_focused()?, "the composer kept focus");
             let scale = image.width() / 1280;
             ensure!(
-                image.get_pixel(1100 * scale, 11 * scale).0[..3] == [20, 20, 20],
+                image.get_pixel(1100 * scale, 11 * scale).0[..3] == [14, 14, 14],
                 "find bar surface differs"
             );
             let highlighted = image
