@@ -85,7 +85,9 @@ impl Settings {
             "Recording store escapes CODEX_HOME"
         );
         crate::private::restrict(&root, 0o700)?;
-        let directory = root.join(crate::private::hex(&Sha256::digest(recording.id.as_bytes())));
+        let directory = root.join(crate::private::hex(&Sha256::digest(
+            recording.id.as_bytes(),
+        )));
         fs::create_dir(&directory)?;
         crate::private::restrict(&directory, 0o700)?;
         Self::write_metadata(&directory, &serde_json::to_value(recording)?)?;
