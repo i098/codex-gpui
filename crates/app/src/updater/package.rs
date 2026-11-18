@@ -4,6 +4,7 @@ use anyhow::{Context as _, Result, bail, ensure};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
 use serde::Deserialize;
+use crate::private::hex;
 use sha2::{Digest as _, Sha256};
 use std::{
     io::{Read, Write},
@@ -176,10 +177,6 @@ fn verify(key: &VerifyingKey, manifest: &Manifest, digest: &[u8]) -> Result<()> 
         .map_err(|_| anyhow::anyhow!("invalid update signature"))?;
     key.verify(digest, &Signature::from_bytes(&signature))
         .context("the update signature is not valid")
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(test)]

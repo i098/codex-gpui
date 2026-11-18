@@ -64,7 +64,7 @@ impl Scripts {
 }
 
 fn revision(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", Sha256::digest(bytes))
+    format!("sha256:{}", crate::private::hex(&Sha256::digest(bytes)))
 }
 
 fn trim(text: &mut String) {
