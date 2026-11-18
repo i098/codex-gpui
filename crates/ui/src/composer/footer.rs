@@ -120,6 +120,34 @@ impl Composer {
         )
         .focus_handle(&self.dictate_focus)
     }
+
+    /// The ChatGPT Chat composer's model picker (`chatgptConversations.modelPicker.*`). The
+    /// app loads no ChatGPT model list, so it shows the original's load-error state: the
+    /// disabled `composerPill` ghost trigger (`ps-3 pe-3.5 gap-1.5`, 16/26 tertiary text, 40%
+    /// opacity) with the error as its label and tooltip.
+    fn chatgpt_model_picker(&self, t: &Theme) -> AnyElement {
+        let error = "Could not load ChatGPT models";
+        let trigger = div()
+            .id("chatgpt-model-picker")
+            .role(gpui::Role::Button)
+            .aria_label("Select ChatGPT model")
+            .aria_disabled(true)
+            .flex_none()
+            .h(px(28.))
+            .flex()
+            .items_center()
+            .rounded_full()
+            .pl(px(12.))
+            .pr(px(14.))
+            .gap(px(6.))
+            .opacity(0.4)
+            .layer()
+            .child(text(error, 16., 26., 400., t.text_tertiary))
+            .child(icon("chevron-down-small", 16., t.text_tertiary));
+        crate::tooltip::tooltip(trigger, error, Some("⌃⇧M"), crate::tooltip::Side::Top)
+            .into_any_element()
+    }
+
     pub(super) fn footer(&self, window: &mut Window, t: &Theme, cx: &mut Context<Self>) -> Div {
         let open = matches!(self.menu, Some(Menu::Effort | Menu::Models));
         let hotkey_home = self.hotkey_controls.is_some();
@@ -615,7 +643,13 @@ impl Composer {
                     .justify_end()
                     .overflow_hidden()
                     .children(self.context_donut(t))
-                    .child(model_button),
+                    .map(|d| {
+                        if self.chat {
+                            d.child(self.chatgpt_model_picker(t))
+                        } else {
+                            d.child(model_button)
+                        }
+                    }),
             )
             .children(self.hotkey_controls.clone())
             .child(self.dictation_button(t, cx))
