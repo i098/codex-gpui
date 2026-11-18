@@ -155,7 +155,10 @@ fn import_sound(path: &Path, dir: &Path) -> Result<Value> {
         })
         .context("unreadable sound")?;
     ensure!(seconds > 0. && seconds < MAX_SECONDS, "sound too long");
-    let name = format!("codex-custom-{:x}.{ext}", Sha256::digest(&bytes));
+    let name = format!(
+        "codex-custom-{}.{ext}",
+        crate::private::hex(&Sha256::digest(&bytes))
+    );
     std::fs::create_dir_all(dir)?;
     let staged = dir.join(format!(".codex-import-{name}"));
     std::fs::write(&staged, &bytes)?;

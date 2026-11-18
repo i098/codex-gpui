@@ -85,7 +85,9 @@ impl Settings {
             "Recording store escapes CODEX_HOME"
         );
         crate::private::restrict(&root, 0o700)?;
-        let directory = root.join(format!("{:x}", Sha256::digest(recording.id.as_bytes())));
+        let directory = root.join(crate::private::hex(&Sha256::digest(
+            recording.id.as_bytes(),
+        )));
         fs::create_dir(&directory)?;
         crate::private::restrict(&directory, 0o700)?;
         Self::write_metadata(&directory, &serde_json::to_value(recording)?)?;
@@ -124,7 +126,7 @@ impl Settings {
     fn directory(&self, id: &str) -> Result<PathBuf> {
         ensure!(!id.is_empty(), "Invalid recording identifier");
         let root = self.root();
-        let path = root.join(format!("{:x}", Sha256::digest(id.as_bytes())));
+        let path = root.join(crate::private::hex(&Sha256::digest(id.as_bytes())));
         let metadata = fs::symlink_metadata(&path).context("Dictation recording was not found")?;
         ensure!(
             metadata.is_dir() && !metadata.file_type().is_symlink(),
@@ -340,7 +342,7 @@ impl Settings {
     pub fn delete(&self, id: &str) -> Result<()> {
         let path = self
             .root()
-            .join(format!("{:x}", Sha256::digest(id.as_bytes())));
+            .join(crate::private::hex(&Sha256::digest(id.as_bytes())));
         if matches!(fs::symlink_metadata(path), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
         {
             return self.delete_legacy(id);
