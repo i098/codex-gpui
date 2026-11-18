@@ -1,5 +1,6 @@
 //! Shared by the Linux and Windows updaters: read the signed release manifest, download the
 //! package, and check its SHA-256 and Ed25519 signature before anyone installs it.
+use crate::private::hex;
 use anyhow::{Context as _, Result, bail, ensure};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
@@ -176,10 +177,6 @@ fn verify(key: &VerifyingKey, manifest: &Manifest, digest: &[u8]) -> Result<()> 
         .map_err(|_| anyhow::anyhow!("invalid update signature"))?;
     key.verify(digest, &Signature::from_bytes(&signature))
         .context("the update signature is not valid")
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(test)]

@@ -12,10 +12,14 @@ use std::{
 };
 use ui::screens::settings::voice::{Access, Policy, Recording};
 
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn recording(home: &Path, id: &str, status: &str, created: i64) -> Result<PathBuf> {
     let path = home
         .join("dictation-history")
-        .join(format!("{:x}", Sha256::digest(id.as_bytes())));
+        .join(hex(&Sha256::digest(id.as_bytes())));
     fs::create_dir_all(&path)?;
     fs::write(
         path.join("metadata.json"),
@@ -108,10 +112,7 @@ fn recording_links_cannot_escape_the_owned_store() -> Result<()> {
     let settings = Settings::new(home.path().into(), home.path().join("preferences.json"));
     let root = home.path().join("dictation-history");
     fs::create_dir(&root)?;
-    symlink(
-        outside.path(),
-        root.join(format!("{:x}", Sha256::digest(b"escape"))),
-    )?;
+    symlink(outside.path(), root.join(hex(&Sha256::digest(b"escape"))))?;
     assert!(settings.audio("escape").is_err());
     assert!(settings.delete("escape").is_err());
     assert!(outside.path().exists());
