@@ -6,7 +6,7 @@ use anyhow::{Context as _, Result, bail, ensure};
 use app::Route;
 use app::host::{Host, Identity, Request};
 use base64::Engine as _;
-use common::{Fx, exchange, profile_row as center, script};
+use common::{Fx, exchange, mode_key, profile_row as center, script};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use ui::screens::home::{LibraryFile, LibraryLoad};
@@ -157,7 +157,7 @@ fn files_menu_reads_searches_and_attaches_library_files() -> Result<()> {
     *host.fail.lock().unwrap() = true;
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
-    fx.keys("ctrl-2")?;
+    fx.keys(mode_key(2))?;
     banner_loaded(&mut fx)?;
 
     // A failed read shows `Couldn't load Library files`; the request is the original's body.
@@ -217,7 +217,7 @@ fn browse_all_opens_the_library_dialog_and_adds_picked_files() -> Result<()> {
     let host = Arc::new(Library::default());
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
-    fx.keys("ctrl-2")?;
+    fx.keys(mode_key(2))?;
     banner_loaded(&mut fx)?;
     tap(&mut fx, FILES)?;
     fx.wait("recent files", |fx| {
@@ -262,7 +262,7 @@ fn plugins_picker_mentions_connected_plugins() -> Result<()> {
         lines.extend(exchange("plugin/list", list.clone()));
     }
     let mut fx = Fx::scripted(lines)?;
-    fx.keys("ctrl-2")?;
+    fx.keys(mode_key(2))?;
     banner_loaded(&mut fx)?;
     let loaded = |fx: &Fx| {
         fx.read(|root, cx| {
@@ -300,7 +300,7 @@ fn plugins_picker_mentions_connected_plugins() -> Result<()> {
 #[test]
 fn run_location_menu_keeps_work_on_this_computer() -> Result<()> {
     let mut fx = Fx::new()?;
-    fx.keys("ctrl-2")?;
+    fx.keys(mode_key(2))?;
     fx.capture_evidence("CGX_WORK_RAIL_SHOTS", "work-home")?;
     let open = |fx: &Fx| fx.read(|root, cx| root.home().read(cx).work.run_open);
     tap(&mut fx, RUN)?;

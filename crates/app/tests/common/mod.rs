@@ -163,6 +163,18 @@ pub struct Fx {
     _host_home: tempfile::TempDir,
 }
 
+/// Keystroke for the default `switchToMode<n>` shortcut on this platform.
+pub fn mode_key(n: u8) -> &'static str {
+    match (cfg!(target_os = "macos"), n) {
+        (true, 1) => "ctrl-1",
+        (true, 2) => "ctrl-2",
+        (true, _) => "ctrl-3",
+        (false, 1) => "alt-1",
+        (false, 2) => "alt-2",
+        (false, _) => "alt-3",
+    }
+}
+
 impl Fx {
     /// Dark, 1280x832, readback only.
     pub fn new() -> Result<Self> {

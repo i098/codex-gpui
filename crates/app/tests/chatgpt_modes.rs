@@ -1,7 +1,7 @@
 mod common;
 
 use anyhow::{Result, bail};
-use common::Fx;
+use common::{Fx, mode_key};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use ui::screens::home::{CHAT_HEADLINES, WORK_HEADLINE};
@@ -89,7 +89,7 @@ fn mode_switch_changes_sidebar_and_home() -> Result<()> {
     assert_eq!(surface(&app), (1, None, "Do anything".into()));
     app.capture_evidence("CGX_MODES_SHOTS", "codex-home")?;
 
-    app.keys("ctrl-1")?;
+    app.keys(mode_key(1))?;
     app.wait("ChatGPT rows in Recents", |app| shows(app, "Trip plan"))?;
     app.capture_evidence("CGX_MODES_SHOTS", "chatgpt-home")?;
     let titles: Vec<_> = app.read(|root, cx| {
@@ -120,7 +120,7 @@ fn mode_switch_changes_sidebar_and_home() -> Result<()> {
 
     // A failed page keeps the shown rows, without a message, like the original.
     *host.fail.lock().unwrap() = true;
-    app.keys("ctrl-2")?;
+    app.keys(mode_key(2))?;
     app.wait("Work page request", |_| {
         host.urls.lock().unwrap().len() == 2
     })?;
@@ -132,7 +132,7 @@ fn mode_switch_changes_sidebar_and_home() -> Result<()> {
     assert!(shows(&app, "Trip plan"));
     app.capture_evidence("CGX_MODES_SHOTS", "work-home")?;
 
-    app.keys("ctrl-3")?;
+    app.keys(mode_key(3))?;
     assert_eq!(surface(&app), (1, None, "Do anything".into()));
     assert!(!shows(&app, "Trip plan"));
     Ok(())

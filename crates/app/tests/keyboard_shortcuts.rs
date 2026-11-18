@@ -51,7 +51,7 @@ fn edits_reject_conflicts_and_reset_restores_the_number_mode() -> Result<()> {
     preferences
         .change(&Change::Reset)
         .map_err(anyhow::Error::msg)?;
-    ensure!(preferences.primary_number_shortcut_target == NumberTarget::Sidebar);
+    ensure!(preferences.primary_number_shortcut_target == Some(NumberTarget::Sidebar));
     ensure!(
         preferences.keys(command).collect::<Vec<_>>() == vec!["CmdOrCtrl+N", "CmdOrCtrl+Shift+O"]
     );
@@ -416,7 +416,7 @@ mod native {
             cx.global::<KeyboardState>()
                 .preferences
                 .primary_number_shortcut_target
-                == NumberTarget::Sidebar
+                == Some(NumberTarget::Sidebar)
         }));
         fx.click((550., 203.))?;
         fx.type_text("Open web link in default browser")?;
@@ -444,7 +444,7 @@ mod native {
         ensure!(fx.cx.update(|cx| {
             let preferences = &cx.global::<KeyboardState>().preferences;
             preferences.bindings.is_empty()
-                && preferences.primary_number_shortcut_target == NumberTarget::Sidebar
+                && preferences.primary_number_shortcut_target == Some(NumberTarget::Sidebar)
                 && preferences.external_browser_link_shortcut == LinkModifier::Primary
         }));
         capture(&mut fx, "reset-result")?;
