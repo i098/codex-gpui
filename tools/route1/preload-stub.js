@@ -107,7 +107,10 @@
   };
   window.addEventListener("message", async (e) => {
     if (e.source !== window || e.data?.type !== "connect-app-host") return;
-    const { K0t: RpcTarget, Y0t: newMessagePortRpcSession } = await import(cfg.appShared);
+    // Cap'n Web from the original bundle: Vite (26.1007) exports it from app-shared, rspack
+    // (26.1029) has it in module `Fkn8`, already loaded when the app connects.
+    const lib = cfg.appShared ? await import(cfg.appShared) : (await import(cfg.entry)).__webpack_require__("Fkn8");
+    const [RpcTarget, newMessagePortRpcSession] = cfg.appShared ? [lib.K0t, lib.Y0t] : [lib.TF, lib.ab];
     rpcTarget = RpcTarget;
     const shape = await (await fetch(q("services"))).json();
     const services = {};

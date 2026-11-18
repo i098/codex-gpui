@@ -17,6 +17,7 @@ fn main() {
         return;
     }
     app::qa::prepare().expect("prepare isolated QA profile");
+    app::fd_limit::raise();
     if std::env::args().nth(1).as_deref() == Some("--setup-computer-use") {
         if let Err(error) = bridge::setup_computer_use() {
             eprintln!("codex-gpui: {error:#}");

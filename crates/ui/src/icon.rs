@@ -44,6 +44,7 @@ pub fn icon_sized(name: &str, width: f32, height: f32, color: Hsla) -> Icon {
         composited: None,
         own_layer: false,
         runtime: false,
+        positioned: false,
         image: false,
         saved_opacity: None,
         transformation: None,
@@ -71,6 +72,8 @@ pub struct Icon {
     composited: Option<Point<Pixels>>,
     own_layer: bool,
     runtime: bool,
+    /// With `runtime`: an image fitted at this exact position still applies.
+    positioned: bool,
     /// An `<img>`: Blink draws the svg image into its snapped dest rect.
     image: bool,
     saved_opacity: Option<u8>,
@@ -133,6 +136,13 @@ impl Icon {
         self
     }
 
+    /// Rasterized at runtime, except where an image is fitted at its exact position: the ref's
+    /// raster there can depend on a tile offset the runtime layer does not reproduce.
+    pub fn runtime_unless_positioned(mut self) -> Self {
+        self.positioned = true;
+        self.runtime()
+    }
+
     /// An `<img>` of an svg: Blink draws the image into the box's snapped device rect (35 px
     /// for 16 px at 110%), not the LayoutUnit box an inline svg fills (35.1875 px).
     pub fn image(mut self) -> Self {
@@ -172,7 +182,7 @@ fn with_saved_opacity<R>(
 static IMAGES: LazyLock<Mutex<HashMap<String, Option<Arc<RenderImage>>>>> =
     LazyLock::new(Default::default);
 
-fn load(path: String, cx: &App) -> Option<Arc<RenderImage>> {
+pub(crate) fn load(path: String, cx: &App) -> Option<Arc<RenderImage>> {
     let mut images = IMAGES.lock().unwrap_or_else(|e| e.into_inner());
     images
         .entry(path)
@@ -273,7 +283,7 @@ impl Element for Icon {
         // svg opaque into a `saveLayerAlpha` with it, as Skia does for CSS `opacity`.
         let opacity = self.interactivity.base_style.opacity.take().unwrap_or(1.);
         let (name, flip_x, own_layer) = (self.name.clone(), self.flip_x, self.own_layer);
-        let (composited, runtime) = (self.composited, self.runtime);
+        let (composited, runtime, positioned) = (self.composited, self.runtime, self.positioned);
         let saved_opacity = self.saved_opacity;
         let transformation = self.transformation;
         let css = if self.image {
@@ -310,12 +320,15 @@ impl Element for Icon {
                 let flipped = if flip_x { "-flipx" } else { "" };
                 let key = color_key(color);
                 let dir = format!("icons/px/{name}{flipped}@{w}x{h}/{key}");
-                let fitted = || {
-                    load(format!("{dir}@{x}_{y}.png"), cx)
-                        .or_else(|| load(format!("{dir}.png"), cx))
+                let at = || load(format!("{dir}@{x}_{y}.png"), cx);
+                let fitted = || at().or_else(|| load(format!("{dir}.png"), cx));
+                let image = match (runtime, positioned) {
+                    (false, _) => fitted(),
+                    (true, true) => at(),
+                    (true, false) => None,
                 };
-                if let Some(image) = (!own_layer && !runtime && transformation.is_none())
-                    .then(fitted)
+                if let Some(image) = (!own_layer && transformation.is_none())
+                    .then_some(image)
                     .flatten()
                 {
                     let device = Bounds {

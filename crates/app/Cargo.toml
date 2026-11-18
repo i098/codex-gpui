@@ -22,7 +22,7 @@ harness = false
 [dependencies]
 anyhow.workspace = true
 async-channel = "2"
-base64 = "0.22"
+base64 = "0.23"
 bridge = { path = "../bridge" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 chrono-tz = "0.10"
@@ -34,7 +34,7 @@ http_client = { git = "https://github.com/zed-industries/zed", rev = "3e145061d8
 iana-time-zone = "0.1"
 image.workspace = true
 notify = "8"
-pollster = "0.4"
+pollster = "1.0"
 portable-pty = "0.9"
 rrule = { path = "../../vendor/rrule", features = ["exrule"] }
 regex = "1"
@@ -77,3 +77,6 @@ gpui_platform = { workspace = true, features = ["test-support"] }
 parking_lot = "0.12"
 parity = { path = "../parity" }
 textsys = { path = "../textsys" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

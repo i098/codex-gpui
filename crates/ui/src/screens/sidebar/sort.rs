@@ -114,13 +114,22 @@ impl HomeSidebar {
     /// Whether Recents lists `id`: without `Show` ▸ `Projects`, a project's chats show only
     /// under their project.
     pub(super) fn in_recents(&self, id: &str) -> bool {
-        self.chat_options.show_projects
-            || self.chat_options.organize == Organize::List
-            || !self.projects.iter().any(|p| {
-                p.root
-                    .as_ref()
-                    .is_some_and(|root| self.cwds.get(id) == Some(root))
-            })
+        let cwd = self.cwds.get(id);
+        // ChatGPT mode's chats are threads of folders under `Documents/ChatGPT`; Codex mode lists
+        // only its own.
+        let chatgpt_chat = cwd.is_some_and(|cwd| {
+            let parts: Vec<_> = std::path::Path::new(cwd.as_ref()).components().collect();
+            parts
+                .windows(3)
+                .any(|w| w[0].as_os_str() == "Documents" && w[1].as_os_str() == "ChatGPT")
+        });
+        (self.chatgpt_surface() || !chatgpt_chat)
+            && (self.chat_options.show_projects
+                || self.chat_options.organize == Organize::List
+                || !self
+                    .projects
+                    .iter()
+                    .any(|p| p.root.as_ref().is_some_and(|root| cwd == Some(root))))
     }
 
     /// The rows top to bottom; `Show` ▸ `Projects` only while organized by project.

@@ -25,8 +25,8 @@ fn new_tab_page_opens_a_picked_tab() -> Result<()> {
     })?;
     let proof = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fx.shot()?.save(proof.join("new-tab.png"))?;
-    // The `Browser` row replaces the `New tab` tab with a browser tab.
-    fx.click((755., 174.))?;
+    // `Browser`, beside `Side chat` in the first row, replaces the `New tab` tab.
+    fx.click((1116., 131.))?;
     fx.wait("browser tab", |fx| {
         fx.read(|r, _| matches!(r.side_tabs(), [SidePanel::Browser(_)]))
     })?;

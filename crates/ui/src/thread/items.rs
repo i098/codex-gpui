@@ -333,8 +333,15 @@ pub(super) fn wrap_row() -> Div {
 /// in degrees (90 = open). At rest it is the fitted icon; while it turns, the svg path is
 /// rotated about its viewBox centre and rasterized like any icon (no clipping: the path stays
 /// 5.5 px from the centre). The sprite fallback (Linux) rotates the mask instead.
-/// `None` draws the running status without a disclosure control.
-pub(super) fn disclosure(label: String, angle: Option<f32>, window: &Window, t: &Theme) -> Div {
+/// `None` draws the running status without a disclosure control. `tabular`: the label's
+/// digits take tabular advances (`tabular-nums`, the original's live turn timer).
+pub(super) fn disclosure(
+    label: String,
+    angle: Option<f32>,
+    tabular: bool,
+    window: &Window,
+    t: &Theme,
+) -> Div {
     let color = t.text_tertiary;
     let chevron = angle.map(|angle| {
         if angle == 0. {
@@ -407,7 +414,20 @@ pub(super) fn disclosure(label: String, angle: Option<f32>, window: &Window, t: 
                     .flex_wrap()
                     .items_center()
                     .gap(px(4.))
-                    .child(measured(window, label, 14., 21., 430., color, None))
+                    .child(measured_with(
+                        window,
+                        label,
+                        14.,
+                        21.,
+                        430.,
+                        color,
+                        None,
+                        if tabular {
+                            crate::composer::tabular_features()
+                        } else {
+                            Default::default()
+                        },
+                    ))
                     .children(chevron),
             ),
         )
@@ -513,7 +533,15 @@ pub(super) fn diff_card(
                                 }),
                                 ..Default::default()
                             }))
-                            .child(icon("thread-file-diff", 24., t.text_secondary)),
+                            // Fitted images hold the page blend; under the nested top fade
+                            // (refs/terminal@1280x832, card at dev y 77) only the raster in
+                            // the scroller's layer blends in Chromium's order, so the images
+                            // are fitted per position everywhere else.
+                            // shortcut: positions copied per ref use; add new uses' positions.
+                            .child(
+                                icon("thread-file-diff", 24., t.text_secondary)
+                                    .runtime_unless_positioned(),
+                            ),
                     )
                     .child(
                         div()
@@ -582,7 +610,8 @@ pub(super) fn diff_card(
                                 .child(if focus.reverted {
                                     icon("thread-undo", 14., t.text).flip_x()
                                 } else {
-                                    icon("thread-undo", 14., t.text)
+                                    // As the card's icon above.
+                                    icon("thread-undo", 14., t.text).runtime_unless_positioned()
                                 })
                                 .when(pending, |button| button.opacity(0.5))
                                 .on_click({
@@ -978,6 +1007,17 @@ fn item_row(item: &ThreadItem, live: bool) -> Option<Row> {
             r.image = saved_path.clone();
             r.detail
                 .extend(revised_prompt.clone().filter(|p| !p.trim().is_empty()));
+            r
+        }
+        ThreadItem::HookPrompt { id, fragments } => {
+            let mut r = row(id, "settings-hooks", "Hook prompt".to_owned());
+            r.detail.extend(
+                fragments
+                    .iter()
+                    .map(|f| f.text.trim())
+                    .filter(|text| !text.is_empty())
+                    .map(str::to_owned),
+            );
             r
         }
         ThreadItem::ImageView { id, path } => {
@@ -2083,6 +2123,19 @@ mod tests {
             row_label(search(json!({"type": "other"})), false),
             "Searched the web"
         );
+    }
+
+    #[test]
+    fn hook_prompt_shows_its_fragments() {
+        let row = item_row(
+            &serde_json::from_value(json!({"type": "hookPrompt", "id": "h",
+                "fragments": [{"text": "ran the formatter"}, {"text": " "}]}))
+            .unwrap(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(row.label, "Hook prompt");
+        assert_eq!(row.detail, ["ran the formatter"]);
     }
 
     #[test]

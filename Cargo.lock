@@ -193,11 +193,11 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "app"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-channel",
- "base64 0.22.1",
+ "base64 0.23.1",
  "block2 0.6.2",
  "bridge",
  "chrono",
@@ -210,6 +210,7 @@ dependencies = [
  "http_client",
  "iana-time-zone",
  "image",
+ "libc",
  "notify",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
@@ -217,7 +218,7 @@ dependencies = [
  "objc2-user-notifications",
  "parity",
  "parking_lot",
- "pollster 0.4.0",
+ "pollster 1.0.1",
  "portable-pty",
  "raw-window-handle",
  "regex",
@@ -381,9 +382,9 @@ dependencies = [
 
 [[package]]
 name = "async-lock"
-version = "3.4.2"
+version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "290f7f2596bd5b78a9fec8088ccd89180d7f9f55b94b0576823bbbdc72ee8311"
+checksum = "0876700b0d007ad25d5508865a4259c3af9af6d296bf663a0d586d0bc3369f6f"
 dependencies = [
  "event-listener",
  "event-listener-strategy",
@@ -757,11 +758,12 @@ dependencies = [
 
 [[package]]
 name = "bridge"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-channel",
  "async-lock",
+ "base64 0.23.1",
  "chrono",
  "futures-lite",
  "log",
@@ -1050,15 +1052,15 @@ dependencies = [
 
 [[package]]
 name = "cocoa"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f79398230a6e2c08f5c9760610eb6924b52aa9e7950a619602baba59dcbbdbb2"
+checksum = "1e0d7076fd2bf3e3864683161b46e8b72277cdd0d304d6291faceea6e7db9a14"
 dependencies = [
  "bitflags 2.13.2",
  "block",
  "cocoa-foundation 0.2.1",
  "core-foundation 0.10.1",
- "core-graphics 0.24.0",
+ "core-graphics 0.25.0",
  "foreign-types",
  "libc",
  "objc",
@@ -1251,6 +1253,19 @@ name = "core-graphics"
 version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fa95a34622365fa5bbf40b20b75dba8dfa8c94c734aea8ac9a5ca38af14316f1"
+dependencies = [
+ "bitflags 2.13.2",
+ "core-foundation 0.10.1",
+ "core-graphics-types 0.2.0",
+ "foreign-types",
+ "libc",
+]
+
+[[package]]
+name = "core-graphics"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "064badf302c3194842cf2c5d61f56cc88e54a759313879cdf03abdd27d0c3b97"
 dependencies = [
  "bitflags 2.13.2",
  "core-foundation 0.10.1",
@@ -2627,7 +2642,7 @@ dependencies = [
  "accesskit_macos",
  "anyhow",
  "block2 0.6.2",
- "cocoa 0.26.0",
+ "cocoa 0.27.0",
  "collections",
  "core-foundation 0.10.1",
  "core-foundation-sys",
@@ -2640,7 +2655,7 @@ dependencies = [
  "gpui_apple",
  "gpui_util",
  "image",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "log",
  "objc",
  "objc2 0.6.5",
@@ -3275,6 +3290,15 @@ name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
 dependencies = [
  "either",
 ]
@@ -4541,7 +4565,7 @@ dependencies = [
 
 [[package]]
 name = "parity"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "gpui",
@@ -4874,6 +4898,12 @@ name = "pollster"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
+
+[[package]]
+name = "pollster"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc6355899e1c9462875b6757c79f3caa011a1fdae12bbb1a2e72dd1f234f8336"
 
 [[package]]
 name = "polycool"
@@ -5514,9 +5544,9 @@ dependencies = [
 
 [[package]]
 name = "rust-embed"
-version = "8.13.0"
+version = "8.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19afa5b4b6a611de00bd1bdae6ae6f39084c9399f0679c3f52d8469cf335cc23"
+checksum = "e98f580cf7a2863aeb6827800283f52cbe6fb3f3bb7c1843783f903c16dcb8ad"
 dependencies = [
  "rust-embed-impl",
  "rust-embed-utils",
@@ -5525,9 +5555,9 @@ dependencies = [
 
 [[package]]
 name = "rust-embed-impl"
-version = "8.13.0"
+version = "8.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0d8afda6374eac59e066abee06d265247ebbaf3006cf878e2879e8356e34053"
+checksum = "a93e2f69cf224a6c7df7509aa5ba4a23f56828ee41b040e92ac8762371eb9ba7"
 dependencies = [
  "mime_guess",
  "proc-macro2",
@@ -5539,9 +5569,9 @@ dependencies = [
 
 [[package]]
 name = "rust-embed-utils"
-version = "8.13.0"
+version = "8.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d84e8ba78bd384263e5922f084cbe1b081c3b7e69add59c8fb097b879ba968a"
+checksum = "915e33dccbe7deb2b8a342dc4c517503fe85e0230ddbae40a4fb0220493dad9b"
 dependencies = [
  "sha2 0.11.1",
  "walkdir",
@@ -6002,10 +6032,10 @@ dependencies = [
 
 [[package]]
 name = "shapes"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64 0.23.1",
  "gpui",
  "gpui_platform",
  "image",
@@ -6168,9 +6198,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.16.3"
+version = "1.16.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
+checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
 
 [[package]]
 name = "smol"
@@ -6515,7 +6545,7 @@ dependencies = [
 
 [[package]]
 name = "textsys"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "core-foundation 0.10.1",
@@ -6536,7 +6566,7 @@ dependencies = [
 
 [[package]]
 name = "theme"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "gpui",
@@ -6958,11 +6988,11 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-channel",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bridge",
  "chrono",
  "gpui",

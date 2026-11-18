@@ -342,7 +342,11 @@ pub(super) struct Slash {
     /// The chat's latest commits offered by `/review-mode`: sha and subject.
     review_commits: Vec<(String, String)>,
     scroll: gpui::ScrollHandle,
-    goal: Option<Value>,
+    pub(super) goal: Option<Value>,
+    /// Goal mode (the `@` Goal row): the placeholder it replaced. The next send sets the goal.
+    pub(super) goal_mode: Option<SharedString>,
+    /// Repaints the goal row's elapsed time each second while the goal is active.
+    pub(super) goal_tick: Option<Task<()>>,
     pub(super) search: mention::Search,
     /// The `memories` feature is on, so `/memories` is offered.
     pub(super) memories: bool,
@@ -962,9 +966,6 @@ impl Composer {
     /// Text filters the rows; Goal uses it as the objective.
     fn open_sub(&mut self, id: &'static str, cx: &mut Context<Self>) {
         self.cancel_dictation(cx);
-        if id == "goal" {
-            self.slash.goal = None;
-        }
         let start = self.slash.range.start;
         let token = format!("/{id} ");
         self.splice(self.slash.range.clone(), &token);
@@ -1004,12 +1005,208 @@ impl Composer {
     }
 
     pub fn set_goal(&mut self, goal: Option<Value>, cx: &mut Context<Self>) {
+        let active = goal.as_ref().is_some_and(|goal| goal["status"] == "active");
+        self.slash.goal_tick = active.then(|| {
+            cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(Duration::from_secs(1)).await;
+                    if this.update(cx, |_, cx| cx.notify()).is_err() {
+                        break;
+                    }
+                }
+            })
+        });
         self.slash.goal = goal;
         if self.slash.sub.as_ref().is_some_and(|sub| sub.id == "goal") {
             let items = self.sub_items("goal");
             self.slash.sub.as_mut().unwrap().items = items;
         }
         cx.notify();
+    }
+
+    pub fn goal_saved(&mut self, objective: &str, cx: &mut Context<Self>) {
+        if self.slash.goal_mode.is_some() && self.content.trim() == objective {
+            self.content.clear();
+            self.mentions.clear();
+            self.selected_range = 0..0;
+            self.marked_range = None;
+            self.set_goal_mode(false, cx);
+        }
+    }
+
+    /// The `@` Goal row turns goal mode on (`composer.placeholder.goal`); the footer's `Goal`
+    /// chip turns it off.
+    pub(super) fn set_goal_mode(&mut self, on: bool, cx: &mut Context<Self>) {
+        if on && self.slash.goal_mode.is_none() {
+            self.slash.goal_mode = Some(std::mem::replace(
+                &mut self.placeholder,
+                "Describe your goal, define measurable outcomes for best results".into(),
+            ));
+        } else if !on && let Some(placeholder) = self.slash.goal_mode.take() {
+            self.placeholder = placeholder;
+        }
+        cx.notify();
+    }
+
+    /// A send in goal mode sets the chat's goal to the draft text instead of starting a turn.
+    pub(super) fn send_goal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let objective = self.content.trim().to_owned();
+        if objective.is_empty() {
+            return;
+        }
+        if !self.attachments.is_empty() || !self.diff_comments.is_empty() {
+            use gpui::AppContext as _;
+            let dialog = cx.new(|cx| {
+                Confirmation::new(
+                    "Unable to set goal",
+                    "Goals require a text objective. Remove attachments and diff comments before setting the goal.",
+                    "OK",
+                    window,
+                    cx,
+                ).notice(window, cx)
+            });
+            cx.subscribe_in(&dialog, window, |this, _, _, window, cx| {
+                this.blocked = None;
+                this.focus_handle.focus(window, cx);
+                cx.notify();
+            })
+            .detach();
+            self.blocked = Some(dialog);
+            cx.notify();
+            return;
+        }
+        cx.default_global::<PromptHistory>().push(&objective);
+        cx.emit(SlashCommand::Goal {
+            objective: Some(objective),
+            status: "active",
+        });
+    }
+
+    /// The chat's goal over the card (`composer.threadGoal`): status, objective, elapsed time
+    /// or token progress, then Clear and Pause or Resume.
+    pub(super) fn goal_row(&self, t: &Theme, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let goal = self.slash.goal.as_ref()?;
+        let status = goal["status"].as_str()?;
+        let summary = match status {
+            "active" => "Pursuing goal",
+            "paused" => "Paused goal",
+            "blocked" => "Goal stalled",
+            "usageLimited" => "Goal usage limited",
+            "budgetLimited" => "Goal limited",
+            "complete" => "Goal achieved",
+            _ => return None,
+        };
+        let used = goal["timeUsedSeconds"].as_f64().unwrap_or(0.);
+        let secs = if status == "active" {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0., |now| now.as_secs_f64());
+            used + now - goal["updatedAt"].as_f64().unwrap_or(now)
+        } else {
+            used
+        };
+        let progress = goal["tokenBudget"]
+            .as_f64()
+            .filter(|_| matches!(status, "active" | "budgetLimited"))
+            .map_or_else(
+                || crate::screens::profile::duration(secs),
+                |budget| {
+                    let compact = crate::screens::profile::compact;
+                    let tokens = goal["tokensUsed"].as_f64().unwrap_or(0.);
+                    format!("{} / {}", compact(tokens), compact(budget))
+                },
+            );
+        let button =
+            |id: &'static str, name: &'static str, label: &'static str, command: SlashCommand| {
+                crate::tooltip::tooltip(
+                    div()
+                        .id(id)
+                        .size(px(24.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(6.))
+                        .role(gpui::Role::Button)
+                        .aria_label(label)
+                        .tab_index(0)
+                        .focus_visible(crate::focus::trigger_focus)
+                        .hover(|s| s.bg(t.ghost_hover))
+                        .child(icon(name, 14., t.text_tertiary))
+                        .on_key_down(cx.listener({
+                            let command = command.clone();
+                            move |_, event: &gpui::KeyDownEvent, _, cx| {
+                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                    cx.emit(command.clone());
+                                    cx.stop_propagation();
+                                }
+                            }
+                        }))
+                        .on_click(cx.listener(move |_, _, _, cx| cx.emit(command.clone()))),
+                    label,
+                    None,
+                    crate::tooltip::Side::Top,
+                )
+            };
+        let toggle = match status {
+            "active" => Some(("goal-pause", "automation-pause", "Pause goal", "paused")),
+            "paused" => Some(("goal-resume", "automation-resume", "Resume goal", "active")),
+            _ => None,
+        };
+        Some(
+            div()
+                .id("thread-goal")
+                .h(px(32.))
+                .px(px(10.))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(icon("mention-goal", 14., t.text_tertiary.opacity(0.7)))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .items_center()
+                        .overflow_hidden()
+                        .child(text(summary, 14., 20., 430., t.text).flex_none())
+                        .child(div().ml(px(4.)).min_w_0().overflow_hidden().child(text(
+                            format!("{} •", goal["objective"].as_str().unwrap_or_default()),
+                            14.,
+                            20.,
+                            430.,
+                            t.text_secondary,
+                        )))
+                        .child(
+                            tabular(text(progress, 14., 20., 430., t.text_secondary))
+                                .ml(px(6.))
+                                .flex_none(),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(button(
+                            "goal-clear",
+                            "queue-delete",
+                            "Clear goal",
+                            SlashCommand::ClearGoal,
+                        ))
+                        .children(toggle.map(|(id, name, label, status)| {
+                            button(
+                                id,
+                                name,
+                                label,
+                                SlashCommand::Goal {
+                                    objective: None,
+                                    status,
+                                },
+                            )
+                        })),
+                ),
+        )
     }
 
     fn pick_sub(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {

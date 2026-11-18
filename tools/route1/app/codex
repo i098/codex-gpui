@@ -1,0 +1,13 @@
+#!/bin/bash
+# Stand-in for the `codex` binary of the original desktop app (CODEX_CLI_PATH). Startup-config probes
+# run the app's bundled CLI; the long-lived `app-server` is the fixture mock with a fake signed-in
+# account whose backend is the loopback stub (see ../README.md, "Capturing the original app").
+D=$(cd "$(dirname "$0")" && pwd)
+case " $* " in
+  *" --print-startup-config "*) exec "$APP/Contents/Resources/codex-cli/bin/codex" "$@" ;;
+  *" app-server "*)
+    exec env MOCK_FIXTURES="$D/mock/fixtures" R1_ORACLE="$D/mock/oracle.json" MOCK_LOG="$D/mock.log" \
+      MOCK_BACKEND_ORIGIN="https://127.0.0.1:$STUB_PORT" MOCK_HOLD_COMMAND="python3 -c" MOCK_THEME="$R1_THEME" MOCK_REAL_TMP=1 \
+      /opt/homebrew/bin/node "$D/mock/linux/mock-app-server.mjs" ;;
+  *) exec "$APP/Contents/Resources/codex-cli/bin/codex" "$@" ;;
+esac

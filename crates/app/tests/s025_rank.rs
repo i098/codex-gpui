@@ -48,7 +48,14 @@ fn ambiguous_queries_match_the_original_order() -> Result<()> {
                 })
                 .collect()
         });
-        let expected = state["groups"].as_array().context("groups")?;
+        // 26.1029 (`ob`) lists a query's commands before `Chats`; the 26.1007 recording put
+        // `Chats` first.
+        let mut expected: Vec<_> = state["groups"]
+            .as_array()
+            .context("groups")?
+            .iter()
+            .collect();
+        expected.sort_by_key(|group| group["heading"] == "Chats");
         ensure!(
             actual
                 .iter()
@@ -112,6 +119,29 @@ fn point(value: &Value) -> (f32, f32) {
     )
 }
 
+/// The recording's row centres are 26.1007 geometry (31 px rows from y 252.07). 26.1029's
+/// search dialog (refs/sidebar/*.spec.json) lists 35 px rows from y 263.07, with the same
+/// 30.57 px group headings between them.
+fn relaid(y: f32) -> f32 {
+    [
+        (252.07, 263.07),
+        (283.07, 298.07),
+        (344.64, 363.64),
+        (376.07, 403.07),
+        (406.21, 429.21),
+    ]
+    .into_iter()
+    .find(|(old, _)| (old - y).abs() < 0.01)
+    .unwrap_or_else(|| panic!("no 26.1029 row for recorded y {y}"))
+    .1
+}
+
+/// 26.1029 rows sampled in their 10 px end padding (x 1012), clear of keys and text: the
+/// `ghost_hover` fill or the bare dialog fill over the dimmed home page (refs/sidebar dark).
+const SAMPLE_X: f32 = 1012.;
+const SELECTED_RGBA: [u8; 4] = [42, 42, 42, 255];
+const PLAIN_RGBA: [u8; 4] = [23, 23, 23, 255];
+
 fn check_selection(
     fx: &mut common::Fx,
     selection: &Value,
@@ -140,13 +170,12 @@ fn check_selection(
         if query != selection["query"].as_str().unwrap() && row["label"] != selected {
             continue;
         }
-        let palette = if row["label"] == selected {
-            "selectedRgba"
+        let expected = if row["label"] == selected {
+            SELECTED_RGBA
         } else {
-            "plainRgba"
+            PLAIN_RGBA
         };
-        let expected: [u8; 4] = serde_json::from_value(selection[palette].clone())?;
-        let (x, y) = point(&row["sample"]);
+        let (x, y) = (SAMPLE_X, relaid(point(&row["sample"]).1));
         let actual = image.get_pixel((x * scale) as u32, (y * scale) as u32).0;
         ensure!(
             actual
@@ -229,7 +258,10 @@ fn pointer_and_keys_keep_the_recorded_result_selected() -> Result<()> {
     for step in selection["steps"].as_array().context("selection steps")? {
         match step["type"].as_str().context("selection step")? {
             "key" => fx.keys(step["key"].as_str().unwrap())?,
-            "hover" => fx.hover(point(&step["at"]))?,
+            "hover" => {
+                let (x, y) = point(&step["at"]);
+                fx.hover((x, relaid(y)))?
+            }
             "type" => fx.type_text(step["text"].as_str().unwrap())?,
             kind => anyhow::bail!("unsupported selection step {kind}"),
         }
@@ -256,7 +288,8 @@ fn pointer_and_keys_keep_the_recorded_result_selected() -> Result<()> {
         fx.click(common::RAIL_HOME)?;
         fx.click(common::SEARCH)?;
         fx.type_text(click["query"].as_str().unwrap())?;
-        fx.click(point(&click["at"]))?;
+        let (x, y) = point(&click["at"]);
+        fx.click((x, relaid(y)))?;
         check_destination(&mut fx, &recording, click["heading"].as_str().unwrap())?.save(
             std::env::temp_dir().join(format!(
                 "s025-rank-{}.png",

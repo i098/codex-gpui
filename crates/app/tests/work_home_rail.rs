@@ -96,6 +96,14 @@ fn tap(fx: &mut Fx, id: &str) -> Result<()> {
     fx.click(at)
 }
 
+/// Runs the app until Home's account banner loaded: it shifts the layout, so a menu opened
+/// before it arrives moves under the next click.
+fn banner_loaded(fx: &mut Fx) -> Result<()> {
+    fx.wait("home banner", |fx| {
+        fx.read(|root, cx| root.home().read(cx).banner.is_some())
+    })
+}
+
 /// Draws frames until `id` stops moving: a menu follows its trigger one frame late.
 fn settle(fx: &mut Fx, id: &str) -> Result<()> {
     let mut last = center(fx, id)?;
@@ -150,6 +158,7 @@ fn files_menu_reads_searches_and_attaches_library_files() -> Result<()> {
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
     fx.keys("ctrl-2")?;
+    banner_loaded(&mut fx)?;
 
     // A failed read shows `Couldn't load Library files`; the request is the original's body.
     tap(&mut fx, FILES)?;
@@ -198,6 +207,42 @@ fn files_menu_reads_searches_and_attaches_library_files() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn browse_all_opens_the_library_dialog_and_adds_picked_files() -> Result<()> {
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("fs/createDirectory", json!({})));
+    lines.extend(exchange("fs/writeFile", json!({})));
+    lines.extend(exchange("fs/remove", json!({})));
+    let mut fx = Fx::scripted(lines)?;
+    let host = Arc::new(Library::default());
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+    fx.keys("ctrl-2")?;
+    banner_loaded(&mut fx)?;
+    tap(&mut fx, FILES)?;
+    fx.wait("recent files", |fx| {
+        matches!(files(fx).2, LibraryLoad::Ready(_))
+    })?;
+    tap(&mut fx, "work-files-browse-0")?;
+    let browsed = |fx: &Fx| {
+        fx.read(|root, cx| {
+            let browse = &root.home().read(cx).work.browse;
+            browse.open && matches!(browse.load, LibraryLoad::Ready(_))
+        })
+    };
+    fx.wait("dialog files", |fx| browsed(fx))?;
+    ensure!(!files(&fx).0, "the menu closes");
+    ensure!(host.bodies.lock().unwrap().last().unwrap()["limit"] == 50);
+    fx.capture_evidence("CGX_WORK_RAIL_SHOTS", "browse-dialog")?;
+
+    tap(&mut fx, "library-browse-file-0")?;
+    tap(&mut fx, "library-browse-add")?;
+    fx.wait("attached file", |fx| !attached(fx).is_empty())?;
+    ensure!(attached(&fx)[0].ends_with("Q3 plan.txt"));
+    ensure!(!fx.read(|root, cx| root.home().read(cx).work.browse.open));
+    Ok(())
+}
+
 fn plugin(id: &str, title: &str, installed: bool) -> Value {
     json!({
         "id": id, "name": id, "installed": installed, "enabled": installed,
@@ -218,6 +263,7 @@ fn plugins_picker_mentions_connected_plugins() -> Result<()> {
     }
     let mut fx = Fx::scripted(lines)?;
     fx.keys("ctrl-2")?;
+    banner_loaded(&mut fx)?;
     let loaded = |fx: &Fx| {
         fx.read(|root, cx| {
             let plugins = &root.home().read(cx).work.plugins;

@@ -18,12 +18,25 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64, macmini-arm64]
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.pr && format('refs/pull/{0}/head', inputs.pr) || 'main' }}
-      # All scratch lives in one /tmp directory that the last step deletes.
+      # All scratch lives in one /tmp directory that the last step deletes. A run that dies before
+      # that step leaves its directory behind, and the next run then fills the remaining disk. The
+      # `parity-mac` concurrency group allows one run at a time, so no live run owns a /tmp/cgx-parity.*
+      # directory: report the space, remove the leftovers, and report the space again.
       - name: Prepare scratch
         run: |
+          echo '== /tmp before the cleanup'
+          df -h /tmp
+          for old in /tmp/cgx-parity.*; do
+            if [ -d "$old" ]; then du -sh "$old"; fi
+          done
+          for old in /tmp/cgx-parity.*; do
+            if [ -d "$old" ]; then rm -rf "$old"; fi
+          done
+          echo '== /tmp after the cleanup'
+          df -h /tmp
           scratch=$(mktemp -d /tmp/cgx-parity.XXXXXXXX)
           {
             echo "SCRATCH=$scratch"
@@ -61,7 +74,7 @@ jobs:
           ' "$SCRATCH/out/report.json" | tee "$SCRATCH/out/summary.md" >>"$GITHUB_STEP_SUMMARY"
         env:
           INPUT_SCREEN: ${{ inputs.screen }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always() && env.SCRATCH != ''
         with:
           name: parity-${{ env.HEAD_SHA }}

@@ -22,14 +22,24 @@ impl Root {
             .to_string_lossy()
             .into_owned();
         let (changes, recents) = (self.diff.is_some(), recent_files(&cwd, cx));
-        let page = cx.new(|_| NewTabPage::new(changes, recents));
+        let bottom_open = self.terminal.visible;
+        let page = cx.new(|_| NewTabPage::new(changes, bottom_open, recents));
         cx.subscribe_in(&page, window, |this, _, pick: &NewTabPick, window, cx| {
+            // `Terminal options` ▸ `Open bottom terminal` runs `toggleBottomPanel`; the page stays.
+            if *pick == NewTabPick::BottomTerminal {
+                this.show_terminal(Some(true), window, cx);
+                this.sync(window, cx);
+                return;
+            }
             this.tabs.retain(|tab| *tab != SidePanel::NewTab);
             this.new_tab = None;
             match pick {
                 NewTabPick::Changes => this.set_side(SidePanel::Changes, window, cx),
-                NewTabPick::Terminal => this.show_terminal(false, window, cx),
-                NewTabPick::BottomTerminal => this.show_terminal(true, window, cx),
+                NewTabPick::Terminal => this.show_terminal(Some(false), window, cx),
+                NewTabPick::SideChat => {
+                    window.dispatch_action(Box::new(super::shortcuts::OpenCurrentSideChat), cx)
+                }
+                NewTabPick::BottomTerminal => {}
                 NewTabPick::Browser => {
                     this.open_browser_tab(None, window, cx);
                 }

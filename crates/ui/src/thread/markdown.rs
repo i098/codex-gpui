@@ -848,9 +848,14 @@ impl<'a> Markdown<'a> {
                         };
                         let leading_icon = |d: Stateful<Div>| {
                             let mention = tones(self.theme).mention;
-                            let (bottom, glyph) = if python {
+                            // (from the line's top, else its bottom, in css px; glyph)
+                            let (top, offset, glyph) = if python {
                                 (
-                                    3.37,
+                                    // 26.1029: a 14 px slot icon container, its 16 px glyph 1 px
+                                    // above, 3.57 px under the line's top in lines of any height
+                                    // (assets/icons/px holds the ref's raster there).
+                                    true,
+                                    3.57,
                                     icon("thread-lang-python", 16., mention).into_any_element(),
                                 )
                             } else {
@@ -865,10 +870,15 @@ impl<'a> Markdown<'a> {
                                         .into_any_element(),
                                     None => globe().into_any_element(),
                                 };
-                                (2.87, glyph)
+                                (false, 2.87, glyph)
                             };
-                            d.child(div().w(px(19.)))
-                                .child(div().absolute().left_0().bottom(px(bottom)).child(glyph))
+                            let slot = div().absolute().left_0();
+                            let slot = if top {
+                                slot.top(px(offset))
+                            } else {
+                                slot.bottom(px(offset))
+                            };
+                            d.child(div().w(px(19.))).child(slot.child(glyph))
                         };
                         if flow {
                             for (index, word) in label.into_iter().enumerate() {
