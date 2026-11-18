@@ -1,10 +1,10 @@
 //! Shared by the Linux and Windows updaters: read the signed release manifest, download the
 //! package, and check its SHA-256 and Ed25519 signature before anyone installs it.
+use crate::private::hex;
 use anyhow::{Context as _, Result, bail, ensure};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
 use serde::Deserialize;
-use crate::private::hex;
 use sha2::{Digest as _, Sha256};
 use std::{
     io::{Read, Write},
