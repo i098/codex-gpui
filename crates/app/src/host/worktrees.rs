@@ -158,7 +158,10 @@ fn snapshot(root: &Path) -> Result<()> {
             "Codex worktree snapshot: settings-delete-targeted",
         ])?
     };
-    let id = format!("{:x}", Sha1::digest(root.to_string_lossy().as_bytes()));
+    let id: String = Sha1::digest(root.to_string_lossy().as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     git(&["update-ref", &format!("refs/codex/snapshots/{id}"), &commit])?;
     Ok(())
 }
