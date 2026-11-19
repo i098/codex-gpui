@@ -1960,29 +1960,28 @@ impl Root {
     }
 
     /// The account's ChatGPT model list, like the original's `chatgpt-models` query; the
-    /// home and thread composers' picker shows its default label. A failure is logged and
-    /// keeps the `Could not load ChatGPT models` state.
+    /// home and thread composers' picker shows its versions and the selected label. A failure
+    /// is logged and keeps the `Could not load ChatGPT models` state.
     fn load_chatgpt_models(&mut self, window: &Window, cx: &mut Context<Self>) {
         let host = self.host.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let label = cx
+            let models = cx
                 .background_spawn(async move {
                     let identity = host
                         .identity()
                         .context("No authenticated workspace is available")?;
                     host.fetch(&chatgpt_models::request(&identity))
                         .and_then(|response| host::json_body(&response))
-                        .map(|body| chatgpt_models::trigger_label(&body))
+                        .map(|body| chatgpt_models::picker(&body))
                 })
                 .await
                 .context("ChatGPT models")?;
             this.update(cx, |this, cx| {
-                let label = SharedString::from(label);
                 for composer in [
                     this.home.read(cx).composer.clone(),
                     this.thread_composer.clone(),
                 ] {
-                    composer.update(cx, |c, cx| c.set_chatgpt_model(Some(label.clone()), cx));
+                    composer.update(cx, |c, cx| c.set_chatgpt_models(Some(models.clone()), cx));
                 }
             })
         });

@@ -1,11 +1,12 @@
 //! The ChatGPT composer's model list: the original's `chatgpt-models` query (`RJt`, `GET
-//! /models`) and the label its picker trigger shows for the default selection.
+//! /models`), the picker's version rows and the label its trigger shows.
 
 use crate::{
     chatgpt,
     host::{Identity, Request},
 };
 use serde_json::Value;
+use ui::composer::{ChatGptModelRow, ChatGptModels};
 
 pub(crate) fn request(identity: &Identity) -> Request {
     chatgpt::web_request(
@@ -16,12 +17,13 @@ pub(crate) fn request(identity: &Identity) -> Request {
     )
 }
 
-/// The trigger label of the default selection, as the original's `pt` in `U3` computes it
-/// for a Chat (non-`tpp`) conversation: with several intelligence presets the default
-/// preset's title, else the version's label (`rCn`). Without a matching version, the
-/// default model's title, else `Select ChatGPT model`.
-// shortcut: default selection only, no display-title overrides; the picker menu (#1542) adds the rest.
-pub(crate) fn trigger_label(body: &Value) -> String {
+/// The picker's version rows (`modelListConfig.options`, `rCn`) and the trigger label, as the
+/// original's `pt` in `U3` computes it for a Chat (non-`tpp`) conversation: with several
+/// intelligence presets the selected preset's title, else the version's label. Without a
+/// version holding the default model, the default model's title, else `Select ChatGPT model`.
+// shortcut: no display-title overrides, limits or lane matching (`mOt`); a picked version takes
+// its first preset. #1543/#1544 add internal models and limits.
+pub(crate) fn picker(body: &Value) -> ChatGptModels {
     let list = |key: &str| body[key].as_array().map(Vec::as_slice).unwrap_or_default();
     let str_of = |v: &Value, key: &str| v[key].as_str().map(str::to_owned);
     let categories: Vec<&Value> = list("categories")
@@ -65,51 +67,81 @@ pub(crate) fn trigger_label(body: &Value) -> String {
             .cloned()
             .collect()
     };
-    let version = versions.iter().find(|v| {
+    let version_label = |v: &Value| -> String {
+        [
+            "display_text_for_intelligence",
+            "display_text",
+            "display_text_full",
+            "id",
+        ]
+        .iter()
+        .find_map(|key| str_of(v, key))
+        .unwrap_or_default()
+    };
+    // `pt`: several presets show the selected preset's title, else the version's label.
+    let label_in = |v: &Value, slug: &str| -> String {
+        let (version_slugs, version_presets) = (slugs(v), presets(v));
+        if version_presets.len() > 1
+            && let Some(preset) = version_presets
+                .iter()
+                .find(|p| preset_slug(p, &version_slugs).as_deref() == Some(slug))
+        {
+            let category = categories.iter().find(|c| c["default_model"] == slug);
+            let title = str_of(preset, "title")
+                .or_else(|| category.and_then(|c| str_of(c, "human_category_short_name")))
+                .or_else(|| category.and_then(|c| str_of(c, "human_category_name")));
+            let label = if preset["selected_display_version"].is_null() {
+                title
+            } else {
+                str_of(preset, "selected_display_title").or(title)
+            };
+            if let Some(label) = label {
+                return label;
+            }
+        }
+        version_label(v)
+    };
+    let selected = versions.iter().position(|v| {
         let s = slugs(v);
         s.contains(&default)
             || presets(v)
                 .iter()
                 .any(|p| preset_slug(p, &s).as_deref() == Some(&default))
     });
-    let Some(version) = version else {
-        return list("models")
+    let rows: Vec<ChatGptModelRow> = versions
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let slug = if Some(i) == selected {
+                default.clone()
+            } else {
+                let s = slugs(v);
+                presets(v)
+                    .first()
+                    .and_then(|p| preset_slug(p, &s))
+                    .or_else(|| s.into_iter().next())
+                    .unwrap_or_default()
+            };
+            ChatGptModelRow {
+                label: version_label(v).into(),
+                trigger_label: label_in(v, &slug).into(),
+            }
+        })
+        .collect();
+    let label = match selected {
+        Some(i) => rows[i].trigger_label.clone(),
+        None => list("models")
             .iter()
             .find(|m| m["slug"] == default.as_str())
             .and_then(|m| str_of(m, "title"))
-            .unwrap_or_else(|| "Select ChatGPT model".to_owned());
+            .unwrap_or_else(|| "Select ChatGPT model".to_owned())
+            .into(),
     };
-    let version_slugs = slugs(version);
-    let version_presets = presets(version);
-    if version_presets.len() > 1
-        && let Some(preset) = version_presets
-            .iter()
-            .find(|p| preset_slug(p, &version_slugs).as_deref() == Some(&default))
-    {
-        let category = categories
-            .iter()
-            .find(|c| c["default_model"] == default.as_str());
-        let title = str_of(preset, "title")
-            .or_else(|| category.and_then(|c| str_of(c, "human_category_short_name")))
-            .or_else(|| category.and_then(|c| str_of(c, "human_category_name")));
-        let label = if preset["selected_display_version"].is_null() {
-            title
-        } else {
-            str_of(preset, "selected_display_title").or(title)
-        };
-        if let Some(label) = label {
-            return label;
-        }
+    ChatGptModels {
+        label,
+        rows,
+        selected,
     }
-    [
-        "display_text_for_intelligence",
-        "display_text",
-        "display_text_full",
-        "id",
-    ]
-    .iter()
-    .find_map(|key| str_of(version, key))
-    .unwrap_or_else(|| "Select ChatGPT model".to_owned())
 }
 
 #[cfg(test)]
@@ -134,7 +166,10 @@ mod tests {
                     "model_slug": "gpt-6", "lane": "instant"}],
             }],
         });
-        assert_eq!(trigger_label(&body), "6");
+        let picker = picker(&body);
+        assert_eq!(picker.label.as_ref(), "6");
+        let rows: Vec<_> = picker.rows.iter().map(|r| r.label.as_ref()).collect();
+        assert_eq!((rows, picker.selected), (vec!["6"], Some(0)));
     }
 
     #[test]
@@ -154,7 +189,12 @@ mod tests {
                  ]},
             ],
         });
-        assert_eq!(trigger_label(&body), "6 Thinking");
+        let picker = picker(&body);
+        assert_eq!(picker.label.as_ref(), "6 Thinking");
+        assert_eq!(picker.selected, Some(1));
+        // A picked version shows its first preset's label.
+        let row = &picker.rows[0];
+        assert_eq!((row.label.as_ref(), row.trigger_label.as_ref()), ("5", "5"));
     }
 
     #[test]
@@ -164,7 +204,8 @@ mod tests {
             "models": [{"slug": "research", "title": "Deep Research"}],
             "versions": [{"id": "6", "slugs": ["gpt-6"]}],
         });
-        assert_eq!(trigger_label(&body), "Deep Research");
-        assert_eq!(trigger_label(&json!({})), "Select ChatGPT model");
+        assert_eq!(picker(&body).label.as_ref(), "Deep Research");
+        assert_eq!(picker(&body).selected, None);
+        assert_eq!(picker(&json!({})).label.as_ref(), "Select ChatGPT model");
     }
 }

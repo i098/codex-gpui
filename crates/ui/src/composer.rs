@@ -908,7 +908,28 @@ enum Menu {
     Permissions,
     Effort,
     Models,
+    /// The ChatGPT Chat composer's version list (`chatgptConversations.modelPicker.*`).
+    ChatGptModels,
     Comments,
+}
+
+/// The ChatGPT model picker's rows and selection, from the account's `/models` list.
+#[derive(Clone)]
+pub struct ChatGptModels {
+    /// The trigger label of the selection.
+    pub label: SharedString,
+    pub rows: Vec<ChatGptModelRow>,
+    /// The row of the selection; `None` when no version holds the default model.
+    pub selected: Option<usize>,
+}
+
+/// One version row of the ChatGPT model picker (`rCn`).
+#[derive(Clone)]
+pub struct ChatGptModelRow {
+    /// The row text (`display_text_for_intelligence`).
+    pub label: SharedString,
+    /// The trigger label once this row is picked (`pt`).
+    pub trigger_label: SharedString,
 }
 
 /// Index of the `Speed` sub trigger among the effort menu's items.
@@ -1032,8 +1053,8 @@ pub struct Composer {
     docked: bool,
     /// The ChatGPT home's one-row pill: `+`, the editor, then the model, microphone and voice.
     chat: bool,
-    /// The ChatGPT model picker's trigger label; `None` until the account's model list loads.
-    chatgpt_model: Option<SharedString>,
+    /// The ChatGPT model picker's rows and selection; `None` until the account's model list loads.
+    chatgpt_models: Option<ChatGptModels>,
     shell_commands: bool,
     content: String,
     /// Mention chips in `content`, in order.
@@ -1208,7 +1229,7 @@ impl Composer {
             placeholder: placeholder.into(),
             docked,
             chat: false,
-            chatgpt_model: None,
+            chatgpt_models: None,
             shell_commands: false,
             content: String::new(),
             mentions: Vec::new(),
@@ -2176,9 +2197,9 @@ impl Composer {
         cx.notify();
     }
 
-    /// The ChatGPT model picker's trigger label from the account's model list.
-    pub fn set_chatgpt_model(&mut self, label: Option<SharedString>, cx: &mut Context<Self>) {
-        self.chatgpt_model = label;
+    /// The ChatGPT model picker's rows and selection from the account's model list.
+    pub fn set_chatgpt_models(&mut self, models: Option<ChatGptModels>, cx: &mut Context<Self>) {
+        self.chatgpt_models = models;
         cx.notify();
     }
 
@@ -2642,6 +2663,7 @@ impl Composer {
             let count = match menu {
                 Menu::Permissions => permission_menu_rows(&self.permission_rows, cx).len(),
                 Menu::Models => self.models.len() + 1,
+                Menu::ChatGptModels => self.chatgpt_models.as_ref().map_or(0, |m| m.rows.len()),
                 Menu::Effort => 3,
                 Menu::Comments => self.diff_comments.len(),
             };
@@ -2877,6 +2899,14 @@ impl Composer {
                 }
                 self.toggle_menu(Menu::Effort, window, cx);
                 self.picked(cx);
+            }
+            // `mh.Item` `onSelect`: a new version becomes the selection, then the menu closes.
+            Some(Menu::ChatGptModels) => {
+                if let Some(models) = &mut self.chatgpt_models {
+                    models.selected = Some(index);
+                    models.label = models.rows[index].trigger_label.clone();
+                }
+                self.dismiss(&Dismiss, window, cx);
             }
             // The original's DOM order: `Select model`, `Speed` (sub trigger), `Reset`.
             Some(Menu::Effort) => match index {
