@@ -163,7 +163,7 @@ fn snapshot(root: &Path) -> Result<()> {
             "Codex worktree snapshot: settings-delete-targeted",
         ])?
     };
-    let id = format!("{:x}", Sha1::digest(root.to_string_lossy().as_bytes()));
+    let id = crate::private::hex(&Sha1::digest(root.to_string_lossy().as_bytes()));
     git(&["update-ref", &format!("refs/codex/snapshots/{id}"), &commit])?;
     Ok(())
 }
@@ -397,7 +397,7 @@ pub(in crate::host) fn restore_thread_worktree(params: &Value) -> Result<Value> 
             continue;
         }
         for candidate in cwd.ancestors().take_while(|candidate| !candidate.exists()) {
-            let id = format!("{:x}", Sha1::digest(candidate.to_string_lossy().as_bytes()));
+            let id = crate::private::hex(&Sha1::digest(candidate.to_string_lossy().as_bytes()));
             let reference = format!("refs/codex/snapshots/{id}");
             if let Some(snapshot) = answer(root, &["rev-parse", "--verify", &reference])? {
                 checked(run(
