@@ -29,6 +29,14 @@ impl Root {
         }
         let id = format!("chatgpt:{}", crate::uuid_v4());
         self.shortcut_state.ephemeral.insert(id.clone());
+        let work = ui::screens::sidebar::MODES[self.sidebar.read(cx).mode()] == "Work";
+        self.shortcut_state.chatgpt_turns.insert(
+            id.clone(),
+            chatgpt_conversation::Turn {
+                work,
+                ..Default::default()
+            },
+        );
         self.show_thread(thread(&id, &s.text), window, cx);
         self.chatgpt_turn(id, s, cx);
     }
@@ -39,7 +47,12 @@ impl Root {
         let Some(identity) = host.identity() else {
             return;
         };
-        let previous = self.shortcut_state.chatgpt_turns.get(&id).cloned();
+        let previous = self
+            .shortcut_state
+            .chatgpt_turns
+            .get(&id)
+            .cloned()
+            .unwrap_or_default();
         let turn = format!("{id}:{}", crate::uuid_v4());
         let reply = format!("{turn}:reply");
         self.apply_chatgpt(
@@ -69,7 +82,7 @@ impl Root {
                 &*host,
                 &identity,
                 &prompt,
-                previous.as_ref(),
+                &previous,
                 &AtomicBool::new(false),
                 &mut |turn| {
                     // A rewritten reply sends no delta; the final `item/completed` carries it.

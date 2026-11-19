@@ -110,13 +110,14 @@ fn chat_turn_sends_the_sentinel_headers_and_decodes_the_reply() -> Result<()> {
     let previous = Turn {
         conversation_id: Some("conversation".into()),
         message_id: Some("parent".into()),
+        work: true,
         ..Turn::default()
     };
     let turn = send(
         &host,
         &identity,
         "Reply with the single word: pong",
-        Some(&previous),
+        &previous,
         &AtomicBool::new(false),
         &mut |turn| updates.push(turn.reply.clone()),
     )?;
@@ -127,6 +128,7 @@ fn chat_turn_sends_the_sentinel_headers_and_decodes_the_reply() -> Result<()> {
             message_id: Some("00000000-0000-4000-8000-000000000012".into()),
             reply: "pong".into(),
             complete: true,
+            work: true,
         }
     );
     assert!(updates.contains(&"pong".to_owned()), "{updates:?}");
