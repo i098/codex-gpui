@@ -21,9 +21,10 @@ pub(crate) fn request(identity: &Identity) -> Request {
 /// original's `pt` in `U3` computes it for a Chat (non-`tpp`) conversation: with several
 /// intelligence presets the selected preset's title, else the version's label. Without a
 /// version holding the default model, the default model's title, else `Select ChatGPT model`.
-/// Also the `Model` slash command's model options (`options`) and `Change from` labels.
+/// Also the `Model` slash command's model options (`options`), the `Internal models` submenu's
+/// rows (`internalOptions`) and `Change from` labels.
 // shortcut: no display-title overrides, limits or lane matching (`mOt`); a picked version takes
-// its first preset. #1543/#1544 add internal models and limits.
+// its first preset. #1544 adds limits.
 pub(crate) fn picker(body: &Value) -> ChatGptModels {
     let list = |key: &str| body[key].as_array().map(Vec::as_slice).unwrap_or_default();
     let str_of = |v: &Value, key: &str| v[key].as_str().map(str::to_owned);
@@ -203,9 +204,37 @@ pub(crate) fn picker(body: &Value) -> ChatGptModels {
         });
     let mut seen = std::collections::HashSet::new();
     options.retain(|o| seen.insert((o.slug.clone(), o.effort.clone())));
+    // `BSn`'s `internalOptions`: the models of every `internal_groups` entry without the
+    // `hidden` tag; the picker lists one row per slug (`gOt` by `slug`), a Work-mode model at
+    // its first thinking effort.
+    let mut internal_slugs = std::collections::HashSet::new();
+    let internal: Vec<ModelOption> = list("internal_groups")
+        .iter()
+        .flat_map(|g| g["model_ids"].as_array().into_iter().flatten())
+        .filter_map(|id| model(id.as_str()?))
+        .filter(|m| {
+            !m["tags"]
+                .as_array()
+                .is_some_and(|t| t.iter().any(|t| t == "hidden"))
+        })
+        .filter_map(|m| {
+            let slug = str_of(m, "slug").filter(|s| internal_slugs.insert(s.clone()))?;
+            let first_effort = (m["is_work_mode_model"] == true)
+                .then(|| str_of(&m["thinking_efforts"][0], "thinking_effort"))
+                .flatten();
+            Some(ModelOption {
+                effort: effort_of(&slug, first_effort),
+                title: str_of(m, "title"),
+                description: str_of(m, "description"),
+                selected_label: None,
+                slug,
+            })
+        })
+        .collect();
     // `USn` searches these and every version's options for the selection's name.
     let all_options: Vec<ModelOption> = options
         .iter()
+        .chain(&internal)
         .cloned()
         .chain(versions.iter().flat_map(|v| version_options(v)))
         .collect();
@@ -266,10 +295,27 @@ pub(crate) fn picker(body: &Value) -> ChatGptModels {
             pick: pick(o.slug, o.effort, first_row),
         })
         .collect();
+    // `jo(option, Ls(d, slug))`: an internal model checks the version that holds it.
+    let internal = internal
+        .into_iter()
+        .map(|o| {
+            let row = versions.iter().position(|v| slugs(v).contains(&o.slug));
+            ChatGptModelOption {
+                // `ro(e) ?? We`: the model title, else `Select ChatGPT model`.
+                title: o
+                    .title
+                    .unwrap_or_else(|| "Select ChatGPT model".to_owned())
+                    .into(),
+                description: o.description.unwrap_or_default().into(),
+                pick: pick(o.slug, o.effort, row),
+            }
+        })
+        .collect();
     ChatGptModels {
         current: pick(default, None, selected),
         rows,
         options,
+        internal,
     }
 }
 
@@ -388,6 +434,38 @@ mod tests {
         assert_eq!(
             picker(&json!({})).current.trigger_label.as_ref(),
             "Select ChatGPT model"
+        );
+    }
+
+    #[test]
+    fn internal_models_skip_hidden_ones_and_check_their_version() {
+        // The recorded Go account's `internal_groups`: both alpha models are `hidden`.
+        let mut body = json!({
+            "default_model_slug": "gpt-6",
+            "models": [
+                {"slug": "gpt-6", "title": "GPT-6"},
+                {"slug": "alpha-13", "tags": ["hidden"]},
+                {"slug": "alpha-12", "tags": ["hidden"]},
+            ],
+            "versions": [{"id": "6", "slugs": ["gpt-6"]}],
+            "internal_groups": [{"group": "alpha", "model_ids": ["alpha-13", "alpha-12"]}],
+        });
+        assert!(picker(&body).internal.is_empty());
+        // An unhidden internal model lists once, by title, else `Select ChatGPT model`.
+        body["models"][1]["tags"] = json!([]);
+        body["models"][2] = json!({"slug": "gpt-6", "title": "GPT-6", "tags": []});
+        body["internal_groups"][0]["model_ids"] = json!(["alpha-13", "gpt-6", "gpt-6"]);
+        let internal = picker(&body).internal;
+        let rows: Vec<_> = internal
+            .iter()
+            .map(|o| (o.title.as_ref(), o.pick.slug.as_ref(), o.pick.row))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("Select ChatGPT model", "alpha-13", None),
+                ("GPT-6", "gpt-6", Some(0)),
+            ]
         );
     }
 }
