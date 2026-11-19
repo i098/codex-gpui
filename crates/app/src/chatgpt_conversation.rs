@@ -25,6 +25,8 @@ pub struct Turn {
     /// A Work conversation: its first message has the `tpp` origin, which the server answers
     /// with `product_experience: work`.
     pub work: bool,
+    /// `conversation_detail_metadata`'s `model_limits`, merged by model (`XD`).
+    pub model_limits: Vec<ui::composer::ChatGptLimit>,
 }
 
 /// Sends `prompt` as the next message after `previous`, with `model` (slug, thinking effort):
@@ -333,6 +335,20 @@ impl Decoder {
         if data["type"] == "message_stream_complete" {
             self.turn.complete = true;
         }
+        if data["type"] == "conversation_detail_metadata" {
+            for limit in data["model_limits"].as_array().into_iter().flatten() {
+                let (Some(slug), Some(resets_after)) =
+                    (limit["model_slug"].as_str(), limit["resets_after"].as_str())
+                else {
+                    continue;
+                };
+                self.turn.model_limits.retain(|l| l.slug != slug);
+                self.turn.model_limits.push(ui::composer::ChatGptLimit {
+                    slug: slug.to_owned().into(),
+                    resets_after: resets_after.to_owned().into(),
+                });
+            }
+        }
         let message = &data["message"];
         if message["author"]["role"] == "assistant"
             && message["recipient"] == "all"
@@ -503,6 +519,33 @@ mod tests {
     }
 
     #[test]
+    fn detail_metadata_limits_merge_by_model() -> Result<()> {
+        let mut decoder = Decoder::default();
+        let limit = |slug: &str, at: &str| {
+            json!({"model_slug": slug, "resets_after": at,
+            "using_default_model_slug": "gpt-6"})
+        };
+        decoder.event(
+            None,
+            json!({"type": "conversation_detail_metadata",
+            "model_limits": [limit("gpt-6-thinking", "t1"), limit("o3", "t1")]}),
+        )?;
+        decoder.event(
+            None,
+            json!({"type": "conversation_detail_metadata",
+            "model_limits": [limit("o3", "t2")]}),
+        )?;
+        let limits: Vec<_> = decoder
+            .turn
+            .model_limits
+            .iter()
+            .map(|l| (l.slug.as_ref(), l.resets_after.as_ref()))
+            .collect();
+        assert_eq!(limits, vec![("gpt-6-thinking", "t1"), ("o3", "t2")]);
+        Ok(())
+    }
+
+    #[test]
     fn deltas_reuse_the_previous_path_and_apply_every_op() -> Result<()> {
         let mut decoder = Decoder::default();
         decoder.event(Some("delta_encoding"), json!("v1"))?;
@@ -537,7 +580,7 @@ mod tests {
                 message_id: Some("m1".into()),
                 reply: "Hell".into(),
                 complete: false,
-                work: false,
+                ..Turn::default()
             }
         );
         Ok(())

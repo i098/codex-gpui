@@ -111,6 +111,13 @@ impl Root {
                             Ok(done) => {
                                 let item = json!({"type": "agentMessage", "id": reply, "text": done.reply, "phase": null});
                                 this.apply_chatgpt(&id, "item/completed", json!({"turnId": turn, "item": item}), cx);
+                                // A Work (`tpp`) conversation's limits do not reach the Chat picker.
+                                if !done.work && !done.model_limits.is_empty() {
+                                    for composer in [this.home.read(cx).composer.clone(), this.thread_composer.clone()] {
+                                        let limits = done.model_limits.clone();
+                                        composer.update(cx, |c, cx| c.add_chatgpt_limits(limits, cx));
+                                    }
+                                }
                                 this.shortcut_state.chatgpt_turns.insert(id.clone(), done);
                                 ("completed", None)
                             }
