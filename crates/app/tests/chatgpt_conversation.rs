@@ -129,6 +129,7 @@ fn chat_turn_sends_the_sentinel_headers_and_decodes_the_reply() -> Result<()> {
             reply: "pong".into(),
             complete: true,
             work: true,
+            model_limits: Vec::new(),
         }
     );
     assert!(updates.contains(&"pong".to_owned()), "{updates:?}");

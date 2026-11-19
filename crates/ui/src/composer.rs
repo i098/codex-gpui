@@ -946,6 +946,45 @@ pub struct ChatGptModelRow {
     pub label: SharedString,
     /// The selection once this row is picked.
     pub pick: ChatGptPick,
+    /// The version's default model, then its options' models: the row is disabled when all of
+    /// them have reached their limit (`mOt`), with the default model's limit as its tooltip.
+    pub slugs: Vec<SharedString>,
+}
+
+/// A model that reached its usage limit (`conversation_detail_metadata`'s `model_limits`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChatGptLimit {
+    pub slug: SharedString,
+    /// The server reset time (`resets_after`), RFC 3339.
+    pub resets_after: SharedString,
+}
+
+/// `V3`: the limited row's tooltip (`chatgptConversations.modelPicker.limit.*`), with the reset
+/// time as en-US `time, short` or `date, medium` (ICU puts U+202F before `AM`/`PM`).
+// shortcut: no EDU-plan `description` override and no locale other than en-US.
+pub fn chatgpt_limit_text<Tz: chrono::TimeZone>(
+    resets_after: &str,
+    now: chrono::DateTime<Tz>,
+) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let Ok(reset) = chrono::DateTime::parse_from_rfc3339(resets_after) else {
+        return "Limit reached. Try again later.".to_owned();
+    };
+    let reset = reset.with_timezone(&now.timezone());
+    let time = reset.format("%-I:%M\u{202f}%p");
+    let day = reset.date_naive();
+    if day == now.date_naive() {
+        format!("Limit reached. Try again after {time}.")
+    } else if now.date_naive().succ_opt() == Some(day) {
+        format!("Limit reached. Try again after {time} tomorrow.")
+    } else {
+        format!(
+            "Limit reached. Try again after {}.",
+            reset.format("%b %-d, %Y")
+        )
+    }
 }
 
 /// One row of the ChatGPT `Model` slash command's submenu (`Ekt`).
@@ -1082,6 +1121,8 @@ pub struct Composer {
     chatgpt_models: Option<ChatGptModels>,
     /// The open `Internal models` submenu's search field; `None` while the submenu is closed.
     chatgpt_internal: Option<Entity<Composer>>,
+    /// Model limits seen in this session's ChatGPT Chat conversations.
+    chatgpt_limits: Vec<ChatGptLimit>,
     shell_commands: bool,
     content: String,
     /// Mention chips in `content`, in order.
@@ -1258,6 +1299,7 @@ impl Composer {
             chat: false,
             chatgpt_models: None,
             chatgpt_internal: None,
+            chatgpt_limits: Vec::new(),
             shell_commands: false,
             content: String::new(),
             mentions: Vec::new(),
@@ -2231,6 +2273,37 @@ impl Composer {
         cx.notify();
     }
 
+    /// The account's model limits from its ChatGPT Chat conversations; a later limit of the same
+    /// model replaces the earlier one.
+    pub fn add_chatgpt_limits(&mut self, limits: Vec<ChatGptLimit>, cx: &mut Context<Self>) {
+        for limit in limits {
+            self.chatgpt_limits.retain(|l| l.slug != limit.slug);
+            self.chatgpt_limits.push(limit);
+        }
+        cx.notify();
+    }
+
+    /// `YD`: the limit of `slug` while its reset time is in the future.
+    fn chatgpt_limit(&self, slug: &str) -> Option<&ChatGptLimit> {
+        self.chatgpt_limits.iter().find(|l| {
+            l.slug == slug
+                && chrono::DateTime::parse_from_rfc3339(&l.resets_after)
+                    .is_ok_and(|reset| reset > chrono::Utc::now())
+        })
+    }
+
+    /// A version row's limit when all its models are limited (`mOt` finds no option): the
+    /// default model's limit (`Be.get(e.defaultModelSlug)`).
+    // shortcut: no `modelSlugByLane` fallback for the selection's lane.
+    fn chatgpt_row_limit(&self, row: &ChatGptModelRow) -> Option<&ChatGptLimit> {
+        let (default, options) = row.slugs.split_first()?;
+        options
+            .iter()
+            .all(|slug| self.chatgpt_limit(slug).is_some())
+            .then(|| self.chatgpt_limit(default))
+            .flatten()
+    }
+
     /// The submit button's accessible label (`composer.submitButtonTooltip.*`): `Stop` while a
     /// turn runs and the composer is empty, else the follow-up mode (`Queue` or `Steer`) while
     /// a turn runs, else `Send`. The original shows no tooltip on this button.
@@ -2963,13 +3036,20 @@ impl Composer {
             // `mh.Item` `onSelect`: a new version becomes the selection, then the menu closes.
             // The row after the versions is the `Internal models` sub trigger.
             Some(Menu::ChatGptModels) => {
-                let Some(models) = &mut self.chatgpt_models else {
+                let Some(models) = &self.chatgpt_models else {
                     return;
                 };
                 if index == models.rows.len() {
                     return self.open_chatgpt_internal(window, cx);
                 }
-                models.current = models.rows[index].pick.clone();
+                let row = &models.rows[index];
+                if self.chatgpt_row_limit(row).is_some() {
+                    return;
+                }
+                let pick = row.pick.clone();
+                if let Some(models) = &mut self.chatgpt_models {
+                    models.current = pick;
+                }
                 self.dismiss(&Dismiss, window, cx);
             }
             // The original's DOM order: `Select model`, `Speed` (sub trigger), `Reset`.
@@ -4107,6 +4187,29 @@ impl Render for Composer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn limit_text_names_the_reset_day() {
+        // 2026-11-19 22:30 at UTC-5.
+        let zone = chrono::FixedOffset::west_opt(5 * 3600).unwrap();
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-20T03:30:00Z")
+            .unwrap()
+            .with_timezone(&zone);
+        let text = |reset: &str| chatgpt_limit_text(reset, now);
+        assert_eq!(
+            text("2026-11-20T04:05:00Z"),
+            "Limit reached. Try again after 11:05\u{202f}PM."
+        );
+        assert_eq!(
+            text("2026-11-20T14:00:00+00:00"),
+            "Limit reached. Try again after 9:00\u{202f}AM tomorrow."
+        );
+        assert_eq!(
+            text("2026-11-22T14:00:00Z"),
+            "Limit reached. Try again after Nov 22, 2026."
+        );
+        assert_eq!(text("soon"), "Limit reached. Try again later.");
+    }
 
     #[test]
     fn enabled_efforts_keep_low_to_xhigh_and_filter_the_rest() {

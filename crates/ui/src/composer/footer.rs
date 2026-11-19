@@ -206,7 +206,8 @@ impl Composer {
         popover(t, 254., |d| {
             d.children(models.rows.iter().enumerate().map(|(i, row)| {
                 let selected = models.current.row == Some(i);
-                div()
+                let limit = self.chatgpt_row_limit(row);
+                let item = div()
                     .id(("chatgpt-model", i))
                     .role(gpui::Role::MenuItemRadio)
                     .aria_label(row.label.clone())
@@ -215,6 +216,7 @@ impl Composer {
                     } else {
                         gpui::Toggled::False
                     })
+                    .aria_disabled(limit.is_some())
                     .px(px(8.))
                     .py(px(5.))
                     .flex()
@@ -224,6 +226,7 @@ impl Composer {
                     .hover(move |s| s.bg(hover))
                     .track_focus(&self.menu_focus.items[i])
                     .focus(move |s| s.bg(hover))
+                    .when(limit.is_some(), |d| d.opacity(0.5))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.activate_menu_item(i, window, cx)
                     }))
@@ -236,7 +239,8 @@ impl Composer {
                     )))
                     .when(selected, |d| {
                         d.child(icon("menu-check", 16., t.text).opacity(0.75))
-                    })
+                    });
+                limit_tooltip(item, limit)
             }))
             .when(!models.internal.is_empty(), |d| {
                 d.child(self.chatgpt_internal_trigger(models, t, cx))
@@ -307,9 +311,12 @@ impl Composer {
                 div().max_h(px(250.)).flex().flex_col().children(
                     matches.into_iter().enumerate().map(|(n, o)| {
                         let pick = o.pick.clone();
-                        div()
+                        // `disabled: Be.get(e.slug) != null`.
+                        let limit = self.chatgpt_limit(&o.pick.slug);
+                        let item = div()
                             .id(("chatgpt-internal-model", n))
                             .role(gpui::Role::MenuItem)
+                            .aria_disabled(limit.is_some())
                             .px(px(8.))
                             .py(px(5.))
                             .flex()
@@ -317,9 +324,12 @@ impl Composer {
                             .gap(px(6.))
                             .rounded(px(15.))
                             .hover(move |s| s.bg(hover))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.pick_chatgpt_internal(pick.clone(), window, cx)
-                            }))
+                            .when(limit.is_some(), |d| d.opacity(0.5))
+                            .when(limit.is_none(), |d| {
+                                d.on_click(cx.listener(move |this, _, window, cx| {
+                                    this.pick_chatgpt_internal(pick.clone(), window, cx)
+                                }))
+                            })
                             .child(div().flex_1().min_w_0().child(text(
                                 o.title.clone(),
                                 13.,
@@ -329,7 +339,8 @@ impl Composer {
                             )))
                             .when(&o.pick.slug == selected, |d| {
                                 d.child(icon("menu-check", 16., t.text).opacity(0.75))
-                            })
+                            });
+                        limit_tooltip(item, limit)
                     }),
                 )
             };
@@ -891,5 +902,19 @@ impl Composer {
             }))
             .child(left.min_w_0().flex_shrink(1.))
             .child(right)
+    }
+}
+
+/// A limited model row (`disabled`) and its `V3` limit tooltip, else the row as it is.
+fn limit_tooltip(item: Stateful<Div>, limit: Option<&ChatGptLimit>) -> AnyElement {
+    match limit {
+        Some(limit) => crate::tooltip::tooltip(
+            item,
+            chatgpt_limit_text(&limit.resets_after, chrono::Local::now()),
+            None,
+            crate::tooltip::Side::Right,
+        )
+        .into_any_element(),
+        None => item.into_any_element(),
     }
 }

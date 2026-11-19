@@ -281,6 +281,13 @@ pub(crate) fn picker(body: &Value) -> ChatGptModels {
             ChatGptModelRow {
                 label: version_label(v).into(),
                 pick: pick(slug, effort, Some(i)),
+                // `defaultModelSlug` (`slugs[0]`), then the version's options.
+                slugs: slugs(v)
+                    .into_iter()
+                    .take(1)
+                    .chain(version_options(v).into_iter().map(|o| o.slug))
+                    .map(Into::into)
+                    .collect(),
             }
         })
         .collect();
