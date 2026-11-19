@@ -235,7 +235,7 @@ impl Host for FixtureHost {
         &self,
         _: &Request,
         cancelled: &AtomicBool,
-        receive: &mut dyn FnMut(Value) -> bool,
+        receive: &mut dyn FnMut(Option<&str>, Value) -> bool,
     ) -> Result<()> {
         if self.case == "setup-stream" {
             for (id, line) in [
@@ -243,6 +243,7 @@ impl Host for FixtureHost {
                 ("log-2", "Installing project dependencies"),
             ] {
                 if !receive(
+                    None,
                     json!({"id":id,"item_type":"log","key":{"type":"UserSetupScript","created_at":"2026-10-15T17:00:00Z"},"line":line}),
                 ) {
                     break;

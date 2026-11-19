@@ -935,7 +935,7 @@ fn run(
             host.stream(
                 &request(&identity, &path, "GET", None),
                 cancelled,
-                &mut |event| {
+                &mut |_, event| {
                     if cancelled.load(Ordering::Acquire) {
                         return false;
                     }

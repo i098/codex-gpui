@@ -9,6 +9,7 @@ mod activity_access;
 mod archived_chats;
 mod chatgpt;
 mod chatgpt_chats;
+pub mod chatgpt_conversation;
 mod chronicle;
 mod cloud_task;
 mod data_controls;
