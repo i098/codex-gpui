@@ -137,6 +137,10 @@ fn conversation_request(identity: &Identity, sentinel: &[(&str, String)], body: 
     request
 }
 
+/// The original's Work default (`Mui`) when `/tpp/models/` offers none; a `tpp`
+/// conversation answers a Chat slug with 422 `conversation_model_origin_mismatch`.
+const WORK_MODEL: &str = "gpt-5.6-luna";
+
 /// `cli`/`sli`: the message after `previous`, a follow-up once it has a conversation.
 fn body(prompt: &str, message_id: &str, previous: &Turn) -> Value {
     let mut body = json!({
@@ -148,7 +152,7 @@ fn body(prompt: &str, message_id: &str, previous: &Turn) -> Value {
             "metadata": {},
         }],
         "parent_message_id": "client-created-root",
-        "model": "auto",
+        "model": if previous.work { WORK_MODEL } else { "auto" },
         "timezone": iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".into()),
         "timezone_offset_min": -crate::utc_offset() / 60,
         "supported_encodings": ["v1"],
@@ -479,6 +483,8 @@ mod tests {
         let body = body("hi", "m", &follow_up);
         assert!(body.get("conversation_origin").is_none());
         assert_eq!(body["parent_message_id"], "p");
+        assert_eq!(body["model"], "gpt-5.6-luna");
+        assert_eq!(super::body("hi", "m", &Turn::default())["model"], "auto");
     }
 
     #[test]
