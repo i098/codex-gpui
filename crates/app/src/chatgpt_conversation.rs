@@ -27,13 +27,14 @@ pub struct Turn {
     pub work: bool,
 }
 
-/// Sends `prompt` as the next message after `previous`: a new conversation while `previous`
-/// has no conversation yet, else a follow-up. Reports every change of the turn to `on_update`
-/// until the stream ends or `cancelled` is set.
+/// Sends `prompt` as the next message after `previous`, with `model` (slug, thinking effort):
+/// a new conversation while `previous` has no conversation yet, else a follow-up. Reports
+/// every change of the turn to `on_update` until the stream ends or `cancelled` is set.
 pub fn send(
     host: &dyn Host,
     identity: &Identity,
     prompt: &str,
+    model: (&str, Option<&str>),
     previous: &Turn,
     cancelled: &AtomicBool,
     on_update: &mut dyn FnMut(&Turn),
@@ -41,7 +42,7 @@ pub fn send(
     let started = Instant::now();
     let requirements = host::json_body(&host.fetch(&prepare_request(identity, started))?)
         .context("ChatGPT chat requirements")?;
-    let body = body(prompt, &host::device_id(), previous);
+    let body = body(prompt, model, &host::device_id(), previous);
     let request = conversation_request(identity, &sentinel_headers(&requirements, started)?, &body);
     let mut decoder = Decoder::default();
     decoder.turn.work = previous.work;
@@ -141,8 +142,9 @@ fn conversation_request(identity: &Identity, sentinel: &[(&str, String)], body: 
 /// conversation answers a Chat slug with 422 `conversation_model_origin_mismatch`.
 const WORK_MODEL: &str = "gpt-5.6-luna";
 
-/// `cli`/`sli`: the message after `previous`, a follow-up once it has a conversation.
-fn body(prompt: &str, message_id: &str, previous: &Turn) -> Value {
+/// `cli`/`sli`: the message after `previous`, a follow-up once it has a conversation. A Chat
+/// turn sends the picked `(model, thinking_effort)`; a Work turn sends [`WORK_MODEL`].
+fn body(prompt: &str, model: (&str, Option<&str>), message_id: &str, previous: &Turn) -> Value {
     let mut body = json!({
         "action": "next",
         "messages": [{
@@ -152,11 +154,14 @@ fn body(prompt: &str, message_id: &str, previous: &Turn) -> Value {
             "metadata": {},
         }],
         "parent_message_id": "client-created-root",
-        "model": if previous.work { WORK_MODEL } else { "auto" },
+        "model": if previous.work { WORK_MODEL } else { model.0 },
         "timezone": iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".into()),
         "timezone_offset_min": -crate::utc_offset() / 60,
         "supported_encodings": ["v1"],
     });
+    if let (false, Some(effort)) = (previous.work, model.1) {
+        body["thinking_effort"] = effort.into();
+    }
     if let (Some(conversation), Some(parent)) = (&previous.conversation_id, &previous.message_id) {
         body["conversation_id"] = conversation.as_str().into();
         body["parent_message_id"] = parent.as_str().into();
@@ -463,15 +468,17 @@ mod tests {
         assert!(hash(&format!("0.25{answer}"))[..6] <= *"0fffff");
     }
 
+    const AUTO: (&str, Option<&str>) = ("auto", None);
+
     #[test]
     fn only_a_new_work_conversation_has_the_tpp_origin() {
         let work = Turn {
             work: true,
             ..Turn::default()
         };
-        assert_eq!(body("hi", "m", &work)["conversation_origin"], "tpp");
+        assert_eq!(body("hi", AUTO, "m", &work)["conversation_origin"], "tpp");
         assert!(
-            body("hi", "m", &Turn::default())
+            body("hi", AUTO, "m", &Turn::default())
                 .get("conversation_origin")
                 .is_none()
         );
@@ -480,11 +487,19 @@ mod tests {
             message_id: Some("p".into()),
             ..work
         };
-        let body = body("hi", "m", &follow_up);
+        let body = body("hi", ("gpt-6", Some("min")), "m", &follow_up);
         assert!(body.get("conversation_origin").is_none());
         assert_eq!(body["parent_message_id"], "p");
         assert_eq!(body["model"], "gpt-5.6-luna");
-        assert_eq!(super::body("hi", "m", &Turn::default())["model"], "auto");
+        assert!(body.get("thinking_effort").is_none());
+        let chat = super::body("hi", ("gpt-6", Some("min")), "m", &Turn::default());
+        assert_eq!(
+            (&chat["model"], &chat["thinking_effort"]),
+            (&json!("gpt-6"), &json!("min"))
+        );
+        let auto = super::body("hi", AUTO, "m", &Turn::default());
+        assert_eq!(auto["model"], "auto");
+        assert!(auto.get("thinking_effort").is_none());
     }
 
     #[test]
