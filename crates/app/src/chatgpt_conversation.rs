@@ -22,33 +22,29 @@ pub struct Turn {
     pub reply: String,
     /// The server sent `message_stream_complete`.
     pub complete: bool,
+    /// A Work conversation: its first message has the `tpp` origin, which the server answers
+    /// with `product_experience: work`.
+    pub work: bool,
 }
 
-/// Sends `prompt` as a new conversation, or as a follow-up to the `previous` turn, and reports
-/// every change of the turn to `on_update` until the stream ends or `cancelled` is set.
+/// Sends `prompt` as the next message after `previous`: a new conversation while `previous`
+/// has no conversation yet, else a follow-up. Reports every change of the turn to `on_update`
+/// until the stream ends or `cancelled` is set.
 pub fn send(
     host: &dyn Host,
     identity: &Identity,
     prompt: &str,
-    previous: Option<&Turn>,
+    previous: &Turn,
     cancelled: &AtomicBool,
     on_update: &mut dyn FnMut(&Turn),
 ) -> Result<Turn> {
     let started = Instant::now();
     let requirements = host::json_body(&host.fetch(&prepare_request(identity, started))?)
         .context("ChatGPT chat requirements")?;
-    let mut body = body(prompt, &host::device_id());
-    if let Some(Turn {
-        conversation_id: Some(conversation),
-        message_id: Some(parent),
-        ..
-    }) = previous
-    {
-        body["conversation_id"] = conversation.as_str().into();
-        body["parent_message_id"] = parent.as_str().into();
-    }
+    let body = body(prompt, &host::device_id(), previous);
     let request = conversation_request(identity, &sentinel_headers(&requirements, started)?, &body);
     let mut decoder = Decoder::default();
+    decoder.turn.work = previous.work;
     let mut failure = None;
     host.stream(
         &request,
@@ -141,9 +137,9 @@ fn conversation_request(identity: &Identity, sentinel: &[(&str, String)], body: 
     request
 }
 
-/// `cli`/`sli` for a new conversation's first message.
-fn body(prompt: &str, message_id: &str) -> Value {
-    json!({
+/// `cli`/`sli`: the message after `previous`, a follow-up once it has a conversation.
+fn body(prompt: &str, message_id: &str, previous: &Turn) -> Value {
+    let mut body = json!({
         "action": "next",
         "messages": [{
             "id": message_id,
@@ -156,7 +152,15 @@ fn body(prompt: &str, message_id: &str) -> Value {
         "timezone": iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".into()),
         "timezone_offset_min": -crate::utc_offset() / 60,
         "supported_encodings": ["v1"],
-    })
+    });
+    if let (Some(conversation), Some(parent)) = (&previous.conversation_id, &previous.message_id) {
+        body["conversation_id"] = conversation.as_str().into();
+        body["parent_message_id"] = parent.as_str().into();
+    } else if previous.work {
+        // `conversationOrigin: "tpp"` of the original's Work start (`yNi`).
+        body["conversation_origin"] = "tpp".into();
+    }
+    body
 }
 
 /// `A3t`, with what a native app has: no screen, heap, scripts, or DOM.
@@ -456,6 +460,28 @@ mod tests {
     }
 
     #[test]
+    fn only_a_new_work_conversation_has_the_tpp_origin() {
+        let work = Turn {
+            work: true,
+            ..Turn::default()
+        };
+        assert_eq!(body("hi", "m", &work)["conversation_origin"], "tpp");
+        assert!(
+            body("hi", "m", &Turn::default())
+                .get("conversation_origin")
+                .is_none()
+        );
+        let follow_up = Turn {
+            conversation_id: Some("c".into()),
+            message_id: Some("p".into()),
+            ..work
+        };
+        let body = body("hi", "m", &follow_up);
+        assert!(body.get("conversation_origin").is_none());
+        assert_eq!(body["parent_message_id"], "p");
+    }
+
+    #[test]
     fn deltas_reuse_the_previous_path_and_apply_every_op() -> Result<()> {
         let mut decoder = Decoder::default();
         decoder.event(Some("delta_encoding"), json!("v1"))?;
@@ -489,7 +515,8 @@ mod tests {
                 conversation_id: Some("c1".into()),
                 message_id: Some("m1".into()),
                 reply: "Hell".into(),
-                complete: false
+                complete: false,
+                work: false,
             }
         );
         Ok(())

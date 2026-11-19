@@ -12,6 +12,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add the onboarding capabilities step with its `Local files` row: it asks for access to `Desktop`, `Documents` and `Downloads` in order, shows `Setting up…` while the request runs, `Setup incomplete` with `Retry` when a folder stays closed, and goes on to the app with `Continue` or `Skip`. Before, onboarding went straight from the role step to the app (#994).
 - Show the thread goal above the composer, set a goal with the Goal mode, and mark the final response when the goal completes (#868).
 - ChatGPT mode: a send from the Chat home starts a ChatGPT conversation and streams the reply into the conversation view; a follow-up continues the same conversation. Before, the send started a local Codex thread (#1529).
+- ChatGPT mode: a send from the Work home starts a ChatGPT Work conversation (`conversation_origin: "tpp"`). Before, the send started a local Codex thread (#1530).
 ### Fixed
 - Show installed plugin logos in the Customize sidebar, with theme-aware images and app icons when no plugin logo is available (#1505).
 - Parity gate: the Mac run prints the free space and removes the `/tmp/cgx-parity.*` scratch directories an earlier run left behind, so it no longer fails with `No space left on device`.

@@ -58,7 +58,8 @@ pub(crate) enum NewChatMode {
 pub(crate) struct ShortcutState {
     pub new_chat_mode: NewChatMode,
     pub ephemeral: HashSet<String>,
-    /// The last finished turn of each open ChatGPT conversation, the parent of a follow-up.
+    /// The last finished turn of each open ChatGPT conversation, the parent of a follow-up;
+    /// before the first one finishes, only its Work flag.
     pub chatgpt_turns: HashMap<String, crate::chatgpt_conversation::Turn>,
     pub confirmation: Option<Entity<Confirmation>>,
     pub zoom_banner: Option<Entity<ui::zoom::ZoomBanner>>,
@@ -659,8 +660,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // The Work home keeps the local thread until #1530 adds its `tpp` origin.
-        if ui::screens::sidebar::MODES[self.sidebar.read(cx).mode()] == "ChatGPT" {
+        if self.sidebar.read(cx).chatgpt_surface() {
             return self.start_chatgpt_turn(s, window, cx);
         }
         self.qa_work_started = true;
