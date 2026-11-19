@@ -56,15 +56,14 @@ const LINK_DESCRIPTION: &str =
 #[serde(default, rename_all = "camelCase")]
 pub struct Preferences {
     pub bindings: BTreeMap<String, Vec<String>>,
-    pub primary_number_shortcut_target: NumberTarget,
+    pub primary_number_shortcut_target: Option<NumberTarget>,
     pub external_browser_link_shortcut: LinkModifier,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum NumberTarget {
     Sidebar,
-    #[default]
     Tabs,
 }
 
@@ -157,6 +156,15 @@ const CTRL_NUMBERS: &[&str] = &[
     "Control+9",
 ];
 
+/// Default `switchToMode1..3` keys: `Ctrl+N` on macOS, `Alt+N` elsewhere.
+const fn mode_keys(mac: bool) -> [&'static [&'static str]; 3] {
+    if mac {
+        [&["Ctrl+1"], &["Ctrl+2"], &["Ctrl+3"]]
+    } else {
+        [&["Alt+1"], &["Alt+2"], &["Alt+3"]]
+    }
+}
+
 impl Preferences {
     pub fn defaults(&self, command: &Command) -> &'static [&'static str] {
         let numbered = command
@@ -167,9 +175,18 @@ impl Preferences {
         if let Some((number, tab)) = numbered
             && let Ok(index @ 1..=9) = number.parse::<usize>()
         {
-            let primary = tab == (self.primary_number_shortcut_target == NumberTarget::Tabs);
+            // Until the user picks a primary target, tab shortcuts stay unbound.
+            if tab && self.primary_number_shortcut_target.is_none() {
+                return &[];
+            }
+            let primary = tab == (self.primary_number_shortcut_target == Some(NumberTarget::Tabs));
             let numbers = if primary { CMD_NUMBERS } else { CTRL_NUMBERS };
             return &numbers[index - 1..index];
+        }
+        if let Some(n) = command.id.strip_prefix("switchToMode")
+            && let Ok(index @ 1..=3) = n.parse::<usize>()
+        {
+            return mode_keys(cfg!(target_os = "macos"))[index - 1];
         }
         command.keys
     }
@@ -224,7 +241,7 @@ impl Preferences {
                 self.bindings.clear();
                 self.external_browser_link_shortcut = LinkModifier::default();
             }
-            Change::NumberTarget(target) => self.primary_number_shortcut_target = *target,
+            Change::NumberTarget(target) => self.primary_number_shortcut_target = Some(*target),
             Change::LinkModifier(modifier) => self.external_browser_link_shortcut = *modifier,
         }
         Ok(())
@@ -1179,7 +1196,7 @@ impl KeyboardPage {
         let t = cx.theme().clone();
         let preferences = &cx.global::<KeyboardState>().preferences;
         let (title, detail, label, action, open) = if number {
-            let tabs = preferences.primary_number_shortcut_target == NumberTarget::Tabs;
+            let tabs = preferences.primary_number_shortcut_target != Some(NumberTarget::Sidebar);
             (
                 "Number shortcuts",
                 if tabs {
@@ -1741,5 +1758,16 @@ impl Render for KeyboardPage {
                     .children(search_bar),
             )
             .children(self.confirmation.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mode_keys;
+
+    #[test]
+    fn mode_defaults_follow_the_platform() {
+        assert_eq!(mode_keys(true)[1], ["Ctrl+2"]);
+        assert_eq!(mode_keys(false)[2], ["Alt+3"]);
     }
 }

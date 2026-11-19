@@ -1,7 +1,7 @@
 mod common;
 
 use anyhow::Result;
-use common::Fx;
+use common::{Fx, mode_key};
 
 const MODE_SWITCH: &str = "Switch mode, current mode: Codex";
 
@@ -29,14 +29,14 @@ fn mode_switch_menu_picks_with_keys_and_click_outside_closes() -> Result<()> {
     assert!(!mode_menu(&app));
 
     // Work shares the ChatGPT row: picking it keeps Work.
-    app.keys("ctrl-2")?;
+    app.keys(mode_key(2))?;
     app.click(trigger)?;
     app.keys("down enter")?;
     assert_eq!(mode(&app), 2);
     app.click(trigger)?;
     app.keys("up enter")?;
     assert_eq!(mode(&app), 1);
-    app.keys("ctrl-1")?;
+    app.keys(mode_key(1))?;
 
     app.click(trigger)?;
     assert!(mode_menu(&app));
@@ -57,13 +57,13 @@ fn mode_switch_menu_picks_with_keys_and_click_outside_closes() -> Result<()> {
 }
 
 #[test]
-fn control_digits_switch_mode() -> Result<()> {
+fn mode_digits_switch_mode() -> Result<()> {
     let mut app = Fx::new()?;
-    app.keys("ctrl-1")?;
+    app.keys(mode_key(1))?;
     assert_eq!(mode(&app), 0);
-    app.keys("ctrl-2")?;
+    app.keys(mode_key(2))?;
     assert_eq!(mode(&app), 2);
-    app.keys("ctrl-3")?;
+    app.keys(mode_key(3))?;
     assert_eq!(mode(&app), 1);
     Ok(())
 }
@@ -152,7 +152,7 @@ fn work_home_choose_project_opens_the_project_menu() -> Result<()> {
             composer.set_slash_projects(vec![("beta".into(), "/tmp/beta".into())])
         })
     });
-    app.keys("ctrl-2")?;
+    app.keys(mode_key(2))?;
     app.capture_evidence("CGX_WORK_HOME_SHOTS", "work-home")?;
     // The original's `Choose project` pill: the rail under the card starts at
     // (501.25, 489.44), its first 28 px pill 6 px in.
