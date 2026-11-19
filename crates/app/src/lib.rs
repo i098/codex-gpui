@@ -10,6 +10,7 @@ mod archived_chats;
 mod chatgpt;
 mod chatgpt_chats;
 pub mod chatgpt_conversation;
+mod chatgpt_models;
 mod chatgpt_thread;
 mod chronicle;
 mod cloud_task;
@@ -1927,6 +1928,7 @@ impl Root {
         self.home.update(cx, |home, cx| home.set_mode(mode, cx));
         if self.sidebar.read(cx).chatgpt_surface() {
             self.load_chatgpt_chats(window, cx);
+            self.load_chatgpt_models(window, cx);
         }
         if self.state.route != Route::Home {
             self.navigate(Route::Home, window, cx);
@@ -1952,6 +1954,36 @@ impl Root {
             this.update(cx, |this, cx| {
                 this.sidebar
                     .update(cx, |s, cx| s.set_chatgpt_chats(chats, cx))
+            })
+        });
+        log_err(task, cx);
+    }
+
+    /// The account's ChatGPT model list, like the original's `chatgpt-models` query; the
+    /// home and thread composers' picker shows its default label. A failure is logged and
+    /// keeps the `Could not load ChatGPT models` state.
+    fn load_chatgpt_models(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let host = self.host.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let label = cx
+                .background_spawn(async move {
+                    let identity = host
+                        .identity()
+                        .context("No authenticated workspace is available")?;
+                    host.fetch(&chatgpt_models::request(&identity))
+                        .and_then(|response| host::json_body(&response))
+                        .map(|body| chatgpt_models::trigger_label(&body))
+                })
+                .await
+                .context("ChatGPT models")?;
+            this.update(cx, |this, cx| {
+                let label = SharedString::from(label);
+                for composer in [
+                    this.home.read(cx).composer.clone(),
+                    this.thread_composer.clone(),
+                ] {
+                    composer.update(cx, |c, cx| c.set_chatgpt_model(Some(label.clone()), cx));
+                }
             })
         });
         log_err(task, cx);
