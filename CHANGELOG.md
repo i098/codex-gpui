@@ -16,6 +16,9 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Parity gate: the Mac run prints the free space and removes the `/tmp/cgx-parity.*` scratch directories an earlier run left behind, so it no longer fails with `No space left on device`.
 - ChatGPT mode: the Chat composer shows the `Select ChatGPT model` picker in its `Could not load ChatGPT models` state, not the Codex model and effort control (#1524).
 
+### Security
+- Update `rusqlite` to 0.41 (bundled SQLite fix, RUSTSEC-2026-0459), `pulldown-cmark`, `rustls-webpki`, `webpki-roots`, `rustix` and `heapless` to their patched releases.
+
 ## [0.1.4] - 2026-11-13
 
 ### Fixed
