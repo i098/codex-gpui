@@ -58,6 +58,8 @@ pub(crate) enum NewChatMode {
 pub(crate) struct ShortcutState {
     pub new_chat_mode: NewChatMode,
     pub ephemeral: HashSet<String>,
+    /// The last finished turn of each open ChatGPT conversation, the parent of a follow-up.
+    pub chatgpt_turns: HashMap<String, crate::chatgpt_conversation::Turn>,
     pub confirmation: Option<Entity<Confirmation>>,
     pub zoom_banner: Option<Entity<ui::zoom::ZoomBanner>>,
     undo: Vec<AppEdit>,
@@ -657,6 +659,9 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.sidebar.read(cx).chatgpt_surface() {
+            return self.start_chatgpt_turn(s, window, cx);
+        }
         self.qa_work_started = true;
         let bridge = self.bridge.clone();
         let cwd = self
