@@ -2612,6 +2612,15 @@ impl Composer {
                 attachments.push(attachment.path.clone());
             }
         }
+        // A ChatGPT Chat turn sends the picked model (`selectedModel`), else `auto`.
+        let (model, effort) = match (&self.chatgpt_models, self.chat) {
+            (Some(models), true) => (
+                models.current.slug.to_string(),
+                models.current.effort.as_ref().map(ToString::to_string),
+            ),
+            (None, true) => ("auto".to_owned(), None),
+            (_, false) => self.mode_settings(),
+        };
         Submission {
             shell_command: self.shell_commands && self.content.starts_with('!'),
             text: if self.mentions.is_empty()
@@ -2624,8 +2633,8 @@ impl Composer {
             },
             attachments,
             context_files,
-            model: self.mode_settings().0,
-            effort: self.mode_settings().1,
+            model,
+            effort,
             permission: self.permission.clone(),
             service_tier: SERVICE_TIERS[self.speed],
             plan: self.plan,
