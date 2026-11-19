@@ -919,6 +919,8 @@ enum Menu {
 pub struct ChatGptModels {
     pub rows: Vec<ChatGptModelRow>,
     pub options: Vec<ChatGptModelOption>,
+    /// The `Internal models` submenu's rows (`internalOptions`); empty hides the submenu.
+    pub internal: Vec<ChatGptModelOption>,
     /// The selection (`selectedModel`).
     pub current: ChatGptPick,
 }
@@ -1078,6 +1080,8 @@ pub struct Composer {
     chat: bool,
     /// The ChatGPT model picker's rows and selection; `None` until the account's model list loads.
     chatgpt_models: Option<ChatGptModels>,
+    /// The open `Internal models` submenu's search field; `None` while the submenu is closed.
+    chatgpt_internal: Option<Entity<Composer>>,
     shell_commands: bool,
     content: String,
     /// Mention chips in `content`, in order.
@@ -1253,6 +1257,7 @@ impl Composer {
             docked,
             chat: false,
             chatgpt_models: None,
+            chatgpt_internal: None,
             shell_commands: false,
             content: String::new(),
             mentions: Vec::new(),
@@ -2685,6 +2690,7 @@ impl Composer {
     fn toggle_menu(&mut self, menu: Menu, window: &mut Window, cx: &mut Context<Self>) {
         self.slash.reset();
         self.close_speed();
+        self.chatgpt_internal = None;
         self.end_search(cx);
         if self.menu == Some(menu) {
             self.menu = None;
@@ -2695,7 +2701,10 @@ impl Composer {
             let count = match menu {
                 Menu::Permissions => permission_menu_rows(&self.permission_rows, cx).len(),
                 Menu::Models => self.models.len() + 1,
-                Menu::ChatGptModels => self.chatgpt_models.as_ref().map_or(0, |m| m.rows.len()),
+                Menu::ChatGptModels => self
+                    .chatgpt_models
+                    .as_ref()
+                    .map_or(0, |m| m.rows.len() + usize::from(!m.internal.is_empty())),
                 Menu::Effort => 3,
                 Menu::Comments => self.diff_comments.len(),
             };
@@ -2741,6 +2750,7 @@ impl Composer {
                 self.focus_handle.focus(window, cx);
             }
             self.close_speed();
+            self.chatgpt_internal = None;
             cx.notify();
         } else if self.approval.is_some() {
             // `approval.decline` (Escape), unless a menu has focus.
@@ -2880,6 +2890,33 @@ impl Composer {
         self.speed_open = false;
     }
 
+    /// Opens the `Internal models` submenu (`FlyoutSubmenuItem`) with its search field focused.
+    fn open_chatgpt_internal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.chatgpt_internal.is_none() {
+            let search =
+                gpui::AppContext::new(cx, |cx| Composer::settings_search("Internal models", cx));
+            cx.observe(&search, |_, _, cx| cx.notify()).detach();
+            self.chatgpt_internal = Some(search);
+        }
+        if let Some(search) = &self.chatgpt_internal {
+            search.focus_handle(cx).focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// `kt`: an internal model becomes the selection, then the menu closes.
+    fn pick_chatgpt_internal(
+        &mut self,
+        pick: ChatGptPick,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(models) = &mut self.chatgpt_models {
+            models.current = pick;
+        }
+        self.dismiss(&Dismiss, window, cx);
+    }
+
     /// A speed picked in the submenu closes it and focuses the `Speed` trigger.
     pub(super) fn pick_speed(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.speed = index;
@@ -2933,10 +2970,15 @@ impl Composer {
                 self.picked(cx);
             }
             // `mh.Item` `onSelect`: a new version becomes the selection, then the menu closes.
+            // The row after the versions is the `Internal models` sub trigger.
             Some(Menu::ChatGptModels) => {
-                if let Some(models) = &mut self.chatgpt_models {
-                    models.current = models.rows[index].pick.clone();
+                let Some(models) = &mut self.chatgpt_models else {
+                    return;
+                };
+                if index == models.rows.len() {
+                    return self.open_chatgpt_internal(window, cx);
                 }
+                models.current = models.rows[index].pick.clone();
                 self.dismiss(&Dismiss, window, cx);
             }
             // The original's DOM order: `Select model`, `Speed` (sub trigger), `Reset`.

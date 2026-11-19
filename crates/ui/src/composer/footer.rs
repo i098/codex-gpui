@@ -195,8 +195,9 @@ impl Composer {
     }
 
     /// The Chat picker's version list: `S5e`'s model list without the Work-only `Select model`
-    /// heading and `Default` row; each `menuitemradio` row checks the selection.
-    // shortcut: no internal models, limits or effort view yet (#1543, #1544).
+    /// heading and `Default` row; each `menuitemradio` row checks the selection. With internal
+    /// models (`U3`'s `internalOptions`) an `Internal models` sub trigger follows the rows.
+    // shortcut: no limits or effort view yet (#1544).
     fn chatgpt_models_menu(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
         let hover = t.menu_item_hover;
         let Some(models) = &self.chatgpt_models else {
@@ -237,7 +238,116 @@ impl Composer {
                         d.child(icon("menu-check", 16., t.text).opacity(0.75))
                     })
             }))
+            .when(!models.internal.is_empty(), |d| {
+                d.child(self.chatgpt_internal_trigger(models, t, cx))
+            })
         })
+    }
+
+    /// `mh.FlyoutSubmenuItem` `Internal models` and, while open, its `panelWide` (360 px)
+    /// flyout: the search field, then up to 50 models whose title or slug matches (`xt`),
+    /// else `No internal models found`.
+    fn chatgpt_internal_trigger(
+        &self,
+        models: &ChatGptModels,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let hover = t.menu_item_hover;
+        let i = models.rows.len();
+        let trigger = div()
+            .id("chatgpt-internal-models")
+            .relative()
+            .role(gpui::Role::MenuItem)
+            .px(px(8.))
+            .py(px(5.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .rounded(px(15.))
+            .hover(move |s| s.bg(hover))
+            .track_focus(&self.menu_focus.items[i])
+            .focus(move |s| s.bg(hover))
+            .when(self.chatgpt_internal.is_some(), |d| d.bg(hover))
+            .on_click(
+                cx.listener(move |this, _, window, cx| this.activate_menu_item(i, window, cx)),
+            )
+            .child(div().flex_1().min_w_0().child(text(
+                "Internal models",
+                13.,
+                18.5714,
+                430.,
+                t.text,
+            )))
+            .child(icon("chevron-right", 16., t.text_tertiary));
+        let Some(search) = &self.chatgpt_internal else {
+            return trigger;
+        };
+        let query = search.read(cx).field_text().trim().to_lowercase();
+        let matches: Vec<&ChatGptModelOption> = models
+            .internal
+            .iter()
+            .filter(|o| {
+                o.title.to_lowercase().contains(&query)
+                    || o.pick.slug.to_lowercase().contains(&query)
+            })
+            .take(50)
+            .collect();
+        let body =
+            if matches.is_empty() {
+                div().px(px(8.)).py(px(5.)).child(text(
+                    "No internal models found",
+                    12.,
+                    16.,
+                    400.,
+                    t.text_tertiary,
+                ))
+            } else {
+                let selected = &models.current.slug;
+                div().max_h(px(250.)).flex().flex_col().children(
+                    matches.into_iter().enumerate().map(|(n, o)| {
+                        let pick = o.pick.clone();
+                        div()
+                            .id(("chatgpt-internal-model", n))
+                            .role(gpui::Role::MenuItem)
+                            .px(px(8.))
+                            .py(px(5.))
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .rounded(px(15.))
+                            .hover(move |s| s.bg(hover))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.pick_chatgpt_internal(pick.clone(), window, cx)
+                            }))
+                            .child(div().flex_1().min_w_0().child(text(
+                                o.title.clone(),
+                                13.,
+                                18.5714,
+                                430.,
+                                t.text,
+                            )))
+                            .when(&o.pick.slug == selected, |d| {
+                                d.child(icon("menu-check", 16., t.text).opacity(0.75))
+                            })
+                    }),
+                )
+            };
+        let flyout = popover(t, 360., |d| d.child(search.clone()).child(body));
+        // Right of the 254 px menu's padding box, top-aligned with the trigger's menu box. The
+        // root menu's mouse-down-out guard: the flyout lies outside its box.
+        let flyout = div()
+            .id("chatgpt-internal-flyout")
+            .absolute()
+            .left_full()
+            .ml(px(9.))
+            .top(px(-4.))
+            .hover_listener_mode(gpui::HoverListenerMode::InputModalityIndependent)
+            .on_hover(
+                cx.listener(|this, hovered: &bool, _, _| this.menu_trigger_hovered = *hovered),
+            )
+            .child(flyout);
+        trigger.child(deferred(flyout).with_priority(2))
     }
 
     pub(super) fn footer(&self, window: &mut Window, t: &Theme, cx: &mut Context<Self>) -> Div {

@@ -16,6 +16,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - ChatGPT mode: the Chat composer loads the account's ChatGPT model list (`GET /models`) and shows the default model's label on the `Select ChatGPT model` trigger, with the `Thinking effort` tooltip. A failed load keeps the `Could not load ChatGPT models` state (#1541).
 - ChatGPT mode: the `Select ChatGPT model` trigger opens the account's version list; a click on a version selects it, puts a check on it and shows its label on the trigger (#1542).
 - ChatGPT mode: the Chat composer's `/` menu has the `Model` command (`Change from {model}`); its submenu lists the account's model options with a check on the selection, and a pick changes the selection (#1545).
+- ChatGPT mode: when the account has internal models, the `Select ChatGPT model` list ends with the `Internal models` submenu: a search field, the models whose title or slug matches, else `No internal models found`; a pick selects the model (#1543).
 - ChatGPT mode: a Chat turn sends the selected model and its thinking effort in the `/f/conversation` body (`model`, `thinking_effort`). Before, every Chat turn sent `auto` (#1546).
 ### Fixed
 - Show installed plugin logos in the Customize sidebar, with theme-aware images and app icons when no plugin logo is available (#1505).
