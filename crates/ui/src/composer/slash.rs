@@ -516,6 +516,9 @@ impl Composer {
             let query = self.content[range.start + 1..range.end].to_lowercase();
             for (index, command) in COMMANDS.iter().enumerate() {
                 let available = match command.id {
+                    // `Tkt`: the ChatGPT composer registers only its own commands; of them,
+                    // only `Model` (`Ekt`) exists here so far.
+                    _ if self.chat && command.id != "model" => false,
                     "new" => self.docked && !self.slash.hotkey_window,
                     "hotkey-window-new" => self.docked && self.slash.hotkey_window,
                     "hotkey-window-resume" => self.slash.hotkey_window,
@@ -536,7 +539,8 @@ impl Composer {
                     self.slash.matches.push(index);
                 }
             }
-            for (index, skill) in self.slash.skills.iter().enumerate() {
+            // `Tkt` registers no Codex skills.
+            for (index, skill) in self.slash.skills.iter().enumerate().filter(|_| !self.chat) {
                 if matches_query(&skill.title, &query) || matches_query(&skill.name, &query) {
                     self.slash.matches.push(COMMANDS.len() + index);
                 }
