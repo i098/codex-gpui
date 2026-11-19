@@ -18,6 +18,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Parity gate: the Mac run prints the free space and removes the `/tmp/cgx-parity.*` scratch directories an earlier run left behind, so it no longer fails with `No space left on device`.
 - ChatGPT mode: the Chat composer shows the `Select ChatGPT model` picker in its `Could not load ChatGPT models` state, not the Codex model and effort control (#1524).
 - ChatGPT mode: a Work send gets a reply. It sends the Work model `gpt-5.6-luna`, as the original does; before, the backend refused the `auto` model with 422 `conversation_model_origin_mismatch` (#1534).
+- ChatGPT mode: the composer under a ChatGPT conversation is the composer of its home: `Ask ChatGPT` with the Chat controls, or `Work with ChatGPT`. Before, it showed `Work with Codex` with the Codex controls (#1538).
 
 ## [0.1.4] - 2026-11-13
 

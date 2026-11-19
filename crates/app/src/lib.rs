@@ -5323,6 +5323,12 @@ impl Root {
         // The composer is shared; load the selected thread's own queue after navigation. An
         // archived chat cannot have a side chat.
         let side_chat = !self.archived.contains(&thread.id);
+        // `hG` in the original: a ChatGPT conversation keeps its home's composer kind.
+        let chatgpt = self
+            .shortcut_state
+            .chatgpt_turns
+            .get(&thread.id)
+            .map(|turn| turn.work);
         self.thread_composer.update(cx, |c, cx| {
             c.bind_thread(&thread.id);
             c.set_running(running, cx);
@@ -5332,6 +5338,15 @@ impl Root {
             c.set_queue_pending(self.queue_pending, cx);
             c.set_search_roots(vec![thread.cwd.clone()], cx);
             c.set_side_chat(side_chat);
+            c.set_placeholder(
+                match chatgpt {
+                    Some(false) => "Ask ChatGPT",
+                    Some(true) => "Work with ChatGPT",
+                    None => "Work with Codex",
+                },
+                cx,
+            );
+            c.set_chat(chatgpt == Some(false), cx);
         });
         if self
             .thread
