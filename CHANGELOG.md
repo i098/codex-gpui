@@ -13,6 +13,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Show the thread goal above the composer, set a goal with the Goal mode, and mark the final response when the goal completes (#868).
 - ChatGPT mode: a send from the Chat home starts a ChatGPT conversation and streams the reply into the conversation view; a follow-up continues the same conversation. Before, the send started a local Codex thread (#1529).
 - ChatGPT mode: a send from the Work home starts a ChatGPT Work conversation (`conversation_origin: "tpp"`). Before, the send started a local Codex thread (#1530).
+- ChatGPT mode: the Chat composer loads the account's ChatGPT model list (`GET /models`) and shows the default model's label on the `Select ChatGPT model` trigger, with the `Thinking effort` tooltip. A failed load keeps the `Could not load ChatGPT models` state (#1541).
 ### Fixed
 - Show installed plugin logos in the Customize sidebar, with theme-aware images and app icons when no plugin logo is available (#1505).
 - Parity gate: the Mac run prints the free space and removes the `/tmp/cgx-parity.*` scratch directories an earlier run left behind, so it no longer fails with `No space left on device`.

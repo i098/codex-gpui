@@ -1032,6 +1032,8 @@ pub struct Composer {
     docked: bool,
     /// The ChatGPT home's one-row pill: `+`, the editor, then the model, microphone and voice.
     chat: bool,
+    /// The ChatGPT model picker's trigger label; `None` until the account's model list loads.
+    chatgpt_model: Option<SharedString>,
     shell_commands: bool,
     content: String,
     /// Mention chips in `content`, in order.
@@ -1206,6 +1208,7 @@ impl Composer {
             placeholder: placeholder.into(),
             docked,
             chat: false,
+            chatgpt_model: None,
             shell_commands: false,
             content: String::new(),
             mentions: Vec::new(),
@@ -2170,6 +2173,12 @@ impl Composer {
     /// Switches to the ChatGPT home's one-row layout ([`Self::chat`]).
     pub fn set_chat(&mut self, chat: bool, cx: &mut Context<Self>) {
         self.chat = chat;
+        cx.notify();
+    }
+
+    /// The ChatGPT model picker's trigger label from the account's model list.
+    pub fn set_chatgpt_model(&mut self, label: Option<SharedString>, cx: &mut Context<Self>) {
+        self.chatgpt_model = label;
         cx.notify();
     }
 

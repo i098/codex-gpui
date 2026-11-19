@@ -121,17 +121,26 @@ impl Composer {
         .focus_handle(&self.dictate_focus)
     }
 
-    /// The ChatGPT Chat composer's model picker (`chatgptConversations.modelPicker.*`). The
-    /// app loads no ChatGPT model list, so it shows the original's load-error state: the
-    /// disabled `composerPill` ghost trigger (`ps-3 pe-3.5 gap-1.5`, 16/26 tertiary text, 40%
-    /// opacity) with the error as its label and tooltip.
+    /// The ChatGPT Chat composer's model picker (`chatgptConversations.modelPicker.*`), the
+    /// `composerPill` ghost trigger (`ps-3 pe-3.5 gap-1.5`, 16/26 text). With the account's
+    /// model list it shows the selected label and the `Thinking effort` tooltip; without it the
+    /// original's load-error state: disabled, 40% opacity, the error as label and tooltip.
+    // shortcut: the loaded trigger opens no menu yet; #1542 adds the menu.
     fn chatgpt_model_picker(&self, t: &Theme) -> AnyElement {
-        let error = "Could not load ChatGPT models";
+        let (label, color, tooltip): (SharedString, _, _) = match &self.chatgpt_model {
+            Some(label) => (label.clone(), t.text, "Thinking effort"),
+            None => (
+                "Could not load ChatGPT models".into(),
+                t.text_tertiary,
+                "Could not load ChatGPT models",
+            ),
+        };
+        let error = self.chatgpt_model.is_none();
         let trigger = div()
             .id("chatgpt-model-picker")
             .role(gpui::Role::Button)
             .aria_label("Select ChatGPT model")
-            .aria_disabled(true)
+            .aria_disabled(error)
             .flex_none()
             .h(px(28.))
             .flex()
@@ -140,11 +149,10 @@ impl Composer {
             .pl(px(12.))
             .pr(px(14.))
             .gap(px(6.))
-            .opacity(0.4)
-            .layer()
-            .child(text(error, 16., 26., 400., t.text_tertiary))
+            .when(error, |d| d.opacity(0.4).layer())
+            .child(text(label, 16., 26., 400., color))
             .child(icon("chevron-down-small", 16., t.text_tertiary));
-        crate::tooltip::tooltip(trigger, error, Some("⌃⇧M"), crate::tooltip::Side::Top)
+        crate::tooltip::tooltip(trigger, tooltip, Some("⌃⇧M"), crate::tooltip::Side::Top)
             .into_any_element()
     }
 
