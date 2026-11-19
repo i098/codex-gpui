@@ -74,14 +74,14 @@ impl Root {
             self.apply_chatgpt(&id, method, json!({"turnId": turn, "item": item}), cx);
         }
         let (send, receive) = async_channel::unbounded();
-        let prompt = s.text.clone();
         cx.background_spawn(async move {
             let mut shown = 0;
             // shortcut: nothing cancels a turn yet; it ends with the stream or its 600 s budget.
             let result = chatgpt_conversation::send(
                 &*host,
                 &identity,
-                &prompt,
+                &s.text,
+                (&s.model, s.effort.as_deref()),
                 &previous,
                 &AtomicBool::new(false),
                 &mut |turn| {

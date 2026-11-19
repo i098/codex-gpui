@@ -117,6 +117,7 @@ fn chat_turn_sends_the_sentinel_headers_and_decodes_the_reply() -> Result<()> {
         &host,
         &identity,
         "Reply with the single word: pong",
+        ("gpt-6", Some("min")),
         &previous,
         &AtomicBool::new(false),
         &mut |turn| updates.push(turn.reply.clone()),
@@ -168,6 +169,9 @@ fn chat_turn_sends_the_sentinel_headers_and_decodes_the_reply() -> Result<()> {
     assert_eq!(body["parent_message_id"], "parent");
     assert_eq!(body["conversation_id"], "conversation");
     assert_eq!(body["supported_encodings"], json!(["v1"]));
+    // A Work follow-up keeps the Work model and sends no thinking effort.
+    assert_eq!(body["model"], "gpt-5.6-luna");
+    assert!(body.get("thinking_effort").is_none());
     assert_eq!(
         body["messages"][0]["content"],
         json!({"content_type": "text", "parts": ["Reply with the single word: pong"]})
