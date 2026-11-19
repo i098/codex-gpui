@@ -25,6 +25,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - ChatGPT mode: the Chat composer shows the `Select ChatGPT model` picker in its `Could not load ChatGPT models` state, not the Codex model and effort control (#1524).
 - ChatGPT mode: a Work send gets a reply. It sends the Work model `gpt-5.6-luna`, as the original does; before, the backend refused the `auto` model with 422 `conversation_model_origin_mismatch` (#1534).
 - ChatGPT mode: the composer under a ChatGPT conversation is the composer of its home: `Ask ChatGPT` with the Chat controls, or `Work with ChatGPT`. Before, it showed `Work with Codex` with the Codex controls (#1538).
+- ChatGPT mode: the Chat composer's `/` menu lists only the ChatGPT commands (`Model`). Before, it also listed the Codex commands, such as `Code review`, `Thread memory` and `Plan mode`, and the Codex skills (#1550).
 
 ### Security
 - Update `rusqlite` to 0.41 (bundled SQLite fix, RUSTSEC-2026-0459), `pulldown-cmark`, `rustls-webpki`, `webpki-roots`, `rustix` and `heapless` to their patched releases.
