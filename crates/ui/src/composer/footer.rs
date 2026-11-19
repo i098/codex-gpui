@@ -123,24 +123,26 @@ impl Composer {
 
     /// The ChatGPT Chat composer's model picker (`chatgptConversations.modelPicker.*`), the
     /// `composerPill` ghost trigger (`ps-3 pe-3.5 gap-1.5`, 16/26 text). With the account's
-    /// model list it shows the selected label and the `Thinking effort` tooltip; without it the
-    /// original's load-error state: disabled, 40% opacity, the error as label and tooltip.
-    // shortcut: the loaded trigger opens no menu yet; #1542 adds the menu.
-    fn chatgpt_model_picker(&self, t: &Theme) -> AnyElement {
-        let (label, color, tooltip): (SharedString, _, _) = match &self.chatgpt_model {
-            Some(label) => (label.clone(), t.text, "Thinking effort"),
+    /// model list it shows the selected label and the `Thinking effort` tooltip, and opens the
+    /// version list; without it the original's load-error state: disabled, 40% opacity, the
+    /// error as label and tooltip.
+    fn chatgpt_model_picker(&self, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let (label, color, tooltip): (SharedString, _, _) = match &self.chatgpt_models {
+            Some(models) => (models.label.clone(), t.text, "Thinking effort"),
             None => (
                 "Could not load ChatGPT models".into(),
                 t.text_tertiary,
                 "Could not load ChatGPT models",
             ),
         };
-        let error = self.chatgpt_model.is_none();
+        let error = self.chatgpt_models.is_none();
+        let open = self.menu == Some(Menu::ChatGptModels);
         let trigger = div()
             .id("chatgpt-model-picker")
             .role(gpui::Role::Button)
             .aria_label("Select ChatGPT model")
             .aria_disabled(error)
+            .aria_expanded(open)
             .flex_none()
             .h(px(28.))
             .flex()
@@ -150,10 +152,88 @@ impl Composer {
             .pr(px(14.))
             .gap(px(6.))
             .when(error, |d| d.opacity(0.4).layer())
+            .when(open, |d| d.bg(t.ghost_hover))
+            .when(!error, |d| {
+                d.track_focus(&self.model_focus)
+                    .focus_visible(crate::focus::trigger_focus)
+                    .on_key_down(cx.listener(|this, event, window, cx| {
+                        this.trigger_key(Menu::ChatGptModels, event, window, cx)
+                    }))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_menu(Menu::ChatGptModels, window, cx)
+                    }))
+            })
             .child(text(label, 16., 26., 400., color))
             .child(icon("chevron-down-small", 16., t.text_tertiary));
-        crate::tooltip::tooltip(trigger, tooltip, Some("⌃⇧M"), crate::tooltip::Side::Top)
+        div()
+            .id("chatgpt-model-picker-slot")
+            .relative()
+            .when(!error, |d| {
+                d.on_hover(
+                    cx.listener(|this, hovered: &bool, _, _| this.menu_trigger_hovered = *hovered),
+                )
+            })
+            .child(if open {
+                trigger.into_any_element()
+            } else {
+                crate::tooltip::tooltip(trigger, tooltip, Some("⌃⇧M"), crate::tooltip::Side::Top)
+                    .into_any_element()
+            })
+            // `S5e`: `align: end`, `alignOffset: (trigger width - 254) / 2` centers the menu.
+            .when(open, |d| {
+                d.child(self.anchored_menu(
+                    self.chatgpt_models_menu(t, cx),
+                    Some(EFFORT_MENU_SLOT),
+                    cx,
+                ))
+            })
             .into_any_element()
+    }
+
+    /// The Chat picker's version list: `S5e`'s model list without the Work-only `Select model`
+    /// heading and `Default` row; each `menuitemradio` row checks the selection.
+    // shortcut: no internal models, limits or effort view yet (#1543, #1544).
+    fn chatgpt_models_menu(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
+        let hover = t.menu_item_hover;
+        let Some(models) = &self.chatgpt_models else {
+            return div();
+        };
+        popover(t, 254., |d| {
+            d.children(models.rows.iter().enumerate().map(|(i, row)| {
+                let selected = models.selected == Some(i);
+                div()
+                    .id(("chatgpt-model", i))
+                    .role(gpui::Role::MenuItemRadio)
+                    .aria_label(row.label.clone())
+                    .aria_toggled(if selected {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .px(px(8.))
+                    .py(px(5.))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .rounded(px(15.))
+                    .hover(move |s| s.bg(hover))
+                    .track_focus(&self.menu_focus.items[i])
+                    .focus(move |s| s.bg(hover))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.activate_menu_item(i, window, cx)
+                    }))
+                    .child(div().flex_1().min_w_0().child(text(
+                        row.label.clone(),
+                        13.,
+                        18.5714,
+                        430.,
+                        t.text,
+                    )))
+                    .when(selected, |d| {
+                        d.child(icon("menu-check", 16., t.text).opacity(0.75))
+                    })
+            }))
+        })
     }
 
     pub(super) fn footer(&self, window: &mut Window, t: &Theme, cx: &mut Context<Self>) -> Div {
@@ -653,7 +733,7 @@ impl Composer {
                     .children(self.context_donut(t))
                     .map(|d| {
                         if self.chat {
-                            d.child(self.chatgpt_model_picker(t))
+                            d.child(self.chatgpt_model_picker(t, cx))
                         } else {
                             d.child(model_button)
                         }
