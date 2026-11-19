@@ -659,7 +659,8 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.sidebar.read(cx).chatgpt_surface() {
+        // The Work home keeps the local thread until #1530 adds its `tpp` origin.
+        if ui::screens::sidebar::MODES[self.sidebar.read(cx).mode()] == "ChatGPT" {
             return self.start_chatgpt_turn(s, window, cx);
         }
         self.qa_work_started = true;
