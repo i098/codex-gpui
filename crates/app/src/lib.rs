@@ -10,6 +10,7 @@ mod archived_chats;
 mod chatgpt;
 mod chatgpt_chats;
 pub mod chatgpt_conversation;
+mod chatgpt_thread;
 mod chronicle;
 mod cloud_task;
 mod data_controls;
@@ -5538,6 +5539,13 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         self.qa_work_started = true;
+        if let Some(id) = self
+            .conversation(side)
+            .map(|(view, _)| view.read(cx).id().to_owned())
+            .filter(|id| id.starts_with("chatgpt:"))
+        {
+            return self.chatgpt_turn(id, s, cx);
+        }
         // `hooks/list` before `turn/start`, as the original's composer does.
         if let Some(cwd) = self
             .conversation(side)

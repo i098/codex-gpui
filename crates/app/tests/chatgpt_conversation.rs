@@ -107,10 +107,16 @@ fn chat_turn_sends_the_sentinel_headers_and_decodes_the_reply() -> Result<()> {
     );
     let identity = host.identity().context("identity")?;
     let mut updates = Vec::new();
+    let previous = Turn {
+        conversation_id: Some("conversation".into()),
+        message_id: Some("parent".into()),
+        ..Turn::default()
+    };
     let turn = send(
         &host,
         &identity,
         "Reply with the single word: pong",
+        Some(&previous),
         &AtomicBool::new(false),
         &mut |turn| updates.push(turn.reply.clone()),
     )?;
@@ -118,6 +124,7 @@ fn chat_turn_sends_the_sentinel_headers_and_decodes_the_reply() -> Result<()> {
         turn,
         Turn {
             conversation_id: Some("00000000-0000-4000-8000-000000000001".into()),
+            message_id: Some("00000000-0000-4000-8000-000000000012".into()),
             reply: "pong".into(),
             complete: true,
         }
@@ -155,7 +162,8 @@ fn chat_turn_sends_the_sentinel_headers_and_decodes_the_reply() -> Result<()> {
     );
     let body = &conversation.body;
     assert_eq!(body["action"], "next");
-    assert_eq!(body["parent_message_id"], "client-created-root");
+    assert_eq!(body["parent_message_id"], "parent");
+    assert_eq!(body["conversation_id"], "conversation");
     assert_eq!(body["supported_encodings"], json!(["v1"]));
     assert_eq!(
         body["messages"][0]["content"],
