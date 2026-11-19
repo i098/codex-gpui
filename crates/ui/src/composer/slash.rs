@@ -382,6 +382,8 @@ pub(super) struct SubItem {
 #[derive(Clone)]
 enum SubAction {
     Model(usize),
+    /// A ChatGPT model option (`chatgpt_models.options`).
+    ChatGptModel(usize),
     Effort(String),
     Fork,
     ForkWorktree,
@@ -521,6 +523,8 @@ impl Composer {
                     | "share" | "side" | "status" | "goal" | "memory" => self.docked,
                     "project" | "chat" | "worktree" => !self.docked,
                     "plan-mode" => self.current_model().is_some() && self.plan_supported(),
+                    // `Ekt`: the ChatGPT command waits for the model list and no reply streaming.
+                    "model" if self.chat => self.chatgpt_models.is_some() && !self.running,
                     "fast" | "model" | "reasoning" | "ultrafast" => self.current_model().is_some(),
                     "memories" => self.slash.memories,
                     _ => true,
@@ -612,6 +616,10 @@ impl Composer {
         if let Some(command) = COMMANDS.get(index) {
             let description = match command.id {
                 "reasoning" => effort_label(self.displayed_effort()),
+                "model" if self.chat => self
+                    .chatgpt_models
+                    .as_ref()
+                    .map_or("", |models| &models.current.change_from),
                 "plan-mode" if self.plan => "Turn plan mode off",
                 "ide-context" if self.ide_context => "Turn off IDE context",
                 _ => command.description,
@@ -795,6 +803,18 @@ impl Composer {
     fn sub_items(&self, id: &str) -> Vec<SubItem> {
         let current = |is_current: bool| if is_current { "Current" } else { "" };
         match id {
+            "model" if self.chat => self
+                .chatgpt_models
+                .iter()
+                .flat_map(|models| &models.options)
+                .enumerate()
+                .map(|(index, option)| SubItem {
+                    title: option.title.to_string(),
+                    description: option.description.to_string(),
+                    icon: "",
+                    action: SubAction::ChatGptModel(index),
+                })
+                .collect(),
             "model" => self
                 .models
                 .iter()
@@ -1243,6 +1263,11 @@ impl Composer {
         }
         self.finish_command(window, cx);
         match action {
+            SubAction::ChatGptModel(index) => {
+                if let Some(models) = &mut self.chatgpt_models {
+                    models.current = models.options[index].pick.clone();
+                }
+            }
             SubAction::Model(model) => {
                 self.select_model(model);
                 self.picked(cx);
@@ -1290,6 +1315,15 @@ impl Composer {
                 "mcp" | "model" | "reasoning" | "fork" | "project"
             )
         });
+        // `RightIcon`: the ChatGPT model option that matches the selection's slug and effort.
+        let checked = self.chat
+            && self.slash.sub.as_ref().is_some_and(|sub| sub.id == "model")
+            && self.chatgpt_models.as_ref().is_some_and(|models| {
+                models.options.get(index).is_some_and(|option| {
+                    (&option.pick.slug, &option.pick.effort)
+                        == (&models.current.slug, &models.current.effort)
+                })
+            });
         div()
             .id(("suggestion", index))
             .flex_none()
@@ -1312,7 +1346,9 @@ impl Composer {
                 this.slash.selected = selected;
                 this.activate_slash(window, cx);
             }))
-            .child(icon(icon_name, 16., icon_color))
+            .when(!icon_name.is_empty(), |row| {
+                row.child(icon(icon_name, 16., icon_color))
+            })
             .child(text(title.to_owned(), 13., 18.5714, 400., t.text).flex_none())
             .child(
                 text(
@@ -1324,6 +1360,13 @@ impl Composer {
                 )
                 .truncate(),
             )
+            .when(checked, |row| {
+                row.child(
+                    div()
+                        .ml_auto()
+                        .child(icon("menu-check", 16., t.text).opacity(0.75)),
+                )
+            })
             .when(submenu, |row| {
                 row.child(
                     div()
