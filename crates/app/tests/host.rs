@@ -876,7 +876,6 @@ fn unrelated_database_fields(
         db.query_row("SELECT * FROM automations WHERE id='task'", [], |row| {
             row.as_ref()
                 .column_names()
-                .into_iter()
                 .enumerate()
                 .filter(|(_, name)| {
                     !["status", "next_run_at", "next_run_nominal_at", "updated_at"].contains(name)
