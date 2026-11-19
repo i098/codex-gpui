@@ -107,11 +107,12 @@ pub trait Host: Send + Sync {
         None
     }
 
+    /// Delivers each server-sent event as its `event:` name (if any) and its JSON `data`.
     fn stream(
         &self,
         request: &Request,
         cancelled: &std::sync::atomic::AtomicBool,
-        on_event: &mut dyn FnMut(Value) -> bool,
+        on_event: &mut dyn FnMut(Option<&str>, Value) -> bool,
     ) -> Result<()> {
         let response = self.fetch(request)?;
         let wire = response_wire(&response);
@@ -302,7 +303,7 @@ impl Host for RemoteThreadHost {
         &self,
         request: &Request,
         cancelled: &std::sync::atomic::AtomicBool,
-        on_event: &mut dyn FnMut(Value) -> bool,
+        on_event: &mut dyn FnMut(Option<&str>, Value) -> bool,
     ) -> Result<()> {
         ensure!(
             matches!(request, Request::Http(_)),
@@ -2779,15 +2780,21 @@ impl Host for CloudHost {
         &self,
         request: &Request,
         cancelled: &std::sync::atomic::AtomicBool,
-        on_event: &mut dyn FnMut(Value) -> bool,
+        on_event: &mut dyn FnMut(Option<&str>, Value) -> bool,
     ) -> Result<()> {
         let Request::Http(request) = request else {
             bail!("streams require HTTP transport");
         };
         let url = request["url"].as_str().context("HTTP request has no url")?;
+        // A ChatGPT turn (`chatgptSse`) cannot be polled again: a second POST starts a new turn.
+        let budget = if request["chatgptSse"].is_object() {
+            600
+        } else {
+            30
+        };
         let mut response = self
-            // ponytail: renew streams after 30 seconds; asynchronous I/O can replace this bounded blocking read.
-            .send_response(url, request, Some(Duration::from_secs(30)))
+            // ponytail: renew streams after the budget; asynchronous I/O can replace this bounded blocking read.
+            .send_response(url, request, Some(Duration::from_secs(budget)))
             .map_err(|(status, message)| {
                 anyhow::anyhow!("stream HTTP status {status}: {message}")
             })?;
@@ -2844,12 +2851,13 @@ impl Host for CloudHost {
 fn event_stream(
     reader: impl std::io::BufRead,
     cancelled: &std::sync::atomic::AtomicBool,
-    on_event: &mut dyn FnMut(Value) -> bool,
+    on_event: &mut dyn FnMut(Option<&str>, Value) -> bool,
 ) -> Result<()> {
     if cancelled.load(std::sync::atomic::Ordering::Acquire) {
         return Ok(());
     }
     let mut data = String::new();
+    let mut name: Option<String> = None;
     for line in reader.lines() {
         if cancelled.load(std::sync::atomic::Ordering::Acquire) {
             return Ok(());
@@ -2861,18 +2869,21 @@ fn event_stream(
                     return Ok(());
                 }
                 let event = serde_json::from_str(data.trim_end())?;
-                if !on_event(event) {
+                if !on_event(name.as_deref(), event) {
                     return Ok(());
                 }
                 data.clear();
             }
+            name = None;
         } else if let Some(value) = line.strip_prefix("data:") {
             data.push_str(value.strip_prefix(' ').unwrap_or(value));
             data.push('\n');
+        } else if let Some(value) = line.strip_prefix("event:") {
+            name = Some(value.trim().to_owned());
         }
     }
     if !data.is_empty() && data.trim() != "[DONE]" {
-        on_event(serde_json::from_str(data.trim_end())?);
+        on_event(name.as_deref(), serde_json::from_str(data.trim_end())?);
     }
     Ok(())
 }
@@ -3018,7 +3029,7 @@ fn valid_integrity_state(state: &str) -> bool {
         })
 }
 
-fn user_agent() -> String {
+pub(crate) fn user_agent() -> String {
     let os = match std::env::consts::OS {
         "macos" => "Mac OS",
         "windows" => "Windows",
@@ -3331,19 +3342,25 @@ mod cloud_stream_tests {
     use serde_json::{Value, json};
 
     #[test]
-    fn events_join_data_lines_and_stop_before_later_messages() {
-        let input = b": keepalive\r\ndata: {\"item_type\":\"log\",\r\ndata: \"line\":\"ready\"}\r\n\r\ndata: {\"line\":\"ignored\"}\n\n";
-        let mut received = Vec::<Value>::new();
+    fn events_join_data_lines_carry_names_and_stop_before_later_messages() {
+        let input = b": keepalive\r\nevent: delta\r\ndata: {\"item_type\":\"log\",\r\ndata: \"line\":\"ready\"}\r\n\r\ndata: {\"line\":\"ignored\"}\n\n";
+        let mut received = Vec::<(Option<String>, Value)>::new();
         event_stream(
             std::io::Cursor::new(input),
             &std::sync::atomic::AtomicBool::new(false),
-            &mut |event| {
-                received.push(event);
+            &mut |name, event| {
+                received.push((name.map(str::to_owned), event));
                 false
             },
         )
         .unwrap();
-        assert_eq!(received, [json!({"item_type":"log","line":"ready"})]);
+        assert_eq!(
+            received,
+            [(
+                Some("delta".to_owned()),
+                json!({"item_type":"log","line":"ready"})
+            )]
+        );
     }
 
     #[test]
@@ -3352,7 +3369,7 @@ mod cloud_stream_tests {
             event_stream(
                 std::io::Cursor::new(b"data: invalid\n\n"),
                 &std::sync::atomic::AtomicBool::new(false),
-                &mut |_| true
+                &mut |_, _| true
             )
             .is_err()
         );
@@ -3365,7 +3382,7 @@ mod cloud_stream_tests {
         event_stream(
             std::io::Cursor::new(b"data: 1\n\n: keepalive\n\ndata: 2\n\n"),
             &cancelled,
-            &mut |event| {
+            &mut |_, event| {
                 received.push(event);
                 cancelled.store(true, std::sync::atomic::Ordering::Release);
                 true
