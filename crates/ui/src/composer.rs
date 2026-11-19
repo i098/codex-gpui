@@ -913,14 +913,28 @@ enum Menu {
     Comments,
 }
 
-/// The ChatGPT model picker's rows and selection, from the account's `/models` list.
+/// The ChatGPT model picker's rows, the `Model` slash command's options and the selection,
+/// from the account's `/models` list.
 #[derive(Clone)]
 pub struct ChatGptModels {
-    /// The trigger label of the selection.
-    pub label: SharedString,
     pub rows: Vec<ChatGptModelRow>,
-    /// The row of the selection; `None` when no version holds the default model.
-    pub selected: Option<usize>,
+    pub options: Vec<ChatGptModelOption>,
+    /// The selection (`selectedModel`).
+    pub current: ChatGptPick,
+}
+
+/// A ChatGPT model selection and the text it shows.
+#[derive(Clone)]
+pub struct ChatGptPick {
+    pub slug: SharedString,
+    /// The thinking effort, else the model's default.
+    pub effort: Option<SharedString>,
+    /// The checked version row (`versionId`); `None` when no version holds the model.
+    pub row: Option<usize>,
+    /// The picker trigger's label (`pt`).
+    pub trigger_label: SharedString,
+    /// The `Model` slash command's description (`Change from {model}`), empty without a name.
+    pub change_from: SharedString,
 }
 
 /// One version row of the ChatGPT model picker (`rCn`).
@@ -928,8 +942,17 @@ pub struct ChatGptModels {
 pub struct ChatGptModelRow {
     /// The row text (`display_text_for_intelligence`).
     pub label: SharedString,
-    /// The trigger label once this row is picked (`pt`).
-    pub trigger_label: SharedString,
+    /// The selection once this row is picked.
+    pub pick: ChatGptPick,
+}
+
+/// One row of the ChatGPT `Model` slash command's submenu (`Ekt`).
+#[derive(Clone)]
+pub struct ChatGptModelOption {
+    pub title: SharedString,
+    pub description: SharedString,
+    /// The selection once this row is picked.
+    pub pick: ChatGptPick,
 }
 
 /// Index of the `Speed` sub trigger among the effort menu's items.
@@ -2903,8 +2926,7 @@ impl Composer {
             // `mh.Item` `onSelect`: a new version becomes the selection, then the menu closes.
             Some(Menu::ChatGptModels) => {
                 if let Some(models) = &mut self.chatgpt_models {
-                    models.selected = Some(index);
-                    models.label = models.rows[index].trigger_label.clone();
+                    models.current = models.rows[index].pick.clone();
                 }
                 self.dismiss(&Dismiss, window, cx);
             }

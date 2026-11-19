@@ -128,7 +128,11 @@ impl Composer {
     /// error as label and tooltip.
     fn chatgpt_model_picker(&self, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let (label, color, tooltip): (SharedString, _, _) = match &self.chatgpt_models {
-            Some(models) => (models.label.clone(), t.text, "Thinking effort"),
+            Some(models) => (
+                models.current.trigger_label.clone(),
+                t.text,
+                "Thinking effort",
+            ),
             None => (
                 "Could not load ChatGPT models".into(),
                 t.text_tertiary,
@@ -200,7 +204,7 @@ impl Composer {
         };
         popover(t, 254., |d| {
             d.children(models.rows.iter().enumerate().map(|(i, row)| {
-                let selected = models.selected == Some(i);
+                let selected = models.current.row == Some(i);
                 div()
                     .id(("chatgpt-model", i))
                     .role(gpui::Role::MenuItemRadio)
