@@ -16,29 +16,38 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Turn {
     pub conversation_id: Option<String>,
+    /// The visible assistant message, the parent of a follow-up.
+    pub message_id: Option<String>,
     /// The visible assistant reply so far.
     pub reply: String,
     /// The server sent `message_stream_complete`.
     pub complete: bool,
 }
 
-/// Sends `prompt` as the first message of a new conversation and reports every change of the
-/// turn to `on_update` until the stream ends or `cancelled` is set.
+/// Sends `prompt` as a new conversation, or as a follow-up to the `previous` turn, and reports
+/// every change of the turn to `on_update` until the stream ends or `cancelled` is set.
 pub fn send(
     host: &dyn Host,
     identity: &Identity,
     prompt: &str,
+    previous: Option<&Turn>,
     cancelled: &AtomicBool,
     on_update: &mut dyn FnMut(&Turn),
 ) -> Result<Turn> {
     let started = Instant::now();
     let requirements = host::json_body(&host.fetch(&prepare_request(identity, started))?)
         .context("ChatGPT chat requirements")?;
-    let request = conversation_request(
-        identity,
-        &sentinel_headers(&requirements, started)?,
-        &body(prompt, &host::device_id()),
-    );
+    let mut body = body(prompt, &host::device_id());
+    if let Some(Turn {
+        conversation_id: Some(conversation),
+        message_id: Some(parent),
+        ..
+    }) = previous
+    {
+        body["conversation_id"] = conversation.as_str().into();
+        body["parent_message_id"] = parent.as_str().into();
+    }
+    let request = conversation_request(identity, &sentinel_headers(&requirements, started)?, &body);
     let mut decoder = Decoder::default();
     let mut failure = None;
     host.stream(
@@ -319,6 +328,7 @@ impl Decoder {
             && let Some(parts) = message["content"]["parts"].as_array()
         {
             self.turn.reply = parts.iter().filter_map(Value::as_str).collect();
+            self.turn.message_id = message["id"].as_str().map(str::to_owned);
         }
         Ok(self.turn != before)
     }
@@ -452,7 +462,7 @@ mod tests {
         decoder.event(
             Some("delta"),
             json!({"p": "", "o": "add", "c": 0, "v": {"message": {
-                "author": {"role": "assistant"}, "recipient": "all",
+                "id": "m1", "author": {"role": "assistant"}, "recipient": "all",
                 "content": {"content_type": "text", "parts": [""]}, "metadata": {"a": 1}
             }, "conversation_id": "c1"}}),
         )?;
@@ -477,6 +487,7 @@ mod tests {
             decoder.turn,
             Turn {
                 conversation_id: Some("c1".into()),
+                message_id: Some("m1".into()),
                 reply: "Hell".into(),
                 complete: false
             }
