@@ -29,6 +29,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Security
 - Update `rusqlite` to 0.41 (bundled SQLite fix, RUSTSEC-2026-0459), `pulldown-cmark`, `rustls-webpki`, `webpki-roots`, `rustix` and `heapless` to their patched releases.
+- Update `url` to 2.5.9 to fix RUSTSEC-2026-0592, a stack overflow on nested `blob:` URLs.
 
 ## [0.1.4] - 2026-11-13
 
