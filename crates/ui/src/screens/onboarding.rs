@@ -64,12 +64,23 @@ pub struct Project {
     pub label: String,
 }
 
+/// One card of the starter-task step, an entry of `OnboardingStarterTasks` in the original.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StarterTask {
+    pub id: String,
+    pub label: String,
+    pub icon: &'static str,
+    /// The turn the task runs; `None` is the native Desktop note.
+    pub prompt: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Completion {
     pub roles: Vec<String>,
     pub personalized_suggestions: bool,
     pub skipped: bool,
     pub roots: Vec<String>,
+    pub task: Option<StarterTask>,
 }
 
 impl Completion {
@@ -114,6 +125,8 @@ pub enum OnboardingEvent {
     FirstRunComplete,
     /// Ask the host for access to these `FOLDERS`, in order; answer with `set_local_files`.
     RequestLocalFiles(Vec<&'static str>),
+    /// Fetch the starter tasks for this role; answer with `set_tasks`.
+    LoadTasks(String),
 }
 impl EventEmitter<OnboardingEvent> for Onboarding {}
 
@@ -133,6 +146,7 @@ enum Action {
     NotNow,
     Reload,
     LocalFiles,
+    Task(usize),
 }
 
 const ROLES: &[(&str, &str)] = &[
@@ -155,6 +169,7 @@ enum State {
     Roles,
     Import,
     Workspace,
+    Tasks,
     Capabilities,
     Error,
     FirstRun(usize),
@@ -182,6 +197,9 @@ pub struct Onboarding {
     folders: [bool; 3],
     local_files_pending: bool,
     local_files_failed: bool,
+    /// `None` while the host fetches them.
+    tasks: Option<Vec<StarterTask>>,
+    task: Option<StarterTask>,
 }
 
 impl Onboarding {
@@ -216,6 +234,8 @@ impl Onboarding {
             folders: [false; 3],
             local_files_pending: false,
             local_files_failed: false,
+            tasks: None,
+            task: None,
         }
     }
     pub fn page(&self) -> Page {
@@ -310,6 +330,37 @@ impl Onboarding {
         self.local_files_failed = !self.missing_folders().is_empty();
         cx.notify();
     }
+    pub fn set_tasks(&mut self, tasks: Vec<StarterTask>, cx: &mut Context<Self>) {
+        if !matches!(self.state, State::Tasks) {
+            return;
+        }
+        if tasks.is_empty() {
+            self.state = State::Capabilities;
+        }
+        self.tasks = Some(tasks);
+        cx.notify();
+    }
+    /// The original asks for a starter task only with a ChatGPT account.
+    fn enter_tasks(&mut self, cx: &mut Context<Self>) {
+        if !self.chatgpt {
+            self.state = State::Capabilities;
+            return;
+        }
+        self.state = State::Tasks;
+        self.tasks = None;
+        self.task = None;
+        let completion = self.completion(false);
+        let role = completion.representative_role().unwrap_or("something_else");
+        cx.emit(OnboardingEvent::LoadTasks(role.into()));
+    }
+    fn select_task(&mut self, index: usize) {
+        self.task = self
+            .tasks
+            .as_ref()
+            .and_then(|tasks| tasks.get(index))
+            .cloned();
+        self.state = State::Capabilities;
+    }
     fn missing_folders(&self) -> Vec<&'static str> {
         FOLDERS
             .iter()
@@ -339,6 +390,7 @@ impl Onboarding {
             personalized_suggestions: !skipped && self.suggestions,
             skipped,
             roots: self.roots.clone(),
+            task: if skipped { None } else { self.task.clone() },
         }
     }
     fn complete(&mut self, skipped: bool, cx: &mut Context<Self>) {
@@ -362,11 +414,11 @@ impl Onboarding {
             }
             Action::Continue => match self.state {
                 State::Roles if !self.roles.is_empty() => {
-                    self.state = if self.import_available {
-                        State::Import
+                    if self.import_available {
+                        self.state = State::Import;
                     } else {
-                        State::Capabilities
-                    };
+                        self.enter_tasks(cx);
+                    }
                 }
                 State::Import | State::Capabilities => self.complete(false, cx),
                 State::Workspace if !self.roots.is_empty() => self.complete(false, cx),
@@ -392,8 +444,9 @@ impl Onboarding {
             }
             Action::Suggestions => self.suggestions = !self.suggestions,
             Action::Skip => {
-                // The original skips this step without asking and keeps the chosen roles.
-                if matches!(self.state, State::Capabilities) {
+                // The original skips this step without asking and keeps the chosen roles
+                // and task (`capabilitiesSkipped`).
+                if matches!(self.state, State::Capabilities | State::Tasks) {
                     self.complete(false, cx);
                 } else if self.page == Page::Welcome {
                     self.complete(true, cx);
@@ -460,7 +513,8 @@ impl Onboarding {
                 self.error = None;
                 cx.emit(OnboardingEvent::OpenImport(self.completion(false)));
             }
-            Action::NotNow => self.state = State::Capabilities,
+            Action::NotNow => self.enter_tasks(cx),
+            Action::Task(index) => self.select_task(index),
             Action::LocalFiles => {
                 if matches!(
                     self.local_files_status(),
@@ -499,7 +553,9 @@ impl Onboarding {
                     State::Roles => self.roles.is_empty(),
                     State::Workspace => self.roots.is_empty(),
                     State::Loading | State::Error => true,
-                    State::Import | State::Capabilities | State::FirstRun(_) => false,
+                    State::Import | State::Tasks | State::Capabilities | State::FirstRun(_) => {
+                        false
+                    }
                 });
         let border = t.border;
         let (background, foreground) = if primary {
@@ -721,6 +777,121 @@ impl Onboarding {
             .child(
                 self.button("onboarding-skip", "Skip", Action::Skip, false, window, cx)
                     .mt(px(12.)),
+            )
+    }
+    /// The original's starter-task step: its introduction, then a grid of task cards.
+    fn tasks_view(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
+        let width = f32::from(window.viewport_size().width);
+        let columns = if width < 640. {
+            1
+        } else if width < 1024. {
+            2
+        } else {
+            4
+        };
+        let tasks = self.tasks.as_deref().unwrap_or_default();
+        // The original's `loading-block` while the tasks load.
+        let mut grid = div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .when(self.tasks.is_none(), |grid| {
+                grid.child(div().h(px(120.)).rounded(px(16.)).bg(t.surface_secondary))
+            });
+        for (row, chunk) in tasks.chunks(columns).enumerate() {
+            let mut line = div().w_full().flex().gap(px(12.));
+            for (col, task) in chunk.iter().enumerate() {
+                let index = row * columns + col;
+                let id = gpui::ElementId::from(("onboarding-task", index));
+                let hovered = self.hovered_button.as_ref() == Some(&id);
+                let hover_id = id.clone();
+                let handle = focus::handle(id.clone(), 0, window, cx);
+                let card = div()
+                    .id(id)
+                    .role(gpui::Role::Button)
+                    .aria_label(SharedString::from(task.label.clone()))
+                    .flex_1()
+                    .min_w_0()
+                    .h(px(120.))
+                    .p(px(16.))
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap(px(16.))
+                    .rounded(px(16.))
+                    .border_1()
+                    .border_color(t.border)
+                    .bg(if hovered { t.ghost_hover } else { t.surface })
+                    .cursor_pointer()
+                    .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                        this.hovered_button = hovered.then(|| hover_id.clone());
+                        cx.notify();
+                    }))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.action(Action::Task(index), window, cx)
+                    }))
+                    .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            this.action(Action::Task(index), window, cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .child(icon(task.icon, 24., t.text))
+                    .child(
+                        text(task.label.clone(), 18., 24., 400., t.text)
+                            .w_full()
+                            .whitespace_normal()
+                            .line_clamp(2),
+                    );
+                line = line.child(focus::ring(card, &handle, px(16.), px(2.), cx));
+            }
+            for _ in chunk.len()..columns {
+                line = line.child(div().flex_1());
+            }
+            grid = grid.child(line);
+        }
+        div()
+            .w(px(820.))
+            .max_w_full()
+            .p(px(40.))
+            .flex()
+            .flex_col()
+            .child(
+                text(
+                    "Here in the desktop app, I can work directly with your computer’s files, folders, and apps you choose.",
+                    18.,
+                    24.,
+                    400.,
+                    t.text,
+                )
+                .whitespace_normal(),
+            )
+            .child(
+                text(
+                    "Start with a simple task to see how it works:",
+                    18.,
+                    24.,
+                    400.,
+                    t.text,
+                )
+                .mt(px(24.)),
+            )
+            .child(grid.mt(px(24.)))
+            .child(
+                div().mt(px(40.)).flex().justify_center().child(
+                    self.button(
+                        "onboarding-tasks-skip",
+                        "Skip",
+                        Action::Skip,
+                        false,
+                        window,
+                        cx,
+                    )
+                    .w(px(320.))
+                    .max_w_full(),
+                ),
             )
     }
     /// `_d` and `vd` in the original: the introduction, then a card of capability rows.
@@ -1196,6 +1367,7 @@ impl Render for Onboarding {
             State::Roles=>self.role_view(window,cx),
             State::Workspace=>self.workspace_view(window,cx),
             State::FirstRun(index)=>self.first_run_view(index,window,cx),
+            State::Tasks=>self.tasks_view(window,cx),
             State::Capabilities=>self.capabilities_view(window,cx),
             State::Import=>div().w(px(640.)).max_w_full().p(px(40.)).flex().flex_col().gap(px(24.))
                 .child(text("Import work from other AI apps",28.,34.,400.,t.text))
@@ -1242,6 +1414,7 @@ mod tests {
             personalized_suggestions: true,
             skipped: false,
             roots: Vec::new(),
+            task: None,
         };
         assert_eq!(value.representative_role(), Some("engineering"));
         assert_eq!(value.work_mode(), "coding");
@@ -1249,6 +1422,38 @@ mod tests {
         assert_eq!(value.representative_role(), None);
         value.roles = vec!["marketing".into()];
         assert_eq!(value.work_mode(), "non_coding");
+    }
+
+    #[test]
+    fn a_chosen_starter_task_reaches_completion_after_capabilities() {
+        let task = StarterTask {
+            id: "desktop_note".into(),
+            label: "Leave a note on my Desktop".into(),
+            icon: "folder",
+            prompt: None,
+        };
+        let mut app = gpui::HeadlessAppContext::new(textsys::text_system());
+        let view = app.new(|cx| Onboarding::new(Page::Onboarding, true, None, cx));
+        view.update(&mut app, |view, cx| {
+            view.roles = vec!["marketing".into()];
+            view.enter_tasks(cx);
+            assert!(matches!(view.state, State::Tasks));
+            view.set_tasks(vec![task.clone()], cx);
+            view.select_task(0);
+            assert!(matches!(view.state, State::Capabilities));
+            assert_eq!(view.completion(false).task, Some(task));
+            assert_eq!(view.completion(true).task, None);
+            // No tasks: the step falls through to the capabilities step.
+            view.enter_tasks(cx);
+            view.set_tasks(Vec::new(), cx);
+            assert!(matches!(view.state, State::Capabilities));
+        });
+        // Without a ChatGPT account the original has no starter-task step.
+        let view = app.new(|cx| Onboarding::new(Page::Onboarding, false, None, cx));
+        view.update(&mut app, |view, cx| {
+            view.enter_tasks(cx);
+            assert!(matches!(view.state, State::Capabilities));
+        });
     }
 
     #[test]
