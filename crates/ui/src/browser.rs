@@ -108,6 +108,8 @@ pub enum BrowserEvent {
     },
     TitleChanged,
     LoadFinished,
+    /// Untrusted text from `window.ipc.postMessage`. It does not authorize host actions.
+    ScriptMessage(String),
     /// The annotation toolbar's Send: the owner sends the pending annotations as a turn.
     SendAnnotations,
     /// The annotation toolbar's Discard: the owner confirms, then drops the pending
@@ -317,6 +319,25 @@ impl BrowserTab {
         }
     }
 
+    /// Runs app-supplied JavaScript in the page's main frame.
+    pub fn evaluate(&self, script: &str) -> anyhow::Result<()> {
+        self.page.evaluate(script)
+    }
+
+    /// Registers app-supplied JavaScript for the start of future main-frame documents.
+    pub fn add_user_script(&self, script: &str) -> anyhow::Result<()> {
+        self.page.add_user_script(script)
+    }
+
+    /// Captures a PNG of a rectangle in page-viewport coordinates, not window coordinates.
+    pub fn snapshot(
+        &self,
+        region: Bounds<Pixels>,
+    ) -> impl Future<Output = anyhow::Result<Vec<u8>>> + use<> {
+        let pending = self.page.snapshot(region);
+        async move { pending?.recv().await? }
+    }
+
     /// `⌘T` and `⌘L`: the address bar focused with its text selected.
     pub fn focus_address(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.address.focus_handle(cx).focus(window, cx);
@@ -358,6 +379,11 @@ impl BrowserTab {
 
     /// Reads the page again after it reported a change, emitting what differs.
     fn page_changed(&mut self, change: page::PageChange, cx: &mut Context<Self>) {
+        #[cfg(target_os = "macos")]
+        if let page::PageChange::ScriptMessage(body) = change {
+            cx.emit(BrowserEvent::ScriptMessage(body));
+            return;
+        }
         let previous = std::mem::replace(&mut self.state, self.page.state());
         if let page::PageChange::Failed(error) = change {
             // The error page draws in place of the native page.

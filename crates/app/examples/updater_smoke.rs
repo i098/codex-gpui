@@ -62,6 +62,9 @@ fn main() -> anyhow::Result<()> {
                 canceled_at.get().is_none(),
                 "managed update restarted: {status:?}"
             );
+            if status == Status::Available {
+                backend.install();
+            }
             if status == Status::Ready {
                 if std::env::var_os("CGX_SMOKE_MANAGED").is_some() {
                     backend.set_managed(true);
