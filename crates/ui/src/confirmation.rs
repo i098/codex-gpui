@@ -22,6 +22,7 @@ pub struct Confirmation {
     destructive: bool,
     /// The left button is a second, destructive choice instead of Cancel.
     alternate: bool,
+    site_annotation: bool,
     /// One primary button (`confirm_label`) and no Cancel, like `Unable to send message`.
     notice: bool,
     settings_style: bool,
@@ -59,6 +60,7 @@ impl Confirmation {
             cancel_label: "Cancel".into(),
             destructive: false,
             alternate: false,
+            site_annotation: false,
             notice: false,
             settings_style: false,
             controls,
@@ -99,6 +101,12 @@ impl Confirmation {
         self.alternate = true;
         self.controls[1].focus(window, cx);
         self
+    }
+
+    /// Site annotation asks for a choice; it has no separate cancel action.
+    pub fn site_annotation(mut self, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        self.site_annotation = true;
+        self.alternate("Block", window, cx)
     }
 
     pub fn with_opt_out(mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
@@ -154,6 +162,7 @@ impl Confirmation {
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let key = &event.keystroke;
         match key.key.as_str() {
+            "escape" if self.site_annotation => {}
             "escape" => self.finish(Outcome::Cancel, window, cx),
             "tab" if !key.modifiers.platform && !key.modifiers.control && !key.modifiers.alt => {
                 let controls = || {
@@ -292,7 +301,7 @@ impl Render for Confirmation {
             .skip(self.notice as usize)
             .map(|(index, label)| {
                 let destructive = if index == 0 {
-                    self.alternate
+                    self.alternate && !self.site_annotation
                 } else {
                     self.destructive
                 };
@@ -376,6 +385,11 @@ impl Render for Confirmation {
                         if self.settings_style { 430. } else { 500. },
                         foreground,
                     ))
+                    .when(self.site_annotation && index == 1, |button| {
+                        button
+                            .gap(px(6.))
+                            .child(text("↵", 12., 16., 500., foreground))
+                    })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.finish(
                             if index == 1 {
@@ -400,7 +414,11 @@ impl Render for Confirmation {
             .bg(t.dialog_overlay)
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|this, _, window, cx| this.finish(Outcome::Cancel, window, cx)),
+                cx.listener(|this, _, window, cx| {
+                    if !this.site_annotation {
+                        this.finish(Outcome::Cancel, window, cx);
+                    }
+                }),
             )
             .child({
                 let dialog = div()
@@ -444,13 +462,26 @@ impl Render for Confirmation {
                                     .flex()
                                     .flex_col()
                                     .gap(px(12.))
-                                    .child(text(
-                                        self.title.clone(),
-                                        20.,
-                                        if self.settings_style { 28. } else { 26. },
-                                        if self.settings_style { 600. } else { 500. },
-                                        t.text,
-                                    ))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(8.))
+                                            .when(self.site_annotation, |title| {
+                                                title.child(crate::icon(
+                                                    "diff-comment-add",
+                                                    20.,
+                                                    t.text_secondary,
+                                                ))
+                                            })
+                                            .child(text(
+                                                self.title.clone(),
+                                                20.,
+                                                if self.settings_style { 28. } else { 26. },
+                                                if self.settings_style { 600. } else { 500. },
+                                                t.text,
+                                            )),
+                                    )
                                     .child(
                                         text(
                                             self.description.clone(),

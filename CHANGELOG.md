@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- In the macOS in-app browser, allow or block sites that ask to start or toggle annotation mode (#837).
 - On macOS, render MCP App widgets from completed tool calls inside the thread (#909).
 - Mini shows task creation and progress from an active voice chat (#875).
 - Customize the Explore sidebar, pin or unpin native destinations and Security Cloud, and keep the rail order between sessions (#985).

@@ -220,6 +220,21 @@ impl WebPage {
             );
             controller.addUserScript(&script);
         }
+        let page_script = unsafe {
+            WKUserScript::initWithSource_injectionTime_forMainFrameOnly(
+                WKUserScript::alloc(mtm),
+                &NSString::from_str(include_str!("../site_annotation.js")),
+                WKUserScriptInjectionTime::AtDocumentStart,
+                true,
+            )
+        };
+        // SAFETY: The controller retains the main-frame script on the main thread.
+        unsafe {
+            webview
+                .configuration()
+                .userContentController()
+                .addUserScript(&page_script)
+        };
         let failures = FailureDelegate::new(mtm, inner, changed);
         unsafe { webview.setNavigationDelegate(Some(ProtocolObject::from_ref(&*failures))) };
         Some(Self {
@@ -256,6 +271,15 @@ impl WebPage {
                 .addUserScript(&script);
         }
         Ok(())
+    }
+
+    pub fn site_annotation_state(&self, permission_required: Option<bool>, active: bool) {
+        let enabled = permission_required.is_some();
+        let permission_required = permission_required.unwrap_or(true);
+        let _ = self.evaluate(&format!(
+            "dispatchEvent(new CustomEvent('browser-sidebar-site-annotation-api-enabled-changed',\
+             {{ detail: {{ enabled: {enabled}, permissionRequired: {permission_required}, active: {active} }} }}))"
+        ));
     }
 
     pub fn annotation_mode(&self, generation: u32, mode: u8) {
@@ -423,9 +447,17 @@ define_class!(
                 return;
             };
             let body = body.to_string();
-            if body.len() <= 32 * 1024 && self.ivars().len() < 32
-                && let Ok(pick) = serde_json::from_str(&body)
-            {
+            if body.len() > 32 * 1024 || self.ivars().len() >= 32 {
+                return;
+            }
+            #[derive(serde::Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct SiteMessage {
+                site_request: super::super::SiteAnnotationRequest,
+            }
+            if let Ok(message) = serde_json::from_str::<SiteMessage>(&body) {
+                let _ = self.ivars().try_send(PageChange::SiteAnnotation(message.site_request));
+            } else if let Ok(pick) = serde_json::from_str(&body) {
                 let _ = self.ivars().try_send(PageChange::Annotation(pick));
             }
         }

@@ -7,6 +7,7 @@ mod account;
 mod account_backend;
 mod activity_access;
 mod archived_chats;
+mod browser_site_annotation;
 mod browsing_history;
 mod chatgpt;
 mod chatgpt_chats;
@@ -4072,6 +4073,7 @@ impl Root {
                 BrowserEvent::TitleChanged | BrowserEvent::Navigated { .. } => {
                     if matches!(event, BrowserEvent::Navigated { .. }) {
                         browsing_history::record(tab, cx);
+                        browser_site_annotation::sync_blocked(tab, cx);
                     } else {
                         browsing_history::retitle(tab, cx);
                     }
@@ -4084,6 +4086,9 @@ impl Root {
                 BrowserEvent::SendAnnotations => this.send_browser_annotations(window, cx),
                 BrowserEvent::DiscardAnnotations => {
                     this.confirm_discard_browser_annotations(window, cx)
+                }
+                BrowserEvent::SiteAnnotation(request) => {
+                    this.request_site_annotation(key, tab, *request, window, cx);
                 }
                 BrowserEvent::LoadStarted { .. }
                 | BrowserEvent::LoadFinished
@@ -4100,17 +4105,29 @@ impl Root {
         })
         .detach();
         let host = self.host.clone();
+        #[cfg(target_os = "macos")]
+        let bridge = self.bridge.clone();
         let gate = cx.background_spawn(async move {
-            host.identity().is_some_and(|identity| {
-                chatgpt::Gate::BrowserAnnotationMultiSelect
-                    .enabled(&usage::statsig(host.as_ref(), &identity))
-            })
+            let Some(identity) = host.identity() else {
+                return (false, None);
+            };
+            let gates = usage::statsig(host.as_ref(), &identity);
+            let multi_select = chatgpt::Gate::BrowserAnnotationMultiSelect.enabled(&gates);
+            #[cfg(target_os = "macos")]
+            let permission = browser_site_annotation::availability(&bridge, &gates).await;
+            #[cfg(not(target_os = "macos"))]
+            let permission = None;
+            (multi_select, permission)
         });
         let weak = tab.downgrade();
         cx.spawn(async move |_, cx| {
-            let enabled = gate.await;
-            if enabled {
-                let _ = weak.update(cx, |tab, _| tab.set_annotation_multi_select(true));
+            let (multi_select, permission) = gate.await;
+            if let Some(tab) = weak.upgrade() {
+                cx.update(|cx| browser_site_annotation::sync_blocked(&tab, cx));
+                tab.update(cx, |tab, _| {
+                    tab.set_annotation_multi_select(multi_select);
+                    tab.set_site_annotation_api(permission);
+                });
             }
         })
         .detach();
@@ -4145,7 +4162,8 @@ impl Root {
     fn sync_browser_pages(&self, cx: &mut App) {
         let thread = self.thread.is_some()
             && matches!(self.state.route, Route::Thread(_))
-            && self.page.is_none();
+            && self.page.is_none()
+            && self.diff_confirmation.is_none();
         for (key, tab) in &self.browser_tabs {
             let shown = thread && self.side_visible(SidePanel::Browser(*key));
             tab.update(cx, |tab, cx| tab.set_page_hidden(!shown, cx));

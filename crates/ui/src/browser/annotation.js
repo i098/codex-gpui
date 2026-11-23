@@ -21,6 +21,17 @@
     mode = nextMode;
   };
 
+  for (const active of [true, false]) {
+    addEventListener(`codex:annotation-mode-${active ? 'on' : 'off'}`, (event) => {
+      if (event.target !== window || !isSecureContext ||
+          !navigator.userActivation?.isActive || mode > 1) return;
+      event.preventDefault();
+      window.webkit.messageHandlers.codexAnnotation.postMessage(JSON.stringify({
+        siteRequest: { generation, active },
+      }));
+    }, true);
+  }
+
   function block(event) {
     event.preventDefault();
     event.stopImmediatePropagation();
