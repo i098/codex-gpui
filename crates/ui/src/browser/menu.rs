@@ -20,8 +20,9 @@ const fn item(id: &'static str, label: &'static str) -> Item {
 }
 
 /// The original's order; a click off a link shows the items after [`LINK_ITEMS`].
-static ITEMS: [Item; 8] = [
+static ITEMS: [Item; 11] = [
     item("open-link-in-new-tab", "Open in new tab"),
+    item("open-link-in-new-window", "Open in new window"),
     item("open-link-in-external-browser", "Open in external browser"),
     item("link-separator", ""),
     item("copy-link", "Copy link address"),
@@ -29,8 +30,10 @@ static ITEMS: [Item; 8] = [
     item("back", "Back"),
     item("forward", "Forward"),
     item("reload", "Reload"),
+    item("history-separator", ""),
+    item("inspect", "Inspect"),
 ];
-const LINK_ITEMS: usize = 5;
+const LINK_ITEMS: usize = 6;
 
 impl BrowserTab {
     /// Shows the menu for a right-click at `(x, y)` in the page, over `link` when set.
@@ -77,13 +80,18 @@ impl BrowserTab {
                 ("open-link-in-new-tab", link @ Some(_)) => {
                     window.dispatch_action(Box::new(OpenBrowserTab(link)), cx)
                 }
-                ("open-link-in-external-browser", Some(link)) => cx.open_url(&link),
+                // ponytail: the browser's own window is not ported; `Open in new window`
+                // opens the system browser until it is, as the link menu's `New window` does.
+                ("open-link-in-new-window" | "open-link-in-external-browser", Some(link)) => {
+                    cx.open_url(&link)
+                }
                 ("copy-link", Some(link)) => cx.write_to_clipboard(ClipboardItem::new_string(link)),
                 (id, _) => {
                     let _ = tab.update(cx, |tab, cx| match id {
                         "back" => tab.go_back(cx),
                         "forward" => tab.go_forward(cx),
                         "reload" => tab.reload(false, cx),
+                        "inspect" => tab.page.inspect(),
                         _ => {}
                     });
                 }

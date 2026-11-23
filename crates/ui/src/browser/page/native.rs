@@ -62,6 +62,8 @@ impl WebPage {
         let on_window = changed.clone();
         let view = WebViewBuilder::new()
             .with_visible(false)
+            // The context menu's `Inspect` opens WebKit's Web Inspector.
+            .with_devtools(true)
             // `Started` fires once the navigation commits: the URL has changed.
             .with_on_page_load_handler(move |event, _| {
                 let _ = on_load.try_send(match event {
@@ -126,6 +128,11 @@ impl WebPage {
                 webview.reload_(None);
             }
         }
+    }
+
+    /// Opens WebKit's Web Inspector for the page.
+    pub fn inspect(&self) {
+        self.view.open_devtools();
     }
 
     pub fn state(&self) -> PageState {
