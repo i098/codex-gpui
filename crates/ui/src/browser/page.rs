@@ -90,6 +90,14 @@ impl Page {
         }
     }
 
+    /// Opens the Web Inspector; a detached page has nothing to inspect.
+    #[cfg(target_os = "macos")]
+    pub fn inspect(&self) {
+        if let Self::Native(page) = self {
+            page.inspect();
+        }
+    }
+
     pub fn state(&self) -> PageState {
         match self {
             #[cfg(target_os = "macos")]

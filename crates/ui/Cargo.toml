@@ -49,7 +49,7 @@ objc2-core-graphics = { version = "0.3.2", default-features = false, features = 
 raw-window-handle = "0.6"
 objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-app-kit", "WKWebView", "WKNavigation", "WKNavigationDelegate"] }
 # The in-app browser's page: a WKWebView child of the window's view.
-wry = { version = "0.57", default-features = false }
+wry = { version = "0.57", default-features = false, features = ["devtools"] }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
