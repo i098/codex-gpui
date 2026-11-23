@@ -621,6 +621,9 @@ pub struct Root {
     /// The sidebar `Cloud` group's `/wham/tasks/list` read; a newer read or a new host drops it.
     cloud_load: Option<Task<()>>,
     destination_load: Option<Task<()>>,
+    sidebar_layout: Arc<ui::SidebarLayout>,
+    sidebar_scope: Option<Option<destinations::Scope>>,
+    sidebar_save: Option<Task<()>>,
     unread_destinations: Option<Arc<[SharedString]>>,
     /// The MCP catalog lists the `codex_security_cloud` destination.
     security_cloud: bool,
@@ -1191,6 +1194,9 @@ impl Root {
             project_load: None,
             cloud_load: None,
             destination_load: None,
+            sidebar_layout: Arc::default(),
+            sidebar_scope: None,
+            sidebar_save: None,
             unread_destinations: None,
             security_cloud: false,
             picking_project: false,
@@ -1742,6 +1748,7 @@ impl Root {
             .update(cx, |s, cx| s.set_cloud_tasks(Vec::new(), cx));
         self.destination_load = None;
         self.set_unread_destinations(None, cx);
+        self.reset_sidebar_layout(cx);
         self.suggestion_load = None;
         self.git_status_load = None;
         self.automation_updates.clear();
@@ -8307,6 +8314,7 @@ impl Root {
                 "account/updated" if self.ready => {
                     self.destination_load = None;
                     self.set_unread_destinations(None, cx);
+                    self.reset_sidebar_layout(cx);
                     self.read_account(None, cx);
                 }
                 "mcpServer/startupStatus/updated" | "mcpServer/oauthLogin/completed"
@@ -8621,12 +8629,7 @@ impl Root {
                 view.set_usage_limit_notice(self.usage_limit_notice, cx)
             });
         }
-        if account.is_some_and(|account| account.account.is_some()) {
-            self.load_destinations(cx);
-        } else {
-            self.destination_load = None;
-            self.set_unread_destinations(None, cx);
-        }
+        self.load_destinations(cx);
     }
 
     fn read_account(&self, window: Option<&Window>, cx: &mut Context<Self>) {
@@ -10031,6 +10034,9 @@ impl Render for Root {
             );
         let root = routes::actions(archived_chats::actions(root, cx), cx);
         let root = profile_menu::actions(root, cx);
+        let root = root.on_action(cx.listener(|this, action: &ui::EditSidebar, _, cx| {
+            this.edit_sidebar(action.0.clone(), cx);
+        }));
         let root = hotkey::actions(root, self.popout.is_some(), cx);
         let root = features::actions(root, self, cx)
             .on_action(cx.listener(|this, _: &ForceReloadSkills, _, cx| this.refresh_skills(cx)))

@@ -3,7 +3,9 @@ use anyhow::{Context as _, Result, ensure};
 use gpui::{AppContext as _, Context, Entity, PathPromptOptions, Window};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use ui::screens::onboarding::{Completion, Onboarding, OnboardingEvent, Page, Project};
+use ui::screens::onboarding::{
+    Completion, Onboarding, OnboardingEvent, Page, Project, StarterTask,
+};
 
 pub fn route(path: &str) -> Option<Route> {
     let page = match path {
@@ -150,6 +152,25 @@ impl Root {
                             }),
                         }
                     }
+                    OnboardingEvent::LoadTasks(role) => {
+                        let request = recommendations_request(
+                            role,
+                            mail_provider(this.account_email.as_deref()),
+                        );
+                        let (view, host) = (view.clone(), this.host.clone());
+                        cx.spawn_in(window, async move |_, cx| {
+                            let tasks = cx
+                                .background_spawn(async move {
+                                    let response = host
+                                        .fetch(&request)
+                                        .and_then(|response| host::json_body(&response));
+                                    starter_tasks(response.ok().as_ref())
+                                })
+                                .await;
+                            view.update(cx, |view, cx| view.set_tasks(tasks, cx));
+                        })
+                        .detach();
+                    }
                     OnboardingEvent::RequestLocalFiles(folders) => {
                         let (view, folders) = (view.clone(), folders.clone());
                         let home = crate::env::home();
@@ -275,7 +296,8 @@ impl Root {
     ) {
         let host = self.host.clone();
         let chatgpt = self.chatgpt_account && view.read(cx).page() != Page::SelectWorkspace;
-        let payload = json!({"conversational_onboarding_skipped":true,"onboarding_credit_reward_warning_shown":false,"role":completion.representative_role()});
+        let payload = json!({"conversational_onboarding_skipped":completion.task.is_none(),"onboarding_credit_reward_warning_shown":false,"role":completion.representative_role()});
+        let desktop = crate::env::home().map(|home| home.join("Desktop"));
         cx.spawn_in(window,async move |this,cx| {
             let result=cx.background_spawn(async move {
                 if chatgpt {
@@ -283,6 +305,12 @@ impl Root {
                     successful_response(&host.fetch(&request)?)?;
                 }
                 for root in &completion.roots {host.add_project(Path::new(root))?;}
+                // The backend already recorded completion, so a missing Desktop must not block setup.
+                if completion.task.as_ref().is_some_and(|task| task.prompt.is_none())
+                    && let Err(error) = desktop.context("Home directory is unavailable").and_then(|desktop| create_desktop_note(&desktop))
+                {
+                    eprintln!("codex-gpui: cannot write the Desktop note: {error:#}");
+                }
                 Ok::<_,anyhow::Error>(completion)
             }).await;
             this.update_in(cx,|this,window,cx| {
@@ -298,6 +326,12 @@ impl Root {
                         if destination == Route::Settings {this.settings_section=Some("Import");}
                         this.load_projects(cx);
                         if destination == Route::Home && let Some(root)=completion.roots.first() {this.select_project(root.clone(),window,cx);}else{this.navigate(destination,window,cx);}
+                        // The original runs a prompt task as the first turn.
+                        if let Some(prompt)=completion.task.and_then(|task| task.prompt) {
+                            this.plugin_prefill(&prompt,window,cx);
+                            let composer=this.home.read(cx).composer.clone();
+                            composer.update(cx,|composer,cx| composer.send_draft(false,window,cx));
+                        }
                     }
                     Err(error)=>view.update(cx,|view,cx|view.set_error(format!("Couldn't finish setup — try again: {error}"),cx)),
                 }
@@ -420,6 +454,104 @@ fn create_project(documents: &Path) -> Result<PathBuf> {
     unreachable!()
 }
 
+/// The bundled catalog the original falls back to when the backend has no tasks (`Bl`).
+const FALLBACK_TASKS: &str = include_str!("onboarding_tasks.json");
+
+fn recommendations_request(role: &str, mail_provider: &str) -> host::Request {
+    let url = format!(
+        "/onboarding/recommendations?provider_id=codex-starter-tasks&role={role}&mail_provider={mail_provider}"
+    );
+    let mut request = chatgpt::desktop_request("GET", &url, None);
+    request["headers"]["x-openai-use-sheep"] = "1".into();
+    host::Request::Http(request)
+}
+
+/// `email-domain-mail-provider` in the original, which reads the domain's MX records.
+// shortcut: names the public Google and Microsoft mail domains only, so a custom domain is `other`;
+// add an MX lookup when the app gains a DNS resolver.
+fn mail_provider(email: Option<&str>) -> &'static str {
+    let domain = email
+        .and_then(|email| email.rsplit_once('@'))
+        .map(|(_, domain)| domain.trim().to_ascii_lowercase())
+        .unwrap_or_default();
+    match domain.as_str() {
+        "gmail.com" | "googlemail.com" => "google",
+        "outlook.com" | "hotmail.com" | "live.com" | "msn.com" => "microsoft",
+        _ => "other",
+    }
+}
+
+/// The cards of the starter-task step, in the backend's order; the bundled catalog fills in when
+/// the backend has nothing ready. Tasks this app cannot run are left out, as the original drops
+/// Computer use here.
+fn starter_tasks(response: Option<&Value>) -> Vec<StarterTask> {
+    let fallback: Value = serde_json::from_str(FALLBACK_TASKS).unwrap_or_default();
+    let ready = response.filter(|response| {
+        response["status"] == "ready" && response["provider_id"] == "codex-starter-tasks"
+    });
+    let ids = ready
+        .and_then(|response| response["task_ids"].as_array())
+        .filter(|ids| !ids.is_empty())
+        .unwrap_or_else(|| fallback["task_ids"].as_array().expect("bundled task ids"));
+    ids.iter()
+        .filter_map(Value::as_str)
+        .filter_map(|id| {
+            let task = ready
+                .and_then(|response| response["tasks"].get(id))
+                .or_else(|| fallback["tasks"].get(id))?;
+            let plugin = task["pluginName"].as_str().unwrap_or_default();
+            if id == "computer_use" || plugin == "computer-use" {
+                return None;
+            }
+            let prompt = if id == "desktop_note" {
+                None
+            } else {
+                Some(task["prompt"].as_str()?.to_owned())
+            };
+            Some(StarterTask {
+                id: id.to_owned(),
+                label: task["messages"]["label"]["defaultMessage"]
+                    .as_str()?
+                    .to_owned(),
+                icon: match plugin {
+                    "" => "folder",
+                    "visualize" => "project-marker-bar-chart",
+                    _ => "plugins",
+                },
+                prompt,
+            })
+        })
+        .collect()
+}
+
+/// The original's `createDesktopNote`: a text file on the Desktop, numbered when the name is taken.
+fn create_desktop_note(desktop: &Path) -> Result<PathBuf> {
+    for index in 1.. {
+        let path = desktop.join(if index == 1 {
+            "Note from ChatGPT.txt".to_owned()
+        } else {
+            format!("Note from ChatGPT {index}.txt")
+        });
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                std::io::Write::write_all(
+                    &mut file,
+                    "Hello from ChatGPT.\n\nYou ask. I can do – now directly on your computer, too."
+                        .as_bytes(),
+                )?;
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    unreachable!()
+}
+
 /// Opens each folder in order; on macOS the first read raises the system's folder-access prompt.
 /// Stops at the first folder it cannot open, as the original's `requestLocalFilesAccess` loop does.
 fn folder_access(home: &Path, folders: &[&str]) -> Vec<bool> {
@@ -476,6 +608,78 @@ mod tests {
         assert_eq!(folder_access(home.path(), &folders), [true, false]);
         std::fs::create_dir(home.path().join("Documents"))?;
         assert_eq!(folder_access(home.path(), &folders), [true, true, true]);
+        Ok(())
+    }
+
+    #[test]
+    fn starter_tasks_follow_the_backend_and_fall_back_to_the_bundled_catalog() {
+        // Recorded from the live backend for a `marketing` role, prompts shortened.
+        let live = json!({
+            "status": "ready",
+            "provider_id": "codex-starter-tasks",
+            "task_ids": ["desktop_note", "computer_use", "data_science_csv_chart", "hold_next_free_hour"],
+            "tasks": {
+                "desktop_note": {"kind": "native_action", "icon": "folder",
+                    "messages": {"label": {"defaultMessage": "Leave a note on my Desktop"}}},
+                "data_science_csv_chart": {"kind": "prompt", "pluginName": "visualize",
+                    "prompt": "Use [@visualize] to chart this CSV",
+                    "messages": {"label": {"defaultMessage": "Turn data into a chart"}}},
+                "hold_next_free_hour": {"kind": "prompt", "pluginName": "outlook-calendar",
+                    "prompt": "Use Outlook Calendar",
+                    "messages": {"label": {"defaultMessage": "Schedule a focus block this week"}}},
+            },
+        });
+        let tasks = starter_tasks(Some(&live));
+        let labels: Vec<_> = tasks.iter().map(|task| task.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "Leave a note on my Desktop",
+                "Turn data into a chart",
+                "Schedule a focus block this week"
+            ]
+        );
+        assert_eq!(tasks[0].prompt, None);
+        assert_eq!(tasks[1].icon, "project-marker-bar-chart");
+        assert_eq!(tasks[2].prompt.as_deref(), Some("Use Outlook Calendar"));
+
+        // A pending or failed request shows the bundled tasks this app can run.
+        let pending =
+            json!({"status": "pending", "provider_id": "codex-starter-tasks", "tasks": {}});
+        for response in [Some(&pending), None] {
+            let ids: Vec<_> = starter_tasks(response)
+                .into_iter()
+                .map(|task| task.id)
+                .collect();
+            assert_eq!(
+                ids,
+                [
+                    "desktop_note",
+                    "hold_next_free_hour",
+                    "send_message_to_self"
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn mail_provider_names_known_domains() {
+        assert_eq!(mail_provider(Some("a@Gmail.com")), "google");
+        assert_eq!(mail_provider(Some("a@outlook.com")), "microsoft");
+        assert_eq!(mail_provider(Some("a@example.org")), "other");
+        assert_eq!(mail_provider(None), "other");
+    }
+
+    #[test]
+    fn desktop_note_never_overwrites_a_file() -> Result<()> {
+        let desktop = tempfile::tempdir()?;
+        std::fs::write(desktop.path().join("Note from ChatGPT.txt"), "mine")?;
+        let note = create_desktop_note(desktop.path())?;
+        assert_eq!(note.file_name().unwrap(), "Note from ChatGPT 2.txt");
+        assert_eq!(
+            std::fs::read_to_string(desktop.path().join("Note from ChatGPT.txt"))?,
+            "mine"
+        );
         Ok(())
     }
 }
