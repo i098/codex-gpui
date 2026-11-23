@@ -218,6 +218,7 @@ pub(crate) fn visible_mini(cx: &mut App) -> Option<WindowHandle<Root>> {
 
 pub(crate) fn init(cx: &mut App) {
     cx.set_global(Runtime::default());
+    cx.set_global(crate::voice_chat::tasks::VoiceTasks::default());
     cx.observe_global::<KeyboardState>(sync_keyboard).detach();
     cx.observe_global::<VoicePolicy>(sync_keyboard).detach();
     cx.bind_keys([gpui::KeyBinding::new("escape", Dismiss, Some("Popout"))]);
@@ -613,6 +614,8 @@ fn attach(
         .is_some_and(|popout| popout.target == Target::Mini)
     {
         composer.update(cx, |composer, cx| composer.set_mini(cx));
+        cx.observe_global::<crate::voice_chat::tasks::VoiceTasks>(|_, cx| cx.notify())
+            .detach();
     }
     if root
         .popout
