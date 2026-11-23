@@ -333,6 +333,7 @@ pub struct BrowserTab {
     site_annotation_blocked: bool,
     /// The chat's browser annotations not sent yet, as the owner reports them.
     pending_annotations: usize,
+    annotation_capture_pending: bool,
     focus: FocusHandle,
     _changes: Task<()>,
 }
@@ -409,6 +410,7 @@ impl BrowserTab {
             site_annotation_api: None,
             site_annotation_blocked: false,
             pending_annotations: 0,
+            annotation_capture_pending: false,
             focus: cx.focus_handle(),
             _changes: changes,
         };
@@ -626,6 +628,11 @@ impl BrowserTab {
             self.pending_annotations = count;
             cx.notify();
         }
+    }
+
+    pub fn set_annotation_capture_pending(&mut self, pending: bool, cx: &mut Context<Self>) {
+        self.annotation_capture_pending = pending;
+        cx.notify();
     }
 
     /// Reads the page again after it reported a change, emitting what differs.
@@ -968,6 +975,7 @@ impl BrowserTab {
     fn annotation_toolbar(&self, cx: &Context<Self>) -> impl IntoElement {
         let t = cx.theme();
         let count = self.pending_annotations;
+        let can_send = count > 0 && !self.annotation_capture_pending;
         let action = |id: &'static str,
                       glyph: &'static str,
                       label: &'static str,
@@ -981,7 +989,7 @@ impl BrowserTab {
                 Side::Top,
             )
         };
-        let discard = if count > 0 {
+        let discard = if can_send {
             action(
                 "browser-annotations-discard",
                 "shortcut-trash",
@@ -1019,13 +1027,17 @@ impl BrowserTab {
             .justify_center()
             .role(gpui::Role::Button)
             .aria_label(SharedString::from(send_label))
+            .aria_disabled(!can_send)
             .bg(t.button_primary_solid)
             .child(icon("composer-arrow-up", 16., t.text_inverse))
             .map(|send| {
-                if count > 0 {
+                if can_send {
                     send.cursor_pointer()
                         .hover(|s| s.bg(t.button_primary_solid_hover))
                         .on_click(cx.listener(|tab, _, _, cx| {
+                            if tab.annotation_capture_pending {
+                                return;
+                            }
                             tab.set_annotating(false, cx);
                             cx.emit(BrowserEvent::SendAnnotations);
                         }))

@@ -12,6 +12,12 @@ pub(super) const FULL_CDP: &str = "browser_use.default_origin_policy.full_cdp_ac
 /// The original's `Allow`/`Block` choices for a default site permission.
 const POLICY_OPTIONS: &[(&str, &str)] = &[("allow", "Allow"), ("deny", "Block")];
 
+#[cfg(target_os = "macos")]
+const ANNOTATION_SCREENSHOTS: &[(&str, &str)] = &[
+    ("always", "Always include"),
+    ("necessary", "Only on drag selection"),
+];
+
 /// One page the built-in browser committed.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Visit {
@@ -475,11 +481,30 @@ impl SettingsPane {
             this.browsing_history = Some(page);
             cx.notify();
         }));
-        let general = vec![row(
-            "Browsing history",
-            Some("View and manage pages visited in the built-in browser"),
-            manage.into_any_element(),
-        )];
+        let general = vec![
+            row(
+                "Browsing history",
+                Some("View and manage pages visited in the built-in browser"),
+                manage.into_any_element(),
+            ),
+            #[cfg(target_os = "macos")]
+            row(
+                "Annotation screenshots",
+                Some(
+                    "Screenshots help ChatGPT better understand and address comments, but increase plan usage",
+                ),
+                div()
+                    .debug_selector(|| "browser-annotation-screenshots".into())
+                    .child(self.select_menu(
+                        "host.browser-annotation-screenshots-mode",
+                        ANNOTATION_SCREENSHOTS,
+                        None,
+                        |select| select,
+                        cx,
+                    ))
+                    .into_any_element(),
+            ),
+        ];
         vec![
             ("General", general),
             ("Permissions", permissions),
