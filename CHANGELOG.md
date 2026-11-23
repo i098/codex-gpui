@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Windows MSIX builds with a configured update feed can check for updates, download a verified package, and install it on restart (#852).
+- In the macOS in-app browser, select an element, an area, or text and add a comment. Hold Space to use the page. When multi-select is enabled, hold Shift to add another selection (#836).
 - The macOS in-app browser adds page hooks for annotation: document-start scripts, page messages, and PNG capture of a page region (#832).
 - The in-app browser's page context menu adds `Open in new window` on a link and `Inspect`, which opens the Web Inspector, after `Reload`. Before, the menu had neither item (#833).
 - Settings ▸ Browser: a `Browsing history` row opens the built-in browser's history, with search, the `All`/`Agent`/`Other` filter, per-row and selection removal and `Clear browsing data`. The app records each page the built-in browser commits to `browsing-history.json`. Before, the page had no history (#1562).
