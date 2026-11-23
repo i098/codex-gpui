@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Add the macOS onboarding switches for Computer use and Computer history. They install the bundled Computer use plugin, request macOS permissions, and turn on Computer history with Memories (#1560).
 - Mini shows task creation and progress from an active voice chat (#875).
 - Customize the Explore sidebar, pin or unpin native destinations and Security Cloud, and keep the rail order between sessions (#985).
 - In the macOS in-app browser, select an element, an area, or text and add a comment. Hold Space to use the page. When multi-select is enabled, hold Shift to add another selection (#836).
