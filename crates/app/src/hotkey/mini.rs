@@ -1,4 +1,5 @@
 use super::{Root, Runtime, Target, windows};
+use crate::voice_chat::tasks::{Kind as TaskKind, VoiceTasks};
 use anyhow::{Context as _, Result};
 use gpui::{
     AnyElement, App, BorrowAppContext as _, Bounds, Context, Focusable as _,
@@ -168,6 +169,7 @@ pub(super) fn observe_pointer(handle: WindowHandle<Root>, cx: &mut App) -> Resul
                             state.expanded,
                             has_chat,
                         )
+                        .chain(task_bounds(window.bounds().size, figure, cx))
                         .try_fold(
                             false,
                             |inside, region| -> Result<bool> {
@@ -342,7 +344,76 @@ pub(super) fn content(root: &Root, window: &Window, cx: &mut Context<Root>) -> A
                 .child(ui::text(title, 14., 20., 500., t.text)),
         );
     }
+    if let (Some(voice), Some(popout)) = (cx.try_global::<VoiceTasks>(), &root.popout) {
+        let owner = popout.owner;
+        for (index, (card, bounds)) in voice
+            .cards()
+            .rev()
+            .zip(task_bounds(viewport, figure, cx))
+            .enumerate()
+        {
+            let target = card.target.clone();
+            let color = match card.kind {
+                TaskKind::Completed => t.text_success,
+                TaskKind::Failed | TaskKind::Missing => t.text_error,
+                _ => t.text,
+            };
+            body = body.child(
+                div()
+                    .id(("mini-voice-task", index))
+                    .absolute()
+                    .left(bounds.origin.x)
+                    .top(bounds.origin.y)
+                    .w(bounds.size.width)
+                    .h(bounds.size.height)
+                    .rounded(px(18.))
+                    .border_1()
+                    .border_color(t.border_subtle)
+                    .bg(t.control_background)
+                    .px(px(12.))
+                    .flex()
+                    .flex_col()
+                    .justify_center()
+                    .overflow_hidden()
+                    .role(gpui::Role::Button)
+                    .tab_index(0)
+                    .on_click(move |_, _, cx| {
+                        let route = crate::Route::Thread(target.to_string());
+                        if owner
+                            .update(cx, |root, window, cx| root.navigate(route, window, cx))
+                            .is_ok()
+                        {
+                            let _ =
+                                windows::show(owner.into(), windows::Presentation::Foreground, cx);
+                        }
+                    })
+                    .child(ui::text(card.kind.title(), 13., 18., 500., color))
+                    .child(
+                        ui::text(card.body.clone(), 12., 16., 400., t.text_secondary).truncate(),
+                    ),
+            );
+        }
+    }
     body.into_any_element()
+}
+
+fn task_bounds(
+    viewport: gpui::Size<Pixels>,
+    figure: gpui::Size<Pixels>,
+    cx: &App,
+) -> impl Iterator<Item = Bounds<Pixels>> {
+    let chat = ui::screens::mini::chat_bounds(viewport, figure);
+    let count = cx
+        .try_global::<VoiceTasks>()
+        .map_or(0, |voice| voice.cards().count());
+    (0..count)
+        .map(move |index| {
+            Bounds::new(
+                point(chat.origin.x, chat.origin.y - px(62. * (index + 1) as f32)),
+                size(chat.size.width, px(56.)),
+            )
+        })
+        .take_while(|bounds| bounds.origin.y >= px(0.))
 }
 
 /// The chosen pet's id (`selected-avatar-id`, default `codex`) and the box Mini draws: the

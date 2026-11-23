@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Voice chat uses the microphone and speakers through WebRTC. Before, voice chat accepted and returned only text (#908).
+- Mini shows task creation and progress from an active voice chat (#875).
 - Customize the Explore sidebar, pin or unpin native destinations and Security Cloud, and keep the rail order between sessions (#985).
 - In the macOS in-app browser, select an element, an area, or text and add a comment. Hold Space to use the page. When multi-select is enabled, hold Shift to add another selection (#836).
 - The macOS in-app browser adds page hooks for annotation: document-start scripts, page messages, and PNG capture of a page region (#832).
