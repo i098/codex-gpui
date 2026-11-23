@@ -149,6 +149,7 @@ fn main() {
         // Launch argv deep links (the original's `queueProcessArgs`): the last codex://
         // argument navigates the new window once it exists.
         let argv_link = std::env::args()
+            .skip(1)
             .filter_map(|arg| {
                 app::deep_link::parse(&arg).or_else(|| {
                     let path = std::path::Path::new(&arg);
@@ -156,7 +157,10 @@ fn main() {
                 })
             })
             .next_back();
-        let argv_web_url = std::env::args().filter_map(|arg| web_url(&arg)).next_back();
+        let argv_web_url = std::env::args()
+            .skip(1)
+            .filter_map(|arg| web_url(&arg))
+            .next_back();
         let handle = app::windows::open_primary(state, cwd, cx).unwrap_or_else(|error| {
             eprintln!("codex-gpui: cannot open the primary window: {error:#}");
             std::process::exit(1)

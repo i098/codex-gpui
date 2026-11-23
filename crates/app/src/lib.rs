@@ -5540,7 +5540,9 @@ impl Root {
         self.pull_request_tab = None;
         self.image = None;
         self.automation_tab = None;
-        let view = cx.new(|_| ThreadView::new(thread, clock, composer));
+        let view = cx.new(|_| {
+            ThreadView::new(thread, clock, composer).bind_widget_connection(self.bridge.clone())
+        });
         view.update(cx, |view, cx| {
             view.set_git_phase(self.git_busy, cx);
             let status = self.worktree_statuses.get(view.id()).copied();
@@ -6457,7 +6459,10 @@ impl Root {
         .detach();
         self.loaded.insert(thread.id.clone());
         let clock = self.clock();
-        let view = cx.new(|_| ThreadView::new(thread, clock, composer.clone().into()));
+        let view = cx.new(|_| {
+            ThreadView::new(thread, clock, composer.clone().into())
+                .bind_widget_connection(self.bridge.clone())
+        });
         self.side_chats.push(SideChat {
             key,
             title,
@@ -9660,6 +9665,15 @@ fn generation_instructions(context: &str) -> String {
 
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(thread) = &self.thread {
+                thread.read(cx).hide_widgets(cx);
+            }
+            for chat in &self.side_chats {
+                chat.view.read(cx).hide_widgets(cx);
+            }
+        }
         if self.crashed {
             return native_menus::actions(
                 div()
