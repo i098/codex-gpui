@@ -4,6 +4,8 @@
 use crate::*;
 use ui::screens::thread::view::{VoiceCard, VoiceLine};
 
+pub(crate) mod tasks;
+
 #[derive(Clone, PartialEq, Debug)]
 enum Status {
     Starting,
@@ -153,6 +155,7 @@ impl Root {
         let Some(voice) = self.voice_chat.take() else {
             return;
         };
+        tasks::VoiceTasks::stop(cx);
         self.sync_voice(cx);
         if !voice.is_live() {
             return;
@@ -196,8 +199,21 @@ impl Root {
 
     pub(crate) fn voice_event(&mut self, event: &Event, cx: &mut Context<Self>) {
         let Event::Notification { method, params } = event else {
+            if matches!(event, Event::Closed) {
+                tasks::VoiceTasks::stop(cx);
+            }
             return;
         };
+        if method == "item/completed" {
+            if let Some(voice) = self
+                .voice_chat
+                .as_ref()
+                .filter(|v| v.status == Status::Live)
+            {
+                tasks::VoiceTasks::apply(&voice.thread_id, params, cx);
+            }
+            return;
+        }
         if !method.starts_with("thread/realtime/") {
             return;
         }
@@ -207,6 +223,11 @@ impl Root {
             .filter(|voice| params["threadId"] == voice.thread_id.as_str())
         {
             voice.apply(method, params);
+            match method.as_str() {
+                "thread/realtime/started" => tasks::VoiceTasks::start(cx),
+                "thread/realtime/error" | "thread/realtime/closed" => tasks::VoiceTasks::stop(cx),
+                _ => {}
+            }
             self.sync_voice(cx);
         }
     }
