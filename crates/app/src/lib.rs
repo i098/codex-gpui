@@ -4117,7 +4117,7 @@ impl Root {
             let (multi_select, permission) = gate.await;
             if let Some(tab) = weak.upgrade() {
                 cx.update(|cx| browser_site_annotation::sync_blocked(&tab, cx));
-                let _ = tab.update(cx, |tab, _| {
+                tab.update(cx, |tab, _| {
                     tab.set_annotation_multi_select(multi_select);
                     tab.set_site_annotation_api(permission);
                 });
