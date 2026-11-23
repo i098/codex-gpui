@@ -313,7 +313,7 @@ pub mod worktrees;
 pub mod environments;
 
 #[path = "browser_settings.rs"]
-mod browser_settings;
+pub mod browser_settings;
 
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
@@ -1176,6 +1176,8 @@ pub struct SettingsPane {
     pets: pets::State,
     /// `Available reasoning efforts` on the Configuration page.
     efforts: Option<(Vec<String>, Entity<crate::settings_kit::MultiSelect>)>,
+    /// Browser ▸ Browsing history, while open.
+    browsing_history: Option<Entity<browser_settings::HistoryPage>>,
 }
 
 /// `Confirm before closing a window` options, default first.
@@ -1230,7 +1232,10 @@ static SHELL_OPTIONS: std::sync::LazyLock<Vec<(&str, &str)>> = std::sync::LazyLo
 
 impl SettingsPane {
     fn new(page: Entity<SettingsPage>, cx: &mut Context<Self>) -> Self {
-        cx.observe(&page, |_, page, cx| {
+        cx.observe(&page, |this: &mut Self, page, cx| {
+            if page.read(cx).section != "Browser" {
+                this.browsing_history = None;
+            }
             if page.read(cx).section != "Git" {
                 page.update(cx, |page, cx| {
                     for change in page.take_pending_instructions() {
@@ -1259,6 +1264,7 @@ impl SettingsPane {
             appearance: Default::default(),
             pets: Default::default(),
             efforts: None,
+            browsing_history: None,
         }
     }
 
@@ -1813,6 +1819,11 @@ impl Render for SettingsPane {
         imports::deactivate(cx);
         if let Some(view) = &self.page.read(cx).subtree {
             return view.clone().into_any_element();
+        }
+        if section == "Browser"
+            && let Some(history) = &self.browsing_history
+        {
+            return history.clone().into_any_element();
         }
         if section == "Computer use" {
             return super::computer_use::render(window, cx);

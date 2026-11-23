@@ -19,6 +19,12 @@ pub(super) enum PageChange {
     Finished,
     /// The main-frame load failed.
     Failed(LoadError),
+    #[cfg(target_os = "macos")]
+    ScriptMessage(String),
+    #[cfg(target_os = "macos")]
+    Annotation(super::annotation::Pick),
+    #[cfg(target_os = "macos")]
+    DocumentStarted,
     /// The page asked for a new window (`target=_blank`, `window.open`); the owner opens
     /// the address in a new browser tab.
     #[cfg(target_os = "macos")]
@@ -96,6 +102,44 @@ impl Page {
         if let Self::Native(page) = self {
             page.inspect();
         }
+    }
+
+    pub fn evaluate(&self, script: &str) -> anyhow::Result<()> {
+        #[cfg(target_os = "macos")]
+        if let Self::Native(page) = self {
+            return page.evaluate(script);
+        }
+        let _ = script;
+        anyhow::bail!("There is no native browser page")
+    }
+
+    pub fn add_user_script(&self, script: &str) -> anyhow::Result<()> {
+        #[cfg(target_os = "macos")]
+        if let Self::Native(page) = self {
+            return page.add_user_script(script);
+        }
+        let _ = script;
+        anyhow::bail!("There is no native browser page")
+    }
+
+    pub fn annotation_mode(&self, generation: u32, mode: u8) {
+        #[cfg(target_os = "macos")]
+        if let Self::Native(page) = self {
+            page.annotation_mode(generation, mode);
+        }
+        let _ = (generation, mode);
+    }
+
+    pub fn snapshot(
+        &self,
+        region: Bounds<Pixels>,
+    ) -> anyhow::Result<async_channel::Receiver<anyhow::Result<Vec<u8>>>> {
+        #[cfg(target_os = "macos")]
+        if let Self::Native(page) = self {
+            return page.snapshot(region);
+        }
+        let _ = region;
+        anyhow::bail!("There is no native browser page")
     }
 
     pub fn state(&self) -> PageState {

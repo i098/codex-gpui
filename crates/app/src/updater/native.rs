@@ -1,5 +1,5 @@
 //! Sparkle 2.9 user-driver messages stay on the main thread.
-//! Sparkle checks the signed appcast; a small background script installs its newer release.
+//! Sparkle verifies, stages, installs, and relaunches the update.
 use anyhow::{Context as _, Result, ensure};
 use async_channel::{Receiver, Sender};
 use block2::{DynBlock, RcBlock};
@@ -15,13 +15,16 @@ use std::cell::{Cell, RefCell};
 use ui::updater::{Release, Status};
 
 const SKIP: isize = 0;
+const INSTALL: isize = 1;
+const DISMISS: isize = 2;
+const STAGE_INSTALLING: isize = 2;
 /// Sparkle checks in the background on this interval when automatic checks are on.
 const CHECK_INTERVAL_SECONDS: f64 = 3600.;
 
 struct DriverState {
     events: Sender<Status>,
     standard: Retained<AnyObject>,
-    archive_url: RefCell<Option<String>>,
+    pending: RefCell<Option<(Status, RcBlock<dyn Fn(isize)>)>>,
     cancel: RefCell<Option<RcBlock<dyn Fn()>>>,
     blocked: Cell<bool>,
     expected: Cell<u64>,
@@ -29,13 +32,37 @@ struct DriverState {
     status: Cell<Status>,
     feed: RefCell<Option<Retained<NSString>>>,
     release: RefCell<Option<Release>>,
-    bundle_path: String,
 }
 
 impl DriverState {
+    fn new(events: Sender<Status>, standard: Retained<AnyObject>) -> Self {
+        Self {
+            events,
+            standard,
+            pending: RefCell::new(None),
+            cancel: RefCell::new(None),
+            blocked: Cell::new(false),
+            expected: Cell::new(0),
+            received: Cell::new(0),
+            status: Cell::new(Status::Idle),
+            feed: RefCell::new(None),
+            release: RefCell::new(None),
+        }
+    }
+
     fn emit(&self, status: Status) {
         if self.status.replace(status) != status {
             let _ = self.events.try_send(status);
+        }
+    }
+
+    fn offer(&self, status: Status, reply: &DynBlock<dyn Fn(isize)>) {
+        self.cancel.borrow_mut().take();
+        if self.blocked.get() {
+            reply.call((decline(status),));
+        } else {
+            *self.pending.borrow_mut() = Some((status, reply.copy()));
+            self.emit(status);
         }
     }
 
@@ -43,23 +70,14 @@ impl DriverState {
         if self.blocked.get() {
             return;
         }
-        let Some(url) = self.archive_url.borrow_mut().take() else {
-            return;
-        };
-        self.emit(Status::Installing);
-        if let Err(error) = std::process::Command::new("/bin/sh")
-            .arg("-c")
-            .arg(INSTALL_SCRIPT)
-            .arg("codex-gpui-update")
-            .arg(url)
-            .arg(&self.bundle_path)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        {
-            eprintln!("codex-gpui: cannot start update installer: {error}");
-            self.emit(Status::Ready);
+        let pending = self.pending.borrow_mut().take();
+        if let Some((status, reply)) = pending {
+            self.emit(if status == Status::Ready {
+                Status::Installing
+            } else {
+                Status::Downloading(None)
+            });
+            reply.call((INSTALL,));
         }
     }
 
@@ -68,7 +86,10 @@ impl DriverState {
         if !managed {
             return;
         }
-        self.archive_url.borrow_mut().take();
+        let pending = self.pending.borrow_mut().take();
+        if let Some((status, reply)) = pending {
+            reply.call((decline(status),));
+        }
         let cancel = self.cancel.borrow_mut().take();
         if let Some(cancel) = cancel {
             cancel.call(());
@@ -77,7 +98,13 @@ impl DriverState {
     }
 }
 
-const INSTALL_SCRIPT: &str = include_str!("../../../../tools/install-update-mac.sh");
+fn decline(status: Status) -> isize {
+    if status == Status::Ready {
+        SKIP
+    } else {
+        DISMISS
+    }
+}
 
 define_class!(
     #[unsafe(super = NSObject)]
@@ -113,8 +140,10 @@ define_class!(
 
         #[unsafe(method(showUpdateFoundWithAppcastItem:state:reply:))]
         fn found(&self, item: &AnyObject, state: &AnyObject, reply: &DynBlock<dyn Fn(isize)>) {
+            let stage: isize = unsafe { msg_send![state, stage] };
+            let status = if stage == STAGE_INSTALLING { Status::Ready } else { Status::Available };
             if self.ivars().blocked.get() {
-                reply.call((SKIP,));
+                reply.call((decline(status),));
                 return;
             }
             unsafe {
@@ -124,12 +153,8 @@ define_class!(
                     return;
                 }
                 *self.ivars().release.borrow_mut() = Some(release(item));
-                let url: Retained<AnyObject> = msg_send![item, fileURL];
-                let url: Retained<NSString> = msg_send![&*url, absoluteString];
-                *self.ivars().archive_url.borrow_mut() = Some(url.to_string());
                 self.dismiss_standard();
-                self.ivars().install();
-                reply.call((SKIP,));
+                self.ivars().offer(status, reply);
             }
         }
 
@@ -152,13 +177,17 @@ define_class!(
         #[unsafe(method(showUpdaterError:acknowledgement:))]
         fn error(&self, error: &NSError, reply: &DynBlock<dyn Fn()>) {
             eprintln!("codex-gpui: update failed: {error:?}");
-            self.ivars().archive_url.borrow_mut().take();
+            self.ivars().pending.borrow_mut().take();
             self.emit(Status::Idle);
             unsafe { let _: () = msg_send![&*self.ivars().standard, showUpdaterError: error, acknowledgement: reply]; }
         }
 
         #[unsafe(method(showDownloadInitiatedWithCancellation:))]
         fn downloading(&self, cancellation: &DynBlock<dyn Fn()>) {
+            if self.ivars().blocked.get() {
+                cancellation.call(());
+                return;
+            }
             *self.ivars().cancel.borrow_mut() = Some(cancellation.copy());
             self.ivars().expected.set(0);
             self.ivars().received.set(0);
@@ -189,29 +218,23 @@ define_class!(
 
         #[unsafe(method(showReadyToInstallAndRelaunch:))]
         fn ready(&self, reply: &DynBlock<dyn Fn(isize)>) {
-            reply.call((SKIP,));
-            self.emit(if self.ivars().archive_url.borrow().is_some() {
-                Status::Ready
-            } else {
-                Status::Idle
-            });
+            self.ivars().offer(Status::Ready, reply);
         }
 
         #[unsafe(method(showInstallingUpdateWithApplicationTerminated:retryTerminatingApplication:))]
-        fn installing(&self, terminated: bool, retry: &DynBlock<dyn Fn()>) {
+        fn installing(&self, _: bool, _: &DynBlock<dyn Fn()>) {
             self.emit(Status::Installing);
-            unsafe { let _: () = msg_send![&*self.ivars().standard, showInstallingUpdateWithApplicationTerminated: terminated, retryTerminatingApplication: retry]; }
         }
 
         #[unsafe(method(showUpdateInstalledAndRelaunched:acknowledgement:))]
-        fn installed(&self, relaunched: bool, reply: &DynBlock<dyn Fn()>) {
+        fn installed(&self, _: bool, reply: &DynBlock<dyn Fn()>) {
             self.emit(Status::Idle);
-            unsafe { let _: () = msg_send![&*self.ivars().standard, showUpdateInstalledAndRelaunched: relaunched, acknowledgement: reply]; }
+            reply.call(());
         }
 
         #[unsafe(method(dismissUpdateInstallation))]
         fn dismiss(&self) {
-            self.ivars().archive_url.borrow_mut().take();
+            self.ivars().pending.borrow_mut().take();
             self.ivars().cancel.borrow_mut().take();
             self.dismiss_standard();
             self.emit(Status::Idle);
@@ -370,19 +393,7 @@ pub(super) fn start(
         msg_send![allocated, initWithHostBundle: &*bundle, delegate: std::ptr::null::<AnyObject>()]
     };
     let (events, receiver) = async_channel::unbounded();
-    let driver = UserDriver::alloc(mtm).set_ivars(DriverState {
-        events,
-        standard,
-        archive_url: RefCell::new(None),
-        cancel: RefCell::new(None),
-        blocked: Cell::new(false),
-        expected: Cell::new(0),
-        received: Cell::new(0),
-        status: Cell::new(Status::Idle),
-        feed: RefCell::new(None),
-        release: RefCell::new(None),
-        bundle_path: bundle.bundlePath().to_string(),
-    });
+    let driver = UserDriver::alloc(mtm).set_ivars(DriverState::new(events, standard));
     let driver: Retained<UserDriver> = unsafe { msg_send![super(driver), init] };
     let class = AnyClass::get(c"SPUUpdater").context("Sparkle updater is unavailable")?;
     let updater: Retained<AnyObject> = unsafe {
@@ -416,31 +427,48 @@ mod tests {
     use std::rc::Rc;
 
     #[test]
+    fn download_and_restart_each_require_their_own_click() {
+        let (events, receiver) = async_channel::unbounded();
+        let standard = unsafe { msg_send![objc2::class!(NSObject), new] };
+        let state = DriverState::new(events, standard);
+
+        for status in [Status::Available, Status::Ready] {
+            let choice = Rc::new(Cell::new(None));
+            let result = choice.clone();
+            let reply = RcBlock::new(move |value| result.set(Some(value)));
+            state.offer(status, &reply);
+            assert_eq!(receiver.try_recv().unwrap(), status);
+            assert_eq!(choice.get(), None, "the offer must wait for a click");
+
+            state.install();
+            assert_eq!(choice.get(), Some(INSTALL));
+            assert_eq!(
+                receiver.try_recv().unwrap(),
+                if status == Status::Ready {
+                    Status::Installing
+                } else {
+                    Status::Downloading(None)
+                }
+            );
+        }
+    }
+
+    #[test]
     fn managed_policy_cancels_a_staged_update_before_install() {
         let (events, receiver) = async_channel::unbounded();
-        let canceled = Rc::new(Cell::new(false));
-        let cancel_called = canceled.clone();
         let standard = unsafe { msg_send![objc2::class!(NSObject), new] };
-        let state = DriverState {
-            events,
-            standard,
-            archive_url: RefCell::new(Some("https://example.test/update.zip".into())),
-            cancel: RefCell::new(Some(RcBlock::new(move || cancel_called.set(true)))),
-            blocked: Cell::new(false),
-            expected: Cell::new(0),
-            received: Cell::new(0),
-            status: Cell::new(Status::Ready),
-            feed: RefCell::new(None),
-            release: RefCell::new(None),
-            bundle_path: "/Applications/Codex GPUI.app".into(),
-        };
+        let state = DriverState::new(events, standard);
+        let choice = Rc::new(Cell::new(None));
+        let result = choice.clone();
+        let reply = RcBlock::new(move |value| result.set(Some(value)));
+        state.offer(Status::Ready, &reply);
+        assert_eq!(receiver.try_recv().unwrap(), Status::Ready);
 
         state.set_managed(true);
         state.install();
 
-        assert!(canceled.get());
+        assert_eq!(choice.get(), Some(SKIP));
         assert_eq!(receiver.try_recv().unwrap(), Status::Idle);
         assert!(receiver.try_recv().is_err());
-        assert!(state.archive_url.borrow().is_none());
     }
 }

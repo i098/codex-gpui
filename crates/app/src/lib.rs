@@ -7,6 +7,7 @@ mod account;
 mod account_backend;
 mod activity_access;
 mod archived_chats;
+mod browsing_history;
 mod chatgpt;
 mod chatgpt_chats;
 pub mod chatgpt_conversation;
@@ -111,7 +112,7 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 use theme::{ActiveTheme as _, Theme};
-use ui::browser::{BrowserEvent, BrowserTab};
+use ui::browser::{BrowserAnnotationAdded, BrowserEvent, BrowserTab};
 use ui::composer::{Approval, Composer, LiveSettingsChange, Permission, QueueAction, Submission};
 use ui::dialog::{
     CommitRepository, CommitStep, Dialog, Kind as DialogKind, Outcome as DialogOutcome, Selection,
@@ -765,6 +766,13 @@ impl Root {
         host_settings::apply(cx);
         if !cx.has_global::<ui::composer::PromptHistory>() {
             cx.set_global(ui::composer::PromptHistory(state.prompt_history.clone()));
+        }
+        if !cx.has_global::<ui::screens::settings::browser_settings::BrowsingHistory>() {
+            let path = state.path.as_ref();
+            browsing_history::install(
+                path.map(|path| path.with_file_name("browsing-history.json")),
+                cx,
+            );
         }
         cx.observe_global::<ui::composer::PromptHistory>(|this, cx| {
             this.state.prompt_history = cx.global::<ui::composer::PromptHistory>().0.clone();
@@ -4062,6 +4070,11 @@ impl Root {
             window,
             move |this, tab, event: &BrowserEvent, window, cx| match event {
                 BrowserEvent::TitleChanged | BrowserEvent::Navigated { .. } => {
+                    if matches!(event, BrowserEvent::Navigated { .. }) {
+                        browsing_history::record(tab, cx);
+                    } else {
+                        browsing_history::retitle(tab, cx);
+                    }
                     let index = this.tabs.iter().position(|t| *t == SidePanel::Browser(key));
                     if let (Some(index), Some(split)) = (index, &this.split) {
                         let label = tab.read(cx).title();
@@ -4072,9 +4085,34 @@ impl Root {
                 BrowserEvent::DiscardAnnotations => {
                     this.confirm_discard_browser_annotations(window, cx)
                 }
-                BrowserEvent::LoadStarted { .. } | BrowserEvent::LoadFinished => {}
+                BrowserEvent::LoadStarted { .. }
+                | BrowserEvent::LoadFinished
+                | BrowserEvent::ScriptMessage(_) => {}
             },
         )
+        .detach();
+        cx.subscribe(&tab, |this, _, event: &BrowserAnnotationAdded, cx| {
+            if this.thread.is_some() {
+                let mut pending = this.thread_composer.read(cx).diff_comments().to_vec();
+                pending.push(event.0.clone());
+                this.change_diff_comments(&pending, cx);
+            }
+        })
+        .detach();
+        let host = self.host.clone();
+        let gate = cx.background_spawn(async move {
+            host.identity().is_some_and(|identity| {
+                chatgpt::Gate::BrowserAnnotationMultiSelect
+                    .enabled(&usage::statsig(host.as_ref(), &identity))
+            })
+        });
+        let weak = tab.downgrade();
+        cx.spawn(async move |_, cx| {
+            let enabled = gate.await;
+            if enabled {
+                let _ = weak.update(cx, |tab, _| tab.set_annotation_multi_select(true));
+            }
+        })
         .detach();
         let pending = self.pending_browser_annotations(cx);
         tab.update(cx, |tab, cx| tab.set_pending_annotations(pending, cx));
@@ -4105,7 +4143,9 @@ impl Root {
     // shortcut: a menu or dialog over the visible page draws under it; hide the page while
     // an overlay is open when one needs to overlap the panel.
     fn sync_browser_pages(&self, cx: &mut App) {
-        let thread = matches!(self.state.route, Route::Thread(_)) && self.page.is_none();
+        let thread = self.thread.is_some()
+            && matches!(self.state.route, Route::Thread(_))
+            && self.page.is_none();
         for (key, tab) in &self.browser_tabs {
             let shown = thread && self.side_visible(SidePanel::Browser(*key));
             tab.update(cx, |tab, cx| tab.set_page_hidden(!shown, cx));

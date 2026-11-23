@@ -18,6 +18,7 @@ use crate::composer::{Composer, SettingsFieldSubmit};
 use crate::tooltip::{Side, tooltip};
 use crate::{icon, icon_button, text};
 
+mod annotation;
 #[cfg(target_os = "macos")]
 mod menu;
 mod page;
@@ -108,12 +109,16 @@ pub enum BrowserEvent {
     },
     TitleChanged,
     LoadFinished,
+    /// Untrusted text from `window.ipc.postMessage`. It does not authorize host actions.
+    ScriptMessage(String),
     /// The annotation toolbar's Send: the owner sends the pending annotations as a turn.
     SendAnnotations,
     /// The annotation toolbar's Discard: the owner confirms, then drops the pending
     /// annotations.
     DiscardAnnotations,
 }
+
+pub struct BrowserAnnotationAdded(pub crate::screens::diff::panel::comments::Comment);
 
 /// What the page reports: its committed URL, title, history position and whether it is
 /// loading a document.
@@ -140,6 +145,7 @@ pub struct BrowserTab {
     hidden: bool,
     /// `thread.browser.commentMode`: clicks on the page annotate it.
     annotating: bool,
+    annotation: annotation::Annotation,
     /// The chat's browser annotations not sent yet, as the owner reports them.
     pending_annotations: usize,
     focus: FocusHandle,
@@ -147,6 +153,7 @@ pub struct BrowserTab {
 }
 
 impl EventEmitter<BrowserEvent> for BrowserTab {}
+impl EventEmitter<BrowserAnnotationAdded> for BrowserTab {}
 
 impl BrowserTab {
     pub fn new(url: Option<Url>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -163,6 +170,18 @@ impl BrowserTab {
             .detach();
         let changes = cx.spawn_in(window, async move |tab, cx| {
             while let Ok(change) = changes.recv().await {
+                #[cfg(target_os = "macos")]
+                if let page::PageChange::Annotation(pick) = change {
+                    if tab
+                        .update_in(cx, |tab, window, cx| {
+                            tab.select_annotation(pick, window, cx);
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                    continue;
+                }
                 #[cfg(target_os = "macos")]
                 if let page::PageChange::ContextMenu { x, y, link } = change {
                     let shown = tab.update_in(cx, |tab, window, cx| {
@@ -201,6 +220,7 @@ impl BrowserTab {
             page_bounds: Bounds::default(),
             hidden: false,
             annotating: false,
+            annotation: annotation::Annotation::default(),
             pending_annotations: 0,
             focus: cx.focus_handle(),
             _changes: changes,
@@ -312,9 +332,29 @@ impl BrowserTab {
     pub fn set_page_hidden(&mut self, hidden: bool, cx: &mut Context<Self>) {
         if self.hidden != hidden {
             self.hidden = hidden;
+            self.sync_annotation();
             self.page.set_hidden(hidden || self.error.is_some());
             cx.notify();
         }
+    }
+
+    /// Runs app-supplied JavaScript in the page's main frame.
+    pub fn evaluate(&self, script: &str) -> anyhow::Result<()> {
+        self.page.evaluate(script)
+    }
+
+    /// Registers app-supplied JavaScript for the start of future main-frame documents.
+    pub fn add_user_script(&self, script: &str) -> anyhow::Result<()> {
+        self.page.add_user_script(script)
+    }
+
+    /// Captures a PNG of a rectangle in page-viewport coordinates, not window coordinates.
+    pub fn snapshot(
+        &self,
+        region: Bounds<Pixels>,
+    ) -> impl Future<Output = anyhow::Result<Vec<u8>>> + use<> {
+        let pending = self.page.snapshot(region);
+        async move { pending?.recv().await? }
     }
 
     /// `⌘T` and `⌘L`: the address bar focused with its text selected.
@@ -332,6 +372,7 @@ impl BrowserTab {
     fn set_annotating(&mut self, annotating: bool, cx: &mut Context<Self>) {
         if self.annotating != annotating {
             self.annotating = annotating;
+            self.reset_annotation();
             cx.notify();
         }
     }
@@ -358,6 +399,11 @@ impl BrowserTab {
 
     /// Reads the page again after it reported a change, emitting what differs.
     fn page_changed(&mut self, change: page::PageChange, cx: &mut Context<Self>) {
+        #[cfg(target_os = "macos")]
+        if let page::PageChange::ScriptMessage(body) = change {
+            cx.emit(BrowserEvent::ScriptMessage(body));
+            return;
+        }
         let previous = std::mem::replace(&mut self.state, self.page.state());
         if let page::PageChange::Failed(error) = change {
             // The error page draws in place of the native page.
@@ -365,13 +411,21 @@ impl BrowserTab {
             self.error = Some(error);
             self.error_details = false;
             self.load_state = LoadState::Failed;
-            self.annotating = false;
+            self.set_annotating(false, cx);
             self.show_url(cx);
             cx.emit(BrowserEvent::LoadFinished);
             cx.notify();
             return;
         }
-        if previous.url != self.state.url {
+        #[cfg(target_os = "macos")]
+        let committed = change == page::PageChange::DocumentStarted;
+        #[cfg(not(target_os = "macos"))]
+        let committed = false;
+        let url_changed = previous.url != self.state.url;
+        if committed || url_changed {
+            self.reset_annotation();
+        }
+        if url_changed {
             if let Some(url) = self.state.url.clone() {
                 cx.emit(BrowserEvent::Navigated { url });
             }
@@ -614,6 +668,7 @@ impl Render for BrowserTab {
             .flex_col()
             .child(toolbar)
             .child(page)
+            .when_some(self.annotation_card(cx), |tab, card| tab.child(card))
             .when(self.annotating, |d| d.child(self.annotation_toolbar(cx)))
     }
 }

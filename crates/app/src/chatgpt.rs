@@ -12,6 +12,7 @@ pub(crate) const ORIGINAL_APP_VERSION: &str = "26.1007.30912";
 #[derive(Clone, Copy)]
 pub(crate) enum Gate {
     ActivityFeature,
+    BrowserAnnotationMultiSelect,
     DataPrivacy,
     PersonalizationLayout,
     UnifiedInstructions,
@@ -25,6 +26,7 @@ impl Gate {
     const fn id(self) -> &'static str {
         match self {
             Self::ActivityFeature => "4039078146",
+            Self::BrowserAnnotationMultiSelect => "2849306825",
             Self::DataPrivacy => "3157804138",
             Self::PersonalizationLayout => "890187595",
             Self::UnifiedInstructions => "2826489636",
