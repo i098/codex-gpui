@@ -11,8 +11,9 @@ use objc2_foundation::{
     MainThreadMarker, NSDictionary, NSError, NSPoint, NSRect, NSSize, NSString, ns_string,
 };
 use objc2_web_kit::{
-    WKNavigation, WKNavigationDelegate, WKSnapshotConfiguration, WKUserScript,
-    WKUserScriptInjectionTime, WKWebView,
+    WKContentWorld, WKNavigation, WKNavigationDelegate, WKScriptMessage, WKScriptMessageHandler,
+    WKSnapshotConfiguration, WKUserContentController, WKUserScript, WKUserScriptInjectionTime,
+    WKWebView,
 };
 use url::Url;
 use wry::dpi::{LogicalPosition, LogicalSize};
@@ -80,7 +81,7 @@ impl WebPage {
             // `Started` fires once the navigation commits: the URL has changed.
             .with_on_page_load_handler(move |event, _| {
                 let _ = on_load.try_send(match event {
-                    PageLoadEvent::Started => PageChange::Changed,
+                    PageLoadEvent::Started => PageChange::DocumentStarted,
                     PageLoadEvent::Finished => PageChange::Finished,
                 });
             })
@@ -111,7 +112,28 @@ impl WebPage {
         let webview = view.webview();
         // SAFETY: main-thread reads and writes of the view's delegate, which wry keeps alive.
         let inner = unsafe { webview.navigationDelegate() }?;
-        let failures = FailureDelegate::new(MainThreadMarker::new()?, inner, changed);
+        let mtm = MainThreadMarker::new()?;
+        let handler = AnnotationHandler::alloc(mtm).set_ivars(changed.clone());
+        let handler: Retained<AnnotationHandler> = unsafe { msg_send![super(handler), init] };
+        // SAFETY: The controller retains the script and handler in an isolated world on this thread.
+        unsafe {
+            let world = WKContentWorld::defaultClientWorld(mtm);
+            let controller = webview.configuration().userContentController();
+            controller.addScriptMessageHandler_contentWorld_name(
+                ProtocolObject::from_ref(&*handler),
+                &world,
+                ns_string!("codexAnnotation"),
+            );
+            let script = WKUserScript::initWithSource_injectionTime_forMainFrameOnly_inContentWorld(
+                WKUserScript::alloc(mtm),
+                &NSString::from_str(include_str!("../annotation.js")),
+                WKUserScriptInjectionTime::AtDocumentStart,
+                true,
+                &world,
+            );
+            controller.addUserScript(&script);
+        }
+        let failures = FailureDelegate::new(mtm, inner, changed);
         unsafe { webview.setNavigationDelegate(Some(ProtocolObject::from_ref(&*failures))) };
         Some(Self {
             view,
@@ -147,6 +169,25 @@ impl WebPage {
                 .addUserScript(&script);
         }
         Ok(())
+    }
+
+    pub fn annotation_mode(&self, generation: u32, mode: u8) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        // SAFETY: The view and isolated content world belong to the main thread.
+        unsafe {
+            self.view
+                .webview()
+                .evaluateJavaScript_inFrame_inContentWorld_completionHandler(
+                    &NSString::from_str(&format!(
+                        "globalThis.codexAnnotation?.({generation},{mode})"
+                    )),
+                    None,
+                    &WKContentWorld::defaultClientWorld(mtm),
+                    None,
+                );
+        }
     }
 
     pub fn snapshot(
@@ -223,8 +264,9 @@ impl WebPage {
     pub fn state(&self) -> PageState {
         let webview = self.view.webview();
         // SAFETY: plain property reads on the main thread, which owns the view.
-        let (title, can_go_back, can_go_forward, loading) = unsafe {
+        let (url, title, can_go_back, can_go_forward, loading) = unsafe {
             (
+                webview.URL().and_then(|url| url.absoluteString()),
                 webview
                     .title()
                     .map(|title| title.to_string())
@@ -235,7 +277,7 @@ impl WebPage {
             )
         };
         PageState {
-            url: self.view.url().ok().and_then(|url| Url::parse(&url).ok()),
+            url: url.and_then(|url| Url::parse(&url.to_string()).ok()),
             title,
             can_go_back,
             can_go_forward,
@@ -277,6 +319,31 @@ fn snapshot_png(image: &NSImage) -> Option<Vec<u8>> {
     // SAFETY: The retained data stays immutable while its bytes are copied.
     Some(unsafe { png.as_bytes_unchecked() }.to_vec())
 }
+
+define_class!(
+    #[unsafe(super = NSObject)]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = async_channel::Sender<PageChange>]
+    struct AnnotationHandler;
+
+    unsafe impl NSObjectProtocol for AnnotationHandler {}
+
+    unsafe impl WKScriptMessageHandler for AnnotationHandler {
+        #[unsafe(method(userContentController:didReceiveScriptMessage:))]
+        fn receive(&self, _: &WKUserContentController, message: &WKScriptMessage) {
+            // SAFETY: WebKit passes a valid message on the main thread.
+            let Ok(body) = (unsafe { message.body() }).downcast::<NSString>() else {
+                return;
+            };
+            let body = body.to_string();
+            if body.len() <= 32 * 1024 && self.ivars().len() < 32
+                && let Ok(pick) = serde_json::from_str(&body)
+            {
+                let _ = self.ivars().try_send(PageChange::Annotation(pick));
+            }
+        }
+    }
+);
 
 /// The Chromium error name for an `NSURLErrorDomain` code; `None` for a load a newer
 /// navigation cancelled, which shows no error page.
