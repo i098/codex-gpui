@@ -3421,10 +3421,19 @@ pub fn drop_target(target: Div, composer: &Entity<Composer>, cx: &App) -> Div {
 /// ink as cc bounds it, 3 sigma (`0 8px 16px -4px`: 20 px left of the box, 12 px above;
 /// CDP `LayerTree`).
 pub(crate) fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -> Div {
+    popover_surface(t, width, false, content)
+}
+
+pub(crate) fn opaque_popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -> Div {
+    popover_surface(t, width, true, content)
+}
+
+fn popover_surface(t: &Theme, width: f32, opaque: bool, content: impl FnOnce(Div) -> Div) -> Div {
     // `bg-surface-elevated-secondary/90` mixes in oklab: white's sRGB lands just outside
     // [0, 1] (red and blue above 1: the popup's edge px keep blue at red), so Skia blits it
     // with its float pipeline (theme `white_mix`).
     let fill = match t.appearance {
+        _ if opaque => t.menu_background,
         Appearance::Light => gpui::Rgba {
             r: 1.00003,
             g: 0.99999,
@@ -3453,16 +3462,18 @@ pub(crate) fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -
         .w(px(width))
         .flex()
         .flex_col()
-        .child(shapes::backdrop_blur(
-            px(8.),
-            shapes::Fill::Color,
-            false,
-            shapes::Decoration {
-                radius: d.radius,
-                corner: shapes::Corner::Squircle,
-                ..Default::default()
-            },
-        ))
+        .when(!opaque, |surface| {
+            surface.child(shapes::backdrop_blur(
+                px(8.),
+                shapes::Fill::Color,
+                false,
+                shapes::Decoration {
+                    radius: d.radius,
+                    corner: shapes::Corner::Squircle,
+                    ..Default::default()
+                },
+            ))
+        })
         .child(shapes::decoration(shapes::Decoration {
             corner: shapes::Corner::Squircle,
             ..d

@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Customize the Explore sidebar, pin or unpin native destinations and Security Cloud, and keep the rail order between sessions (#985).
 - The in-app browser's page context menu adds `Open in new window` on a link and `Inspect`, which opens the Web Inspector, after `Reload`. Before, the menu had neither item (#833).
 - Open a browser page's `target=_blank` and `window.open` requests in a new browser tab (#831).
 - Side tab right-click menu: `Close other tabs` and `Close tabs to the right`; closed tabs can be reopened with `⌘⇧T` (#839).
