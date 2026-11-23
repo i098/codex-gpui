@@ -19,6 +19,7 @@ fn rail_requires_a_ready_update_and_an_enabled_policy() -> Result<()> {
         ("no-feed", Status::Ready, false, false, false),
         ("idle", Status::Idle, true, false, false),
         ("checking", Status::Checking, true, false, false),
+        ("available", Status::Available, true, false, true),
         (
             "downloading",
             Status::Downloading(Some(50)),
@@ -51,8 +52,10 @@ fn rail_requires_a_ready_update_and_an_enabled_policy() -> Result<()> {
             fx.click((center.x.into(), center.y.into()))?;
         }
         ensure!(
-            installs.get() == before + usize::from(visible && status == Status::Ready),
-            "{name}: only a ready update may request installation"
+            installs.get()
+                == before
+                    + usize::from(visible && matches!(status, Status::Available | Status::Ready)),
+            "{name}: only an available or ready update may request installation"
         );
         if let Some(output) = std::env::var_os("CGX_UPDATER_SHOTS") {
             fx.shot()?
@@ -99,6 +102,7 @@ fn sidebar_banner_follows_the_update_until_dismissed() -> Result<()> {
     for (name, status, visible, restart) in [
         ("idle", Status::Idle, false, false),
         ("checking", Status::Checking, false, false),
+        ("available", Status::Available, true, true),
         ("downloading", Status::Downloading(Some(42)), true, false),
         ("installing", Status::Installing, true, false),
         ("ready", Status::Ready, true, true),
@@ -122,7 +126,7 @@ fn sidebar_banner_follows_the_update_until_dismissed() -> Result<()> {
                 .debug_bounds(fx.window, "update-banner-restart")?
                 .is_some()
                 == restart,
-            "{name}: Restart to update only on a staged update"
+            "{name}: show a button only when an update can download or restart"
         );
         if visible {
             ensure!(
@@ -143,7 +147,7 @@ fn sidebar_banner_follows_the_update_until_dismissed() -> Result<()> {
         .context("restart")?
         .center();
     fx.click((center.x.into(), center.y.into()))?;
-    ensure!(installs.get() == 1, "Restart to update installs");
+    ensure!(installs.get() == 1, "Restart now installs");
     let center = fx
         .cx
         .debug_bounds(fx.window, "update-banner-dismiss")?

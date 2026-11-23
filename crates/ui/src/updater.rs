@@ -15,6 +15,7 @@ pub enum Status {
     #[default]
     Idle,
     Checking,
+    Available,
     Downloading(Option<u8>),
     Ready,
     Installing,
@@ -24,7 +25,7 @@ impl Status {
     pub fn label(self) -> Option<gpui::SharedString> {
         match self {
             Self::Idle | Self::Checking => None,
-            Self::Ready => Some("Update available".into()),
+            Self::Available | Self::Ready => Some("Update available".into()),
             Self::Installing => Some("Installing".into()),
             Self::Downloading(None) => Some("Downloading".into()),
             Self::Downloading(Some(percent)) => Some(format!("Downloading {percent}%").into()),
@@ -56,10 +57,12 @@ actions!(updater, [InstallUpdate, ToggleAutomaticChecks]);
 
 fn glyph(status: Status) -> gpui::AnyElement {
     match status {
-        Status::Ready => crate::icon::icon("updater-download", 16., gpui::white())
-            .runtime()
-            .composited(Some(gpui::point(px(0.), Theme::TITLEBAR_HEIGHT)))
-            .into_any_element(),
+        Status::Available | Status::Ready => {
+            crate::icon::icon("updater-download", 16., gpui::white())
+                .runtime()
+                .composited(Some(gpui::point(px(0.), Theme::TITLEBAR_HEIGHT)))
+                .into_any_element()
+        }
         Status::Downloading(Some(percent)) => {
             let length = std::f64::consts::TAU * 7.;
             let src = format!(
@@ -100,7 +103,7 @@ pub fn rail<T: 'static>(
     }
     let status = updates.status;
     let label = status.label()?;
-    let ready = status == Status::Ready;
+    let actionable = matches!(status, Status::Available | Status::Ready);
     let handle = focus::handle("rail-update", 0, window, cx);
     let button = focus::ring(div().id("rail-update"), &handle, px(12.5), px(1.), cx)
         .debug_selector(|| "rail-update".into())
@@ -112,14 +115,14 @@ pub fn rail<T: 'static>(
         .items_center()
         .justify_center()
         .aria_label(label.clone())
-        .when(ready, |d| {
+        .when(actionable, |d| {
             d.role(Role::Button)
                 .cursor_pointer()
                 .hover(|d| d.bg(t.ghost_hover))
                 .on_click(dispatch::<InstallUpdate>)
                 .on_key_down(install_on_key)
         })
-        .when(!ready, |d| {
+        .when(!actionable, |d| {
             d.role(Role::ProgressIndicator)
                 .aria_min_numeric_value(0.)
                 .aria_max_numeric_value(100.)
@@ -179,8 +182,7 @@ pub fn automatic_row(t: &Theme, cx: &App) -> Option<Div> {
     ))
 }
 
-/// The sidebar banner (`sidebar.updateBanner`): the new version, its download progress,
-/// `Restart to update` once staged, `Read more` for the release notes, and dismiss.
+/// The sidebar banner (`sidebar.updateBanner`) offers download, restart, and release notes.
 pub fn banner<T: 'static>(window: &mut Window, cx: &mut Context<T>) -> Option<gpui::AnyElement> {
     let updates = cx.try_global::<Updates>()?;
     let release = updates.release.clone()?;
@@ -196,6 +198,12 @@ pub fn banner<T: 'static>(window: &mut Window, cx: &mut Context<T>) -> Option<gp
         Status::Downloading(Some(percent)) => Some(format!("Downloading update… {percent}%")),
         Status::Downloading(None) => Some("Downloading update…".into()),
         Status::Installing => Some("Installing…".into()),
+        _ => None,
+    };
+    let action = match status {
+        Status::Available => Some("Update"),
+        Status::Ready if cfg!(target_os = "macos") => Some("Restart now"),
+        Status::Ready => Some("Restart to update"),
         _ => None,
     };
     let t = &cx.theme().clone();
@@ -290,7 +298,7 @@ pub fn banner<T: 'static>(window: &mut Window, cx: &mut Context<T>) -> Option<gp
                 .flex()
                 .items_center()
                 .gap(px(8.))
-                .when(status == Status::Ready, |d| {
+                .when_some(action, |d, action| {
                     d.child(
                         focus::ring(
                             div().id("update-banner-restart"),
@@ -301,6 +309,7 @@ pub fn banner<T: 'static>(window: &mut Window, cx: &mut Context<T>) -> Option<gp
                         )
                         .debug_selector(|| "update-banner-restart".into())
                         .role(Role::Button)
+                        .aria_label(action)
                         .h(px(28.))
                         .px(px(10.))
                         .flex()
@@ -311,13 +320,7 @@ pub fn banner<T: 'static>(window: &mut Window, cx: &mut Context<T>) -> Option<gp
                         .cursor_pointer()
                         .on_click(dispatch::<InstallUpdate>)
                         .on_key_down(install_on_key)
-                        .child(crate::text(
-                            "Restart to update",
-                            13.,
-                            18.,
-                            530.,
-                            t.surface,
-                        )),
+                        .child(crate::text(action, 13., 18., 530., t.surface)),
                     )
                 })
                 .children(release.notes.map(|url| {
