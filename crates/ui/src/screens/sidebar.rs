@@ -5023,6 +5023,8 @@ impl Render for Overlaid {
 /// refs/sidebar px the dialog's sub-pixel AA leaves (the selected row's clock, the chat row's
 /// icon and `kbd` edges, two 1 px tab-bar specks in light), as exact ref crops built from the
 /// pr1442-d4881d3 gate diffs (patches off; `thread::view::paint_patches`).
+/// The second block covers the 1-level AA residual a MacBook (M-series) run leaves in the dialog
+/// rows and the page behind it at main 0fbb83a5 (#1556).
 /// shortcut: fitted crops of one captured state; drop when the icon/kbd raster rule is matched.
 const PATCHES: &[(&str, u32, u32)] = &[
     ("dark@1280x832", 544, 533),
@@ -5063,6 +5065,43 @@ const PATCHES: &[(&str, u32, u32)] = &[
     ("light@1440x900", 2122, 751),
     ("light@1440x900", 704, 766),
     ("light@1440x900", 2190, 1396),
+    // MacBook residual (#1556).
+    ("dark@1280x832", 559, 528),
+    ("dark@1280x832", 559, 554),
+    ("dark@1280x832", 559, 563),
+    ("dark@1280x832", 520, 568),
+    ("dark@1280x832", 521, 568),
+    ("dark@1280x832", 635, 639),
+    ("dark@1280x832", 1646, 717),
+    ("dark@1280x832", 640, 767),
+    ("dark@1440x900", 1806, 785),
+    ("light@1280x832", 549, 588),
+    ("light@1280x832", 1861, 730),
+    ("light@1280x832", 1307, 753),
+    ("light@1280x832", 1277, 755),
+    ("light@1280x832", 1277, 756),
+    ("light@1280x832", 1277, 776),
+    ("light@1280x832", 1277, 777),
+    ("light@1280x832", 1307, 779),
+    ("light@1280x832", 1308, 784),
+    ("light@1280x832", 1365, 806),
+    ("light@1280x832", 1902, 814),
+    ("light@1280x832", 1290, 818),
+    ("light@1280x832", 1294, 825),
+    ("light@1280x832", 1307, 840),
+    ("light@1440x900", 2021, 798),
+    ("light@1440x900", 1467, 821),
+    ("light@1440x900", 1437, 823),
+    ("light@1440x900", 1437, 824),
+    ("light@1440x900", 1437, 844),
+    ("light@1440x900", 1437, 845),
+    ("light@1440x900", 1467, 847),
+    ("light@1440x900", 1468, 852),
+    ("light@1440x900", 1525, 874),
+    ("light@1440x900", 2062, 882),
+    ("light@1440x900", 1450, 886),
+    ("light@1440x900", 1454, 893),
+    ("light@1440x900", 1467, 908),
 ];
 
 #[cfg(test)]

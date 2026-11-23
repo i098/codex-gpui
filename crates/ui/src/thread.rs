@@ -3378,7 +3378,8 @@ impl Render for ThreadView {
                 d.child(self.git_popup(window, cx))
             })
             .when(!self.patches.1.is_empty(), |d| {
-                d.child(gpui::deferred(paint_patches(self.patches)))
+                // Above the diff panel's priority-1 gutters, so a crop there is not painted over.
+                d.child(gpui::deferred(paint_patches(self.patches)).with_priority(2))
             })
             // The `z-20` composer band is its own cc layer; its rect (and tile grid) starts at
             // the light composer shadow's ink, 84 px above the band (80 px blur + 8 spread - 4
