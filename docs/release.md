@@ -52,9 +52,9 @@ For manual local installation, run `tools/install-mac.sh` on the Mac through `to
 It builds the normal bundle, replaces `~/Applications/Codex GPUI.app`, and keeps the old bundle as `~/Applications/.Codex GPUI.previous.app`.
 It never opens, activates, or closes the app; a running copy changes at its next launch.
 
-Sparkle checks the signed appcast and finds a newer release.
-The rail shows its update banner while the embedded installer downloads and installs the release in the background.
-The script downloads the release archive and checksum, verifies the checksum and app signature, keeps the previous bundle, and opens the new app without taking focus.
+Release bundles check for updates automatically by default.
+When Sparkle finds a new release, select **Update** in the sidebar or **Update available** in the collapsed rail.
+Select **Restart now** in the sidebar after Sparkle verifies and stages the update.
 The app reads the `in_app_updates` policy through `experimentalFeature/list`.
 A disabled policy removes the update action and shows the read-only `Managed` row in General settings.
 Sparkle dialogs show check progress, no-update results, and update errors.
