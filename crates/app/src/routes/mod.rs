@@ -291,6 +291,17 @@ impl Root {
                 shell.can_go_forward = can_forward;
                 shell.unread_destinations = self.unread_destinations.clone();
                 shell.security_cloud_available = self.security_cloud;
+                shell.sidebar_layout = self.sidebar_layout.clone();
+                shell.selected_destination = match self.state.route {
+                    Route::Sites | Route::Site(_) => Some("builtin:sites"),
+                    Route::Images => Some("builtin:images"),
+                    Route::Maps => Some("builtin:maps"),
+                    Route::Gpts(_) => Some("builtin:gpts"),
+                    Route::Projects => Some("builtin:projects"),
+                    Route::Security => Some("builtin:security"),
+                    Route::SecurityCloud => Some(ui::SECURITY_CLOUD_DESTINATION),
+                    _ => None,
+                };
                 let access = self.security_access.read(cx);
                 shell.security_available = access.gate_enabled && access.plugin_available;
             });

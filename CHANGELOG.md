@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Windows MSIX builds with a configured update feed can check for updates, download a verified package, and install it on restart (#852).
+- Customize the Explore sidebar, pin or unpin native destinations and Security Cloud, and keep the rail order between sessions (#985).
 - In the macOS in-app browser, select an element, an area, or text and add a comment. Hold Space to use the page. When multi-select is enabled, hold Shift to add another selection (#836).
 - The macOS in-app browser adds page hooks for annotation: document-start scripts, page messages, and PNG capture of a page region (#832).
 - The in-app browser's page context menu adds `Open in new window` on a link and `Inspect`, which opens the Web Inspector, after `Reload`. Before, the menu had neither item (#833).
@@ -15,6 +16,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Open a browser page's `target=_blank` and `window.open` requests in a new browser tab (#831).
 - Side tab right-click menu: `Close other tabs` and `Close tabs to the right`; closed tabs can be reopened with `⌘⇧T` (#839).
 - Add the onboarding capabilities step with its `Local files` row: it asks for access to `Desktop`, `Documents` and `Downloads` in order, shows `Setting up…` while the request runs, `Setup incomplete` with `Retry` when a folder stays closed, and goes on to the app with `Continue` or `Skip`. Before, onboarding went straight from the role step to the app (#994).
+- Add the onboarding starter-task step (`Start with a simple task to see how it works:`) between the role or import step and the capabilities step. It shows the account's starter tasks from `GET /onboarding/recommendations`, or the bundled tasks when the backend has none. `Leave a note on my Desktop` writes `Note from ChatGPT.txt` to the Desktop, and a plugin task runs as the first turn after setup (#1558).
 - Show the thread goal above the composer, set a goal with the Goal mode, and mark the final response when the goal completes (#868).
 - ChatGPT mode: a send from the Chat home starts a ChatGPT conversation and streams the reply into the conversation view; a follow-up continues the same conversation. Before, the send started a local Codex thread (#1529).
 - ChatGPT mode: a send from the Work home starts a ChatGPT Work conversation (`conversation_origin: "tpp"`). Before, the send started a local Codex thread (#1530).

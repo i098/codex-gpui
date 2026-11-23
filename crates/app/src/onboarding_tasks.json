@@ -1,0 +1,36 @@
+{
+  "task_ids": [
+    "desktop_note",
+    "csv_chart",
+    "hold_next_free_hour",
+    "send_message_to_self"
+  ],
+  "tasks": {
+    "hold_next_free_hour": {
+      "pluginName": "google-calendar",
+      "prompt": "Use the available Google Calendar integration to find the user's first available 30-minute block during normal working hours in the next 7 days. Use the user's primary calendar without asking follow-up questions. Create one native Google Calendar Focus Time event titled `Focus time` for that block. Call create_event with calendar_id `primary`, event_type `focusTime`, attendees `[]`, self_attendance `omit`, add_google_meet `false`, auto_decline_mode `declineNone`, chat_status `doNotDisturb`, and transparency `opaque`. Make only one native Focus Time attempt; if Google rejects it, create one standard busy event for the same block with event_type `default`, attendees `[]`, self_attendance `omit`, add_google_meet `false`, and transparency `opaque` instead of retrying other Focus Time variations. If no valid block is available in the next 7 days, do not create an event. When reporting a completed result, set output to a concise, human-readable start date and time such as `Fri, Jun 26 at 10:30 AM`; omit the end time and time zone",
+      "messages": {
+        "label": {
+          "defaultMessage": "Schedule a focus block"
+        }
+      }
+    },
+    "send_message_to_self": {
+      "pluginName": "slack",
+      "prompt": "Use the available Slack integration to read the current user's profile, then send a direct message to that same Slack user. Send exactly `Hi from your ChatGPT assistant!` and no additional message text. Do not ask the user to identify themselves or choose a recipient",
+      "messages": {
+        "label": {
+          "defaultMessage": "Send a message to myself"
+        }
+      }
+    },
+    "desktop_note": {
+      "kind": "native_action",
+      "messages": {
+        "label": {
+          "defaultMessage": "Leave a note on my Desktop"
+        }
+      }
+    }
+  }
+}

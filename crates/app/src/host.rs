@@ -2093,6 +2093,17 @@ impl Host for LocalHost {
                     .unwrap_or(Value::Null);
                 Value::Object(serde_json::Map::from_iter([("value".into(), value)]))
             }
+            "sidebar-customization-save" => {
+                let mut layout = Value::Null;
+                self.update_global_state(|state| {
+                    layout = crate::destinations::edit_customization(
+                        &mut state["electron-persisted-atom-state"],
+                        &params,
+                    )?;
+                    Ok(true)
+                })?;
+                layout
+            }
             "list-automations" => self.automations()?,
             "automation-create" => self.create_automation(&params)?,
             "automation-delete" => self.delete_automation(&params)?,
