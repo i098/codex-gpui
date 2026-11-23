@@ -753,8 +753,12 @@ impl Default for TransformationMatrix {
 #[expect(missing_docs)]
 pub struct MonochromeSprite {
     pub order: DrawOrder,
+    /// WGPU and Direct3D expect one padding word before `bounds`.
+    #[cfg(not(target_vendor = "apple"))]
+    pub pad: u32,
     /// Four Chromium layers, each packed as `id << 8 | alpha`, outermost first.
     /// Zero entries mark unused layers.
+    #[cfg(target_vendor = "apple")]
     pub layers: [u16; 4],
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
@@ -762,6 +766,9 @@ pub struct MonochromeSprite {
     pub tile: AtlasTile,
     pub transformation: TransformationMatrix,
 }
+
+#[cfg(not(target_vendor = "apple"))]
+const _: () = assert!(std::mem::size_of::<MonochromeSprite>() == 112);
 
 impl From<MonochromeSprite> for Primitive {
     fn from(sprite: MonochromeSprite) -> Self {
