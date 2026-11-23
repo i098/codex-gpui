@@ -13,6 +13,12 @@ pub(crate) const ORIGINAL_APP_VERSION: &str = "26.1007.30912";
 pub(crate) enum Gate {
     ActivityFeature,
     BrowserAnnotationMultiSelect,
+    #[cfg(target_os = "macos")]
+    BrowserAnnotationApi,
+    #[cfg(target_os = "macos")]
+    BrowserAnnotationApiRollout,
+    #[cfg(target_os = "macos")]
+    BrowserAnnotationPermission,
     DataPrivacy,
     PersonalizationLayout,
     UnifiedInstructions,
@@ -27,6 +33,12 @@ impl Gate {
         match self {
             Self::ActivityFeature => "4039078146",
             Self::BrowserAnnotationMultiSelect => "2849306825",
+            #[cfg(target_os = "macos")]
+            Self::BrowserAnnotationApi => "2460218704",
+            #[cfg(target_os = "macos")]
+            Self::BrowserAnnotationApiRollout => "1126370259",
+            #[cfg(target_os = "macos")]
+            Self::BrowserAnnotationPermission => "2277470408",
             Self::DataPrivacy => "3157804138",
             Self::PersonalizationLayout => "890187595",
             Self::UnifiedInstructions => "2826489636",
