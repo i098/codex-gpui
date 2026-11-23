@@ -4078,7 +4078,9 @@ impl Root {
                 BrowserEvent::DiscardAnnotations => {
                     this.confirm_discard_browser_annotations(window, cx)
                 }
-                BrowserEvent::LoadStarted { .. } | BrowserEvent::LoadFinished => {}
+                BrowserEvent::LoadStarted { .. }
+                | BrowserEvent::LoadFinished
+                | BrowserEvent::ScriptMessage(_) => {}
             },
         )
         .detach();
