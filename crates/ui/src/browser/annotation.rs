@@ -28,7 +28,7 @@ pub(super) struct Pick {
 
 #[derive(Default)]
 pub(super) struct Annotation {
-    generation: u32,
+    pub(super) generation: u32,
     multi_select: bool,
     draft: Option<Draft>,
 }
@@ -65,6 +65,13 @@ impl BrowserTab {
             1
         };
         self.page.annotation_mode(self.annotation.generation, mode);
+        #[cfg(target_os = "macos")]
+        self.page.site_annotation_state(
+            self.site_annotation_api.filter(|_| {
+                !self.site_annotation_blocked && !self.hidden && self.can_annotate() && mode < 2
+            }),
+            self.annotating,
+        );
     }
 
     #[cfg(target_os = "macos")]
