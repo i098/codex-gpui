@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - The in-app browser's page context menu adds `Open in new window` on a link and `Inspect`, which opens the Web Inspector, after `Reload`. Before, the menu had neither item (#833).
+- Settings ▸ Browser: a `Browsing history` row opens the built-in browser's history, with search, the `All`/`Agent`/`Other` filter, per-row and selection removal and `Clear browsing data`. The app records each page the built-in browser commits to `browsing-history.json`. Before, the page had no history (#1562).
 - Open a browser page's `target=_blank` and `window.open` requests in a new browser tab (#831).
 - Side tab right-click menu: `Close other tabs` and `Close tabs to the right`; closed tabs can be reopened with `⌘⇧T` (#839).
 - Add the onboarding capabilities step with its `Local files` row: it asks for access to `Desktop`, `Documents` and `Downloads` in order, shows `Setting up…` while the request runs, `Setup incomplete` with `Retry` when a folder stays closed, and goes on to the app with `Continue` or `Skip`. Before, onboarding went straight from the role step to the app (#994).

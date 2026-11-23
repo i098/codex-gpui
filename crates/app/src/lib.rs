@@ -7,6 +7,7 @@ mod account;
 mod account_backend;
 mod activity_access;
 mod archived_chats;
+mod browsing_history;
 mod chatgpt;
 mod chatgpt_chats;
 pub mod chatgpt_conversation;
@@ -762,6 +763,13 @@ impl Root {
         host_settings::apply(cx);
         if !cx.has_global::<ui::composer::PromptHistory>() {
             cx.set_global(ui::composer::PromptHistory(state.prompt_history.clone()));
+        }
+        if !cx.has_global::<ui::screens::settings::browser_settings::BrowsingHistory>() {
+            let path = state.path.as_ref();
+            browsing_history::install(
+                path.map(|path| path.with_file_name("browsing-history.json")),
+                cx,
+            );
         }
         cx.observe_global::<ui::composer::PromptHistory>(|this, cx| {
             this.state.prompt_history = cx.global::<ui::composer::PromptHistory>().0.clone();
@@ -4055,6 +4063,11 @@ impl Root {
             window,
             move |this, tab, event: &BrowserEvent, window, cx| match event {
                 BrowserEvent::TitleChanged | BrowserEvent::Navigated { .. } => {
+                    if matches!(event, BrowserEvent::Navigated { .. }) {
+                        browsing_history::record(tab, cx);
+                    } else {
+                        browsing_history::retitle(tab, cx);
+                    }
                     let index = this.tabs.iter().position(|t| *t == SidePanel::Browser(key));
                     if let (Some(index), Some(split)) = (index, &this.split) {
                         let label = tab.read(cx).title();
