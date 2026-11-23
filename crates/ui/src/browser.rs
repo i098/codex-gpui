@@ -25,6 +25,181 @@ mod annotation;
 mod menu;
 mod page;
 
+#[cfg(target_os = "macos")]
+pub(crate) struct McpWidget {
+    page: Option<page::WidgetPage>,
+    document: Option<String>,
+    key: String,
+    height: Pixels,
+    host: std::sync::Arc<bridge::widget::WidgetHost>,
+    _loading: Task<()>,
+    _messages: Option<Task<()>>,
+}
+
+#[cfg(target_os = "macos")]
+impl McpWidget {
+    pub(crate) fn new(
+        host: std::sync::Arc<bridge::widget::WidgetHost>,
+        input: &serde_json::Value,
+        result: &serde_json::Value,
+        cx: &mut Context<Self>,
+        resource: impl Future<Output = Option<String>> + 'static,
+    ) -> Self {
+        let key = uuid::Uuid::new_v4().simple().to_string();
+        let document_key = key.clone();
+        let data = serde_json::json!({"input": {"arguments": input}, "result": result});
+        let loading = cx.spawn(async move |widget, cx| {
+            let Some(html) = resource.await else {
+                return;
+            };
+            let document = widget_document(&html, &document_key, &data);
+            let _ = widget.update(cx, |widget, cx| {
+                widget.document = Some(document);
+                cx.notify();
+            });
+        });
+        Self {
+            page: None,
+            document: None,
+            key,
+            height: px(240.),
+            host,
+            _loading: loading,
+            _messages: None,
+        }
+    }
+
+    pub(crate) fn hide(&self) {
+        if let Some(page) = &self.page {
+            page.hide();
+        }
+    }
+
+    fn place(&mut self, bounds: Bounds<Pixels>, window: &Window, cx: &mut Context<Self>) {
+        let visible = bounds.intersect(&window.content_mask().bounds);
+        if visible.size.width <= px(0.) || visible.size.height <= px(0.) {
+            self.hide();
+            return;
+        }
+        if let Some(document) = self.document.take() {
+            let (send, receive) = async_channel::bounded(16);
+            self.page = page::WidgetPage::new(window, document, self.key.clone(), send);
+            let host = self.host.clone();
+            self._messages = Some(cx.spawn(async move |widget, cx| {
+                while let Ok(message) = receive.recv().await {
+                    if let Some(height) = message["height"].as_f64().filter(|h| h.is_finite()) {
+                        let _ = widget.update(cx, |widget, cx| {
+                            let height = px(height.ceil().clamp(32., 640.) as f32);
+                            if widget.height != height {
+                                widget.height = height;
+                                cx.notify();
+                            }
+                        });
+                        continue;
+                    }
+                    let id = &message["id"];
+                    let params = &message["params"];
+                    if message["method"] != "tools/call"
+                        || !(id.is_string() || id.is_number())
+                        || !params["name"].as_str().is_some_and(|name| !name.is_empty())
+                        || !matches!(params["arguments"], serde_json::Value::Null | serde_json::Value::Object(_))
+                    {
+                        continue;
+                    }
+                    // The iframe cannot select a server, thread, or connector with request metadata.
+                    let params = serde_json::json!({
+                        "name": params["name"],
+                        "arguments": params["arguments"].as_object().cloned().unwrap_or_default(),
+                    });
+                    let reply = match host.handle("tools/call", &params).await {
+                        Ok(result) => serde_json::json!({"jsonrpc":"2.0", "id":id, "result":result}),
+                        Err(_) => serde_json::json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32603,"message":"Tool call failed"}}),
+                    };
+                    let _ = widget.update(cx, |widget, _| {
+                        if let Some(page) = &widget.page {
+                            page.post(&reply);
+                        }
+                    });
+                }
+            }));
+            if self.page.is_none() {
+                cx.notify();
+            }
+        }
+        if let Some(page) = &self.page {
+            page.place(bounds, visible);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Render for McpWidget {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div().when(self.page.is_some() || self.document.is_some(), |card| {
+            let widget = cx.entity();
+            card.mt(px(16.)).h(self.height).w_full().child(
+                canvas(
+                    move |bounds, window, cx| {
+                        widget.update(cx, |widget, cx| widget.place(bounds, window, cx));
+                    },
+                    |_, (), _, _| {},
+                )
+                .size_full(),
+            )
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn widget_document(html: &str, key: &str, data: &serde_json::Value) -> String {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD;
+    let data = STANDARD.encode(data.to_string());
+    let html = STANDARD.encode(html);
+    format!(
+        r#"<!doctype html><meta charset="utf-8">
+<style>html,body,iframe{{margin:0;width:100%;height:100%;border:0;display:block}}</style>
+<iframe title="MCP App" sandbox="allow-scripts"></iframe>
+<script>
+const frame = document.querySelector('iframe');
+const decode = value => new TextDecoder().decode(Uint8Array.from(atob(value), c => c.charCodeAt(0)));
+const data = JSON.parse(decode('{data}'));
+function sendWidgetMessage(message) {{ frame.contentWindow.postMessage(message, '*'); }}
+function notify(method, params) {{ sendWidgetMessage({{jsonrpc:'2.0',method,params}}); }}
+addEventListener('message', event => {{
+    if (event.source !== frame.contentWindow || event.origin !== 'null') return;
+    const message = event.data;
+    if (message?.jsonrpc !== '2.0') return;
+    const {{id,method,params}} = message;
+    const validId = typeof id === 'string' || typeof id === 'number';
+    const reply = result => sendWidgetMessage({{jsonrpc:'2.0',id,result}});
+    if (method === 'ui/initialize' && validId) {{
+        reply({{
+            protocolVersion:'2026-01-26',
+            hostInfo:{{name:'Codex',version:'1'}},
+            hostCapabilities:{{serverTools:{{}}}},
+            hostContext:{{displayMode:'inline',availableDisplayModes:['inline']}}
+        }});
+    }} else if (method === 'ui/notifications/initialized') {{
+        notify('ui/notifications/tool-input', data.input);
+        notify('ui/notifications/tool-result', data.result);
+    }} else if (method === 'ui/notifications/size-changed' && Number.isFinite(params?.height)) {{
+        window.ipc.postMessage('{key}' + JSON.stringify({{height:params.height}}));
+    }} else if (method === 'tools/call' && validId) {{
+        window.ipc.postMessage('{key}' + JSON.stringify(message));
+    }} else if (validId && typeof method === 'string') {{
+        sendWidgetMessage({{jsonrpc:'2.0',id,error:{{code:-32601,message:'Method not supported'}}}});
+    }}
+}});
+// The iframe has an opaque origin. Its CSP also blocks external resource loads.
+frame.srcdoc = '<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" ' +
+    'content="default-src \'none\'; script-src \'unsafe-inline\'; ' +
+    'style-src \'unsafe-inline\'; img-src data: blob:; font-src data:; ' +
+    'form-action \'none\'; base-uri \'none\'">' + decode('{html}');
+</script>"#
+    )
+}
+
 /// `thread.browser.addressPlaceholder`.
 const ADDRESS_PLACEHOLDER: &str = "Search or enter a URL";
 /// The label of a tab with no page.

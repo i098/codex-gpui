@@ -11,6 +11,8 @@ mod download;
 
 #[cfg(target_os = "macos")]
 mod native;
+#[cfg(target_os = "macos")]
+pub(super) use native::WidgetPage;
 
 /// A message from the page; the owner then reads [`Page::state`] again.
 #[derive(Clone, Debug, PartialEq)]
