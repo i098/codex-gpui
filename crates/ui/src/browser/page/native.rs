@@ -1,11 +1,19 @@
 //! The page as a WKWebView child of the gpui window's AppKit view.
 
+use anyhow::{Context as _, Result, ensure};
+use block2::RcBlock;
 use gpui::{Bounds, Pixels, Window};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject, Sel};
-use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
-use objc2_foundation::{MainThreadMarker, NSError, NSString, ns_string};
-use objc2_web_kit::{WKNavigation, WKNavigationDelegate, WKWebView};
+use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send};
+use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImage};
+use objc2_foundation::{
+    MainThreadMarker, NSDictionary, NSError, NSPoint, NSRect, NSSize, NSString, ns_string,
+};
+use objc2_web_kit::{
+    WKNavigation, WKNavigationDelegate, WKSnapshotConfiguration, WKUserScript,
+    WKUserScriptInjectionTime, WKWebView,
+};
 use url::Url;
 use wry::dpi::{LogicalPosition, LogicalSize};
 use wry::{NewWindowResponse, PageLoadEvent, Rect, WebView, WebViewBuilder, WebViewExtMacOS as _};
@@ -23,7 +31,7 @@ if (window === window.top) {
     if (event.defaultPrevented || editable || String(getSelection()).trim()) return;
     event.preventDefault();
     const link = target?.closest("a[href]")?.href ?? null;
-    window.ipc.postMessage(JSON.stringify({ x: event.clientX, y: event.clientY, link }));
+    window.ipc.postMessage(JSON.stringify({ type: "context-menu", x: event.clientX, y: event.clientY, link }));
   });
 }
 "#;
@@ -31,17 +39,22 @@ if (window === window.top) {
 /// The page's `CONTEXT_MENU_SCRIPT` message; `None` for any other body.
 fn context_menu(body: &str) -> Option<PageChange> {
     #[derive(serde::Deserialize)]
-    struct Click {
-        x: f32,
-        y: f32,
-        link: Option<String>,
+    #[serde(tag = "type", rename_all = "kebab-case")]
+    enum Message {
+        ContextMenu {
+            x: f32,
+            y: f32,
+            link: Option<String>,
+        },
     }
-    let click: Click = serde_json::from_str(body).ok()?;
+    let Message::ContextMenu { x, y, link } = serde_json::from_str(body).ok()?;
+    if !x.is_finite() || !y.is_finite() {
+        return None;
+    }
     Some(PageChange::ContextMenu {
-        x: click.x,
-        y: click.y,
-        link: click
-            .link
+        x,
+        y,
+        link: link
             .and_then(|link| Url::parse(&link).ok())
             .filter(|link| matches!(link.scheme(), "http" | "https")),
     })
@@ -86,7 +99,10 @@ impl WebPage {
             })
             .with_initialization_script(CONTEXT_MENU_SCRIPT)
             .with_ipc_handler(move |request| {
-                if let Some(change) = context_menu(request.body()) {
+                let body = request.into_body();
+                // Page writers can neither grow the queue without bound nor block navigation.
+                if body.len() <= 64 * 1024 && on_menu.len() < 32 {
+                    let change = context_menu(&body).unwrap_or(PageChange::ScriptMessage(body));
                     let _ = on_menu.try_send(change);
                 }
             })
@@ -106,6 +122,75 @@ impl WebPage {
     pub fn load(&self, url: &Url) {
         // A URL the view rejects leaves the previous page, as a failed navigation does.
         let _ = self.view.load_url(url.as_str());
+    }
+
+    pub fn evaluate(&self, script: &str) -> Result<()> {
+        self.view
+            .evaluate_script(script)
+            .map_err(|error| anyhow::anyhow!("{error}"))
+    }
+
+    pub fn add_user_script(&self, script: &str) -> Result<()> {
+        let mtm = MainThreadMarker::new().context("The browser page needs the main thread")?;
+        // SAFETY: WebKit owns the controller on the main thread and retains the user script.
+        unsafe {
+            let script = WKUserScript::initWithSource_injectionTime_forMainFrameOnly(
+                WKUserScript::alloc(mtm),
+                &NSString::from_str(script),
+                WKUserScriptInjectionTime::AtDocumentStart,
+                true,
+            );
+            self.view
+                .webview()
+                .configuration()
+                .userContentController()
+                .addUserScript(&script);
+        }
+        Ok(())
+    }
+
+    pub fn snapshot(
+        &self,
+        region: Bounds<Pixels>,
+    ) -> Result<async_channel::Receiver<Result<Vec<u8>>>> {
+        let view = self.view.webview();
+        let x = f64::from(f32::from(region.origin.x));
+        let y = f64::from(f32::from(region.origin.y));
+        let width = f64::from(f32::from(region.size.width));
+        let height = f64::from(f32::from(region.size.height));
+        let viewport = view.bounds().size;
+        ensure!(
+            x >= 0.
+                && y >= 0.
+                && width > 0.
+                && height > 0.
+                && x + width <= viewport.width
+                && y + height <= viewport.height,
+            "The snapshot rectangle must be inside the browser viewport"
+        );
+        let mtm = MainThreadMarker::new().context("The browser page needs the main thread")?;
+        let (send, receive) = async_channel::bounded(1);
+        let callback = RcBlock::new(move |image: *mut NSImage, error: *mut NSError| {
+            // SAFETY: WebKit keeps both nullable arguments alive for the completion call.
+            let png = unsafe {
+                if let Some(error) = error.as_ref() {
+                    Err(anyhow::anyhow!("{}", error.localizedDescription()))
+                } else {
+                    image
+                        .as_ref()
+                        .and_then(snapshot_png)
+                        .context("No browser snapshot PNG")
+                }
+            };
+            let _ = send.try_send(png);
+        });
+        // SAFETY: This view and the configuration are on the main thread. WebKit copies the block.
+        unsafe {
+            let configuration = WKSnapshotConfiguration::new(mtm);
+            configuration.setRect(NSRect::new(NSPoint::new(x, y), NSSize::new(width, height)));
+            view.takeSnapshotWithConfiguration_completionHandler(Some(&configuration), &callback);
+        }
+        Ok(receive)
     }
 
     pub fn back(&self) {
@@ -178,6 +263,19 @@ impl WebPage {
     pub fn set_hidden(&self, hidden: bool) {
         let _ = self.view.set_visible(!hidden);
     }
+}
+
+fn snapshot_png(image: &NSImage) -> Option<Vec<u8>> {
+    // SAFETY: No destination rectangle, graphics context or hints are passed.
+    let image =
+        unsafe { image.CGImageForProposedRect_context_hints(std::ptr::null_mut(), None, None) }?;
+    let bitmap = NSBitmapImageRep::initWithCGImage(NSBitmapImageRep::alloc(), &image);
+    // SAFETY: The empty dictionary cannot contain incompatible property values.
+    let png = unsafe {
+        bitmap.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())
+    }?;
+    // SAFETY: The retained data stays immutable while its bytes are copied.
+    Some(unsafe { png.as_bytes_unchecked() }.to_vec())
 }
 
 /// The Chromium error name for an `NSURLErrorDomain` code; `None` for a load a newer

@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- The macOS in-app browser adds page hooks for annotation: document-start scripts, page messages, and PNG capture of a page region (#832).
 - The in-app browser's page context menu adds `Open in new window` on a link and `Inspect`, which opens the Web Inspector, after `Reload`. Before, the menu had neither item (#833).
 - Settings ▸ Browser: a `Browsing history` row opens the built-in browser's history, with search, the `All`/`Agent`/`Other` filter, per-row and selection removal and `Clear browsing data`. The app records each page the built-in browser commits to `browsing-history.json`. Before, the page had no history (#1562).
 - Open a browser page's `target=_blank` and `window.open` requests in a new browser tab (#831).
