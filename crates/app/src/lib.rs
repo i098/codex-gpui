@@ -768,11 +768,7 @@ impl Root {
             cx.set_global(ui::composer::PromptHistory(state.prompt_history.clone()));
         }
         if !cx.has_global::<ui::screens::settings::browser_settings::BrowsingHistory>() {
-            let path = state.path.as_ref();
-            browsing_history::install(
-                path.map(|path| path.with_file_name("browsing-history.json")),
-                cx,
-            );
+            browsing_history::install(state.path.as_deref(), cx);
         }
         cx.observe_global::<ui::composer::PromptHistory>(|this, cx| {
             this.state.prompt_history = cx.global::<ui::composer::PromptHistory>().0.clone();

@@ -6,6 +6,9 @@ use url::Url;
 
 use super::{LoadError, PageState};
 
+#[cfg(any(target_os = "macos", test))]
+mod download;
+
 #[cfg(target_os = "macos")]
 mod native;
 
@@ -19,6 +22,8 @@ pub(super) enum PageChange {
     Finished,
     /// The main-frame load failed.
     Failed(LoadError),
+    #[cfg(target_os = "macos")]
+    Downloaded(crate::screens::settings::browser_settings::Download),
     #[cfg(target_os = "macos")]
     ScriptMessage(String),
     #[cfg(target_os = "macos")]
