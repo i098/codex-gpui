@@ -24,6 +24,8 @@ pub(super) enum PageChange {
     #[cfg(target_os = "macos")]
     Annotation(super::annotation::Pick),
     #[cfg(target_os = "macos")]
+    SiteAnnotation(super::SiteAnnotationRequest),
+    #[cfg(target_os = "macos")]
     DocumentStarted,
     /// The page asked for a new window (`target=_blank`, `window.open`); the owner opens
     /// the address in a new browser tab.
@@ -128,6 +130,13 @@ impl Page {
             page.annotation_mode(generation, mode);
         }
         let _ = (generation, mode);
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn site_annotation_state(&self, permission_required: Option<bool>, active: bool) {
+        if let Self::Native(page) = self {
+            page.site_annotation_state(permission_required, active);
+        }
     }
 
     pub fn snapshot(

@@ -116,9 +116,17 @@ pub enum BrowserEvent {
     /// The annotation toolbar's Discard: the owner confirms, then drops the pending
     /// annotations.
     DiscardAnnotations,
+    SiteAnnotation(SiteAnnotationRequest),
 }
 
 pub struct BrowserAnnotationAdded(pub crate::screens::diff::panel::comments::Comment);
+
+/// A page request tied to the annotation generation that emitted it.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize)]
+pub struct SiteAnnotationRequest {
+    generation: u32,
+    pub active: bool,
+}
 
 /// What the page reports: its committed URL, title, history position and whether it is
 /// loading a document.
@@ -146,6 +154,8 @@ pub struct BrowserTab {
     /// `thread.browser.commentMode`: clicks on the page annotate it.
     annotating: bool,
     annotation: annotation::Annotation,
+    site_annotation_api: Option<bool>,
+    site_annotation_blocked: bool,
     /// The chat's browser annotations not sent yet, as the owner reports them.
     pending_annotations: usize,
     focus: FocusHandle,
@@ -221,6 +231,8 @@ impl BrowserTab {
             hidden: false,
             annotating: false,
             annotation: annotation::Annotation::default(),
+            site_annotation_api: None,
+            site_annotation_blocked: false,
             pending_annotations: 0,
             focus: cx.focus_handle(),
             _changes: changes,
@@ -377,6 +389,50 @@ impl BrowserTab {
         }
     }
 
+    /// `Some` enables the site API and carries the permission requirement.
+    pub fn set_site_annotation_api(&mut self, permission_required: Option<bool>) {
+        self.site_annotation_api = permission_required;
+        self.sync_annotation();
+    }
+
+    pub fn set_site_annotation_blocked(&mut self, blocked: bool) {
+        if self.site_annotation_blocked != blocked {
+            self.site_annotation_blocked = blocked;
+            self.sync_annotation();
+        }
+    }
+
+    pub fn site_annotation_permission_required(&self) -> bool {
+        self.site_annotation_api.unwrap_or(true)
+    }
+
+    pub fn accepts_site_annotation(&self, request: SiteAnnotationRequest) -> bool {
+        self.site_annotation_api.is_some()
+            && !self.site_annotation_blocked
+            && !self.hidden
+            && self.can_annotate()
+            && self.annotation.generation == request.generation
+            && self
+                .state
+                .url
+                .as_ref()
+                .is_some_and(|url| matches!(url.scheme(), "http" | "https"))
+            && {
+                let current = self.page.state();
+                !current.loading && current.url == self.state.url
+            }
+    }
+
+    pub fn apply_site_annotation(
+        &mut self,
+        request: SiteAnnotationRequest,
+        cx: &mut Context<Self>,
+    ) {
+        if self.accepts_site_annotation(request) {
+            self.set_annotating(request.active, cx);
+        }
+    }
+
     pub fn annotating(&self) -> bool {
         self.annotating
     }
@@ -402,6 +458,13 @@ impl BrowserTab {
         #[cfg(target_os = "macos")]
         if let page::PageChange::ScriptMessage(body) = change {
             cx.emit(BrowserEvent::ScriptMessage(body));
+            return;
+        }
+        #[cfg(target_os = "macos")]
+        if let page::PageChange::SiteAnnotation(request) = change {
+            if self.accepts_site_annotation(request) {
+                cx.emit(BrowserEvent::SiteAnnotation(request));
+            }
             return;
         }
         let previous = std::mem::replace(&mut self.state, self.page.state());
