@@ -2,7 +2,8 @@ use super::package::{self, Manifest, Trust};
 use anyhow::{Context as _, Result, ensure};
 use async_channel::{Receiver, Sender};
 use std::{
-    os::windows::process::CommandExt as _,
+    ffi::c_void,
+    os::windows::{ffi::OsStrExt as _, process::CommandExt as _},
     path::{Path, PathBuf},
     process::Command as Process,
     sync::{
@@ -219,6 +220,7 @@ fn powershell(script: &str) -> Result<Process> {
         .flat_map(|part| part.encode_utf16().flat_map(u16::to_le_bytes))
         .collect();
     command
+        .env_remove("PSModulePath")
         .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
         .args(["-NoProfile", "-NonInteractive", "-EncodedCommand"])
         .arg(STANDARD.encode(script));
@@ -235,6 +237,78 @@ fn run_script(command: &mut Process) -> Result<()> {
     Ok(())
 }
 
+fn verify_msix_signature(path: &Path) -> Result<()> {
+    #[repr(C)]
+    struct Guid {
+        data1: u32,
+        data2: u16,
+        data3: u16,
+        data4: [u8; 8],
+    }
+    #[repr(C)]
+    struct FileInfo {
+        size: u32,
+        path: *const u16,
+        file: *mut c_void,
+        subject: *const Guid,
+    }
+    #[repr(C)]
+    struct TrustData {
+        size: u32,
+        policy: *mut c_void,
+        sip: *mut c_void,
+        ui: u32,
+        revocation: u32,
+        choice: u32,
+        file: *mut FileInfo,
+        state_action: u32,
+        state: *mut c_void,
+        url: *const u16,
+        flags: u32,
+        ui_context: u32,
+        settings: *mut c_void,
+    }
+    #[link(name = "wintrust")]
+    unsafe extern "system" {
+        fn WinVerifyTrust(window: *mut c_void, action: *const Guid, data: *mut TrustData) -> i32;
+    }
+    const AUTHENTICODE: Guid = Guid {
+        data1: 0xaac56b,
+        data2: 0xcd44,
+        data3: 0x11d0,
+        data4: [0x8c, 0xc2, 0x00, 0xc0, 0x4f, 0xc2, 0x95, 0xee],
+    };
+    let path: Vec<_> = path.as_os_str().encode_wide().chain([0]).collect();
+    let mut file = FileInfo {
+        size: size_of::<FileInfo>() as u32,
+        path: path.as_ptr(),
+        file: std::ptr::null_mut(),
+        subject: std::ptr::null(),
+    };
+    let mut data = TrustData {
+        size: size_of::<TrustData>() as u32,
+        policy: std::ptr::null_mut(),
+        sip: std::ptr::null_mut(),
+        ui: 2, // WTD_UI_NONE
+        revocation: 0,
+        choice: 1, // WTD_CHOICE_FILE
+        file: &mut file,
+        state_action: 0, // WTD_STATEACTION_IGNORE
+        state: std::ptr::null_mut(),
+        url: std::ptr::null(),
+        flags: 0,
+        ui_context: 1, // WTD_UICONTEXT_INSTALL
+        settings: std::ptr::null_mut(),
+    };
+    // SAFETY: the ABI structures and the terminated path outlive the call.
+    let result = unsafe { WinVerifyTrust(std::ptr::null_mut(), &AUTHENTICODE, &mut data) };
+    ensure!(
+        result == 0,
+        "Windows rejected the MSIX signature: {result:#010x}"
+    );
+    Ok(())
+}
+
 fn stage(
     trust: &Trust,
     manifest: &Manifest,
@@ -245,9 +319,8 @@ fn stage(
     let directory = tempfile::tempdir_in(root)?;
     let path = directory.path().join(PACKAGE);
     package::download(trust, manifest, &path, progress)?;
+    verify_msix_signature(&path)?;
     run_script(powershell(r#"
-        $signature = Get-AuthenticodeSignature -LiteralPath $env:CGX_MSIX
-        if ($signature.Status -ne 'Valid') { throw "Windows rejected the MSIX signature: $($signature.Status)" }
         $family = $env:CGX_APP_ID.Split('!')[0]
         $current = Get-AppxPackage -Name CodexGPUI.App | Where-Object PackageFamilyName -CEQ $family
         if (!$current) { throw 'The current MSIX is not registered' }
