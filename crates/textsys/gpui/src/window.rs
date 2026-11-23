@@ -4470,6 +4470,7 @@ impl Window {
     /// None under an opacity of 0: Chromium paints nothing there, and a sprite outside the
     /// layers would reset the layer state of the pixels it covers (a hidden hover fill would
     /// detach the text painted over it from its composited layer).
+    #[cfg(target_vendor = "apple")]
     fn sprite_layers(&self) -> Option<[u16; 4]> {
         if self.element_opacity <= 0. {
             return None;
@@ -4489,8 +4490,14 @@ impl Window {
         Some(layers)
     }
 
+    #[cfg(target_vendor = "apple")]
     fn sprite_color_and_layers(&self, color: Hsla) -> Option<(Hsla, [u16; 4])> {
         self.sprite_layers().map(|layers| (color, layers))
+    }
+
+    #[cfg(not(target_vendor = "apple"))]
+    fn sprite_color_and_layers(&self, color: Hsla) -> Option<(Hsla, u32)> {
+        (self.element_opacity > 0.).then(|| (color.opacity(self.element_opacity), 0))
     }
 
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
@@ -5177,12 +5184,15 @@ impl Window {
                     transformation: TransformationMatrix::unit(),
                 });
             } else {
-                let Some((color, layers)) = self.sprite_color_and_layers(color) else {
+                let Some((color, blend)) = self.sprite_color_and_layers(color) else {
                     return Ok(());
                 };
                 self.next_frame.scene.insert_primitive(MonochromeSprite {
                     order: 0,
-                    layers,
+                    #[cfg(target_vendor = "apple")]
+                    layers: blend,
+                    #[cfg(not(target_vendor = "apple"))]
+                    pad: blend,
                     bounds,
                     content_mask,
                     color,
@@ -5333,12 +5343,15 @@ impl Window {
             .map_origin(|value| ScaledPixels(round_half_up(value.0)))
             .map_size(|size| size.ceil());
 
-        let Some((color, layers)) = self.sprite_color_and_layers(color) else {
+        let Some((color, blend)) = self.sprite_color_and_layers(color) else {
             return Ok(());
         };
         self.next_frame.scene.insert_primitive(MonochromeSprite {
             order: 0,
-            layers,
+            #[cfg(target_vendor = "apple")]
+            layers: blend,
+            #[cfg(not(target_vendor = "apple"))]
+            pad: blend,
             bounds: final_bounds,
             content_mask,
             color,
