@@ -27,6 +27,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - ChatGPT mode: a model that reached its limit in a Chat conversation (`conversation_detail_metadata`'s `model_limits`) disables its row in the `Select ChatGPT model` list and the `Internal models` submenu, with the original's tooltip (`Limit reached. Try again after …`) (#1544).
 - ChatGPT mode: a Chat turn sends the selected model and its thinking effort in the `/f/conversation` body (`model`, `thinking_effort`). Before, every Chat turn sent `auto` (#1546).
 ### Fixed
+- Stop the app from trying to open its own executable when it starts from an absolute path (#1575).
 - Show installed plugin logos in the Customize sidebar, with theme-aware images and app icons when no plugin logo is available (#1505).
 - Parity gate: the Mac run prints the free space and removes the `/tmp/cgx-parity.*` scratch directories an earlier run left behind, so it no longer fails with `No space left on device`.
 - ChatGPT mode: the Chat composer shows the `Select ChatGPT model` picker in its `Could not load ChatGPT models` state, not the Codex model and effort control (#1524).
