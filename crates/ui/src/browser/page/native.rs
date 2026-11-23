@@ -21,6 +21,93 @@ use wry::{NewWindowResponse, PageLoadEvent, Rect, WebView, WebViewBuilder, WebVi
 
 use super::{LoadError, PageChange, PageState};
 
+pub(in crate::browser) struct WidgetPage {
+    view: WebView,
+    clip: Retained<objc2_app_kit::NSView>,
+}
+
+impl WidgetPage {
+    pub(in crate::browser) fn new(
+        window: &Window,
+        html: String,
+        key: String,
+        messages: async_channel::Sender<serde_json::Value>,
+    ) -> Option<Self> {
+        use objc2_app_kit::NSView;
+        let mtm = MainThreadMarker::new()?;
+        let view = WebViewBuilder::new()
+            .with_incognito(true)
+            .with_visible(false)
+            .with_navigation_handler(|url| matches!(url.as_str(), "about:blank" | "about:srcdoc"))
+            .with_new_window_req_handler(|_, _| NewWindowResponse::Deny)
+            .with_ipc_handler(move |request| {
+                let body = request.into_body();
+                if let Some(payload) = body.strip_prefix(&key)
+                    && payload.len() <= 64 * 1024
+                    && let Ok(message) = serde_json::from_str(payload)
+                {
+                    let _ = messages.try_send(message);
+                }
+            })
+            .with_html(html)
+            .build_as_child(window)
+            .ok()?;
+        let webview = view.webview();
+        // WebKit cancels file selection on macOS when no UI delegate implements it.
+        unsafe { webview.setUIDelegate(None) };
+        // SAFETY: This AppKit view was created on the main thread above.
+        let parent = unsafe { webview.superview() }?;
+        let clip = NSView::initWithFrame(NSView::alloc(mtm), NSRect::ZERO);
+        clip.setClipsToBounds(true);
+        parent.addSubview(&clip);
+        webview.removeFromSuperview();
+        clip.addSubview(&webview);
+        Some(Self { view, clip })
+    }
+
+    pub(in crate::browser) fn post(&self, message: &serde_json::Value) {
+        let _ = self
+            .view
+            .evaluate_script(&format!("sendWidgetMessage({message})"));
+    }
+
+    pub(in crate::browser) fn place(&self, bounds: Bounds<Pixels>, visible: Bounds<Pixels>) {
+        // SAFETY: The clip is only accessed on the AppKit thread.
+        let Some(parent) = (unsafe { self.clip.superview() }) else {
+            return;
+        };
+        let number = |pixel: Pixels| f64::from(f32::from(pixel));
+        let y = if parent.isFlipped() {
+            number(visible.top())
+        } else {
+            parent.bounds().size.height - number(visible.bottom())
+        };
+        self.clip.setFrame(NSRect::new(
+            NSPoint::new(number(visible.left()), y),
+            NSSize::new(number(visible.size.width), number(visible.size.height)),
+        ));
+        let _ = self.view.set_bounds(Rect {
+            position: LogicalPosition::new(
+                number(bounds.left() - visible.left()),
+                number(bounds.top() - visible.top()),
+            )
+            .into(),
+            size: LogicalSize::new(number(bounds.size.width), number(bounds.size.height)).into(),
+        });
+        let _ = self.view.set_visible(true);
+    }
+
+    pub(in crate::browser) fn hide(&self) {
+        let _ = self.view.set_visible(false);
+    }
+}
+
+impl Drop for WidgetPage {
+    fn drop(&mut self) {
+        self.clip.removeFromSuperview();
+    }
+}
+
 /// Posts a right-click to the host instead of WebKit's menu. Editable text and selections
 /// keep WebKit's own menu (cut, copy, paste, spelling). Runs in every frame; a frame's
 /// coordinates are not the page's, so only the main frame reports.

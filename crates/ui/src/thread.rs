@@ -199,6 +199,12 @@ impl Clock {
 
 pub struct ThreadView {
     thread_id: String,
+    #[cfg(target_os = "macos")]
+    widget_bridge: Option<Arc<bridge::Bridge>>,
+    #[cfg(target_os = "macos")]
+    widgets: RefCell<HashMap<String, gpui::Entity<crate::browser::McpWidget>>>,
+    #[cfg(target_os = "macos")]
+    widget_catalog: RefCell<WidgetCatalog>,
     /// Branch recorded by `thread/metadata/update`; the header shows it once known.
     branch: Option<SharedString>,
     /// Remote environment link (`thread/environment/connected` / `disconnected`).
@@ -825,6 +831,12 @@ impl ThreadView {
             terminal_item: None,
             terminals_stopping: false,
             thread_id: thread.id,
+            #[cfg(target_os = "macos")]
+            widget_bridge: None,
+            #[cfg(target_os = "macos")]
+            widgets: RefCell::default(),
+            #[cfg(target_os = "macos")]
+            widget_catalog: RefCell::default(),
             branch: None,
             environment_connected: None,
             environment_actions: Vec::new(),
@@ -882,6 +894,127 @@ impl ThreadView {
             older_anchor: Rc::default(),
             menu: None,
             context_image: None,
+        }
+    }
+
+    pub fn bind_widget_connection(self, bridge: Arc<bridge::Bridge>) -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            let mut view = self;
+            view.widget_bridge = Some(bridge);
+            view
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            drop(bridge);
+            self
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn hide_widgets(&self, cx: &App) {
+        for widget in self.widgets.borrow().values() {
+            widget.read(cx).hide();
+        }
+    }
+
+    fn mcp_widgets(&self, items: &[ThreadItem], cx: &mut Context<Self>) -> Div {
+        let cards = div().flex().flex_col();
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (items, cx);
+            cards
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let Some(bridge) = &self.widget_bridge else {
+                return cards;
+            };
+            let mut widgets = self.widgets.borrow_mut();
+            cards.children(items.iter().filter_map(|item| {
+                let ThreadItem::McpToolCall {
+                    id,
+                    server,
+                    tool,
+                    status,
+                    arguments,
+                    result: Some(result),
+                    error: None,
+                    metadata,
+                    ..
+                } = item
+                else {
+                    return None;
+                };
+                if status != "completed" || result["isError"] == true {
+                    return None;
+                }
+                if let Some(widget) = widgets.get(id) {
+                    return Some(widget.clone());
+                }
+                let catalog = self.widget_catalog.borrow();
+                let context = metadata.get("appContext");
+                let uri = context
+                    .and_then(|value| value["resourceUri"].as_str())
+                    .or_else(|| match &*catalog {
+                        WidgetCatalog::Ready(templates) => {
+                            templates.get(server)?.get(tool).map(String::as_str)
+                        }
+                        _ => None,
+                    })
+                    .or_else(|| widget_template(&result["_meta"]))
+                    .or_else(|| metadata.get("mcpAppResourceUri").and_then(Value::as_str));
+                let Some(uri) = uri else {
+                    let request = matches!(*catalog, WidgetCatalog::Unread);
+                    drop(catalog);
+                    if request {
+                        let bridge = bridge.clone();
+                        let thread = self.thread_id.clone();
+                        *self.widget_catalog.borrow_mut() = WidgetCatalog::Loading;
+                        cx.spawn(async move |view, cx| {
+                            let templates = widget_catalog(&bridge, &thread).await;
+                            let _ = view.update(cx, |view, cx| {
+                                *view.widget_catalog.get_mut() = WidgetCatalog::Ready(templates);
+                                cx.notify();
+                            });
+                        })
+                        .detach();
+                    }
+                    return None;
+                };
+                let parsed = url::Url::parse(uri).ok()?;
+                if parsed.scheme() != "ui" || parsed.host().is_none() {
+                    return None;
+                }
+                let widget = widgets.entry(id.clone()).or_insert_with(|| {
+                    let thread = self.thread_id.clone();
+                    let bridge = bridge.clone();
+                    let host = Arc::new(bridge::widget::WidgetHost::new(
+                        bridge.clone(),
+                        server,
+                        &thread,
+                    ));
+                    let origin = (server == "codex_apps" && context.is_some()).then(|| id.clone());
+                    let request = serde_json::json!({
+                        "threadId": thread,
+                        "server": server,
+                        "uri": uri,
+                        "connectorId": context.and_then(|value| value.get("connectorId")),
+                        "originCallId": origin,
+                    });
+                    let uri = uri.to_owned();
+                    cx.new(|cx| {
+                        crate::browser::McpWidget::new(host, arguments, result, cx, async move {
+                            let reply: Value = bridge
+                                .request("mcpServer/resource/read", request)
+                                .await
+                                .ok()?;
+                            widget_html(&reply, &uri, origin.as_deref())
+                        })
+                    })
+                });
+                Some(widget.clone())
+            }))
         }
     }
 
@@ -2571,6 +2704,7 @@ impl ThreadView {
                 });
             }
             col = col.child(self.automation_cards(&turn.items, window, t, cx));
+            col = col.child(self.mcp_widgets(&turn.items, cx));
             col = col.child(div().h(px(16.))).child(markdown::with_find(
                 answer,
                 window,
@@ -2677,6 +2811,7 @@ impl ThreadView {
                 },
             )
             .child(self.automation_cards(&turn.items, window, t, cx))
+            .child(self.mcp_widgets(&turn.items, cx))
     }
 
     /// The still-fading streamed segments of agent message `item`.
@@ -2923,6 +3058,8 @@ fn forked_marker(parent: &str, t: &Theme) -> Div {
 
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(target_os = "macos")]
+        self.hide_widgets(cx);
         let now = cx.background_executor().now();
         // A static capture shows streamed text after its fade.
         let finished = crate::screens::home::animation_finished(window, cx);
@@ -3981,9 +4118,109 @@ fn far(top: Pixels, h: Pixels, view: Pixels) -> bool {
     top + h < -view / 2. || top > view * 1.5
 }
 
+#[cfg(target_os = "macos")]
+fn widget_template(metadata: &Value) -> Option<&str> {
+    metadata["ui"]["resourceUri"]
+        .as_str()
+        .or_else(|| metadata["ui/resourceUri"].as_str())
+        .or_else(|| metadata["openai/outputTemplate"].as_str())
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Default)]
+enum WidgetCatalog {
+    #[default]
+    Unread,
+    Loading,
+    Ready(HashMap<String, HashMap<String, String>>),
+}
+
+#[cfg(target_os = "macos")]
+async fn widget_catalog(
+    bridge: &bridge::Bridge,
+    thread: &str,
+) -> HashMap<String, HashMap<String, String>> {
+    let mut templates = HashMap::new();
+    let mut cursor = None::<String>;
+    for _ in 0..32 {
+        let request = serde_json::json!({
+            "threadId": thread, "detail": "toolsAndAuthOnly", "limit": 100, "cursor": cursor,
+        });
+        let Ok(page) = bridge
+            .request::<_, Value>("mcpServerStatus/list", request)
+            .await
+        else {
+            break;
+        };
+        if let Some(servers) = page["data"].as_array() {
+            for server in servers {
+                let (Some(name), Some(tools)) =
+                    (server["name"].as_str(), server["tools"].as_object())
+                else {
+                    continue;
+                };
+                let tools: HashMap<_, _> = tools
+                    .iter()
+                    .filter_map(|(name, tool)| {
+                        Some((name.clone(), widget_template(&tool["_meta"])?.to_owned()))
+                    })
+                    .collect();
+                if !tools.is_empty() {
+                    templates.insert(name.to_owned(), tools);
+                }
+            }
+        }
+        let Some(next) = page["nextCursor"].as_str() else {
+            break;
+        };
+        if cursor.as_deref() == Some(next) {
+            break;
+        }
+        cursor = Some(next.to_owned());
+    }
+    templates
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn widget_html(reply: &Value, uri: &str, origin: Option<&str>) -> Option<String> {
+    if origin.is_some() && reply["originCallId"].as_str() != origin {
+        return None;
+    }
+    reply["contents"].as_array()?.iter().find_map(|content| {
+        if content["uri"] != uri
+            || !matches!(
+                content["mimeType"].as_str(),
+                Some("text/html;profile=mcp-app" | "text/html+skybridge")
+            )
+        {
+            return None;
+        }
+        let text = content["text"].as_str()?;
+        (!text.is_empty() && text.len() <= 2 * 1024 * 1024).then(|| text.to_owned())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_widget_resource_requires_the_requested_html_and_call() {
+        let mut reply = serde_json::json!({
+            "originCallId": "call-1",
+            "contents": [
+                {"uri": "ui://other/widget", "mimeType": "text/html;profile=mcp-app", "text": "wrong"},
+                {"uri": "ui://notes/widget", "mimeType": "text/plain", "text": "not HTML"},
+                {"uri": "ui://notes/widget", "mimeType": "text/html;profile=mcp-app", "text": "<p>Notes</p>"}
+            ]
+        });
+        assert_eq!(
+            widget_html(&reply, "ui://notes/widget", Some("call-1")).as_deref(),
+            Some("<p>Notes</p>")
+        );
+        reply["originCallId"] = Value::String("call-2".into());
+        assert!(widget_html(&reply, "ui://notes/widget", Some("call-1")).is_none());
+    }
 
     #[gpui::test]
     fn command_completion_keeps_streamed_output_and_failure(cx: &mut gpui::TestAppContext) {
