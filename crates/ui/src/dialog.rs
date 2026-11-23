@@ -240,6 +240,7 @@ pub enum Outcome {
         draft: bool,
         commit_changes: bool,
         open_browser: bool,
+        gitlab: bool,
     },
     Handoff {
         workspace: String,
@@ -308,6 +309,7 @@ struct GitForm {
     draft: bool,
     commit_changes: bool,
     open_browser: bool,
+    gitlab: bool,
     workspaces: Vec<String>,
 }
 
@@ -1542,16 +1544,41 @@ impl Dialog {
     pub fn task(&self) -> &str {
         &self.thread
     }
-    pub fn create_pr(title: String, head: String, cx: &mut Context<Self>) -> Self {
+    pub fn create_pr(title: String, head: String, gitlab: bool, cx: &mut Context<Self>) -> Self {
         Self {
             selected: 1,
             git_form: GitForm {
                 title,
                 head,
                 open_browser: true,
+                gitlab,
                 ..Default::default()
             },
             ..Self::new(Kind::CreatePr, cx)
+        }
+    }
+
+    fn create_pr_label(&self) -> &'static str {
+        if self.git_form.gitlab {
+            "Create merge request"
+        } else {
+            "Create PR"
+        }
+    }
+
+    fn draft_pr_label(&self) -> &'static str {
+        if self.git_form.gitlab {
+            "Create draft merge request"
+        } else {
+            "Create draft PR"
+        }
+    }
+
+    fn open_pr_label(&self) -> &'static str {
+        if self.git_form.gitlab {
+            "Open merge request in browser"
+        } else {
+            "Open PR in browser"
         }
     }
 
@@ -2040,10 +2067,10 @@ impl Dialog {
             (Kind::CreatePr, 0) => "Description",
             (Kind::CreatePr, 1) => "Title",
             (Kind::CreatePr, 2) => "Base branch",
-            (Kind::CreatePr, 3) => "Create draft PR",
+            (Kind::CreatePr, 3) => self.draft_pr_label(),
             (Kind::CreatePr, 4) => "Commit and push local changes",
-            (Kind::CreatePr, 5) => "Open PR in browser",
-            (Kind::CreatePr, _) => "Create PR",
+            (Kind::CreatePr, 5) => self.open_pr_label(),
+            (Kind::CreatePr, _) => self.create_pr_label(),
             (Kind::Handoff, 0) => "Branch name",
             (Kind::Handoff, 1) => "Workspace",
             (Kind::Handoff, 4) => "Bring changes back",
@@ -2283,6 +2310,7 @@ impl Dialog {
                     draft: self.git_form.draft,
                     commit_changes: self.git_form.commit_changes,
                     open_browser: self.git_form.open_browser,
+                    gitlab: self.git_form.gitlab,
                 });
                 cx.notify();
             }
@@ -4030,13 +4058,18 @@ impl Dialog {
 
     fn git_form_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
         let pr = self.kind == Kind::CreatePr;
-        let mut content = div().p(px(20.)).flex().flex_col().gap(px(12.)).child(text(
-            if pr { "Create PR" } else { "Hand off" },
-            20.,
-            28.,
-            600.,
-            t.text,
-        ));
+        let label = if pr {
+            self.create_pr_label()
+        } else {
+            "Hand off"
+        };
+        let button_width = if self.git_form.gitlab { 180. } else { 130. };
+        let mut content = div()
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(text(label, 20., 28., 600., t.text));
         if pr {
             content = content
                 .child(self.git_field(1, "Title", &self.git_form.title, t, cx))
@@ -4070,7 +4103,7 @@ impl Dialog {
                     400.,
                     t.text_secondary,
                 ))
-                .child(self.git_toggle(3, "Create draft PR", self.git_form.draft, t, cx))
+                .child(self.git_toggle(3, self.draft_pr_label(), self.git_form.draft, t, cx))
                 .child(self.git_toggle(
                     4,
                     "Commit and push local changes",
@@ -4078,7 +4111,7 @@ impl Dialog {
                     t,
                     cx,
                 ))
-                .child(self.git_toggle(5, "Open PR in browser", self.git_form.open_browser, t, cx));
+                .child(self.git_toggle(5, self.open_pr_label(), self.git_form.open_browser, t, cx));
         } else {
             content = content
                 .child(self.git_field(0, "Branch name", &self.query, t, cx))
@@ -4095,7 +4128,7 @@ impl Dialog {
             .when_some(self.error.as_ref(), |content, error| {
                 content.child(text(error.clone(), 13., 20., 400., t.text).whitespace_normal())
             })
-            .child(self.button(6, if pr { "Create PR" } else { "Hand off" }, 130., t, cx))
+            .child(self.button(6, label, button_width, t, cx))
     }
 }
 
@@ -4889,7 +4922,7 @@ impl Render for Dialog {
                         Kind::HookStats => "Hook stats".into(),
                         Kind::HookReview => "Review hooks".into(),
                         Kind::Commit => "Commit or push".into(),
-                        Kind::CreatePr => "Create PR".into(),
+                        Kind::CreatePr => self.create_pr_label().into(),
                         Kind::Handoff => "Hand off".into(),
                         Kind::Branches => "Switch branch".into(),
                         Kind::CreateBranch => "Create and checkout branch".into(),
