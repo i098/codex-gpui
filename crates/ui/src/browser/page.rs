@@ -21,6 +21,10 @@ pub(super) enum PageChange {
     Failed(LoadError),
     #[cfg(target_os = "macos")]
     ScriptMessage(String),
+    #[cfg(target_os = "macos")]
+    Annotation(super::annotation::Pick),
+    #[cfg(target_os = "macos")]
+    DocumentStarted,
     /// The page asked for a new window (`target=_blank`, `window.open`); the owner opens
     /// the address in a new browser tab.
     #[cfg(target_os = "macos")]
@@ -116,6 +120,14 @@ impl Page {
         }
         let _ = script;
         anyhow::bail!("There is no native browser page")
+    }
+
+    pub fn annotation_mode(&self, generation: u32, mode: u8) {
+        #[cfg(target_os = "macos")]
+        if let Self::Native(page) = self {
+            page.annotation_mode(generation, mode);
+        }
+        let _ = (generation, mode);
     }
 
     pub fn snapshot(
