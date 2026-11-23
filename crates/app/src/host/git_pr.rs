@@ -228,10 +228,29 @@ fn existing_merge_request(
 pub(super) fn summary(host: &super::LocalHost, params: &Value) -> Result<Value> {
     let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
     let status = super::git::fetch("git-commit-status", params)?;
-    if params["creationProvider"] == true {
-        return Ok(json!({"gitLab": gitlab_repository(cwd, &status).is_some()}));
+    if let Some(repository) = gitlab_repository(cwd, &status) {
+        if params["creationProvider"] == true {
+            let project = repository.trim_start_matches("https://gitlab.com/");
+            let info = repository_command(
+                host,
+                cwd,
+                &[
+                    "glab".into(),
+                    "api".into(),
+                    "--hostname=gitlab.com".into(),
+                    format!("projects/{}", project.replace('/', "%2F")),
+                ],
+            )
+            .ok()
+            .and_then(|output| serde_json::from_str::<Value>(&output).ok());
+            let base = info
+                .as_ref()
+                .and_then(|info| info["default_branch"].as_str());
+            return Ok(json!({"gitLab": true, "baseBranch": base}));
+        }
+        return Ok(json!({"gitLab": true}));
     }
-    if gitlab_repository(cwd, &status).is_some() {
+    if params["creationProvider"] == true {
         return Ok(Value::Null);
     }
     github_summary(host, cwd, &status)
@@ -502,10 +521,14 @@ for line in sys.stdin:
         params = message["params"]
         command = params["command"]
         stdout = sys.argv[1]
-        if command[:3] == ["glab", "mr", "list"]:
+        if command[:2] == ["glab", "api"]:
+            assert command[2:] == ["--hostname=gitlab.com", "projects/team%2Fproject"], command
+            stdout = json.dumps({"default_branch": "release/main"})
+        elif command[:3] == ["glab", "mr", "list"]:
             stdout = "[]"
         elif command[:3] == ["glab", "mr", "create"]:
             assert "--draft" in command, command
+            assert "--target-branch=release/main" in command, command
         print(json.dumps({"id": message["id"], "result": {}}), flush=True)
         print(json.dumps({"method":"process/exited","params":{"processHandle":params["processHandle"],"exitCode":0,"stdout":stdout,"stderr":"","stdoutCapReached":False,"stderrCapReached":False}}), flush=True)
 "#;
@@ -544,9 +567,14 @@ for line in sys.stdin:
                 String::from_utf8_lossy(&output.stderr)
             );
         }
+        let target = summary(
+            &host,
+            &json!({"cwd": temp.path(), "creationProvider": true}),
+        )?;
+        assert_eq!(target["baseBranch"], "release/main");
         let result = create(
             &host,
-            &json!({"cwd": temp.path(), "gitLab": true, "draft": true}),
+            &json!({"cwd": temp.path(), "gitLab": true, "draft": true, "base": target["baseBranch"]}),
         )?;
         assert_eq!(result["url"], url);
         Ok(())

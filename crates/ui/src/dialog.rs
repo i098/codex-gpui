@@ -1544,11 +1544,18 @@ impl Dialog {
     pub fn task(&self) -> &str {
         &self.thread
     }
-    pub fn create_pr(title: String, head: String, gitlab: bool, cx: &mut Context<Self>) -> Self {
+    pub fn create_pr(
+        title: String,
+        head: String,
+        gitlab: bool,
+        base: String,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             selected: 1,
             git_form: GitForm {
-                title,
+                title: if gitlab { String::new() } else { title },
+                base,
                 head,
                 open_browser: true,
                 gitlab,
@@ -2558,6 +2565,7 @@ impl Dialog {
                     Kind::Branches => vec![0, 1],
                     Kind::BranchConflict => vec![1, 2],
                     Kind::Commit => self.commit_tab_order(),
+                    Kind::CreatePr if self.git_form.gitlab => vec![1, 0, 3, 4, 5, 6],
                     Kind::CreatePr => vec![1, 0, 2, 3, 4, 5, 6],
                     Kind::Handoff => vec![0, 1, 4, 6],
                     _ => vec![0, 1, 2],
@@ -4014,7 +4022,15 @@ impl Dialog {
             .border_color(t.border)
             .rounded(px(8.))
             .p(px(8.))
-            .child(text(format!("{label}: {value}"), 14., 20., 400., t.text))
+            .child(if self.git_form.gitlab {
+                if value.is_empty() {
+                    text(label, 14., 20., 400., t.text_secondary)
+                } else {
+                    text(SharedString::new(value), 14., 20., 400., t.text)
+                }
+            } else {
+                text(format!("{label}: {value}"), 14., 20., 400., t.text)
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selected = index;
                 this.select_all = true;
@@ -4072,12 +4088,34 @@ impl Dialog {
             .child(text(label, 20., 28., 600., t.text));
         if pr {
             content = content
+                .when(self.git_form.gitlab, |d| {
+                    let base = self.git_form.base.as_str();
+                    d.child(text(
+                        format!(
+                            "{} → {}",
+                            self.git_form.head,
+                            if base.is_empty() { "-" } else { base }
+                        ),
+                        13.,
+                        20.,
+                        400.,
+                        t.text_secondary,
+                    ))
+                })
                 .child(self.git_field(1, "Title", &self.git_form.title, t, cx))
                 .child(
                     self.editor(
                         "pr-description",
-                        "Description",
-                        "Description (empty = generated)",
+                        if self.git_form.gitlab {
+                            "Message"
+                        } else {
+                            "Description"
+                        },
+                        if self.git_form.gitlab {
+                            "Description (leave empty to generate)"
+                        } else {
+                            "Description (empty = generated)"
+                        },
                         t,
                         cx,
                     )
@@ -4087,22 +4125,24 @@ impl Dialog {
                     .rounded(px(8.))
                     .p(px(8.)),
                 )
-                .child(self.git_field(2, "Base branch", &self.git_form.base, t, cx))
-                .child(text(
-                    format!(
-                        "{} → {}",
-                        if self.git_form.base.is_empty() {
-                            "Default branch"
-                        } else {
-                            &self.git_form.base
-                        },
-                        self.git_form.head
-                    ),
-                    13.,
-                    20.,
-                    400.,
-                    t.text_secondary,
-                ))
+                .when(!self.git_form.gitlab, |d| {
+                    d.child(self.git_field(2, "Base branch", &self.git_form.base, t, cx))
+                        .child(text(
+                            format!(
+                                "{} → {}",
+                                if self.git_form.base.is_empty() {
+                                    "Default branch"
+                                } else {
+                                    &self.git_form.base
+                                },
+                                self.git_form.head
+                            ),
+                            13.,
+                            20.,
+                            400.,
+                            t.text_secondary,
+                        ))
+                })
                 .child(self.git_toggle(3, self.draft_pr_label(), self.git_form.draft, t, cx))
                 .child(self.git_toggle(
                     4,

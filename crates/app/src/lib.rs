@@ -2397,9 +2397,7 @@ impl Root {
         let pr_host = host.clone();
         let pr_cwd = cwd.clone();
         let pr_read = cx.background_spawn(async move {
-            git_call(&*pr_host, "gh-thread-pr", json!({"cwd": pr_cwd}))
-                .ok()
-                .filter(|pr| !pr.is_null())
+            git_call(&*pr_host, "gh-thread-pr", json!({"cwd": pr_cwd})).ok()
         });
         let info_cwd = cwd.clone();
         let read = cx.background_spawn(async move {
@@ -2438,7 +2436,13 @@ impl Root {
             let pr = pr_read.await;
             this.update(cx, |this, cx| {
                 if this.thread.as_ref() == Some(&thread) && Arc::ptr_eq(&host, &this.host) {
-                    thread.update(cx, |view, cx| view.set_pull_request(pr, cx));
+                    thread.update(cx, |view, cx| {
+                        view.set_gitlab(pr.as_ref().is_some_and(|pr| pr["gitLab"] == true), cx);
+                        view.set_pull_request(
+                            pr.filter(|pr| !pr.is_null() && pr["gitLab"] != true),
+                            cx,
+                        );
+                    });
                 }
             })
             .ok();
@@ -2523,11 +2527,11 @@ impl Root {
         let params = json!({"cwd": cwd, "creationProvider": true});
         let lookup = host.clone();
         let read = cx.background_spawn(async move {
-            git_call(&*lookup, "gh-thread-pr", params).is_ok_and(|result| result["gitLab"] == true)
+            git_call(&*lookup, "gh-thread-pr", params).unwrap_or_default()
         });
         self.set_git_phase(Some("Loading repository…"), cx);
         cx.spawn_in(window, async move |this, cx| {
-            let gitlab = read.await;
+            let provider = read.await;
             this.update_in(cx, |this, window, cx| {
                 this.set_git_phase(None, cx);
                 if this.thread.as_ref() != Some(&thread)
@@ -2536,7 +2540,12 @@ impl Root {
                 {
                     return;
                 }
-                let dialog = cx.new(|cx| Dialog::create_pr(title, branch, gitlab, cx));
+                let gitlab = provider["gitLab"] == true;
+                let base = provider["baseBranch"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                let dialog = cx.new(|cx| Dialog::create_pr(title, branch, gitlab, base, cx));
                 this.commit_cwd = Some(cwd);
                 this.show_dialog(dialog, window, cx);
             })

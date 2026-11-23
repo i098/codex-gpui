@@ -235,6 +235,7 @@ pub struct ThreadView {
     chat_actions_hovered: bool,
     git_repository: Option<Result<crate::dialog::CommitRepository, String>>,
     git_phase: Option<&'static str>,
+    gitlab: bool,
     pull_request: Option<Value>,
     worktree_missing: bool,
     worktree_status: Option<&'static str>,
@@ -466,6 +467,19 @@ impl ThreadView {
         cx.notify();
     }
 
+    pub fn set_gitlab(&mut self, gitlab: bool, cx: &mut Context<Self>) {
+        self.gitlab = gitlab;
+        cx.notify();
+    }
+
+    fn create_request_label(&self) -> &'static str {
+        if self.gitlab {
+            "Create merge request"
+        } else {
+            "Create pull request"
+        }
+    }
+
     pub fn set_worktree_missing(&mut self, missing: bool, cx: &mut Context<Self>) {
         self.worktree_missing = missing;
         cx.notify();
@@ -521,7 +535,7 @@ impl ThreadView {
             ("Push", self.git_phase.or(push)),
             ("Create branch", self.git_phase.or(create)),
             ("Switch branch", self.git_phase.or(switch)),
-            ("Create pull request", self.git_phase.or(switch)),
+            (self.create_request_label(), self.git_phase.or(switch)),
             (
                 "View PR",
                 self.pull_request.is_none().then_some("No pull request"),
@@ -815,6 +829,7 @@ impl ThreadView {
             chat_actions_hovered: false,
             git_repository: None,
             git_phase: None,
+            gitlab: false,
             pull_request: None,
             worktree_missing: false,
             worktree_status: None,
@@ -3351,10 +3366,12 @@ impl Render for ThreadView {
                             .when_some(self.git_phase, |d, phase| d.child(text(phase, 14., 20., 400., t.text_secondary)))
                             .when_some(self.worktree_status, |d, status| d.child(text(status, 14., 20., 400., t.text)))
                             .when_some(self.git_repository.as_ref().and_then(|result| result.as_ref().ok()), |d, repo| {
-                                d.child(div().id("thread-git-summary").role(gpui::Role::Button).aria_label("Branch changes and pull request actions")
+                                let label = if self.pull_request.is_some() { "View PR" } else { self.create_request_label() };
+                                d.child(div().id("thread-git-summary").role(gpui::Role::Button)
+                                    .aria_label(if self.gitlab { "Branch changes and merge request actions" } else { "Branch changes and pull request actions" })
                                     .tab_index(0).flex().gap(px(12.)).p(px(8.)).rounded(px(8.)).border_1().border_color(t.border)
                                     .child(text(format!("{} · {} files · +{} −{}", repo.branch.as_deref().unwrap_or("Detached HEAD"), repo.all.files, repo.all.additions, repo.all.deletions), 13., 20., 400., t.text_secondary))
-                                    .child(text(if self.pull_request.is_some() { "View PR" } else { "Create pull request" }, 13., 20., 500., t.text))
+                                    .child(text(label, 13., 20., 500., t.text))
                                     .on_click(cx.listener(|view, _, window, cx| view.open_git_actions(false, window, cx))))
                             })
                             .children(turns)
