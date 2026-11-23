@@ -126,6 +126,23 @@ pub struct SetTheme(pub &'static str);
 #[action(namespace = shell, no_json)]
 pub struct ViewChanges(pub String);
 
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = shell, no_json)]
+pub struct EditSidebar(pub SidebarEdit);
+
+#[derive(Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum SidebarEdit {
+    Pin(String, bool),
+    Move(String, String),
+}
+
+#[derive(Clone, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidebarLayout {
+    pub order: Vec<String>,
+    pub pin_overrides: std::collections::HashMap<String, bool>,
+}
+
 // Edit menu commands; text inputs handle them.
 actions!(
     edit,
@@ -196,6 +213,8 @@ pub struct RailDestination {
     pub icon: &'static str,
     pub label: &'static str,
     pub mcp_entrypoints: &'static [(&'static str, &'static str)],
+    pub pinned_by_default: bool,
+    action: fn() -> Box<dyn Action>,
 }
 
 pub const RAIL_DESTINATIONS: &[RailDestination] = &[
@@ -207,47 +226,107 @@ pub const RAIL_DESTINATIONS: &[RailDestination] = &[
             ("code-review", "pull_requests.open"),
             ("connector_openai_code_review", "pull_requests.open"),
         ],
+        pinned_by_default: true,
+        action: || Box::new(OpenPullRequests),
     },
     RailDestination {
         id: "builtin:sites",
         icon: "sites",
         label: "Sites",
         mcp_entrypoints: &[],
+        pinned_by_default: true,
+        action: || Box::new(OpenSites),
     },
+    secondary("builtin:images", "diff-file-image", "Images", || {
+        Box::new(OpenImages)
+    }),
+    secondary("builtin:maps", "project-marker-globe", "Maps", || {
+        Box::new(OpenMaps)
+    }),
+    secondary("builtin:gpts", "signin-chatgpt", "GPTs", || {
+        Box::new(OpenGpts)
+    }),
+    secondary("builtin:projects", "folder", "Projects", || {
+        Box::new(OpenProjects)
+    }),
+    secondary("builtin:security", "security", "Security", || {
+        Box::new(OpenSecurity)
+    }),
+    secondary(
+        SECURITY_CLOUD_DESTINATION,
+        "security",
+        "Security Cloud",
+        || Box::new(OpenSecurityCloud),
+    ),
 ];
 
-/// The pinned destinations' rail order, as indices into [`RAIL_DESTINATIONS`].
-// shortcut: session-only; persist it with the account's sidebar customization
-// (`sidebar-customization-snapshots-v2` `order`) once the port writes that state.
-#[derive(Clone, Copy)]
-struct RailOrder([usize; RAIL_DESTINATIONS.len()]);
+pub const SECURITY_CLOUD_DESTINATION: &str =
+    r#"mcp:["mcp-global","connector_openai_defense_factory","open_defense_factory","global"]"#;
 
-impl gpui::Global for RailOrder {}
-
-impl RailOrder {
-    fn get(cx: &App) -> Self {
-        cx.try_global()
-            .copied()
-            .unwrap_or(Self(std::array::from_fn(|i| i)))
-    }
-
-    /// `from` takes `to`'s place and the items between shift, as the original's `arrayMove`
-    /// on drop.
-    fn moved(mut self, from: usize, to: usize) -> Self {
-        let at = |id| self.0.iter().position(|&i| i == id).expect("a permutation");
-        let (from, to) = (at(from), at(to));
-        if from < to {
-            self.0[from..=to].rotate_left(1);
-        } else {
-            self.0[to..=from].rotate_right(1);
-        }
-        self
+const fn secondary(
+    id: &'static str,
+    icon: &'static str,
+    label: &'static str,
+    action: fn() -> Box<dyn Action>,
+) -> RailDestination {
+    RailDestination {
+        id,
+        icon,
+        label,
+        mcp_entrypoints: &[],
+        pinned_by_default: false,
+        action,
     }
 }
 
-/// A dragged pinned rail destination (its [`RAIL_DESTINATIONS`] index); it also draws the
-/// item under the pointer.
-struct RailDrag(usize);
+impl RailDestination {
+    fn suffix(&self) -> &'static str {
+        match self.id {
+            "builtin:pull-requests" => "rail-code-review",
+            SECURITY_CLOUD_DESTINATION => "security-cloud",
+            id => id.trim_start_matches("builtin:"),
+        }
+    }
+}
+
+impl SidebarLayout {
+    fn pinned(&self, destination: &RailDestination) -> bool {
+        self.pin_overrides
+            .get(destination.id)
+            .copied()
+            .unwrap_or(destination.pinned_by_default)
+    }
+
+    pub fn edit(&mut self, edit: SidebarEdit) {
+        for destination in RAIL_DESTINATIONS {
+            if !self.order.iter().any(|id| id == destination.id) {
+                self.order.push(destination.id.into());
+            }
+        }
+        match edit {
+            SidebarEdit::Pin(id, pin) => {
+                if pin {
+                    self.order.retain(|existing| existing != &id);
+                    self.order.push(id.clone());
+                }
+                self.pin_overrides.insert(id, pin);
+            }
+            SidebarEdit::Move(from, to) => {
+                let at = |id: &str| self.order.iter().position(|entry| entry == id);
+                if let (Some(from), Some(to)) = (at(&from), at(&to)) {
+                    if from < to {
+                        self.order[from..=to].rotate_left(1);
+                    } else {
+                        self.order[to..=from].rotate_right(1);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A dragged pinned destination, shown under the pointer.
+struct RailDrag(&'static RailDestination);
 
 impl Render for RailDrag {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -259,7 +338,7 @@ impl Render for RailDrag {
             .justify_center()
             .rounded(RADIUS_RAIL)
             .bg(t.ghost_hover)
-            .child(icon::icon(RAIL_DESTINATIONS[self.0].icon, 20., t.text))
+            .child(icon::icon(self.0.icon, 20., t.text))
     }
 }
 
@@ -348,6 +427,9 @@ pub struct Shell {
     pub security_available: bool,
     /// The MCP catalog has the `codex_security_cloud` destination: Explore lists `Security Cloud`.
     pub security_cloud_available: bool,
+    pub sidebar_layout: Arc<SidebarLayout>,
+    pub selected_destination: Option<&'static str>,
+    customizing_sidebar: bool,
     pub scheduled_attention: bool,
     /// The profile avatar's menu is open.
     pub profile_menu: bool,
@@ -461,6 +543,9 @@ impl Shell {
             unread_destinations: None,
             security_available: false,
             security_cloud_available: false,
+            sidebar_layout: Arc::default(),
+            selected_destination: None,
+            customizing_sidebar: false,
             scheduled_attention: false,
             profile_menu: false,
             profile_help: false,
@@ -1203,6 +1288,16 @@ impl Shell {
     fn rail(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let (hover_bg, hover_fg) = (t.ghost_hover, t.text);
         let selected = self.selected_rail;
+        let pinned = self.pinned_destinations();
+        let selected = self
+            .selected_destination
+            .map(|id| {
+                pinned
+                    .iter()
+                    .find(|d| d.id == id)
+                    .map_or("explore", |d| d.suffix())
+            })
+            .or(selected);
         let home = self.main.entity_type() == std::any::TypeId::of::<screens::home::HomeMain>();
         // The list (`[6, 50, 40, 732]`) is a composited scroller: its items paint into the
         // layer's transparent tiles, which `vertical-scroll-fade-mask` fades over the top 16 px
@@ -1232,23 +1327,22 @@ impl Shell {
             under
         };
         let scale = window.scale_factor();
-        let rail_order = RailOrder::get(cx);
-        let shell = cx.entity().downgrade();
         let explore_hover =
             cx.listener(|this, hovered: &bool, _, _| this.explore_hovered = *hovered);
         let explore_click = cx.listener(|this, _: &ClickEvent, _, cx| {
             this.explore_menu ^= true;
+            this.customizing_sidebar = false;
             cx.notify();
         });
-        let mut item = |name: &'static str| {
+        let mut item = |name: &'static str, glyph: &'static str| {
             let on = selected == Some(name);
             let fg = if on { t.text } else { t.text_tertiary };
             let id = SharedString::from(format!("rail-{name}"));
             let focus = focus::handle(id.clone(), 0, window, cx);
-            let glyph = if on && !matches!(name, "explore" | "rail-code-review" | "sites") {
-                format!("{name}-filled")
+            let glyph = if on && matches!(name, "home" | "space" | "scheduled" | "plugins") {
+                format!("{glyph}-filled")
             } else {
-                name.to_string()
+                glyph.to_owned()
             };
             focus::ring(
                 div()
@@ -1322,7 +1416,7 @@ impl Shell {
                     .gap(px(8.))
                     .layer()
                     .child(rail_tip(
-                        item("home")
+                        item("home", "home")
                             .when(self.attention, |d| d.child(dot(6.)))
                             .on_click(move |_, window, cx| {
                                 let focus = window.focused(cx).filter(|_| home);
@@ -1336,24 +1430,24 @@ impl Shell {
                         "Home",
                     ))
                     .child(rail_tip(
-                        item("space").on_click(dispatch::<OpenSpace>),
+                        item("space", "space").on_click(dispatch::<OpenSpace>),
                         "Space",
                     ))
                     .child(rail_tip(
-                        item("scheduled")
+                        item("scheduled", "scheduled")
                             .when(self.scheduled_attention, |d| d.child(dot(6.)))
                             .on_click(dispatch::<OpenScheduled>),
                         "Scheduled",
                     ))
                     .child(rail_tip(
-                        item("plugins").on_click(dispatch::<OpenPlugins>),
+                        item("plugins", "plugins").on_click(dispatch::<OpenPlugins>),
                         "Plugins",
                     ))
                     // Explore has no tooltip; its marker follows the bound destination state.
                     // `absolute -end-0.5 -top-0.5` around a `size-5` box centering an `icon-xs`
                     // dot at `scale-50`.
                     .child(
-                        item("explore")
+                        item("explore", "explore")
                             .on_hover(explore_hover)
                             .on_click(explore_click)
                             .when(
@@ -1406,23 +1500,25 @@ impl Shell {
                             .bg(t.border),
                     )
                     // The pinned destinations reorder by drag (`sidebarElectron.rail.reorder`).
-                    .children(rail_order.0.map(|index| {
-                        let destination = &RAIL_DESTINATIONS[index];
-                        let shell = shell.clone();
+                    .children(pinned.into_iter().map(|destination| {
                         rail_tip(
-                            item(destination.icon)
-                                .when(destination.id == "builtin:pull-requests", |item| {
-                                    item.on_click(dispatch::<OpenPullRequests>)
+                            item(destination.suffix(), destination.icon)
+                                .on_click(move |_, window, cx| {
+                                    window.dispatch_action((destination.action)(), cx);
                                 })
-                                .when(destination.id == "builtin:sites", |item| {
-                                    item.on_click(dispatch::<OpenSites>)
-                                })
-                                .on_drag(RailDrag(index), |drag, _, _, cx| {
+                                .on_drag(RailDrag(destination), |drag, _, _, cx| {
                                     cx.new(|_| RailDrag(drag.0))
                                 })
-                                .on_drop(move |drag: &RailDrag, _, cx| {
-                                    cx.set_global(RailOrder::get(cx).moved(drag.0, index));
-                                    shell.update(cx, |_, cx| cx.notify()).ok();
+                                .on_drop(move |drag: &RailDrag, window, cx| {
+                                    if drag.0.id != destination.id {
+                                        window.dispatch_action(
+                                            Box::new(EditSidebar(SidebarEdit::Move(
+                                                drag.0.id.into(),
+                                                destination.id.into(),
+                                            ))),
+                                            cx,
+                                        );
+                                    }
                                 }),
                             destination.label,
                         )
@@ -1464,28 +1560,100 @@ impl Shell {
             )
     }
 
-    /// The Explore `…` menu (`sidebarCustomization.moreMenu`), right of the rail item: the
-    /// secondary destinations the port has, in the original's order (`Images`, `Maps`,
-    /// `GPTs`), then `Projects`, then `Security` and the `Security Cloud` MCP destination when
-    /// available.
-    /// `Customize sidebar` and other MCP destinations need the sidebar-customization store,
-    /// which the port lacks.
-    fn explore_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+    fn destination_available(&self, destination: &RailDestination) -> bool {
+        match destination.id {
+            "builtin:security" => self.security_available,
+            SECURITY_CLOUD_DESTINATION => self.security_cloud_available,
+            _ => true,
+        }
+    }
+
+    fn pinned_destinations(&self) -> Vec<&'static RailDestination> {
+        let mut pinned: Vec<_> = RAIL_DESTINATIONS
+            .iter()
+            .filter(|d| self.destination_available(d) && self.sidebar_layout.pinned(d))
+            .collect();
+        pinned.sort_by_key(|d| {
+            self.sidebar_layout
+                .order
+                .iter()
+                .position(|id| id == d.id)
+                .unwrap_or(usize::MAX)
+        });
+        pinned
+    }
+
+    fn explore_menu(
+        &self,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let hover = t.menu_item_hover;
-        let menu_item = |id: &'static str, label: &'static str, action: Box<dyn gpui::Action>| {
-            div()
-                .id(id)
-                .px(px(8.))
-                .py(px(6.))
-                .rounded(px(12.))
-                .hover(move |s| s.bg(hover))
-                .child(text(label, 14., 20., 430., t.text))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.explore_menu = false;
-                    cx.notify();
-                    window.dispatch_action(action.boxed_clone(), cx);
-                }))
+        let menu_item = |id: SharedString, label, window: &mut Window, cx: &mut Context<Self>| {
+            let focus = focus::handle(id.clone(), 0, window, cx);
+            focus::ring(
+                div()
+                    .id(id)
+                    .px(px(8.))
+                    .py(px(6.))
+                    .rounded(px(12.))
+                    .hover(move |s| s.bg(hover))
+                    .child(text(label, 14., 20., 430., t.text)),
+                &focus,
+                px(12.),
+                px(1.),
+                cx,
+            )
         };
+        let editing = self.customizing_sidebar;
+        let mode = menu_item(
+            "explore-customize".into(),
+            if editing { "Done" } else { "Customize" },
+            window,
+            cx,
+        );
+        let rows = RAIL_DESTINATIONS
+            .iter()
+            .filter(|d| {
+                self.destination_available(d) && (editing || !self.sidebar_layout.pinned(d))
+            })
+            .map(|d| {
+                let pinned = self.sidebar_layout.pinned(d);
+                let row = menu_item(
+                    format!("explore-{}", d.suffix()).into(),
+                    d.label,
+                    window,
+                    cx,
+                );
+                if editing {
+                    let toggle = menu_item(
+                        format!("pin-{}", d.suffix()).into(),
+                        if pinned { "Unpin" } else { "Pin to sidebar" },
+                        window,
+                        cx,
+                    );
+                    div()
+                        .flex()
+                        .justify_between()
+                        .child(row)
+                        .child(toggle.on_click(move |_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(EditSidebar(SidebarEdit::Pin(d.id.into(), !pinned))),
+                                cx,
+                            );
+                        }))
+                        .into_any_element()
+                } else {
+                    row.on_click(cx.listener(move |this, _, window, cx| {
+                        this.explore_menu = false;
+                        window.dispatch_action((d.action)(), cx);
+                        cx.notify();
+                    }))
+                    .into_any_element()
+                }
+            })
+            .collect::<Vec<_>>();
         div()
             .absolute()
             .left(RAIL_WIDTH)
@@ -1493,33 +1661,24 @@ impl Shell {
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 if !this.explore_hovered {
                     this.explore_menu = false;
+                    this.customizing_sidebar = false;
                     cx.notify();
                 }
             }))
-            .child(composer::popover(t, 220., |d| {
-                d.child(menu_item("explore-images", "Images", Box::new(OpenImages)))
-                    .child(menu_item("explore-maps", "Maps", Box::new(OpenMaps)))
-                    .child(menu_item("explore-gpts", "GPTs", Box::new(OpenGpts)))
-                    .child(menu_item(
-                        "explore-projects",
-                        "Projects",
-                        Box::new(OpenProjects),
-                    ))
-                    .when(self.security_available, |d| {
-                        d.child(menu_item(
-                            "explore-security",
-                            "Security",
-                            Box::new(OpenSecurity),
-                        ))
-                    })
-                    .when(self.security_cloud_available, |d| {
-                        d.child(menu_item(
-                            "explore-security-cloud",
-                            "Security Cloud",
-                            Box::new(OpenSecurityCloud),
-                        ))
-                    })
-            }))
+            .child(composer::opaque_popover(
+                t,
+                if editing { 280. } else { 220. },
+                |d| {
+                    d.children(rows)
+                        .child(mode.on_click(cx.listener(|this, _, _, cx| {
+                            if this.customizing_sidebar {
+                                this.explore_menu = false;
+                            }
+                            this.customizing_sidebar ^= true;
+                            cx.notify();
+                        })))
+                },
+            ))
     }
 
     /// Profile avatar menu (`codex.profileDropdown`, `refs/profile-menu`): the account header,
@@ -2708,7 +2867,9 @@ impl Render for Shell {
             .child(self.titlebar(&t, window, cx))
             .child(skip_link)
             .when(self.profile_menu, |d| d.child(self.profile_menu(&t, cx)))
-            .when(self.explore_menu, |d| d.child(self.explore_menu(&t, cx)))
+            .when(self.explore_menu, |d| {
+                d.child(self.explore_menu(&t, window, cx))
+            })
     }
 }
 
@@ -2753,11 +2914,23 @@ mod tests {
     }
 
     #[test]
-    fn rail_order_moves_the_dragged_item_to_the_drop_target() {
-        let start = RailOrder([0, 1]);
-        assert_eq!(start.moved(0, 1).0, [1, 0]);
-        assert_eq!(start.moved(1, 0).0, [1, 0]);
-        assert_eq!(start.moved(1, 0).moved(0, 1).0, [0, 1]);
-        assert_eq!(start.moved(1, 1).0, [0, 1]);
+    fn sidebar_moves_pins_without_losing_unlisted_destinations() {
+        let mut layout = SidebarLayout {
+            order: vec!["builtin:future".into()],
+            ..SidebarLayout::default()
+        };
+        layout.edit(SidebarEdit::Move(
+            "builtin:sites".into(),
+            "builtin:pull-requests".into(),
+        ));
+        assert_eq!(
+            &layout.order[..3],
+            ["builtin:future", "builtin:sites", "builtin:pull-requests"]
+        );
+        layout.edit(SidebarEdit::Pin("builtin:sites".into(), false));
+        assert!(!layout.pinned(&RAIL_DESTINATIONS[1]));
+        layout.edit(SidebarEdit::Pin("builtin:sites".into(), true));
+        assert!(layout.pinned(&RAIL_DESTINATIONS[1]));
+        assert_eq!(layout.order.last().unwrap(), "builtin:sites");
     }
 }

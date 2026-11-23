@@ -9,14 +9,15 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use ui::{SidebarEdit, SidebarLayout};
 
 const CUSTOMIZATION: &str = "inline-sidebar-customization-state-by-account-id-v2";
 const SNAPSHOTS: &str = "sidebar-customization-snapshots-v2";
 const SEEN: &str = "sidebar-more-menu-seen-mcp-destination-ids-by-account-id-v1";
 const CACHE: &str = "mcp-global-entrypoints-v2";
 
-#[derive(Debug, PartialEq)]
-struct Scope {
+#[derive(Clone, Debug, PartialEq, Deserialize, serde::Serialize)]
+pub(crate) struct Scope {
     account: String,
     user: String,
 }
@@ -41,44 +42,83 @@ fn scope(identity: Option<Identity>) -> Result<Option<Scope>> {
 struct Customization {
     version: u8,
     #[serde(default)]
+    order_by_account_id: HashMap<String, Vec<String>>,
+    #[serde(default)]
     visibility_by_account_id: HashMap<String, HashMap<String, bool>>,
 }
 
-fn pin_overrides(atoms: &mut Value, scope: Option<&Scope>) -> HashMap<String, bool> {
+fn snapshot_key(scope: &Scope) -> String {
+    serde_json::to_string(&[&scope.account, &scope.user]).expect("navigation identity serializes")
+}
+
+fn customization(atoms: &Value, scope: Option<&Scope>) -> SidebarLayout {
+    if let Some(scope) = scope
+        && let Some(snapshot) = atoms[SNAPSHOTS].get(snapshot_key(scope))
+        && !snapshot.is_null()
+    {
+        return serde_json::from_value(snapshot.clone()).unwrap_or_default();
+    }
+    let Ok(mut inline) = serde_json::from_value::<Customization>(atoms[CUSTOMIZATION].clone())
+    else {
+        return SidebarLayout::default();
+    };
+    if inline.version != 2 {
+        return SidebarLayout::default();
+    }
+    let account = scope.map_or("anonymous", |scope| scope.account.as_str());
+    SidebarLayout {
+        order: inline
+            .order_by_account_id
+            .remove(account)
+            .unwrap_or_default(),
+        pin_overrides: inline
+            .visibility_by_account_id
+            .remove(account)
+            .unwrap_or_default(),
+    }
+}
+
+pub(crate) fn edit_customization(atoms: &mut Value, params: &Value) -> Result<Value> {
+    let scope: Option<Scope> = serde_json::from_value(params["scope"].clone())?;
+    let edit: SidebarEdit = serde_json::from_value(params["edit"].clone())?;
+    let mut layout = customization(atoms, scope.as_ref());
+    layout.edit(edit);
+    if atoms.is_null() {
+        *atoms = json!({});
+    }
+    ensure!(
+        atoms.is_object(),
+        "persisted navigation state is not an object"
+    );
     if let Some(scope) = scope {
-        let key = serde_json::to_string(&[scope.account.as_str(), scope.user.as_str()])
-            .expect("navigation identity serializes");
-        if let Some(snapshot) = atoms
-            .get_mut(SNAPSHOTS)
-            .and_then(|value| value.get_mut(&key))
-            .filter(|value| !value.is_null())
-        {
-            if !snapshot["order"]
-                .as_array()
-                .is_some_and(|order| order.iter().all(Value::is_string))
-            {
-                return HashMap::new();
+        let snapshots = &mut atoms[SNAPSHOTS];
+        if snapshots.is_null() {
+            *snapshots = json!({});
+        }
+        ensure!(snapshots.is_object(), "sidebar snapshots are not an object");
+        snapshots[snapshot_key(&scope)] = serde_json::to_value(&layout)?;
+    } else {
+        let inline = &mut atoms[CUSTOMIZATION];
+        if inline.is_null() {
+            *inline = json!({"version": 2});
+        }
+        ensure!(
+            inline["version"] == 2,
+            "invalid inline sidebar customization version"
+        );
+        for (key, value) in [
+            ("orderByAccountId", json!(layout.order)),
+            ("visibilityByAccountId", json!(layout.pin_overrides)),
+        ] {
+            let entries = &mut inline[key];
+            if entries.is_null() {
+                *entries = json!({});
             }
-            return snapshot
-                .get_mut("pinOverrides")
-                .map(Value::take)
-                .and_then(|value| serde_json::from_value(value).ok())
-                .unwrap_or_default();
+            ensure!(entries.is_object(), "invalid inline sidebar customization");
+            entries["anonymous"] = value;
         }
     }
-    let customization: Customization = atoms
-        .get_mut(CUSTOMIZATION)
-        .map(Value::take)
-        .and_then(|value| serde_json::from_value(value).ok())
-        .unwrap_or_default();
-    let mut visibility = customization.visibility_by_account_id;
-    if customization.version == 2 {
-        visibility
-            .remove(scope.map_or("anonymous", |scope| scope.account.as_str()))
-            .unwrap_or_default()
-    } else {
-        HashMap::new()
-    }
+    Ok(serde_json::to_value(layout)?)
 }
 
 #[derive(Deserialize)]
@@ -98,7 +138,7 @@ struct CachedServer {
 
 struct Persisted {
     scope: Option<Scope>,
-    overrides: HashMap<String, bool>,
+    layout: Arc<SidebarLayout>,
     seen: HashSet<String>,
     cached: Option<Vec<CachedServer>>,
 }
@@ -125,7 +165,7 @@ fn persisted(host: &dyn Host, authenticated: bool) -> Result<Persisted> {
     let account = scope
         .as_ref()
         .map_or("anonymous", |scope| scope.account.as_str());
-    let overrides = pin_overrides(&mut atoms, scope.as_ref());
+    let layout = customization(&atoms, scope.as_ref());
     let seen = match atoms
         .get_mut(SEEN)
         .map(Value::take)
@@ -149,7 +189,7 @@ fn persisted(host: &dyn Host, authenticated: bool) -> Result<Persisted> {
     });
     Ok(Persisted {
         scope,
-        overrides,
+        layout: Arc::new(layout),
         seen,
         cached,
     })
@@ -324,10 +364,11 @@ fn append_server(
 fn eligible(catalog: Option<&Catalog>, cached: Option<&[CachedServer]>) -> Vec<Destination> {
     let mut destinations: Vec<_> = ui::RAIL_DESTINATIONS
         .iter()
+        .filter(|entry| entry.id != ui::SECURITY_CLOUD_DESTINATION)
         .map(|entry| Destination {
             id: entry.id.into(),
             legacy_id: None,
-            visible_by_default: true,
+            visible_by_default: entry.pinned_by_default,
         })
         .collect();
     if let Some(catalog) = catalog {
@@ -385,7 +426,7 @@ fn pinned(
 }
 
 fn unread(destinations: Vec<Destination>, persisted: &Persisted) -> Arc<[SharedString]> {
-    let pins = pinned(&destinations, &persisted.overrides);
+    let pins = pinned(&destinations, &persisted.layout.pin_overrides);
     destinations
         .into_iter()
         .filter(|destination| {
@@ -397,9 +438,9 @@ fn unread(destinations: Vec<Destination>, persisted: &Persisted) -> Arc<[SharedS
         .collect()
 }
 
-/// The Explore menu's `Security Cloud` (`codex_security_cloud.open_defense_factory`).
+#[cfg(test)]
 fn security_cloud_id() -> SharedString {
-    destination_id("connector_openai_defense_factory", "open_defense_factory")
+    ui::SECURITY_CLOUD_DESTINATION.into()
 }
 
 impl Root {
@@ -417,6 +458,65 @@ impl Root {
         }
     }
 
+    fn set_sidebar_layout(&mut self, layout: Arc<SidebarLayout>, cx: &mut Context<Self>) {
+        self.sidebar_layout = layout.clone();
+        for shell in std::iter::once(&self.shell).chain(self.page.iter()) {
+            shell.update(cx, |shell, cx| {
+                shell.sidebar_layout = layout.clone();
+                cx.notify();
+            });
+        }
+    }
+
+    pub(crate) fn reset_sidebar_layout(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_scope = None;
+        self.sidebar_save = None;
+        self.set_sidebar_layout(Arc::default(), cx);
+        self.set_security_cloud(false, cx);
+    }
+
+    pub(crate) fn edit_sidebar(&mut self, edit: SidebarEdit, cx: &mut Context<Self>) {
+        let Some(expected_scope) = self.sidebar_scope.clone() else {
+            return;
+        };
+        if self.sidebar_save.is_some() {
+            return;
+        }
+        self.destination_load = None;
+        let host = self.host.clone();
+        let write = cx.background_spawn(async move {
+            ensure!(
+                scope(host.identity())? == expected_scope,
+                "navigation account changed before saving"
+            );
+            let request = Request::post(
+                "sidebar-customization-save",
+                Some(json!({"scope": expected_scope, "edit": edit})),
+            );
+            let value = json_body(&host.fetch(&request)?)?;
+            Ok::<SidebarLayout, anyhow::Error>(serde_json::from_value(value)?)
+        });
+        self.sidebar_save = Some(cx.spawn(async move |this, cx| {
+            let result = write.await;
+            this.update(cx, |this, cx| {
+                this.sidebar_save = None;
+                match result {
+                    Ok(layout) => {
+                        this.set_sidebar_layout(Arc::new(layout), cx);
+                        this.load_destinations(cx);
+                    }
+                    Err(error) => {
+                        eprintln!("codex-gpui: cannot save sidebar customization: {error:#}");
+                        this.toast(
+                            ui::toast::Toast::danger("Could not save sidebar customization"),
+                            cx,
+                        );
+                    }
+                }
+            })
+            .ok();
+        }));
+    }
     pub(crate) fn set_security_cloud(&mut self, available: bool, cx: &mut Context<Self>) {
         self.security_cloud = available;
         for shell in std::iter::once(&self.shell).chain(self.page.iter()) {
@@ -428,6 +528,9 @@ impl Root {
     }
 
     pub(crate) fn load_destinations(&mut self, cx: &mut Context<Self>) {
+        if self.sidebar_save.is_some() {
+            return;
+        }
         self.destination_load = None;
         self.set_unread_destinations(None, cx);
         let host = self.host.clone();
@@ -438,29 +541,52 @@ impl Root {
         self.destination_load = Some(cx.spawn(async move |this, cx| {
             let result: Result<_> = async {
                 let persisted = read.await?;
+                let current = {
+                    let host = host.clone();
+                    cx.background_spawn(async move { scope(host.identity()) })
+                        .await?
+                };
+                ensure!(
+                    current == persisted.scope,
+                    "navigation account changed during the read"
+                );
+                this.update(cx, |this, cx| {
+                    this.sidebar_scope = Some(current);
+                    this.set_sidebar_layout(persisted.layout.clone(), cx);
+                })?;
                 let catalog = match catalog(&bridge).await {
                     Ok(catalog) => Some(catalog),
-                    Err(error) if persisted.cached.is_some() => {
-                        eprintln!("codex-gpui: using the persisted MCP catalog after a read failure: {error:#}");
+                    Err(error) => {
+                        eprintln!("codex-gpui: cannot read the MCP catalog: {error:#}");
                         None
                     }
-                    Err(error) => return Err(error),
                 };
-                let current = cx.background_spawn(async move { scope(host.identity()) }).await?;
-                ensure!(current == persisted.scope, "navigation account changed during the read");
+                let current = cx
+                    .background_spawn(async move { scope(host.identity()) })
+                    .await?;
+                ensure!(
+                    current == persisted.scope,
+                    "navigation account changed during the read"
+                );
                 let destinations = eligible(catalog.as_ref(), persisted.cached.as_deref());
                 let security_cloud = destinations
                     .iter()
-                    .any(|destination| destination.id == security_cloud_id());
-                Ok((unread(destinations, &persisted), security_cloud))
-            }.await;
+                    .any(|destination| destination.id == ui::SECURITY_CLOUD_DESTINATION);
+                let unread = (catalog.is_some() || persisted.cached.is_some())
+                    .then(|| unread(destinations, &persisted));
+                Ok((unread, security_cloud))
+            }
+            .await;
             this.update(cx, |this, cx| match result {
                 Ok((unread, security_cloud)) => {
-                    this.set_unread_destinations(Some(unread), cx);
+                    this.set_unread_destinations(unread, cx);
                     this.set_security_cloud(security_cloud, cx);
                 }
-                Err(error) => eprintln!("codex-gpui: cannot read navigation destinations: {error:#}"),
-            }).ok();
+                Err(error) => {
+                    eprintln!("codex-gpui: cannot read navigation destinations: {error:#}")
+                }
+            })
+            .ok();
         }));
     }
 }
@@ -483,10 +609,39 @@ mod tests {
     fn empty_state() -> Persisted {
         Persisted {
             scope: None,
-            overrides: HashMap::new(),
+            layout: Arc::default(),
             seen: HashSet::new(),
             cached: None,
         }
+    }
+
+    #[test]
+    fn sidebar_edits_change_only_the_matching_account_and_user() -> Result<()> {
+        let scope = Scope {
+            account: "account".into(),
+            user: "current".into(),
+        };
+        let other = Scope {
+            account: "account".into(),
+            user: "other".into(),
+        };
+        let other_key = snapshot_key(&other);
+        let mut atoms = json!({
+            SNAPSHOTS: { (other_key): { "order": ["builtin:sites"], "pinOverrides": {} } },
+            "untouched": true,
+        });
+        edit_customization(
+            &mut atoms,
+            &json!({
+                "scope": scope,
+                "edit": SidebarEdit::Pin("builtin:sites".into(), false),
+            }),
+        )?;
+        let current = customization(&atoms, Some(&scope));
+        assert_eq!(current.pin_overrides.get("builtin:sites"), Some(&false));
+        assert_eq!(customization(&atoms, Some(&other)).order, ["builtin:sites"]);
+        assert_eq!(atoms["untouched"], true);
+        Ok(())
     }
 
     #[test]
@@ -500,11 +655,18 @@ mod tests {
         assert_eq!(destination.id.as_ref(), canonical);
         assert_eq!(destination.legacy_id.as_deref(), Some(legacy));
         let destinations = vec![destination];
-        let mut state = empty_state();
-        state.overrides.insert(legacy.into(), true);
-        assert!(pinned(&destinations, &state.overrides).contains(canonical));
-        state.overrides.insert(canonical.into(), false);
-        assert!(!pinned(&destinations, &state.overrides).contains(canonical));
+        let mut overrides = HashMap::new();
+        overrides.insert(legacy.into(), true);
+        assert!(pinned(&destinations, &overrides).contains(canonical));
+        overrides.insert(canonical.into(), false);
+        assert!(!pinned(&destinations, &overrides).contains(canonical));
+        let state = Persisted {
+            layout: Arc::new(SidebarLayout {
+                pin_overrides: overrides,
+                ..SidebarLayout::default()
+            }),
+            ..empty_state()
+        };
         assert_eq!(
             unread(destinations, &state).as_ref(),
             &[SharedString::from(canonical)]
