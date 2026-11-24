@@ -78,7 +78,7 @@ fn rail_space_lists_spaces_from_every_page() -> Result<()> {
     );
     // Hovering a Page row records it, which hides its divider and the one above it.
     let hovered = |fx: &Fx| fx.read(|root, cx| root.space_page().unwrap().read(cx).hovered);
-    for (at, row) in [((300., 326.), 1), ((300., 296.), 0)] {
+    for (at, row) in [((300., 296.), 0), ((300., 326.), 1)] {
         fx.hover(at)?;
         fx.advance(ui::motion::BASIC)?;
         ensure!(
@@ -86,6 +86,12 @@ fn rail_space_lists_spaces_from_every_page() -> Result<()> {
             "hover {at:?}: {:?}",
             hovered(&fx)
         );
+    }
+    // `reference_shot` parks the pointer, so this one keeps it on the second Page.
+    if let Some(dir) = std::env::var_os("CGX_SPACE_EVIDENCE") {
+        std::fs::create_dir_all(&dir)?;
+        fx.shot()?
+            .save(std::path::Path::new(&dir).join("hover-rail-space.png"))?;
     }
     fx.hover((640., 22.))?;
     fx.advance(ui::motion::BASIC)?;
