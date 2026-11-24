@@ -92,7 +92,11 @@ fn pages(host: &dyn host::Host) -> Result<Vec<space::Page>> {
         .filter_map(|item| {
             Some(space::Page {
                 id: item["page_id"].as_str().or(item["id"].as_str())?.to_owned(),
-                title: item["title"].as_str().unwrap_or_default().to_owned(),
+                title: item["title"]
+                    .as_str()
+                    .filter(|title| !title.is_empty())
+                    .unwrap_or("Untitled")
+                    .to_owned(),
             })
         })
         .collect())

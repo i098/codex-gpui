@@ -292,7 +292,6 @@ impl SpacePage {
                     .items_center()
                     .gap(px(8.))
                     .rounded(px(8.))
-                    .hover(|d| d.bg(t.ghost_hover))
                     .child(icon("diff-file-default", 16., t.text_secondary))
                     .child(div().min_w_0().truncate().child(text(
                         page.title.clone(),
