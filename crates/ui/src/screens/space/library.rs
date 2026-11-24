@@ -180,8 +180,19 @@ impl SpacePage {
         cx.notify();
     }
 
+    /// Whether the page still shows invitation `id`; a late answer for another page is dropped.
+    pub fn shows_invitation(&self, id: &str) -> bool {
+        matches!(
+            self.library.as_ref().and_then(|l| l.share.as_ref()),
+            Some(Share::Invitation(i)) if i.id == id
+        )
+    }
+
     /// The invitation was accepted: resolve the link again, as the original does.
     pub fn invitation_accepted(&mut self, id: String, cx: &mut Context<Self>) {
+        if !self.shows_invitation(&id) {
+            return;
+        }
         if let Some(library) = &mut self.library {
             library.accepted = Some(id);
             library.answering = false;

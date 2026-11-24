@@ -94,17 +94,15 @@ pub(super) fn on_action(
             let result = cx
                 .background_spawn(async move { answer(&*host, &id, accept, always) })
                 .await;
-            root.update(cx, |root, cx| {
-                if result.is_err() {
-                    root.toast(
-                        Toast::danger(
-                            "We couldn\u{2019}t update your invitation. Please try again",
-                        ),
-                        cx,
-                    );
-                } else if let Some(page) = page.upgrade() {
+            root.update(cx, |_, cx| {
+                if let Some(page) = page.upgrade() {
                     page.update(cx, |page, cx| {
-                        if accept {
+                        if !page.shows_invitation(&invitation) {
+                            return;
+                        }
+                        if result.is_err() {
+                            page.answer_failed(cx);
+                        } else if accept {
                             page.invitation_accepted(invitation, cx);
                         } else {
                             page.open_library(cx);
