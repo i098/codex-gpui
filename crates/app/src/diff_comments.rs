@@ -23,6 +23,17 @@ fn stored_comments(cx: &App, key: &str, thread: &str) -> Vec<Comment> {
     }
 }
 
+/// The page screenshot stays in memory for the turn payload; it is not written to the settings file.
+fn comments_for_disk(comments: &[Comment]) -> serde_json::Result<Value> {
+    let mut value = serde_json::to_value(comments)?;
+    for comment in value.as_array_mut().into_iter().flatten() {
+        if let Some(comment) = comment.as_object_mut() {
+            comment.remove("localBrowserScreenshot");
+        }
+    }
+    Ok(value)
+}
+
 impl Root {
     pub(super) fn has_dialog(&self) -> bool {
         self.dialog.is_some()
@@ -129,7 +140,7 @@ impl Root {
             if comments.is_empty() {
                 threads.remove(&thread);
             } else {
-                threads.insert(thread, serde_json::to_value(comments)?);
+                threads.insert(thread, comments_for_disk(comments)?);
             }
             settings.write("diff_comments", Value::Object(threads))
         })();
@@ -360,5 +371,30 @@ impl Root {
         }
         self.diff_confirmation = Some(dialog);
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_comments_drop_the_page_screenshot() {
+        let mut comment: Comment = serde_json::from_value(json!({
+            "content": [{"content_type": "text", "text": "x"}],
+            "position": {"path": "browser:Save", "side": "right", "line": 1},
+        }))
+        .unwrap();
+        comment.extra.insert(
+            "localBrowserScreenshot".into(),
+            json!({"dataUrl": "data:image/png;base64,AA=="}),
+        );
+        let saved = comments_for_disk(&[comment.clone()]).unwrap();
+        assert!(saved[0].get("localBrowserScreenshot").is_none());
+        assert!(comment.extra.contains_key("localBrowserScreenshot"));
+        assert_eq!(
+            saved[0]["content"],
+            json!([{"content_type": "text", "text": "x"}])
+        );
     }
 }
