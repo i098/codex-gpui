@@ -95,7 +95,7 @@ fn rail_space_lists_spaces_from_every_page() -> Result<()> {
     }
     fx.hover((640., 22.))?;
     fx.advance(ui::motion::BASIC)?;
-    ensure!(hovered(&fx) == None, "leave: {:?}", hovered(&fx));
+    ensure!(hovered(&fx).is_none(), "leave: {:?}", hovered(&fx));
 
     let query = fx.read(|root, cx| root.space_page().unwrap().read(cx).query.clone());
     fx.cx
