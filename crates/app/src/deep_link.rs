@@ -699,7 +699,6 @@ mod tests {
 
     const ID: &str = "00000000-0000-4000-8000-000000000001";
 
-    #[cfg(unix)] // POSIX path fixtures
     #[test]
     fn library_share_links_name_the_item() {
         use ui::screens::space::library::ShareTarget;
@@ -728,6 +727,7 @@ mod tests {
         assert!(target("https://example.com/library/share/a").is_none());
     }
 
+    #[cfg(unix)] // POSIX path fixtures
     #[test]
     fn file_urls_become_decoded_paths() {
         assert_eq!(
