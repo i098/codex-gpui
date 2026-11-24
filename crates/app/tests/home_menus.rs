@@ -157,9 +157,9 @@ fn work_home_choose_project_opens_the_project_menu() -> Result<()> {
     });
     app.keys(mode_key(2))?;
     app.capture_evidence("CGX_WORK_HOME_SHOTS", "work-home")?;
-    // The original's `Choose project` pill: the rail under the card starts at
-    // (501.25, 489.44), its first 28 px pill 6 px in.
-    app.click((560., 511.))?;
+    // The rail's `Choose project` pill; the account banner moves it, so it is found by selector.
+    let chip = common::profile_row(&mut app, "work-home-project-control")?;
+    app.click(chip)?;
     assert!(project_menu(&app));
     app.type_text("bet")?;
     app.keys("enter")?;
