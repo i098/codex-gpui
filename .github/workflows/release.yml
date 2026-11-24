@@ -1,8 +1,11 @@
 name: release
 # A `vMAJOR.MINOR.PATCH` tag on a merged `tools/version.sh` bump publishes the macOS arm64 zip and .dmg, the Linux .deb and the Windows MSIX.
+# A version bump to 0.1.x that lands on main tags itself and dispatches this workflow; no other version publishes without a manual tag.
 on:
   push:
     tags: ['v*']
+    branches: [main]
+    paths: [Cargo.toml]
   # Re-runs the release for an existing tag with the workflow as it is on the dispatched ref.
   workflow_dispatch:
     inputs:
@@ -11,10 +14,29 @@ on:
         required: true
 permissions:
   contents: write
+  actions: write
 env:
   TAG: ${{ inputs.tag || github.ref_name }}
 jobs:
+  auto-tag:
+    if: github.ref_type == 'branch'
+    runs-on: codex-gpui
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Install the GitHub CLI
+        run: command -v gh >/dev/null || { sudo apt-get update && sudo apt-get install -y --no-install-recommends gh; }
+      - uses: actions/checkout@v7
+      - name: Tag a 0.1.x version and dispatch its release
+        run: |
+          tools/auto-release-tag.sh test
+          tag=$(tools/auto-release-tag.sh)
+          [[ -n $tag ]] || { echo "version $(tools/version.sh) does not release automatically"; exit 0; }
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then echo "$tag exists"; exit 0; fi
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" >/dev/null
+          gh workflow run release.yml --ref main -f tag="$tag"
   release:
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     # Creates the release so each platform job below only uploads to it. GitHub-hosted macOS and
     # Windows runners are not available to this private repository; the Linux job runs on ours.
     runs-on: codex-gpui
