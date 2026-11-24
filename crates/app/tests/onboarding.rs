@@ -38,6 +38,7 @@ fn visible(fx: &mut Fx, id: &str) -> bool {
 
 struct OnboardingHost {
     context: Value,
+    statsig: Option<Value>,
     writes: std::sync::Mutex<Vec<Value>>,
 }
 
@@ -47,8 +48,24 @@ impl app::host::Host for OnboardingHost {
             if request["url"] == "/wham/onboarding/context" {
                 return Ok(self.context.clone());
             }
+            if request["url"] == "/wham/statsig/bootstrap"
+                && let Some(statsig) = &self.statsig
+            {
+                return Ok(json!({"status": 200, "bodyJsonString": statsig.to_string()}));
+            }
+            if request["url"]
+                == "/ps/plugin-categories/scientific-research/plugins?scope=GLOBAL&limit=50"
+                && self.statsig.is_some()
+            {
+                return Ok(json!({"status": 200, "bodyJsonString": json!({
+                    "plugins":[{"id":"plugin_example"}],"pagination":{"next_page_token":null}
+                }).to_string()}));
+            }
             if request["url"] == "/wham/onboarding/desktop/complete" {
                 self.writes.lock().unwrap().push(request.clone());
+                if self.statsig.is_some() {
+                    return Ok(json!({"status": 200}));
+                }
                 anyhow::bail!("Offline completion is denied");
             }
         }
@@ -97,6 +114,7 @@ fn onboarding_keeps_failed_saves_and_cancelled_skips_on_the_page() -> Result<()>
         .clone();
     let host = std::sync::Arc::new(OnboardingHost {
         context,
+        statsig: None,
         writes: Default::default(),
     });
     let mut fx = open_setup("/welcome", host.clone())?;
@@ -137,6 +155,123 @@ fn onboarding_keeps_failed_saves_and_cancelled_skips_on_the_page() -> Result<()>
     fx.keys("escape")?;
     ensure!(!fx.read(|root, cx| root.onboarding().unwrap().read(cx).confirming_skip()));
     ensure!(host.writes.lock().unwrap().len() == 1);
+    Ok(())
+}
+
+#[test]
+fn role_plugins_install_before_setup_finishes_and_manage_opens_the_category() -> Result<()> {
+    use app::deep_link::Link;
+    use common::{exchange, script};
+    use ui::screens::plugins::Tab;
+
+    let mut lines = script(None, |_| {})?;
+    let plugin =
+        json!({"id":"example@openai-curated","name":"example","remotePluginId":"plugin_example"});
+    let unrelated =
+        json!({"id":"other@openai-curated","name":"other","remotePluginId":"plugin_other"});
+    let catalog = json!({"marketplaces":[{"name":"openai-curated","plugins":[plugin, unrelated]}]});
+    for (params, result) in [
+        (json!({"cwds":[],"forceRefetch":false}), catalog.clone()),
+        (
+            json!({"cwds":[common::CWD],"forceRefetch":false}),
+            catalog.clone(),
+        ),
+        (json!({"cwds":[common::CWD],"forceRefetch":true}), {
+            let mut catalog = catalog;
+            catalog["marketplaces"][0]["plugins"][0]["installed"] = json!(true);
+            catalog
+        }),
+    ] {
+        let mut entry = exchange("plugin/list", result);
+        entry[0]["msg"]["params"] = params;
+        lines.extend(entry);
+    }
+    let params = json!({"pluginName":"plugin_example","remoteMarketplaceName":"openai-curated"});
+    for (method, result) in [
+        (
+            "plugin/read",
+            json!({"plugin":{"summary":{"mustShowInstallationInterstitial":false}}}),
+        ),
+        (
+            "plugin/install",
+            json!({"authPolicy":"ON_USE","appsNeedingAuth":[]}),
+        ),
+    ] {
+        let mut entry = exchange(method, result);
+        entry[0]["msg"]["params"] = params.clone();
+        lines.extend(entry);
+    }
+    let mut settings = common::recorded_host_settings()?;
+    settings.write(
+        "electron:onboarding-login-entrypoint",
+        json!("life_sciences"),
+    )?;
+    let mut fx = Fx::captured_with_host_settings("dark", (1280., 832.), lines, settings)?;
+    let host = std::sync::Arc::new(OnboardingHost {
+        context: json!({"status":200,"bodyJsonString":"{\"desktop_onboarding_completed_at\":null,\"role\":\"life_sciences\"}"}),
+        statsig: Some(
+            json!({"feature_gates":{},"dynamic_configs":{"3734000477":{"value":{
+                "life_sciences":["example"],"manage_category_by_role":{"life_sciences":"scientific-research"}
+            }}}}),
+        ),
+        writes: Default::default(),
+    });
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        fx.root.update(cx, |root, cx| {
+            root.set_host(host.clone(), cx);
+            root.open_deep_link(&Link::Onboarding, window, cx);
+        });
+    })?;
+    fx.wait("role step", |fx| visible(fx, "onboarding-continue"))?;
+    click(&mut fx, "onboarding-continue")?;
+    if visible(&mut fx, "onboarding-not-now") {
+        click(&mut fx, "onboarding-not-now")?;
+    }
+    fx.wait("starter tasks or capabilities", |fx| {
+        visible(fx, "onboarding-tasks-skip") || visible(fx, "onboarding-capabilities-continue")
+    })?;
+    fx.wait("install request before setup finishes", |fx| {
+        fx.sent().is_ok_and(|sent| {
+            sent.iter()
+                .any(|request| request["method"] == "plugin/install" && request["params"] == params)
+        })
+    })?;
+    ensure!(host.writes.lock().unwrap().is_empty());
+    ensure!(!fx.read(|root, cx| {
+        root.toasts(cx)
+            .iter()
+            .any(|title| title == "Plugins installed")
+    }));
+    let finish = if visible(&mut fx, "onboarding-tasks-skip") {
+        "onboarding-tasks-skip"
+    } else {
+        "onboarding-capabilities-continue"
+    };
+    click(&mut fx, finish)?;
+    fx.wait("installed toast", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|title| title == "Plugins installed")
+        })
+    })?;
+    shot(&mut fx, "role-plugins-toast")?;
+    fx.click((681., 69.))?;
+    ensure!(fx.route() == app::Route::Plugins("/skills?category=scientific-research".into()));
+    fx.wait("category shows only the installed plugin", |fx| {
+        fx.read(|root, cx| {
+            let page = root.plugins_page().unwrap().read(cx);
+            page.tab == Tab::Plugins
+                && page.data.plugins.value().is_some_and(|markets| {
+                    markets
+                        .iter()
+                        .flat_map(|market| &market.plugins)
+                        .map(|plugin| (plugin.name(), plugin.installed()))
+                        .eq([("example", true)])
+                })
+        })
+    })?;
+    shot(&mut fx, "role-plugins-category")?;
     Ok(())
 }
 
@@ -226,6 +361,7 @@ fn account_completion_is_checked_after_a_previous_local_completion() -> Result<(
         context: json!({"status":200,"bodyJsonString":json!({
             "desktop_onboarding_completed_at":null,"role":"engineering"
         }).to_string()}),
+        statsig: None,
         writes: Default::default(),
     });
     fx.root
