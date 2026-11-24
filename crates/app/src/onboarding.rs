@@ -109,10 +109,11 @@ impl Root {
     ) {
         let (chatgpt, clock) = (self.chatgpt_account, self.clock);
         let view = cx.new(|cx| Onboarding::new(page, chatgpt, clock, cx));
+        let role_plugins = std::cell::RefCell::new(None);
         cx.subscribe_in(
             &view,
             window,
-            |this, view, event: &OnboardingEvent, window, cx| {
+            move |this, view, event: &OnboardingEvent, window, cx| {
                 if this.onboarding_page.as_ref() != Some(view) {
                     return;
                 }
@@ -122,6 +123,7 @@ impl Root {
                         view.clone(),
                         completion.clone(),
                         Route::Home,
+                        role_plugins.borrow().clone(),
                         window,
                         cx,
                     ),
@@ -136,6 +138,7 @@ impl Root {
                             view.clone(),
                             completion.clone(),
                             Route::Settings,
+                            role_plugins.borrow().clone(),
                             window,
                             cx,
                         );
@@ -152,6 +155,48 @@ impl Root {
                             }),
                         }
                     }
+                    OnboardingEvent::PreinstallRolePlugins(role)
+                        if !this.bridge.is_acp() && this.config["features"]["plugins"] != false =>
+                    {
+                        let (sender, receiver) = async_channel::bounded(1);
+                        role_plugins.replace(Some(receiver));
+                        let role = role.clone();
+                        let host = this.host.clone();
+                        let bridge = this.bridge.clone();
+                        let stable_id = cx
+                            .global::<host_settings::Settings>()
+                            .read_all()
+                            .get("statsig-stable-id")
+                            .and_then(Value::as_str)
+                            .map_or_else(host::device_id, str::to_owned);
+                        cx.background_spawn(async move {
+                            let result = async {
+                                let identity = host.identity();
+                                let request =
+                                    chatgpt::bootstrap_request(&stable_id, identity.as_ref());
+                                let config =
+                                    chatgpt::payload(host::json_body(&host.fetch(&request)?)?)?;
+                                install_role_plugins(
+                                    &bridge,
+                                    &config["dynamic_configs"]["3734000477"]["value"],
+                                    &role,
+                                )
+                                .await
+                            }
+                            .await;
+                            match result {
+                                Ok(Some(path)) => {
+                                    let _ = sender.try_send(path);
+                                }
+                                Ok(None) => {}
+                                Err(error) => {
+                                    eprintln!("codex-gpui: onboarding role plugins: {error:#}")
+                                }
+                            }
+                        })
+                        .detach();
+                    }
+                    OnboardingEvent::PreinstallRolePlugins(_) => {}
                     OnboardingEvent::LoadTasks(role) => {
                         let request = recommendations_request(
                             role,
@@ -246,11 +291,14 @@ impl Root {
         let bridge = self.bridge.clone();
         let workspace = view.read(cx).page() == Page::SelectWorkspace;
         let prepared = self.onboarding_context.take();
-        let saved = cx
-            .global::<host_settings::Settings>()
-            .read_all()
+        let settings = cx.global::<host_settings::Settings>().read_all();
+        let saved = settings
             .get("electron:onboarding-welcome-v2-role-state")
             .cloned();
+        let life_sciences = settings
+            .get("electron:onboarding-login-entrypoint")
+            .and_then(Value::as_str)
+            == Some("life_sciences");
         self.onboarding_load = Some(cx.spawn_in(window, async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
@@ -316,7 +364,14 @@ impl Root {
                             .as_ref()
                             .and_then(|saved| saved["personalizedSuggestionsEnabled"].as_bool())
                             .unwrap_or(true);
-                        view.set_context(roles, suggestions, import_available, projects, cx);
+                        view.set_context(
+                            roles,
+                            life_sciences,
+                            suggestions,
+                            import_available,
+                            projects,
+                            cx,
+                        );
                     }
                     Err(error) => view.set_error(error.to_string(), cx),
                 });
@@ -330,6 +385,7 @@ impl Root {
         view: Entity<Onboarding>,
         completion: Completion,
         destination: Route,
+        role_plugins: Option<async_channel::Receiver<String>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -371,11 +427,43 @@ impl Root {
                             let composer=this.home.read(cx).composer.clone();
                             composer.update(cx,|composer,cx| composer.send_draft(false,window,cx));
                         }
+                        // A failed setup save must leave the result available for a retry.
+                        if !completion.skipped && let Some(role_plugins) = role_plugins {
+                            this.show_role_plugins_toast(role_plugins, window, cx);
+                        }
                     }
                     Err(error)=>view.update(cx,|view,cx|view.set_error(format!("Couldn't finish setup — try again: {error}"),cx)),
                 }
             }).ok();
         }).detach();
+    }
+
+    fn show_role_plugins_toast(
+        &self,
+        role_plugins: async_channel::Receiver<String>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(path) = role_plugins.recv().await else {
+                return;
+            };
+            this.update_in(cx, |this, _, cx| {
+                let root = cx.weak_entity();
+                this.toast(
+                    ui::toast::Toast::info("Plugins installed").action(
+                        "Manage",
+                        move |window, cx| {
+                            let _ =
+                                root.update(cx, |this, cx| this.open_plugins(&path, window, cx));
+                        },
+                    ),
+                    cx,
+                );
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn pick_onboarding_folder(
@@ -491,6 +579,99 @@ fn create_project(documents: &Path) -> Result<PathBuf> {
         }
     }
     unreachable!()
+}
+
+async fn install_role_plugins(
+    bridge: &bridge::Bridge,
+    config: &Value,
+    role: &str,
+) -> Result<Option<String>> {
+    let Some(ids) = config[role]
+        .as_array()
+        .filter(|ids| !ids.is_empty() && ids.len() <= 16)
+    else {
+        return Ok(None);
+    };
+    if !ids
+        .iter()
+        .all(|id| id.as_str().is_some_and(|id| !id.is_empty()))
+    {
+        return Ok(None);
+    }
+    let catalog: Value = bridge
+        .request("plugin/list", json!({"cwds": [], "forceRefetch": false}))
+        .await?;
+    let marketplaces = ui::screens::plugins::array(&catalog, "marketplaces");
+    let mut all_installed = true;
+    let mut any_new = false;
+    let mut seen = std::collections::HashSet::new();
+    for id in ids
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|id| seen.insert(*id))
+    {
+        let candidate = marketplaces
+            .iter()
+            .filter(|market| market["path"].is_null())
+            .find_map(|market| {
+                let plugin = ui::screens::plugins::array(market, "plugins")
+                    .iter()
+                    .find(|plugin| plugin["name"] == id || plugin["remotePluginId"] == id)?;
+                let marketplace = market["remoteMarketplaceName"]
+                    .as_str()
+                    .or_else(|| market["name"].as_str())?;
+                Some((plugin, marketplace, plugin["remotePluginId"].as_str()?))
+            });
+        let Some((plugin, marketplace, remote_id)) = candidate else {
+            all_installed = false;
+            continue;
+        };
+        if marketplaces.iter().any(|market| {
+            ui::screens::plugins::array(market, "plugins")
+                .iter()
+                .any(|entry| {
+                    entry["installed"] == true
+                        && (entry["id"] == plugin["id"] || entry["remotePluginId"] == remote_id)
+                })
+        }) {
+            continue;
+        }
+        let params = json!({"pluginName":remote_id,"remoteMarketplaceName":marketplace});
+        let result = async {
+            let detail: Value = bridge.request("plugin/read", &params).await?;
+            if detail["plugin"]["summary"]["mustShowInstallationInterstitial"] != false {
+                return Ok(false);
+            }
+            bridge
+                .request::<_, Value>("plugin/install", &params)
+                .await?;
+            Ok::<_, anyhow::Error>(true)
+        }
+        .await;
+        match result {
+            Ok(true) => any_new = true,
+            Ok(false) => all_installed = false,
+            Err(error) => {
+                eprintln!("codex-gpui: onboarding plugin {id}: {error:#}");
+                all_installed = false;
+            }
+        }
+    }
+    Ok((all_installed && any_new).then(|| {
+        config["manage_category_by_role"][role]
+            .as_str()
+            .map(str::trim)
+            .filter(|category| !category.is_empty())
+            .map_or_else(
+                || "/plugins".to_owned(),
+                |category| {
+                    let query = url::form_urlencoded::Serializer::new(String::new())
+                        .append_pair("category", category)
+                        .finish();
+                    format!("/skills?{query}")
+                },
+            )
+    }))
 }
 
 /// The bundled catalog the original falls back to when the backend has no tasks (`Bl`).
@@ -730,6 +911,71 @@ fn successful_response(response: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn role_preinstall_requires_a_new_install_and_suppresses_partial_success() -> Result<()> {
+        use std::io::Write as _;
+
+        let config = json!({
+            "life_sciences": ["eligible", "installed", "eligible"],
+            "manage_category_by_role": {"life_sciences": "scientific-research"}
+        });
+        let catalog = json!({"marketplaces": [{"name": "openai-curated", "plugins": [
+            {"id":"eligible@openai-curated","name":"eligible","remotePluginId":"plugin_eligible"},
+            {"id":"installed@openai-curated","name":"installed","remotePluginId":"plugin_installed","installed":true}
+        ]}]});
+        let mut replay = tempfile::NamedTempFile::new()?;
+        let params =
+            json!({"pluginName":"plugin_eligible","remoteMarketplaceName":"openai-curated"});
+        for (id, method, params, result) in [
+            (
+                1,
+                "plugin/list",
+                json!({"cwds":[],"forceRefetch":false}),
+                catalog.clone(),
+            ),
+            (
+                2,
+                "plugin/read",
+                params.clone(),
+                json!({"plugin":{"summary":{"mustShowInstallationInterstitial":false}}}),
+            ),
+            (
+                3,
+                "plugin/install",
+                params.clone(),
+                json!({"authPolicy":"ON_USE","appsNeedingAuth":[]}),
+            ),
+            (
+                4,
+                "plugin/list",
+                json!({"cwds":[],"forceRefetch":false}),
+                catalog,
+            ),
+            (
+                5,
+                "plugin/read",
+                params,
+                json!({"plugin":{"summary":{"mustShowInstallationInterstitial":true}}}),
+            ),
+        ] {
+            writeln!(
+                replay,
+                "{}\n{}",
+                json!({"dir":"send","msg":{"id":id,"method":method,"params":params}}),
+                json!({"dir":"recv","msg":{"id":id,"result":result}})
+            )?;
+        }
+        let (bridge, _) = bridge::Bridge::replay(replay.path())?;
+        let run = |role| pollster::block_on(install_role_plugins(&bridge, &config, role));
+        assert_eq!(run("engineering")?, None);
+        assert_eq!(
+            run("life_sciences")?.as_deref(),
+            Some("/skills?category=scientific-research")
+        );
+        assert_eq!(run("life_sciences")?, None);
+        Ok(())
+    }
 
     #[test]
     fn computer_use_requests_permissions_only_after_installing_the_bundled_plugin() -> Result<()> {

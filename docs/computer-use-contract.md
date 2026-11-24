@@ -174,4 +174,13 @@ The Stop hook ran once.
 Reset ran one live cleanup; the final Stop had no live surface to clean.
 A 30-second JavaScript wait delayed the single Interrupt cleanup until the call ended.
 The original one-second hook envelope timed out before that cleanup completed.
-This does not verify built-in Browser, Messages, or locked use.
+The LCU check does not verify built-in Browser, Messages, or locked use.
+
+## Built-in Browser
+
+On macOS, the app registers `in_app_browser` tools for the selected, loaded browser tab in the active chat turn.
+The tools can read the page, capture it, click a visible control, enter text, and navigate within the approved origin.
+An origin includes the scheme, host, and port.
+**Always ask** approves one call. **Always allow** saves approval for the origin.
+Remove a saved approval in **Settings → Browser → Site permissions** to make the next call ask again.
+Site restrictions and managed policy can block access even when the app has saved approval.

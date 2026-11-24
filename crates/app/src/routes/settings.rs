@@ -1,5 +1,6 @@
 use crate::*;
 use gpui::Div;
+use settings::browser_settings::{BROWSER_TOOL_GRANTS, RevokeBrowserToolGrant};
 
 pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     root.on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
@@ -77,6 +78,37 @@ pub(super) fn page(root: &mut Root, window: &mut Window, cx: &mut Context<Root>)
         cx,
     );
     page.update(cx, |page, _| page.set_toaster(root.toaster.clone()));
+    page.update(cx, |_, cx| {
+        cx.observe_global::<host_settings::Settings>(|page, cx| {
+            let grants = cx
+                .global::<host_settings::Settings>()
+                .read_all()
+                .get(BROWSER_TOOL_GRANTS)
+                .cloned()
+                .unwrap_or(Value::Null);
+            page.refresh_browser_tool_grants(grants, cx);
+        })
+        .detach();
+    });
+    cx.subscribe(&page, |root, _, event: &RevokeBrowserToolGrant, cx| {
+        if !cx.has_global::<host_settings::Settings>() {
+            return;
+        }
+        if let Err(error) = cx.update_global::<host_settings::Settings, _>(|settings, _| {
+            settings.update(BROWSER_TOOL_GRANTS, |value| {
+                let mut grants = value
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                grants.remove(&event.0);
+                Ok(Value::Object(grants))
+            })
+        }) {
+            eprintln!("codex-gpui: revoke browser tool grant: {error:#}");
+            root.toast(Toast::danger("Unable to revoke site permission"), cx);
+        }
+    })
+    .detach();
     let cloud = crate::cloud::attach(root, &page, window, cx);
     if let Route::CloudEnvironments(path) = &root.state.route {
         cloud.update(cx, |cloud, cx| cloud.open_path(path, cx));

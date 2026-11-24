@@ -285,6 +285,7 @@ pub struct Page {
     pub tab: Tab,
     pub data: Data,
     pub available: bool,
+    category: bool,
     pub query: Entity<Composer>,
     pub detail: Option<Arc<Plugin>>,
     pub detail_data: Resource<Value>,
@@ -320,7 +321,8 @@ impl Focusable for Page {
 
 impl Page {
     pub fn new(route: &str, available: bool, cx: &mut Context<Self>) -> Self {
-        let tab = if route.starts_with("/skills") {
+        let category = category_from_route(route).is_some();
+        let tab = if route.starts_with("/skills") && !category {
             Tab::Skills
         } else {
             Tab::Plugins
@@ -344,6 +346,7 @@ impl Page {
             tab,
             data: Data::default(),
             available,
+            category,
             query,
             detail: None,
             detail_data: Resource::Loading,
@@ -381,8 +384,12 @@ impl Page {
     pub fn query_changed(&mut self, cx: &mut Context<Self>) {
         self.search_gen += 1;
         self.search = None;
+        if self.category || self.tab != Tab::Plugins || !self.available {
+            cx.notify();
+            return;
+        }
         let term = self.query.read(cx).field_text().trim().to_owned();
-        if term.is_empty() || self.tab != Tab::Plugins || !self.available {
+        if term.is_empty() {
             cx.notify();
             return;
         }
@@ -425,6 +432,15 @@ impl Page {
         }
         cx.notify();
     }
+}
+
+pub fn category_from_route(route: &str) -> Option<std::borrow::Cow<'_, str>> {
+    let (path, query) = route.split_once('?')?;
+    if !matches!(path, "/skills" | "/plugins") {
+        return None;
+    }
+    url::form_urlencoded::parse(query.as_bytes())
+        .find_map(|(key, value)| (key == "category" && !value.is_empty()).then_some(value))
 }
 
 pub fn string<'a>(value: &'a Value, key: &str) -> &'a str {
