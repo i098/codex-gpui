@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Start a chat on a connected computer from `Work in` → `Remote`. The sidebar shows remote projects by computer and connection status (#971).
+- Install configured plugins after the onboarding role step. After setup, select Manage on the Plugins installed notice to open the role's plugin category (#1559).
 - Add the macOS onboarding switches for Computer use and Computer history. They install the bundled Computer use plugin, request macOS permissions, and turn on Computer history with Memories (#1560).
 - In the macOS in-app browser, allow or block sites that ask to start or toggle annotation mode (#837).
 - On macOS, render MCP App widgets from completed tool calls inside the thread (#909).
