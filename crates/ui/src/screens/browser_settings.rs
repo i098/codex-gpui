@@ -6,6 +6,11 @@ use chrono::TimeZone as _;
 use gpui::BorrowAppContext as _;
 use std::collections::HashSet;
 
+#[path = "browser_settings/download_history.rs"]
+mod download_history;
+use download_history::DownloadHistoryPage;
+pub use download_history::{Download, DownloadHistory};
+
 /// `browser_use.default_origin_policy.full_cdp_access`: `allow` or `deny`.
 pub(super) const FULL_CDP: &str = "browser_use.default_origin_policy.full_cdp_access";
 
@@ -527,11 +532,28 @@ impl SettingsPane {
         .on_click(cx.listener(|this, _, _, cx| {
             let page = cx.new(HistoryPage::new);
             cx.subscribe(&page, |this, _, _: &Back, cx| {
-                this.browsing_history = None;
+                this.browser_subpage = None;
                 cx.notify();
             })
             .detach();
-            this.browsing_history = Some(page);
+            this.browser_subpage = Some(page.into());
+            cx.notify();
+        }));
+        let download_manage = action(
+            "download-history-manage",
+            "Manage",
+            Kind::Secondary,
+            false,
+            t,
+        )
+        .on_click(cx.listener(|this, _, _, cx| {
+            let page = cx.new(DownloadHistoryPage::new);
+            cx.subscribe(&page, |this, _, _: &Back, cx| {
+                this.browser_subpage = None;
+                cx.notify();
+            })
+            .detach();
+            this.browser_subpage = Some(page.into());
             cx.notify();
         }));
         let general = vec![
@@ -556,6 +578,11 @@ impl SettingsPane {
                         cx,
                     ))
                     .into_any_element(),
+            ),
+            row(
+                "Download history",
+                Some("View and manage files downloaded from the built-in browser"),
+                download_manage.into_any_element(),
             ),
         ];
         vec![

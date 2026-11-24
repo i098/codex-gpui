@@ -4,6 +4,8 @@
 //! The page is a WKWebView laid over the window's view on macOS ([`page`]). A window without
 //! a native view (gpui's headless renderer) keeps the tab's navigation state and draws no page.
 
+#[cfg(target_os = "macos")]
+use gpui::BorrowAppContext as _;
 use gpui::{
     Action, Animation, AnimationExt as _, App, AppContext as _, Bounds, Context, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, Pixels,
@@ -657,6 +659,13 @@ impl BrowserTab {
 
     /// Reads the page again after it reported a change, emitting what differs.
     fn page_changed(&mut self, change: page::PageChange, cx: &mut Context<Self>) {
+        #[cfg(target_os = "macos")]
+        if let page::PageChange::Downloaded(download) = change {
+            cx.update_default_global::<crate::screens::settings::browser_settings::DownloadHistory, _>(
+                |history, _| history.0.push(download),
+            );
+            return;
+        }
         #[cfg(target_os = "macos")]
         if let page::PageChange::ScriptMessage(body) = change {
             cx.emit(BrowserEvent::ScriptMessage(body));
