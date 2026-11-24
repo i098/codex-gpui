@@ -11,7 +11,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use ui::screens::space::{Retry, Spaces};
+use ui::screens::space::{Pages, Retry, Spaces};
 
 const RECORDING: &str = include_str!("../../../fixtures/space-sites.json");
 
@@ -30,6 +30,16 @@ fn names(fx: &Fx) -> Option<Vec<String>> {
     })
 }
 
+fn page_titles(fx: &Fx) -> Option<Vec<String>> {
+    fx.read(|root, cx| {
+        let page = root.space_page()?.read(cx);
+        let Pages::Ready(pages) = &page.pages else {
+            return None;
+        };
+        Some(pages.iter().map(|page| page.title.clone()).collect())
+    })
+}
+
 #[test]
 fn rail_space_lists_spaces_from_every_page() -> Result<()> {
     let mut fx = Fx::new()?;
@@ -43,6 +53,13 @@ fn rail_space_lists_spaces_from_every_page() -> Result<()> {
     fx.wait("the Spaces list", |fx| names(fx).is_some())?;
     // Newest `updated_at` first, across both `next_cursor` pages.
     ensure!(names(&fx) == Some(vec!["Launch notes".into(), "Demo space".into()]));
+    fx.wait("the Pages list", |fx| page_titles(fx).is_some())?;
+    // Newest `last_used_at` first: the second `next_cursor` page holds the older Page.
+    ensure!(
+        page_titles(&fx) == Some(vec!["Launch notes page".into(), "Older page".into()]),
+        "pages {:?}",
+        page_titles(&fx)
+    );
     fx.capture_evidence("CGX_SPACE_EVIDENCE", "after-rail-space")?;
 
     let query = fx.read(|root, cx| root.space_page().unwrap().read(cx).query.clone());

@@ -30,12 +30,32 @@ pub enum Spaces {
     Failed,
 }
 
+/// One private Page from `GET /pages?surface=private`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Page {
+    pub id: String,
+    pub title: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum Pages {
+    #[default]
+    Loading,
+    Ready(Vec<Page>),
+    Failed,
+}
+
 /// `space.list.retry`: load the list again.
 #[derive(Clone, Debug)]
 pub struct Retry;
 
+/// `space.list.retryPersonalPages`: load the page list again.
+#[derive(Clone, Debug)]
+pub struct PageRetry;
+
 pub struct SpacePage {
     pub spaces: Spaces,
+    pub pages: Pages,
     pub query: Entity<Composer>,
     /// `Files`: the Library replaces the Spaces list while it is `Some`.
     pub library: Option<library::Library>,
@@ -44,6 +64,7 @@ pub struct SpacePage {
 }
 
 impl EventEmitter<Retry> for SpacePage {}
+impl EventEmitter<PageRetry> for SpacePage {}
 impl EventEmitter<library::Action> for SpacePage {}
 impl Focusable for SpacePage {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -54,6 +75,11 @@ impl Focusable for SpacePage {
 impl SpacePage {
     pub fn set_spaces(&mut self, spaces: Spaces, cx: &mut Context<Self>) {
         self.spaces = spaces;
+        cx.notify();
+    }
+
+    pub fn set_pages(&mut self, pages: Pages, cx: &mut Context<Self>) {
+        self.pages = pages;
         cx.notify();
     }
 
@@ -127,6 +153,7 @@ pub fn shell(cx: &mut App) -> (Entity<Shell>, Entity<SpacePage>) {
         cx.observe(&query, |_, _, cx| cx.notify()).detach();
         SpacePage {
             spaces: Spaces::Loading,
+            pages: Pages::Loading,
             query,
             library: None,
             confirmation: None,
@@ -152,7 +179,7 @@ impl Render for SpacePage {
                 self.library_header(&library, window, cx),
                 self.library_body(&library, window, cx),
             ),
-            None => (self.spaces_header(window, cx), self.spaces_body(window, cx)),
+            None => (self.spaces_header(window, cx), self.landing(window, cx)),
         };
         div()
             .id("space-page")
@@ -212,6 +239,70 @@ impl SpacePage {
                     .child(files)
                     .child(search),
             )
+    }
+
+    /// `space.gettingStarted.*`: the heading and description above the account's Pages.
+    fn landing(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(24.))
+            .child(self.spaces_body(window, cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(text("Create pages in Space", 14., 20., 600., t.text))
+                    .child(text(
+                        "Choose a template to start working with ChatGPT and your team",
+                        13.,
+                        18.,
+                        400.,
+                        t.text_secondary,
+                    )),
+            )
+            .child(self.pages_body(window, cx))
+    }
+
+    fn pages_body(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
+        let message = |s: &'static str| text(s, 14., 20., 400., t.text_secondary);
+        match &self.pages {
+            Pages::Loading => div(),
+            Pages::Failed => div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(message("Could not load pages"))
+                .child(button(
+                    "pages-retry",
+                    "Try again",
+                    window,
+                    cx,
+                    |_, _, cx| cx.emit(PageRetry),
+                )),
+            Pages::Ready(pages) if pages.is_empty() => message("No pages yet"),
+            Pages::Ready(pages) => div().flex().flex_col().children(pages.iter().map(|page| {
+                div()
+                    .id(gpui::SharedString::from(format!("page-{}", page.id)))
+                    .h(px(40.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .rounded(px(8.))
+                    .hover(|d| d.bg(t.ghost_hover))
+                    .child(icon("diff-file-default", 16., t.text_secondary))
+                    .child(div().min_w_0().truncate().child(text(
+                        page.title.clone(),
+                        14.,
+                        20.,
+                        400.,
+                        t.text,
+                    )))
+            })),
+        }
     }
 
     fn spaces_body(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
