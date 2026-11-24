@@ -23,6 +23,9 @@ pub(super) struct Pick {
     target_description: Option<String>,
     target_role: Option<String>,
     target_selector: Option<String>,
+    target_path: Option<String>,
+    target_immediate_text: Option<String>,
+    nearby_text: Option<String>,
     selected_text: Option<String>,
 }
 
@@ -117,9 +120,9 @@ impl BrowserTab {
                     target_name: None,
                     target_role: pick.target_role,
                     target_selector: pick.target_selector,
-                    target_path: None,
-                    target_immediate_text: None,
-                    nearby_text: None,
+                    target_path: pick.target_path,
+                    target_immediate_text: pick.target_immediate_text,
+                    nearby_text: pick.nearby_text,
                 },
                 SelectionKind::Region => Selection::Region {
                     page_url,
@@ -164,6 +167,8 @@ impl BrowserTab {
                 target_description: pick.target_description,
                 target_role: pick.target_role,
                 target_selector: pick.target_selector,
+                target_path: pick.target_path,
+                nearby_text: pick.nearby_text,
                 target_rect: Some(pick.target_rect),
                 ..Default::default()
             },
