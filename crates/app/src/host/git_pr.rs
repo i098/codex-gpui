@@ -187,11 +187,23 @@ fn gitlab_create_args(
     Ok(args)
 }
 
-fn gitlab_merge_request_url(repository: &str, output: &str) -> Result<Value> {
-    let iid = output
-        .strip_prefix(repository)
-        .and_then(|path| path.strip_prefix("/-/merge_requests/"))
-        .and_then(|iid| iid.parse::<u64>().ok())
+fn gitlab_merge_request_url(output: &str) -> Result<Value> {
+    // A renamed project or a remote with other letter case returns a different path.
+    let iid = url::Url::parse(output)
+        .ok()
+        .filter(|url| {
+            url.scheme() == "https"
+                && url
+                    .host_str()
+                    .is_some_and(|host| host.eq_ignore_ascii_case("gitlab.com"))
+        })
+        .and_then(|url| {
+            url.path()
+                .rsplit_once("/-/merge_requests/")?
+                .1
+                .parse::<u64>()
+                .ok()
+        })
         .filter(|iid| *iid > 0);
     ensure!(iid.is_some(), "GitLab did not return a merge request URL");
     Ok(json!({"url": output}))
@@ -222,7 +234,7 @@ fn existing_merge_request(
     }) else {
         return Ok(Value::Null);
     };
-    gitlab_merge_request_url(repository, row["web_url"].as_str().unwrap_or_default())
+    gitlab_merge_request_url(row["web_url"].as_str().unwrap_or_default())
 }
 
 pub(super) fn summary(host: &super::LocalHost, params: &Value) -> Result<Value> {
@@ -320,7 +332,7 @@ pub(super) fn create(host: &super::LocalHost, params: &Value) -> Result<Value> {
     if let Some(repository) = &gitlab {
         let args = gitlab_create_args(cwd, repository, branch, params)?;
         let output = repository_command(host, cwd, &args)?;
-        return gitlab_merge_request_url(repository, &output);
+        return gitlab_merge_request_url(&output);
     }
     let mut args = vec!["gh".into(), "pr".into(), "create".into(), "--fill".into()];
     for (field, flag) in [("title", "--title"), ("body", "--body"), ("base", "--base")] {
@@ -446,6 +458,20 @@ mod tests {
             "git@gitlab.com:project",
         ] {
             assert!(gitlab_project(remote).is_none(), "{remote}");
+        }
+    }
+
+    #[test]
+    fn merge_request_url_accepts_renamed_project() {
+        assert!(
+            gitlab_merge_request_url("https://gitlab.com/Team/New-Name/-/merge_requests/7").is_ok()
+        );
+        for bad in [
+            "https://example.com/team/project/-/merge_requests/7",
+            "https://gitlab.com/team/project/-/merge_requests/x",
+            "created",
+        ] {
+            assert!(gitlab_merge_request_url(bad).is_err(), "{bad}");
         }
     }
 

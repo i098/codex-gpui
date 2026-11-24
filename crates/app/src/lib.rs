@@ -2536,9 +2536,7 @@ impl Root {
         let host = self.host.clone();
         let params = json!({"cwd": cwd, "creationProvider": true});
         let lookup = host.clone();
-        let read = cx.background_spawn(async move {
-            git_call(&*lookup, "gh-thread-pr", params).unwrap_or_default()
-        });
+        let read = cx.background_spawn(async move { git_call(&*lookup, "gh-thread-pr", params) });
         self.set_git_phase(Some("Loading repository…"), cx);
         cx.spawn_in(window, async move |this, cx| {
             let provider = read.await;
@@ -2550,6 +2548,16 @@ impl Root {
                 {
                     return;
                 }
+                let provider = match provider {
+                    Ok(provider) => provider,
+                    Err(error) => {
+                        this.toast(
+                            Toast::danger(format!("Cannot read the Git remote: {error}")),
+                            cx,
+                        );
+                        return;
+                    }
+                };
                 let gitlab = provider["gitLab"] == true;
                 let base = provider["baseBranch"]
                     .as_str()
