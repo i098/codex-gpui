@@ -241,29 +241,15 @@ impl SpacePage {
             )
     }
 
-    /// `space.gettingStarted.*`: the heading and description above the account's Pages.
+    /// The Spaces, then the account's Pages. The original's `space.gettingStarted.*` heading
+    /// sits above template tiles; it stays hidden until the tiles land (#1595).
     fn landing(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let t = cx.theme().clone();
         div()
             .flex()
             .flex_col()
-            .gap(px(24.))
             .child(self.spaces_body(window, cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(text("Create pages in Space", 14., 20., 600., t.text))
-                    .child(text(
-                        "Choose a template to start working with ChatGPT and your team",
-                        13.,
-                        18.,
-                        400.,
-                        t.text_secondary,
-                    )),
-            )
-            .child(self.pages_body(window, cx))
+            // Legacy page `mt-8` section around recent-pages `pt-4`.
+            .child(div().pt(px(48.)).child(self.pages_body(window, cx)))
     }
 
     fn pages_body(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -284,22 +270,40 @@ impl SpacePage {
                     |_, _, cx| cx.emit(PageRetry),
                 )),
             Pages::Ready(pages) if pages.is_empty() => message("No pages yet"),
+            // `ContentRow` in a `sidebar-navigation` list: `py-row-y` 5px, `px-row-x` 8px,
+            // `text-base` 14/21 `text-default`, 16px page icon, `gap-2`, `rounded-xl`,
+            // `hover:bg-primary-ghost-hover`, and a `border-subtle` divider inset 12px.
             Pages::Ready(pages) => div().flex().flex_col().children(pages.iter().map(|page| {
+                let group = SharedString::from(format!("page-{}", page.id));
                 div()
-                    .id(gpui::SharedString::from(format!("page-{}", page.id)))
-                    .h(px(40.))
+                    .id(group.clone())
+                    .group(group.clone())
+                    .relative()
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .rounded(px(8.))
+                    .px(px(8.))
+                    .py(px(5.))
+                    .rounded(theme::Theme::RADIUS_XL)
+                    .hover(|s| s.bg(t.ghost_hover))
                     .child(icon("diff-file-default", 16., t.text_secondary))
                     .child(div().min_w_0().truncate().child(text(
                         page.title.clone(),
                         14.,
-                        20.,
-                        400.,
+                        21.,
+                        theme::Theme::FONT_WEIGHT_UI.0,
                         t.text,
                     )))
+                    .child(
+                        div()
+                            .absolute()
+                            .bottom_0()
+                            .left(px(12.))
+                            .right(px(12.))
+                            .h(px(1.))
+                            .bg(t.border_subtle)
+                            .group_hover(group, |s| s.invisible()),
+                    )
             })),
         }
     }

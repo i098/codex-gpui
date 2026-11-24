@@ -30,7 +30,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - ChatGPT mode: when the account has internal models, the `Select ChatGPT model` list ends with the `Internal models` submenu: a search field, the models whose title or slug matches, else `No internal models found`; a pick selects the model (#1543).
 - ChatGPT mode: a model that reached its limit in a Chat conversation (`conversation_detail_metadata`'s `model_limits`) disables its row in the `Select ChatGPT model` list and the `Internal models` submenu, with the original's tooltip (`Limit reached. Try again after …`) (#1544).
 - ChatGPT mode: a Chat turn sends the selected model and its thinking effort in the `/f/conversation` body (`model`, `thinking_effort`). Before, every Chat turn sent `auto` (#1546).
-- Rail `Space`: the landing shows the `Create pages in Space` section and the account's private Pages from `GET /pages?surface=private`, newest `last_used_at` first, with the load-error retry and the empty state. Create page is tracked in #1595 (#979).
+- Rail `Space`: the landing shows the account's private Pages under the Spaces, from `GET /pages?surface=private`, newest `last_used_at` first, with the load-error retry and the empty state. Create page and its `Create pages in Space` templates are tracked in #1595 (#979).
 ### Fixed
 - Stop the app from trying to open its own executable when it starts from an absolute path (#1575).
 - Show installed plugin logos in the Customize sidebar, with theme-aware images and app icons when no plugin logo is available (#1505).
