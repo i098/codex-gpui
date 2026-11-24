@@ -105,7 +105,10 @@ const SOURCES: &[(&str, &str)] = &[
 ];
 const SOURCE_DETAILS: &[(&str, &str)] = &[
     ("pinned", "First six chats in Pinned"),
-    ("recent", "First six recently updated chats, pinned or unpinned"),
+    (
+        "recent",
+        "First six recently updated chats, pinned or unpinned",
+    ),
     ("priority", "Waiting, unread, and active chats first"),
 ];
 
@@ -153,7 +156,12 @@ fn default_layout() -> Value {
 fn slot_keycap<'a>(layout: &'a Value, slot: &str) -> &'a str {
     layout["slots"][slot]["keycapId"]
         .as_str()
-        .unwrap_or_else(|| DEFAULT_SLOTS.iter().find(|s| s.0 == slot).map_or("EMPT1", |s| s.1))
+        .unwrap_or_else(|| {
+            DEFAULT_SLOTS
+                .iter()
+                .find(|s| s.0 == slot)
+                .map_or("EMPT1", |s| s.1)
+        })
 }
 
 /// Puts `id` on `slot`; a keycap already on another slot of the same size swaps places, as the
@@ -161,9 +169,11 @@ fn slot_keycap<'a>(layout: &'a Value, slot: &str) -> &'a str {
 fn assign(layout: &mut Value, slot: &str, id: &str) {
     let double = slot == "ACT10_ACT11";
     let previous = slot_keycap(layout, slot).to_owned();
-    let other = DEFAULT_SLOTS
+    let other = GRID
         .iter()
-        .map(|s| s.0)
+        .copied()
+        .flatten()
+        .copied()
         .find(|&s| s != slot && (s == "ACT10_ACT11") == double && slot_keycap(layout, s) == id);
     if let Some(other) = other {
         layout["slots"][other] = json!({ "keycapId": previous });
@@ -219,7 +229,9 @@ impl SettingsPane {
             ),
             settings_row(
                 "Auto-dim",
-                Some("Turns lighting off after inactivity and back on when you use Codex Micro or an agent key changes color or state"),
+                Some(
+                    "Turns lighting off after inactivity and back on when you use Codex Micro or an agent key changes color or state",
+                ),
                 self.select_menu_or(AUTO_OFF, AUTO_OFFS, "3-minutes", None, |s| s, cx),
                 t,
             ),
@@ -241,7 +253,9 @@ impl SettingsPane {
             ),
             settings_row(
                 "Focus Codex with a single tap",
-                Some("Open the assigned task and focus the Codex window with a single tap instead of a double tap"),
+                Some(
+                    "Open the assigned task and focus the Codex window with a single tap instead of a double tap",
+                ),
                 self.toggle(SINGLE_TAP, false, t, window, cx),
                 t,
             ),
@@ -313,8 +327,14 @@ impl SettingsPane {
                     }
                 })
             })
-            .on_mouse_up(gpui::MouseButton::Left, cx.listener(Self::end_brightness_drag))
-            .on_mouse_up_out(gpui::MouseButton::Left, cx.listener(Self::end_brightness_drag))
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(Self::end_brightness_drag),
+            )
+            .on_mouse_up_out(
+                gpui::MouseButton::Left,
+                cx.listener(Self::end_brightness_drag),
+            )
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
                 let step = match event.keystroke.key.as_str() {
                     "left" | "down" => -1.,
@@ -332,13 +352,13 @@ impl SettingsPane {
             .items_center()
             .gap(px(10.))
             .child(slider)
-            .child(
-                div()
-                    .w(px(48.))
-                    .flex()
-                    .justify_end()
-                    .child(text(format!("{value:.0}%"), 13., 18., 430., t.text_secondary)),
-            )
+            .child(div().w(px(48.)).flex().justify_end().child(text(
+                format!("{value:.0}%"),
+                13.,
+                18.,
+                430.,
+                t.text_secondary,
+            )))
             .into_any_element()
     }
 
@@ -365,21 +385,33 @@ impl SettingsPane {
     fn layout_row(&mut self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let layout = self.layout(cx);
         let dark = t.appearance == Appearance::Dark;
-        let mut key = |slot: &'static str, span: f32| {
-            let id = slot_keycap(&layout, slot);
-            let label = keycap(id).map_or("", |k| k.1);
-            let focus = focus::handle((gpui::ElementId::from("codex-micro-slot"), slot), 0, window, cx);
-            let tile = tile(id, (SURFACE_CELL * span + 4. * (span - 1.), SURFACE_CELL), 12., false, t)
+        let mut key =
+            |slot: &'static str, span: f32| {
+                let id = slot_keycap(&layout, slot);
+                let label = keycap(id).map_or("", |k| k.1);
+                let focus = focus::handle(
+                    (gpui::ElementId::from("codex-micro-slot"), slot),
+                    0,
+                    window,
+                    cx,
+                );
+                let tile = tile(
+                    id,
+                    (SURFACE_CELL * span + 4. * (span - 1.), SURFACE_CELL),
+                    12.,
+                    false,
+                    t,
+                )
                 .id(slot)
                 .role(gpui::Role::Button)
                 .aria_label(format!("Edit {slot}: {label}"));
-            focus::ring(tile, &focus, px(13.), px(2.), cx)
-                .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.open_keycap_editor(slot, window, cx)
-                }))
-                .into_any_element()
-        };
+                focus::ring(tile, &focus, px(13.), px(2.), cx)
+                    .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_keycap_editor(slot, window, cx)
+                    }))
+                    .into_any_element()
+            };
         // Auto-placement in the original's child order (no explicit row or column classes):
         // knob, AG00, AG01, stick, AG02-05, ACT06-09, indicator, ACT10_11 (`col-span-2`), ACT12.
         let cells: Vec<(AnyElement, u8)> = vec![
@@ -420,11 +452,23 @@ impl SettingsPane {
             .child(on_card(
                 12.,
                 Squircle,
-                if dark { gpui::rgb(0x18191e).into() } else { gpui::rgb(0xebe8e2).into() },
+                if dark {
+                    gpui::rgb(0x18191e).into()
+                } else {
+                    gpui::rgb(0xebe8e2).into()
+                },
                 Some(gpui::white().opacity(if dark { 0.1 } else { 0.82 })),
             ))
-            .children(rows.into_iter().map(|row| div().flex().gap(px(4.)).children(row)));
-        div().flex().justify_center().px(px(16.)).py(px(20.)).child(surface)
+            .children(
+                rows.into_iter()
+                    .map(|row| div().flex().gap(px(4.)).children(row)),
+            );
+        div()
+            .flex()
+            .justify_center()
+            .px(px(16.))
+            .py(px(20.))
+            .child(surface)
     }
 
     /// `We`: the ghost `Reset layout` action in the section header; it asks first.
@@ -462,7 +506,12 @@ impl SettingsPane {
         cx.notify();
     }
 
-    fn open_keycap_editor(&mut self, slot: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_keycap_editor(
+        &mut self,
+        slot: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let focus = self
             .codex_micro
             .focus
@@ -483,7 +532,8 @@ impl SettingsPane {
         if let Some((slot, Some(id))) = self.codex_micro.edit {
             let mut layout = self.layout(cx);
             assign(&mut layout, slot, id);
-            self.page.update(cx, |page, cx| page.set(LAYOUT, layout, cx));
+            self.page
+                .update(cx, |page, cx| page.set(LAYOUT, layout, cx));
         }
         self.close_keycap_editor(cx);
     }
@@ -555,7 +605,13 @@ impl SettingsPane {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(text("No matching keycaps", 13., 18., 430., t.text_secondary))
+                .child(text(
+                    "No matching keycaps",
+                    13.,
+                    18.,
+                    430.,
+                    t.text_secondary,
+                ))
         } else {
             // `grid-cols-[repeat(auto-fill,minmax(4.75rem,4.75rem))] justify-between gap-2`
             // in a `px-1` scroller: the columns spread over the full width.
@@ -563,8 +619,11 @@ impl SettingsPane {
             let mut tiles = tiles.peekable();
             let mut lines = Vec::new();
             while tiles.peek().is_some() {
-                let mut line: Vec<AnyElement> =
-                    tiles.by_ref().take(columns).map(IntoElement::into_any_element).collect();
+                let mut line: Vec<AnyElement> = tiles
+                    .by_ref()
+                    .take(columns)
+                    .map(IntoElement::into_any_element)
+                    .collect();
                 while line.len() < columns {
                     line.push(div().w(px(TILE)).h(px(TILE)).into_any_element());
                 }
@@ -733,7 +792,11 @@ fn tile(id: &str, size: (f32, f32), radius: f32, selected: bool, t: &Theme) -> D
 /// A round control on the surface: the analog stick (`#111111` cap) or the knob.
 fn round_cell(cap: u32, scale: f32, t: &Theme) -> Div {
     let dark = t.appearance == Appearance::Dark;
-    let fill = if dark { gpui::rgb(0x23252c) } else { gpui::rgb(0xdad4ca) };
+    let fill = if dark {
+        gpui::rgb(0x23252c)
+    } else {
+        gpui::rgb(0xdad4ca)
+    };
     let edge = gpui::white().opacity(if dark { 0.12 } else { 0.84 });
     div()
         .relative()
@@ -744,15 +807,28 @@ fn round_cell(cap: u32, scale: f32, t: &Theme) -> Div {
         .items_center()
         .justify_center()
         .child(on_card(12., Squircle, fill.into(), Some(edge)))
-        .child(div().size(px(SURFACE_CELL * scale)).rounded_full().bg(gpui::rgb(cap)))
+        .child(
+            div()
+                .size(px(SURFACE_CELL * scale))
+                .rounded_full()
+                .bg(gpui::rgb(cap)),
+        )
 }
 
 /// An agent key (`tt`, `opaque`): `rounded-xl` cell, unassigned (`off`) so a `size-1.5` ring dot.
 fn agent_cell(t: &Theme) -> Div {
     let dark = t.appearance == Appearance::Dark;
-    let fill = if dark { gpui::rgb(0x202127) } else { gpui::rgb(0xf7f5f1) };
+    let fill = if dark {
+        gpui::rgb(0x202127)
+    } else {
+        gpui::rgb(0xf7f5f1)
+    };
     let edge = gpui::white().opacity(if dark { 0.14 } else { 0.82 });
-    let ring = if dark { gpui::white().opacity(0.15) } else { gpui::black().opacity(0.1) };
+    let ring = if dark {
+        gpui::white().opacity(0.15)
+    } else {
+        gpui::black().opacity(0.1)
+    };
     div()
         .relative()
         .flex_none()
@@ -762,13 +838,23 @@ fn agent_cell(t: &Theme) -> Div {
         .items_center()
         .justify_center()
         .child(on_card(12., Squircle, fill.into(), Some(edge)))
-        .child(div().size(px(6.)).rounded_full().border_1().border_color(ring))
+        .child(
+            div()
+                .size(px(6.))
+                .rounded_full()
+                .border_1()
+                .border_color(ring),
+        )
 }
 
 /// `lt`: the indicator, three lamps (`#9ebdff` lit, two `#b8b98b`) beside a `58%` disc.
 fn indicator_cell(t: &Theme) -> Div {
     let dark = t.appearance == Appearance::Dark;
-    let disc = if dark { gpui::rgb(0x202127) } else { gpui::rgb(0x2d2925) };
+    let disc = if dark {
+        gpui::rgb(0x202127)
+    } else {
+        gpui::rgb(0x2d2925)
+    };
     let lamp = |c: u32| div().size(px(4.)).rounded_full().bg(gpui::rgb(c));
     div()
         .flex_none()
@@ -800,6 +886,15 @@ mod tests {
         assign(&mut layout, "ACT06", "APPR");
         assert_eq!(slot_keycap(&layout, "ACT06"), "APPR");
         assert_eq!(slot_keycap(&layout, "ACT07"), "FAST");
+    }
+
+    #[test]
+    fn swap_never_moves_a_keycap_into_a_hidden_slot() {
+        let mut layout = default_layout();
+        assign(&mut layout, "ACT06", "MIC1");
+        assert_eq!(slot_keycap(&layout, "ACT06"), "MIC1");
+        assert_eq!(slot_keycap(&layout, "ACT10"), "MIC1");
+        assert_eq!(slot_keycap(&layout, "ACT07"), "APPR");
     }
 
     #[test]

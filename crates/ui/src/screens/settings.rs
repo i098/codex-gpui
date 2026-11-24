@@ -1938,7 +1938,14 @@ impl Render for SettingsPane {
                         .items_center()
                         .justify_between()
                         .child(text(title, 14., 21., 500., t.text))
-                        .when_some(if title == "Layout" { reset.take() } else { None }, |d, b| d.child(b)),
+                        .when_some(
+                            if title == "Layout" {
+                                reset.take()
+                            } else {
+                                None
+                            },
+                            |d, b| d.child(b),
+                        ),
                 )
                 .child(
                     div()
