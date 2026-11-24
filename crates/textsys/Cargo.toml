@@ -12,7 +12,7 @@ gpui.workspace = true
 anyhow.workspace = true
 core-foundation = "0.10"
 core-graphics = "0.24"
-core-text = "21"
+core-text = "22"
 harfbuzz-sys = { version = "0.8", default-features = false, features = ["bundled"] }
 objc2 = "0.6"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSResponder", "NSView"] }
