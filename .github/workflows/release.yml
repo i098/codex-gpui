@@ -14,13 +14,16 @@ on:
         required: true
 permissions:
   contents: write
-  actions: write
 env:
   TAG: ${{ inputs.tag || github.ref_name }}
 jobs:
   auto-tag:
-    if: github.ref_type == 'branch'
+    if: github.event_name == 'push' && github.ref_type == 'branch'
     runs-on: codex-gpui
+    permissions:
+      contents: write
+      actions: write
+    concurrency: release-auto-tag
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -30,6 +33,10 @@ jobs:
       - name: Tag a 0.1.x version and dispatch its release
         run: |
           tools/auto-release-tag.sh test
+          # Only a push that changes the version tags; a dependency-only Cargo.toml edit does not.
+          git fetch --depth=1 origin "${{ github.event.before }}" 2>/dev/null || true
+          before=$(git show FETCH_HEAD:Cargo.toml 2>/dev/null | sed -n 's/^version = "\(.*\)"$/\1/p' | head -n 1)
+          [[ $before != "$(tools/version.sh)" ]] || { echo "version unchanged ($before)"; exit 0; }
           tag=$(tools/auto-release-tag.sh)
           [[ -n $tag ]] || { echo "version $(tools/version.sh) does not release automatically"; exit 0; }
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then echo "$tag exists"; exit 0; fi
