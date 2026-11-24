@@ -22,9 +22,13 @@ const TEAMS_GATE: &str = "853110088";
 
 pub fn install(root: WeakEntity<Root>, cx: &mut App) {
     cx.set_global(State {
+        // Deferred: the page refreshes while it is built, inside the root's own update.
         dispatch: Some(Arc::new(move |action, cx| {
-            root.update(cx, |root, cx| root.teams_action(action, cx))
-                .ok();
+            let root = root.clone();
+            cx.defer(move |cx| {
+                root.update(cx, |root, cx| root.teams_action(action, cx))
+                    .ok();
+            });
         })),
         ..Default::default()
     });

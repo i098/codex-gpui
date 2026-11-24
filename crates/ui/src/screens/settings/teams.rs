@@ -4,7 +4,7 @@
 use super::{
     Layer,
     account_page::{Kind, action, frame, paragraph, status},
-    settings_row_content,
+    description, settings_row_content,
     worktrees::card,
 };
 use crate::{composer::Composer, screens::computer_use::Load, text};
@@ -119,8 +119,13 @@ impl Teams {
             cx.new(|cx| Composer::settings_compact_field(placeholder, value, cx).field_label(label))
         };
         let (name, description) = team.map_or(("", ""), |t| (&t.name, &t.description));
-        let name = field("Enter a team name", "Team name", name, cx);
-        let description = field("Add a description", "Description", description, cx);
+        let name = field("Team name", "Name", name, cx);
+        let description = field(
+            "Description—what does your team work on?",
+            "Description",
+            description,
+            cx,
+        );
         window.focus(&name.focus_handle(cx), cx);
         self.form = Some(Form {
             id: team.map(|t| t.id.clone()),
@@ -178,17 +183,18 @@ impl Teams {
                 .child(text(label, 13., 18., 500., t.text))
                 .child(editor.clone())
         };
-        let title = if form.id.is_some() {
-            "Edit team"
+        let (title, submit) = if form.id.is_some() {
+            ("Edit team", "Save changes")
         } else {
-            "Create team"
+            ("Create a team", "Create")
         };
-        div()
+        let body = div()
             .flex()
             .flex_col()
             .gap(px(16.))
+            .p(px(16.))
             .child(text(title, 16., 22., 500., t.text))
-            .child(field("Team name", &form.name))
+            .child(field("Name", &form.name))
             .when(form.empty_name, |d| {
                 d.child(status("Enter a team name", true, t))
             })
@@ -207,10 +213,11 @@ impl Teams {
                         ),
                     )
                     .child(
-                        action("teams-save", "Save", Kind::Primary, state.saving, t)
+                        action("teams-save", submit, Kind::Primary, state.saving, t)
                             .on_click(cx.listener(|this, _, _, cx| this.submit(cx))),
                     ),
-            )
+            );
+        div().child(card(vec![body], Some(&self.layer), t))
     }
 
     fn list_view(&self, teams: &[Team], t: &Theme, cx: &mut Context<Self>) -> gpui::Div {
@@ -231,8 +238,8 @@ impl Teams {
             .enumerate()
             .map(|(index, team)| {
                 let edit = team.clone();
-                let detail =
-                    (!team.description.is_empty()).then(|| paragraph(team.description.clone(), t));
+                let detail = (!team.description.is_empty())
+                    .then(|| description(&team.description, t).into_any_element());
                 settings_row_content(
                     team.name.clone(),
                     detail,

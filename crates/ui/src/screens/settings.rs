@@ -475,10 +475,12 @@ const NAV: &[(&str, &[(&str, &str)])] = &[
             ("Usage & billing", "settings-usage"),
             ("Data controls", "settings-data-controls"),
             ("Ads controls", "settings-data-controls"),
-            ("Teams", "settings-profile"),
             ("Debug", "settings-configuration"),
         ],
     ),
+    // The original's own group, between Personal and Integrations (`key:"teams",heading:null`);
+    // its item uses the `home-light` icon.
+    ("", &[("Teams", "home")]),
     (
         "Integrations",
         &[
@@ -2098,7 +2100,7 @@ pub(crate) fn settings_row_content(
         )
 }
 
-fn description(s: &'static str, t: &Theme) -> Div {
+pub(crate) fn description(s: &str, t: &Theme) -> Div {
     let (plain, link) = match s.split_once("<a>") {
         Some((before, rest)) => {
             let (label, after) = rest.split_once("</a>").unwrap_or((rest, ""));
