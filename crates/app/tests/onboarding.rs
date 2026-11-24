@@ -21,6 +21,21 @@ fn shot(fx: &mut Fx, name: &str) -> Result<()> {
     Ok(())
 }
 
+fn click(fx: &mut Fx, id: &str) -> Result<()> {
+    let bounds = fx
+        .cx
+        .debug_bounds(fx.window, id)?
+        .with_context(|| format!("{id} is not on screen"))?;
+    let center = bounds.center();
+    fx.click((center.x.into(), center.y.into()))
+}
+
+fn visible(fx: &mut Fx, id: &str) -> bool {
+    fx.cx
+        .debug_bounds(fx.window, id)
+        .is_ok_and(|bounds| bounds.is_some())
+}
+
 struct OnboardingHost {
     context: Value,
     writes: std::sync::Mutex<Vec<Value>>,
@@ -86,10 +101,25 @@ fn onboarding_keeps_failed_saves_and_cancelled_skips_on_the_page() -> Result<()>
     });
     let mut fx = open_setup("/welcome", host.clone())?;
     shot(&mut fx, "onboarding-role")?;
-    for _ in 0..14 {
-        fx.keys("tab")?;
+    click(&mut fx, "onboarding-continue")?;
+    if visible(&mut fx, "onboarding-not-now") {
+        click(&mut fx, "onboarding-not-now")?;
     }
-    fx.keys("enter")?;
+    fx.wait("the first starter task or capabilities", |fx| {
+        visible(fx, "onboarding-task-0") || visible(fx, "onboarding-capabilities-continue")
+    })?;
+    if visible(&mut fx, "onboarding-task-0") {
+        click(&mut fx, "onboarding-task-0")?;
+    }
+    fx.wait("capabilities", |fx| {
+        visible(fx, "onboarding-capabilities-continue")
+    })?;
+    shot(&mut fx, "onboarding-capabilities")?;
+    ensure!(visible(&mut fx, "onboarding-computer-use"));
+    click(&mut fx, "onboarding-computer-history")?;
+    ensure!(fx.read(|root, cx| root.onboarding().unwrap().read(cx).confirming_skip()));
+    fx.keys("escape")?;
+    click(&mut fx, "onboarding-capabilities-continue")?;
     fx.wait("onboarding save error", |fx| {
         fx.read(|root, cx| {
             root.onboarding()
@@ -101,10 +131,7 @@ fn onboarding_keeps_failed_saves_and_cancelled_skips_on_the_page() -> Result<()>
     shot(&mut fx, "onboarding-save-error")?;
     drop(fx);
     let mut fx = open_setup("/onboarding", host.clone())?;
-    for _ in 0..15 {
-        fx.keys("tab")?;
-    }
-    fx.keys("enter")?;
+    click(&mut fx, "onboarding-skip")?;
     ensure!(fx.read(|root, cx| root.onboarding().unwrap().read(cx).confirming_skip()));
     shot(&mut fx, "onboarding-skip-dialog")?;
     fx.keys("escape")?;

@@ -187,6 +187,45 @@ impl Root {
                         })
                         .detach();
                     }
+                    #[cfg(target_os = "macos")]
+                    OnboardingEvent::EnableComputerCapability(capability) => {
+                        let (view, bridge, host, capability) = (
+                            view.clone(),
+                            this.bridge.clone(),
+                            this.host.clone(),
+                            *capability,
+                        );
+                        cx.spawn_in(window, async move |_, cx| {
+                            let result = cx
+                                .background_spawn(async move {
+                                    use ui::screens::onboarding::ComputerCapability;
+                                    match capability {
+                                        ComputerCapability::Use => {
+                                            enable_computer_use(&bridge, host.as_ref()).await
+                                        }
+                                        ComputerCapability::History => {
+                                            prepare_computer_use_helper(host.as_ref())?;
+                                            crate::chronicle::enable_from_onboarding(
+                                                &bridge,
+                                                host.as_ref(),
+                                            )
+                                        }
+                                    }
+                                })
+                                .await;
+                            if let Err(error) = &result {
+                                eprintln!("codex-gpui: onboarding {capability:?}: {error:#}");
+                            }
+                            view.update(cx, |view, cx| {
+                                view.set_computer_capability(
+                                    capability,
+                                    result.is_ok_and(|enabled| enabled),
+                                    cx,
+                                );
+                            });
+                        })
+                        .detach();
+                    }
                 }
             },
         )
@@ -566,6 +605,110 @@ fn folder_access(home: &Path, folders: &[&str]) -> Vec<bool> {
     accessible
 }
 
+#[cfg(any(target_os = "macos", test))]
+async fn enable_computer_use(bridge: &bridge::Bridge, host: &dyn host::Host) -> Result<bool> {
+    const ID: &str = "computer-use@openai-bundled";
+    struct BundledPlugin {
+        marketplace_path: Value,
+        installed: bool,
+        enabled: bool,
+    }
+
+    async fn plugin(bridge: &bridge::Bridge) -> Result<BundledPlugin> {
+        let mut list: Value = bridge
+            .request(
+                "plugin/list",
+                json!({"cwds": [], "marketplaceKinds": ["local"]}),
+            )
+            .await?;
+        list["marketplaces"]
+            .as_array_mut()
+            .into_iter()
+            .flatten()
+            .find_map(|market| {
+                market["path"].as_str()?;
+                let plugin = market["plugins"]
+                    .as_array()?
+                    .iter()
+                    .find(|p| p["id"] == ID)?;
+                let installed = plugin["installed"] == true;
+                let enabled = plugin["enabled"] == true;
+                Some(BundledPlugin {
+                    marketplace_path: market["path"].take(),
+                    installed,
+                    enabled,
+                })
+            })
+            .context("The bundled Computer use plugin is unavailable")
+    }
+
+    let mut summary = plugin(bridge).await?;
+    if !summary.installed {
+        bridge
+            .request::<_, Value>(
+                "plugin/install",
+                json!({"marketplacePath": summary.marketplace_path, "pluginName": "computer-use"}),
+            )
+            .await?;
+        summary = plugin(bridge).await?;
+    }
+    ensure!(summary.installed, "Computer use was not installed");
+    if !summary.enabled {
+        bridge
+            .config_write(&[bridge::ConfigEdit::upsert(
+                "plugins.\"computer-use@openai-bundled\".enabled",
+                true,
+            )])
+            .await?;
+        let updated = plugin(bridge).await?;
+        ensure!(
+            updated.installed && updated.enabled,
+            "Computer use was not enabled"
+        );
+    }
+    bridge
+        .request::<_, Value>("config/mcpServer/reload", json!({}))
+        .await?;
+    request_computer_use_permissions(host)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn prepare_computer_use_helper(host: &dyn host::Host) -> Result<()> {
+    if !host.skysight_available() {
+        let app = std::env::var_os("CODEX_GPUI_LCU_APP")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/Applications/ChatGPT.app"));
+        host.computer_use_native()
+            .context("The signed Computer Use helper is unavailable")?
+            .install_helper(&app.join(
+                "Contents/Resources/cua_node/lib/node_modules/@oai/sky/Codex Computer Use.app",
+            ))?;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn request_computer_use_permissions(host: &dyn host::Host) -> Result<bool> {
+    use host::computer_use_native::NativeReplyError;
+
+    prepare_computer_use_helper(host)?;
+    match host.skysight(
+        "ComputerUseIPCAppGetSkyshotRequest",
+        &json!({"app": "com.apple.systempreferences"}),
+        115,
+    ) {
+        Ok(_) => Ok(true),
+        Err(error)
+            if error
+                .downcast_ref::<NativeReplyError>()
+                .is_some_and(|e| e.code == -10014) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn successful_response(response: &Value) -> Result<()> {
     let response = response.get("value").unwrap_or(response);
     ensure!(
@@ -587,6 +730,67 @@ fn successful_response(response: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn computer_use_requests_permissions_only_after_installing_the_bundled_plugin() -> Result<()> {
+        use std::io::Write as _;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct PermissionService(AtomicUsize);
+        impl host::Host for PermissionService {
+            fn fetch(&self, _: &host::Request) -> Result<Value> {
+                anyhow::bail!("No network in the permission test")
+            }
+            fn skysight_available(&self) -> bool {
+                true
+            }
+            fn skysight(&self, method: &str, params: &Value, timeout: u32) -> Result<Value> {
+                assert_eq!(method, "ComputerUseIPCAppGetSkyshotRequest");
+                assert_eq!(*params, json!({"app": "com.apple.systempreferences"}));
+                assert_eq!(timeout, 115);
+                if self.0.fetch_add(1, Ordering::Relaxed) == 0 {
+                    return Err(host::computer_use_native::NativeReplyError {
+                        code: -10014,
+                        message: "Permission pending".into(),
+                    }
+                    .into());
+                }
+                Ok(json!({}))
+            }
+        }
+
+        let plugin = json!({"id": "computer-use@openai-bundled", "installed": false});
+        let available = json!({"marketplaces": [{
+            "path": "/bundled/marketplace.json", "plugins": [plugin]
+        }]});
+        let installed = json!({"marketplaces": [{
+            "path": "/bundled/marketplace.json",
+            "plugins": [{"id": "computer-use@openai-bundled", "installed": true, "enabled": true}]
+        }]});
+        let mut replay = tempfile::NamedTempFile::new()?;
+        let list = json!({"cwds": [], "marketplaceKinds": ["local"]});
+        let install =
+            json!({"marketplacePath": "/bundled/marketplace.json", "pluginName": "computer-use"});
+        for (id, method, params, result) in [
+            (1, "plugin/list", list.clone(), available),
+            (2, "plugin/install", install, json!({})),
+            (3, "plugin/list", list.clone(), installed.clone()),
+            (4, "config/mcpServer/reload", json!({}), json!({})),
+            (5, "plugin/list", list, installed),
+            (6, "config/mcpServer/reload", json!({}), json!({})),
+        ] {
+            let send =
+                json!({"dir": "send", "msg": {"id": id, "method": method, "params": params}});
+            let recv = json!({"dir": "recv", "msg": {"id": id, "result": result}});
+            writeln!(replay, "{send}\n{recv}")?;
+        }
+        let (bridge, _) = bridge::Bridge::replay(replay.path())?;
+        let host = PermissionService(AtomicUsize::new(0));
+        assert!(!pollster::block_on(enable_computer_use(&bridge, &host))?);
+        assert!(pollster::block_on(enable_computer_use(&bridge, &host))?);
+        assert_eq!(host.0.load(Ordering::Relaxed), 2);
+        Ok(())
+    }
     #[test]
     fn workspace_creation_preserves_existing_folders() -> Result<()> {
         let home = tempfile::tempdir()?;
