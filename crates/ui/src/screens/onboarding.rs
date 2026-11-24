@@ -134,6 +134,7 @@ pub enum OnboardingEvent {
     RequestLocalFiles(Vec<&'static str>),
     #[cfg(target_os = "macos")]
     EnableComputerCapability(ComputerCapability),
+    PreinstallRolePlugins(String),
     /// Fetch the starter tasks for this role; answer with `set_tasks`.
     LoadTasks(String),
 }
@@ -173,6 +174,7 @@ const ROLES: &[(&str, &str)] = &[
     ("legal", "Legal"),
     ("student", "Student"),
     ("something_else", "Something else"),
+    ("life_sciences", "Life Sciences"),
 ];
 
 enum State {
@@ -191,6 +193,7 @@ pub struct Onboarding {
     chatgpt: bool,
     state: State,
     roles: Vec<String>,
+    life_sciences: bool,
     suggestions: bool,
     import_available: bool,
     projects: Vec<Project>,
@@ -231,6 +234,7 @@ impl Onboarding {
                 State::Loading
             },
             roles: Vec::new(),
+            life_sciences: false,
             suggestions: true,
             import_available: false,
             projects: Vec::new(),
@@ -271,12 +275,14 @@ impl Onboarding {
     pub fn set_context(
         &mut self,
         roles: Vec<String>,
+        life_sciences: bool,
         suggestions: bool,
         import_available: bool,
         projects: Vec<Project>,
         cx: &mut Context<Self>,
     ) {
         self.roles = roles;
+        self.life_sciences = life_sciences || self.roles.iter().any(|role| role == "life_sciences");
         self.suggestions = suggestions;
         self.import_available = import_available;
         self.projects = projects;
@@ -454,6 +460,11 @@ impl Onboarding {
             }
             Action::Continue => match self.state {
                 State::Roles if !self.roles.is_empty() => {
+                    if self.chatgpt
+                        && let Some(role) = self.completion(false).representative_role()
+                    {
+                        cx.emit(OnboardingEvent::PreinstallRolePlugins(role.into()));
+                    }
                     if self.import_available {
                         self.state = State::Import;
                     } else {
@@ -750,7 +761,12 @@ impl Onboarding {
             3
         };
         let mut grid = div().w_full().flex().flex_col().gap(px(8.));
-        for (row, roles) in ROLES.chunks(columns).enumerate() {
+        let roles = if self.life_sciences {
+            ROLES
+        } else {
+            &ROLES[..ROLES.len() - 1]
+        };
+        for (row, roles) in roles.chunks(columns).enumerate() {
             let mut line = div().w_full().flex().gap(px(8.));
             for (col, (_, label)) in roles.iter().enumerate() {
                 let index = row * columns + col;
@@ -1616,6 +1632,7 @@ mod tests {
         view.update(&mut app, |view, cx| {
             view.set_context(
                 Vec::new(),
+                false,
                 true,
                 false,
                 vec![Project {

@@ -89,7 +89,9 @@ impl Root {
             this.plugin_action(page.clone(), action, window, cx);
         })
         .detach();
-        self.load_plugins(page.clone(), route, false, cx);
+        // The onboarding Manage link must see the installs made before this page opened.
+        let force = plugins::category_from_route(&route).is_some();
+        self.load_plugins(page.clone(), route, force, cx);
         self.plugins_page = Some(page.clone());
         let nav = cx.new(|cx| plugins::Nav::new(page.clone(), cx)).into();
         cx.new(|_| {
@@ -143,15 +145,33 @@ impl Root {
             (apps, connected_app_id, reconciliation_error)
         });
         let (bridge, cwd) = (self.bridge.clone(), self.cwd.clone());
+        let category = plugins::category_from_route(&route).map(|category| category.into_owned());
+        let host = self.host.clone();
         let plugins = cx.background_spawn(async move {
             if !available {
                 return Resource::Ready(Vec::new());
             }
-            match bridge
-                .request::<_, Value>("plugin/list", json!({"cwds":[cwd],"forceRefetch":force}))
-                .await
-            {
-                Ok(value) => Resource::Ready(plugins::marketplaces(&value)),
+            let result = async {
+                let value: Value = bridge
+                    .request("plugin/list", json!({"cwds":[cwd],"forceRefetch":force}))
+                    .await?;
+                let mut marketplaces = plugins::marketplaces(&value);
+                if let Some(category) = category {
+                    let ids = plugin_category_ids(host.as_ref(), &category)?;
+                    for marketplace in &mut marketplaces {
+                        marketplace.plugins.retain(|plugin| {
+                            ids.contains(plugin.id())
+                                || plugin.summary["remotePluginId"]
+                                    .as_str()
+                                    .is_some_and(|id| ids.contains(id))
+                        });
+                    }
+                }
+                Ok::<_, anyhow::Error>(marketplaces)
+            }
+            .await;
+            match result {
+                Ok(marketplaces) => Resource::Ready(marketplaces),
                 Err(error) => Resource::Failed(error.to_string()),
             }
         });
@@ -917,6 +937,56 @@ fn share_target_params(targets: &[Value]) -> anyhow::Result<Vec<Value>> {
         })
         .collect()
 }
+
+fn plugin_category_ids(
+    host: &dyn host::Host,
+    category: &str,
+) -> Result<std::collections::HashSet<String>> {
+    ensure!(!matches!(category, "." | ".."), "Invalid plugin category");
+    let mut url = url::Url::parse("https://chatgpt.com/ps/plugin-categories/")?;
+    url.path_segments_mut()
+        .expect("fixed HTTPS base")
+        .pop_if_empty()
+        .push(category)
+        .push("plugins");
+    url.query_pairs_mut()
+        .append_pair("scope", "GLOBAL")
+        .append_pair("limit", "50");
+    let identity = host.identity();
+    let mut ids = std::collections::HashSet::new();
+    let mut cursors = std::collections::HashSet::new();
+    let mut page_url = url.clone();
+    loop {
+        let path = &page_url[url::Position::BeforePath..];
+        let mut request = chatgpt::desktop_request("GET", path, None);
+        if let Some(identity) = &identity {
+            request["expectedIdentity"] =
+                json!({"accountId":identity.account_id,"userId":identity.user_id});
+        }
+        let page = host::json_body(&host.fetch(&host::Request::Http(request))?)?;
+        let plugins = page["plugins"]
+            .as_array()
+            .context("Invalid plugin category response")?;
+        ids.extend(
+            plugins
+                .iter()
+                .filter_map(|plugin| plugin["id"].as_str().map(str::to_owned)),
+        );
+        let Some(cursor) = page["pagination"]["next_page_token"]
+            .as_str()
+            .filter(|cursor| !cursor.is_empty())
+        else {
+            return Ok(ids);
+        };
+        ensure!(
+            cursors.insert(cursor.to_owned()),
+            "Repeated plugin category page token"
+        );
+        page_url.clone_from(&url);
+        page_url.query_pairs_mut().append_pair("pageToken", cursor);
+    }
+}
+
 fn route_plugin_id(route: &str) -> Option<&str> {
     let path = route.split('?').next().unwrap_or(route);
     let path = path
