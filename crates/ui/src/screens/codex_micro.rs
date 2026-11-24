@@ -380,22 +380,35 @@ impl SettingsPane {
                 }))
                 .into_any_element()
         };
-        let blank = || div().w(px(SURFACE_CELL)).h(px(SURFACE_CELL)).flex_none().into_any_element();
-        let rows = vec![
-            vec![
-                round_cell(0x202127, 0.58, t).into_any_element(),
-                round_cell(0x111111, 0.72, t).into_any_element(),
-                key("ACT06", 1.),
-                key("ACT07", 1.),
-            ],
-            vec![
-                key("ACT08", 1.),
-                key("ACT09", 1.),
-                round_cell(0x202127, 0.58, t).into_any_element(),
-                blank(),
-            ],
-            vec![key("ACT10_ACT11", 2.), key("ACT12", 1.), blank()],
+        // Auto-placement in the original's child order (no explicit row or column classes):
+        // knob, AG00, AG01, stick, AG02-05, ACT06-09, indicator, ACT10_11 (`col-span-2`), ACT12.
+        let cells: Vec<(AnyElement, u8)> = vec![
+            (round_cell(0x111111, 0.58, t).into_any_element(), 1),
+            (agent_cell(t).into_any_element(), 1),
+            (agent_cell(t).into_any_element(), 1),
+            (round_cell(0x111111, 0.72, t).into_any_element(), 1),
+            (agent_cell(t).into_any_element(), 1),
+            (agent_cell(t).into_any_element(), 1),
+            (agent_cell(t).into_any_element(), 1),
+            (agent_cell(t).into_any_element(), 1),
+            (key("ACT06", 1.), 1),
+            (key("ACT07", 1.), 1),
+            (key("ACT08", 1.), 1),
+            (key("ACT09", 1.), 1),
+            (indicator_cell(t).into_any_element(), 1),
+            (key("ACT10_ACT11", 2.), 2),
+            (key("ACT12", 1.), 1),
         ];
+        let mut rows: Vec<Vec<AnyElement>> = vec![Vec::new()];
+        let mut used = 0;
+        for (cell, span) in cells {
+            if used + span > 4 {
+                rows.push(Vec::new());
+                used = 0;
+            }
+            used += span;
+            rows.last_mut().unwrap().push(cell);
+        }
         let surface = div()
             .relative()
             .flex()
@@ -557,6 +570,9 @@ impl SettingsPane {
                 }
                 lines.push(div().flex().justify_between().children(line));
             }
+            // The dialog is `max-h-[min(680px,calc(100vh-4rem))]` and the scroller `flex-1 min-h-0`:
+            // it takes what the 186 px of padding, header, search, footer and gaps leave.
+            let dialog_max_h = (window.viewport_size().height - px(64.)).min(px(680.));
             let fade = gpui::linear_gradient(
                 180.,
                 gpui::linear_color_stop(t.menu_background.opacity(0.), 0.),
@@ -573,7 +589,7 @@ impl SettingsPane {
                         .flex_col()
                         .gap(px(8.))
                         .p(px(4.))
-                        .max_h(px(320.))
+                        .max_h(dialog_max_h - px(186.))
                         .overflow_y_scroll()
                         .children(lines),
                 )
@@ -729,6 +745,49 @@ fn round_cell(cap: u32, scale: f32, t: &Theme) -> Div {
         .justify_center()
         .child(on_card(12., Squircle, fill.into(), Some(edge)))
         .child(div().size(px(SURFACE_CELL * scale)).rounded_full().bg(gpui::rgb(cap)))
+}
+
+/// An agent key (`tt`, `opaque`): `rounded-xl` cell, unassigned (`off`) so a `size-1.5` ring dot.
+fn agent_cell(t: &Theme) -> Div {
+    let dark = t.appearance == Appearance::Dark;
+    let fill = if dark { gpui::rgb(0x202127) } else { gpui::rgb(0xf7f5f1) };
+    let edge = gpui::white().opacity(if dark { 0.14 } else { 0.82 });
+    let ring = if dark { gpui::white().opacity(0.15) } else { gpui::black().opacity(0.1) };
+    div()
+        .relative()
+        .flex_none()
+        .w(px(SURFACE_CELL))
+        .h(px(SURFACE_CELL))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(on_card(12., Squircle, fill.into(), Some(edge)))
+        .child(div().size(px(6.)).rounded_full().border_1().border_color(ring))
+}
+
+/// `lt`: the indicator, three lamps (`#9ebdff` lit, two `#b8b98b`) beside a `58%` disc.
+fn indicator_cell(t: &Theme) -> Div {
+    let dark = t.appearance == Appearance::Dark;
+    let disc = if dark { gpui::rgb(0x202127) } else { gpui::rgb(0x2d2925) };
+    let lamp = |c: u32| div().size(px(4.)).rounded_full().bg(gpui::rgb(c));
+    div()
+        .flex_none()
+        .w(px(SURFACE_CELL))
+        .h(px(SURFACE_CELL))
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(4.))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(lamp(0x9ebdff))
+                .child(lamp(0xb8b98b))
+                .child(lamp(0xb8b98b)),
+        )
+        .child(div().size(px(SURFACE_CELL * 0.58)).rounded_full().bg(disc))
 }
 
 #[cfg(test)]
