@@ -2,6 +2,7 @@ use crate::host::{Host, Request};
 use crate::*;
 use base64::Engine as _;
 use gpui::Div;
+use std::path::Path;
 use ui::screens::home::{BROWSE_LIMIT, LibraryFile, WorkEvent};
 
 pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
@@ -11,6 +12,11 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             this.select_project(a.0.clone(), window, cx)
         }))
         .on_action(cx.listener(|this, _: &ClearProject, window, cx| this.clear_project(window, cx)))
+        .on_action(cx.listener(
+            |this, project: &ui::screens::sidebar::OpenRemoteProject, _, cx| {
+                this.open_remote_home(project.0.clone(), Some(project.1.clone()), None, cx);
+            },
+        ))
         .on_action(
             cx.listener(|this, _: &ui::screens::home::ReloadAccount, window, cx| {
                 this.read_account(Some(window), cx)
@@ -275,7 +281,160 @@ fn library_file_bytes(host: &dyn Host, file: &LibraryFile) -> Result<Vec<u8>> {
     }
 }
 
+async fn remote_codex_home(bridge: &Bridge) -> Result<String> {
+    Ok(bridge
+        .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
+        .await?
+        .codex_home)
+}
+
+fn remote_default_cwd(home: &str) -> Option<&str> {
+    let folder = home.strip_suffix(".codex")?;
+    let parent = folder.strip_suffix(['/', '\\'])?;
+    if parent.is_empty() || matches!(parent.as_bytes(), [_, b':']) {
+        Some(folder)
+    } else {
+        Some(parent)
+    }
+}
+
 impl Root {
+    pub(crate) fn submit_home(
+        &mut self,
+        submission: Submission,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let remote = self.home.read(cx).location.remote_host.clone();
+        if let Some(host) = remote.filter(|host| host != self.host_id()) {
+            self.open_remote_home(host, None, Some(submission), cx);
+        } else {
+            self.start_thread(submission, window, cx);
+        }
+    }
+
+    fn open_remote_home(
+        &mut self,
+        host: String,
+        project: Option<String>,
+        mut submission: Option<Submission>,
+        cx: &mut Context<Self>,
+    ) {
+        let bridge = connections::bridge(&host, cx);
+        let mut state = self.state.clone();
+        state.path = None;
+        state.project_root = None;
+        state.route = Route::Home;
+        cx.spawn(async move |this, cx| {
+            let result = async {
+                if submission.as_ref().is_some_and(|draft| {
+                    !draft.attachments.is_empty() || !draft.context_files.is_empty()
+                }) {
+                    anyhow::bail!("Remove local files before starting a remote chat");
+                }
+                let bridge = bridge.context("The remote computer is offline")?;
+                let cwd = match project.as_ref() {
+                    Some(path) => path.clone(),
+                    None => {
+                        let home = remote_codex_home(&bridge).await?;
+                        remote_default_cwd(&home)
+                            .context(
+                                "Open a project on the remote computer before starting this chat",
+                            )?
+                            .to_owned()
+                    }
+                };
+                let mut spec = windows::Spec::new(windows::Kind::Primary, "Codex");
+                if qa::ENABLED {
+                    spec.presentation = windows::Presentation::Hidden;
+                }
+                cx.update(|cx| {
+                    ensure!(
+                        connections::bridge(&host, cx)
+                            .is_some_and(|current| Arc::ptr_eq(&current, &bridge)),
+                        "The remote computer is offline"
+                    );
+                    let events = bridge.subscribe_async();
+                    let handle = windows::open(spec, cx, |window, cx| {
+                        cx.new(|cx| {
+                            Self::with_host_connection(state, bridge, events, cwd, host, window, cx)
+                        })
+                    })?;
+                    handle.update(cx, |root, window, cx| {
+                        if let Some(project) = project {
+                            root.select_project(project, window, cx);
+                        }
+                        if let Some(submission) = submission.take() {
+                            root.start_thread(submission, window, cx);
+                        }
+                    })?;
+                    Ok::<_, anyhow::Error>(())
+                })
+            }
+            .await;
+            if let Err(error) = result {
+                this.update(cx, |root, cx| {
+                    if let Some(submission) = submission {
+                        let composer = root.home.read(cx).composer.clone();
+                        composer.update(cx, |composer, cx| {
+                            composer.restore_submission(&submission.text, cx)
+                        });
+                    }
+                    root.toast(Toast::danger(error.to_string()), cx);
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    pub(crate) fn sync_remote_projects(&mut self, cx: &mut Context<Self>) {
+        self.home.update(cx, |_, cx| cx.notify());
+        if self.host_id() != "local" {
+            return;
+        }
+        let connected: Vec<_> = cx
+            .try_global::<ui::screens::connections::ConnectionsState>()
+            .and_then(|state| state.connections.as_deref())
+            .unwrap_or_default()
+            .iter()
+            .filter(|row| row.state == "connected")
+            .map(|row| row.host_id.clone())
+            .collect();
+        let missing = self.sidebar.update(cx, |sidebar, cx| {
+            sidebar.track_remote_projects(&connected, cx)
+        });
+        for id in missing {
+            let Some(bridge) = connections::bridge(&id, cx) else {
+                self.sidebar.update(cx, |sidebar, cx| {
+                    sidebar.set_remote_projects(&id, Err(()), cx)
+                });
+                continue;
+            };
+            let sidebar = self.sidebar.downgrade();
+            cx.spawn(async move |_, cx| {
+                let result = async {
+                    let home = remote_codex_home(&bridge).await?;
+                    crate::host::app_server_projects(&bridge, Path::new(&home), json!({}), false)
+                        .await
+                }
+                .await;
+                let _ = cx.update(|cx| {
+                    if connections::bridge(&id, cx)
+                        .is_some_and(|current| Arc::ptr_eq(&current, &bridge))
+                    {
+                        sidebar
+                            .update(cx, |sidebar, cx| {
+                                sidebar.set_remote_projects(&id, result.map_err(|_| ()), cx)
+                            })
+                            .ok();
+                    }
+                });
+            })
+            .detach();
+        }
+    }
+
     /// Answers the Work rail's requests.
     pub(crate) fn work_event(
         &mut self,
@@ -347,6 +506,19 @@ impl Root {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_default_cwd_preserves_roots_and_rejects_custom_config() {
+        for (home, cwd) in [
+            ("/home/dev/.codex", Some("/home/dev")),
+            ("/.codex", Some("/")),
+            (r"C:\.codex", Some(r"C:\")),
+            (r"C:\Users\dev\.codex", Some(r"C:\Users\dev")),
+            ("/srv/codex", None),
+        ] {
+            assert_eq!(remote_default_cwd(home), cwd);
+        }
+    }
 
     #[test]
     fn suggestions_keep_the_first_three_prompt_items() {

@@ -821,7 +821,7 @@ impl Root {
             composer.on_model(on_model(this.clone()));
             let this = this.clone();
             composer.on_submit(move |s, window, cx| {
-                this.update(cx, |this, cx| this.start_thread(s.clone(), window, cx))
+                this.update(cx, |this, cx| this.submit_home(s.clone(), window, cx))
                     .ok();
             });
             composer
@@ -1268,6 +1268,9 @@ impl Root {
         )
         .detach();
         connections::install(cx);
+        cx.observe_global::<ui::screens::connections::ConnectionsState>(Self::sync_remote_projects)
+            .detach();
+        root.sync_remote_projects(cx);
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
             this.update(cx, |this, cx| {
