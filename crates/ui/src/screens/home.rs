@@ -1173,16 +1173,17 @@ fn location_menu(
                                 div()
                                     .relative()
                                     .child(popup)
-                                    // `FlyoutSubmenuItem` opens beside the parent with its first
-                                    // row level with the `Remote` row (`alignOffset` = row top
-                                    // minus content top); 88 px is the row's offset in the popup,
-                                    // plus one row when `New worktree` is listed.
+                                    // `FlyoutSubmenuItem`: `alignOffset` = -(padding-top + margin-top)
+                                    // of the flyout, so its first row sits level with the `Remote`
+                                    // row; `sideOffset` = 4 + the row's inset from the menu edge.
+                                    // 82 px is the row's offset in the popup, plus one row when
+                                    // `New worktree` is listed.
                                     .children(flyout.map(|f| {
                                         let rows_above = if has_project { 28.57 } else { 0. };
                                         div()
                                             .absolute()
-                                            .left(px(284.))
-                                            .top(px(88. + rows_above))
+                                            .left(px(289.))
+                                            .top(px(82. + rows_above))
                                             .child(f)
                                     })),
                             ),
