@@ -16,12 +16,16 @@ async fn negotiated_audio_track_carries_speech_samples() -> Result<()> {
     let mut client_ready = false;
     let mut server_ready = false;
     let mut sent = false;
+    // Hard upper limit for runners without nextest; far above any loaded-host handshake.
+    let deadline = tokio::time::sleep(Duration::from_secs(120));
+    tokio::pin!(deadline);
     loop {
         if client_ready && server_ready && !sent {
             client.write(client_mid, &mut encoder, &frame)?;
             sent = true;
         }
         tokio::select! {
+            () = &mut deadline => anyhow::bail!("voice handshake did not finish in 120 s"),
             event = client.next_event() => {
                 client_ready |= matches!(event?, Event::Connected);
             }
