@@ -4075,6 +4075,11 @@ impl Root {
         {
             view.update(cx, |view, _| view.stop());
         }
+        // A closed session leaves the list so a later result for it reopens the tab.
+        #[cfg(target_os = "macos")]
+        if let SidePanel::ArtifactSession(key) = side {
+            self.artifact_sessions.retain(|(k, _)| *k != key);
+        }
         if self.side == Some(side) {
             self.side = self.tabs.get(ix).or(self.tabs.last()).copied();
         }

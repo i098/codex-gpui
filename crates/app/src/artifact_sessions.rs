@@ -230,6 +230,7 @@ impl View {
                 crate::logging::write(&format!("Artifact Session viewer: {error:#}"));
                 let _ = this.update(cx, |view, cx| {
                     view.disconnected = true;
+                    view.task = None; // let start() reconnect
                     cx.notify();
                 });
             }
