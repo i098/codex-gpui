@@ -26,18 +26,22 @@ base64 = "0.23"
 bridge = { path = "../bridge" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 chrono-tz = "0.10"
+cpal = "0.18.2"
 futures-lite = "2"
 gpui.workspace = true
 glob = "0.3.4"
 gpui_platform.workspace = true
 http_client = { git = "https://github.com/zed-industries/zed", rev = "3e145061d861ed32bb6a08dad7b03f2b5e455ad8" }
 iana-time-zone = "0.1"
+if-addrs = "0.15"
 image.workspace = true
-notify = "8"
+notify = "9"
+opus = "0.4"
 pollster = "1.0"
 portable-pty = "0.9"
 rrule = { path = "../../vendor/rrule", features = ["exrule"] }
 regex = "1"
+ringbuf = "0.6"
 rusqlite = { version = "0.41", features = ["bundled"] }
 semver = "1"
 serde = { version = "1", features = ["derive"] }
@@ -45,9 +49,11 @@ serde_json = "1"
 sha1 = "0.11"
 shlex = "2"
 sha2 = "0.11"
+str0m = { version = "0.26", default-features = false, features = ["rust-crypto"] }
 tempfile = "3"
-toml = "0.8"
+toml = "1.1"
 theme = { path = "../theme" }
+tokio = { version = "1", features = ["macros", "net", "rt", "time"] }
 ui = { path = "../ui" }
 ureq = "3"
 url = "2"

@@ -7,6 +7,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Save files from the macOS built-in browser to Downloads. Open Settings ▸ Browser ▸ Download history to view or clear the records without deleting the files (#1563).
+- Voice chat uses the microphone and speakers through WebRTC. Before, voice chat accepted and returned only text (#908).
 - Install configured plugins after the onboarding role step. After setup, select Manage on the Plugins installed notice to open the role's plugin category (#1559).
 - Add the macOS onboarding switches for Computer use and Computer history. They install the bundled Computer use plugin, request macOS permissions, and turn on Computer history with Memories (#1560).
 - In the macOS in-app browser, allow or block sites that ask to start or toggle annotation mode (#837).
@@ -31,6 +33,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - ChatGPT mode: when the account has internal models, the `Select ChatGPT model` list ends with the `Internal models` submenu: a search field, the models whose title or slug matches, else `No internal models found`; a pick selects the model (#1543).
 - ChatGPT mode: a model that reached its limit in a Chat conversation (`conversation_detail_metadata`'s `model_limits`) disables its row in the `Select ChatGPT model` list and the `Internal models` submenu, with the original's tooltip (`Limit reached. Try again after …`) (#1544).
 - ChatGPT mode: a Chat turn sends the selected model and its thinking effort in the `/f/conversation` body (`model`, `thinking_effort`). Before, every Chat turn sent `auto` (#1546).
+- Rail `Space`: the landing shows the account's private Pages under the Spaces, from `GET /pages?surface=private`, newest `last_used_at` first, with the load-error retry and the empty state. Create page and its `Create pages in Space` templates are tracked in #1595 (#979).
 ### Fixed
 - Stop the app from trying to open its own executable when it starts from an absolute path (#1575).
 - Show installed plugin logos in the Customize sidebar, with theme-aware images and app icons when no plugin logo is available (#1505).
