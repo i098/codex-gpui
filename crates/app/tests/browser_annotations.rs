@@ -159,3 +159,84 @@ fn annotation_mode_toolbar_sends_discards_and_exits() -> Result<()> {
     ensure!(pending_texts(&fx) == ["Keep this check"]);
     Ok(())
 }
+
+#[test]
+fn annotation_send_waits_for_the_screenshot() -> Result<()> {
+    for use_toolbar in [true, false] {
+        let mut fx = Fx::captured("dark", (1280., 832.), common::script(None, |_| {})?)?;
+        fx.keys("cmd-2")?;
+        fx.wait_thread(SUBTRACT)?;
+        fx.keys("cmd-t")?;
+        fx.type_text("example.com/docs")?;
+        fx.keys("enter")?;
+        fx.advance(std::time::Duration::ZERO)?;
+        fx.keys("cmd-shift-.")?;
+        ensure!(mode(&fx).0);
+        set_comments(&mut fx, vec![browser_comment("First comment")]);
+        let composer = fx.composer();
+        let tab = fx.read(|root, _| root.active_browser_tab().unwrap().clone());
+        let button = toolbar(&fx, "send");
+        let send = |fx: &mut Fx| -> Result<()> {
+            if use_toolbar {
+                fx.click(button)?;
+            } else {
+                fx.cx.update_window(fx.window, |_, window, cx| {
+                    composer.update(cx, |composer, cx| composer.send_draft(false, window, cx));
+                })?;
+                fx.cx.run_until_parked();
+            }
+            Ok(())
+        };
+        composer.update(&mut fx.cx, |composer, cx| {
+            composer.set_browser_annotation_capture_pending(true, cx)
+        });
+        tab.update(&mut fx.cx, |tab, cx| {
+            tab.set_annotation_capture_pending(true, cx);
+        });
+        fx.advance(std::time::Duration::ZERO)?;
+        send(&mut fx)?;
+        ensure!(mode(&fx) == (true, 1));
+        ensure!(pending_texts(&fx) == ["First comment"]);
+        ensure!(
+            !fx.sent()?
+                .iter()
+                .any(|request| request["method"] == "turn/start")
+        );
+
+        let mut captured = browser_comment("Comment with screenshot");
+        let image = json!("data:image/png;base64,iVBORw0KGgo=");
+        captured
+            .extra
+            .insert("localBrowserScreenshot".into(), json!({"dataUrl": image}));
+        set_comments(&mut fx, vec![browser_comment("First comment"), captured]);
+        tab.update(&mut fx.cx, |tab, cx| {
+            tab.set_annotation_capture_pending(false, cx);
+        });
+        composer.update(&mut fx.cx, |composer, cx| {
+            composer.set_browser_annotation_capture_pending(false, cx)
+        });
+        fx.advance(std::time::Duration::ZERO)?;
+        send(&mut fx)?;
+        fx.wait("annotation turn with screenshot", |fx| {
+            fx.sent()
+                .is_ok_and(|sent| sent.iter().any(|request| request["method"] == "turn/start"))
+        })?;
+        let sent = fx.sent()?;
+        let request = sent
+            .iter()
+            .find(|request| request["method"] == "turn/start")
+            .unwrap();
+        let input = request["params"]["input"].as_array().unwrap();
+        ensure!(
+            input
+                .iter()
+                .any(|item| *item == json!({"type": "image", "url": image}))
+        );
+        ensure!(input.iter().any(|item| {
+            item["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("Comment with screenshot"))
+        }));
+    }
+    Ok(())
+}

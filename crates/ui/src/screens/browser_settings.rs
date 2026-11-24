@@ -17,6 +17,11 @@ pub(super) const FULL_CDP: &str = "browser_use.default_origin_policy.full_cdp_ac
 /// The original's `Allow`/`Block` choices for a default site permission.
 const POLICY_OPTIONS: &[(&str, &str)] = &[("allow", "Allow"), ("deny", "Block")];
 
+#[cfg(target_os = "macos")]
+const ANNOTATION_SCREENSHOTS: &[(&str, &str)] = &[
+    ("always", "Always include"),
+    ("necessary", "Only on drag selection"),
+];
 /// Host settings key for persistent browser-tool approvals.
 pub const BROWSER_TOOL_GRANTS: &str = "in-app-browser-allowed-origins";
 
@@ -556,6 +561,23 @@ impl SettingsPane {
                 "Browsing history",
                 Some("View and manage pages visited in the built-in browser"),
                 manage.into_any_element(),
+            ),
+            #[cfg(target_os = "macos")]
+            row(
+                "Annotation screenshots",
+                Some(
+                    "Screenshots help ChatGPT better understand and address comments, but increase plan usage",
+                ),
+                div()
+                    .debug_selector(|| "browser-annotation-screenshots".into())
+                    .child(self.select_menu(
+                        "host.browser-annotation-screenshots-mode",
+                        ANNOTATION_SCREENSHOTS,
+                        None,
+                        |select| select,
+                        cx,
+                    ))
+                    .into_any_element(),
             ),
             row(
                 "Download history",

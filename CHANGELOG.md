@@ -9,6 +9,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [0.1.5] - 2026-11-24
 
 ### Added
+- Settings ▸ Browser: choose whether to include screenshots with all browser annotations or only with drag selections (#931).
 - Save files from the macOS built-in browser to Downloads. Open Settings ▸ Browser ▸ Download history to view or clear the records without deleting the files (#1563).
 - Voice chat uses the microphone and speakers through WebRTC. Before, voice chat accepted and returned only text (#908).
 - Install configured plugins after the onboarding role step. After setup, select Manage on the Plugins installed notice to open the role's plugin category (#1559).

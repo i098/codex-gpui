@@ -55,6 +55,7 @@ impl Composer {
             text,
             shell_command: false,
             attachments: Vec::new(),
+            comment_images: Vec::new(),
             context_files: Vec::new(),
             model: self
                 .current_model()
