@@ -11,9 +11,13 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use ui::screens::space::{PageRetry, Pages, Retry, Spaces};
+use ui::screens::space::{PageRetry, Pages, Retry, Spaces, View};
 
 const RECORDING: &str = include_str!("../../../fixtures/space-sites.json");
+
+/// The `Pages` and `Sites` pills of the landing's tab bar, at 1280×832.
+const PAGES_TAB: (f32, f32) = (280., 244.);
+const SITES_TAB: (f32, f32) = (492., 244.);
 
 fn names(fx: &Fx) -> Option<Vec<String>> {
     fx.read(|root, cx| {
@@ -61,6 +65,31 @@ fn rail_space_lists_spaces_from_every_page() -> Result<()> {
         page_titles(&fx)
     );
     fx.capture_evidence("CGX_SPACE_EVIDENCE", "after-rail-space")?;
+
+    // The tab bar between the Spaces and the Pages: `Pages` switches the list, and a
+    // tab whose source has not loaded does not.
+    let view = |fx: &Fx| fx.read(|root, cx| root.space_page().map(|page| page.read(cx).view));
+    fx.click(PAGES_TAB)?;
+    ensure!(view(&fx) == Some(View::Pages), "view {:?}", view(&fx));
+    fx.click(SITES_TAB)?;
+    ensure!(
+        view(&fx) == Some(View::Pages),
+        "a tab without a source switched the view"
+    );
+    // Hovering a Page row records it, which hides its divider and the one above it.
+    let hovered = |fx: &Fx| fx.read(|root, cx| root.space_page().unwrap().read(cx).hovered);
+    for (at, row) in [((300., 326.), 1), ((300., 296.), 0)] {
+        fx.hover(at)?;
+        fx.advance(ui::motion::BASIC)?;
+        ensure!(
+            hovered(&fx) == Some(row),
+            "hover {at:?}: {:?}",
+            hovered(&fx)
+        );
+    }
+    fx.hover((640., 22.))?;
+    fx.advance(ui::motion::BASIC)?;
+    ensure!(hovered(&fx) == None, "leave: {:?}", hovered(&fx));
 
     let query = fx.read(|root, cx| root.space_page().unwrap().read(cx).query.clone());
     fx.cx
