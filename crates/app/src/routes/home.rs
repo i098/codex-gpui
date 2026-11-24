@@ -420,15 +420,15 @@ impl Root {
                 }
                 .await;
                 cx.update(|cx| {
-                    if connections::bridge(&id, cx)
-                        .is_some_and(|current| Arc::ptr_eq(&current, &bridge))
-                    {
-                        sidebar
-                            .update(cx, |sidebar, cx| {
-                                sidebar.set_remote_projects(&id, result.map_err(|_| ()), cx)
-                            })
-                            .ok();
-                    }
+                    // A swapped bridge drops the result; Failed lets the next sync retry.
+                    let current = connections::bridge(&id, cx)
+                        .is_some_and(|current| Arc::ptr_eq(&current, &bridge));
+                    let result = if current { result.map_err(|_| ()) } else { Err(()) };
+                    sidebar
+                        .update(cx, |sidebar, cx| {
+                            sidebar.set_remote_projects(&id, result, cx)
+                        })
+                        .ok();
                 });
             })
             .detach();
