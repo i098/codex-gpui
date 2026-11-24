@@ -1035,6 +1035,7 @@ fn location_menu(
     }
     let trigger = location.bounds;
     let enabled = location_enabled(location, has_project, cx);
+    let choosing_remote = location.choosing_remote;
     // The original's rows: `Work in` label, This computer, New worktree (the port's managed
     // worktree start, only with a project), Cloud, Remote. The index is the row's place in
     // `LOCATION_MODES`, which `pick_location` and the keyboard walk use.
@@ -1066,7 +1067,14 @@ fn location_menu(
             .items_center()
             .gap(px(6.))
             .rounded(px(15.))
-            .when(i == location.selected, |d| d.bg(t.menu_item_hover))
+            .when(
+                if choosing_remote {
+                    i == 2
+                } else {
+                    i == location.selected
+                },
+                |d| d.bg(t.menu_item_hover),
+            )
             .when(enabled, |d| {
                 let hover = t.menu_item_hover;
                 d.hover(move |s| s.bg(hover))
@@ -1085,21 +1093,23 @@ fn location_menu(
             })
     });
     let dismiss = owner.clone();
-    let choosing_remote = location.choosing_remote;
     let popup = crate::composer::popover(t, 280., |d| {
-        let title = if choosing_remote {
-            "Choose a remote computer"
-        } else {
-            "Work in"
-        };
-        let d = d.child(div().px(px(8.)).py(px(4.)).child(text(
-            title,
+        d.child(div().px(px(8.)).py(px(4.)).child(text(
+            "Work in",
             13.,
             18.5714,
             430.,
             t.text_tertiary,
-        )));
-        if choosing_remote {
+        )))
+        .children(rows)
+    })
+    .id("work-in-menu")
+    .role(gpui::Role::Menu)
+    .aria_label("Work in")
+    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+    // The original's `Remote` row opens a flyout submenu beside the menu, not a replacement.
+    let flyout = choosing_remote.then(|| {
+        crate::composer::popover(t, 200., |d| {
             d.child(
                 div()
                     .id("remote-computers")
@@ -1130,18 +1140,12 @@ fn location_menu(
                         )
                     })),
             )
-        } else {
-            d.children(rows)
-        }
-    })
-    .id("work-in-menu")
-    .role(gpui::Role::Menu)
-    .aria_label(if choosing_remote {
-        "Choose a remote computer"
-    } else {
-        "Work in"
-    })
-    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+        })
+        .id("remote-computers-menu")
+        .role(gpui::Role::Menu)
+        .aria_label("Remote")
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    });
     // Opens upward from the chip: the bar sits at the bottom of the window. A full-window
     // backdrop under the popup closes it on a click anywhere else, the chip included.
     Some(
@@ -1161,7 +1165,14 @@ fn location_menu(
                             .position(point(trigger.left() + px(1.), trigger.top() - px(18.5)))
                             .anchor(gpui::Anchor::BottomLeft)
                             .snap_to_window_with_margin(px(8.))
-                            .child(popup),
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_end()
+                                    .child(popup)
+                                    // The popovers' shadow insets plus this margin leave a 4 px visual gap.
+                                    .children(flyout.map(|f| div().ml(px(4.)).child(f))),
+                            ),
                     ),
             ),
         )
