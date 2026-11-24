@@ -317,7 +317,7 @@ dependencies = [
  "textsys",
  "theme",
  "tokio",
- "toml 0.8.23",
+ "toml 1.1.8+spec-1.1.0",
  "uds_windows",
  "ui",
  "ureq",
@@ -1821,7 +1821,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 3.0.9",
+ "syn 2.0.119",
 ]
 
 [[package]]
