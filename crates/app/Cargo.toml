@@ -35,7 +35,7 @@ http_client = { git = "https://github.com/zed-industries/zed", rev = "3e145061d8
 iana-time-zone = "0.1"
 if-addrs = "0.15"
 image.workspace = true
-notify = "8"
+notify = "9"
 opus = "0.4"
 pollster = "1.0"
 portable-pty = "0.9"
@@ -51,7 +51,7 @@ shlex = "2"
 sha2 = "0.11"
 str0m = { version = "0.26", default-features = false, features = ["rust-crypto"] }
 tempfile = "3"
-toml = "0.8"
+toml = "1.1"
 theme = { path = "../theme" }
 tokio = { version = "1", features = ["macros", "net", "rt", "time"] }
 ui = { path = "../ui" }
