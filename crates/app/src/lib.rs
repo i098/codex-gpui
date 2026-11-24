@@ -11,6 +11,7 @@ mod archived_chats;
 mod artifact_sessions;
 #[cfg(target_os = "macos")]
 pub use artifact_sessions::ArtifactSessionHost;
+mod browser;
 mod browser_site_annotation;
 mod browsing_history;
 mod chatgpt;
@@ -531,6 +532,7 @@ pub struct Root {
     next_side_chat: usize,
     /// In-app browser tabs, each a [`SidePanel::Browser`] tab, with their keys.
     browser_tabs: Vec<(usize, Entity<BrowserTab>)>,
+    browser_tool_pending: Option<Value>,
     /// The [`SidePanel::Browser`] key of the next browser tab.
     next_browser_tab: usize,
     /// Chats archived in this session: no side chat for them.
@@ -1124,6 +1126,7 @@ impl Root {
             side_chats: Vec::new(),
             next_side_chat: 1,
             browser_tabs: Vec::new(),
+            browser_tool_pending: None,
             next_browser_tab: 1,
             archived: HashSet::new(),
             diff: None,
@@ -8618,6 +8621,9 @@ impl Root {
                 _ => {}
             },
             Event::Request { id, method, params } => {
+                if method == "item/tool/call" && self.browser_tool_call(&id, &params, cx) {
+                    return;
+                }
                 let pending = PendingApproval {
                     id,
                     method,
