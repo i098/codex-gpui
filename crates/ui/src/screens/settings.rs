@@ -1924,6 +1924,7 @@ impl Render for SettingsPane {
             .then(|| self.keycap_dialog(&t, window, cx))
             .flatten();
         let card_border = over(t.border, t.background_panel);
+        let mut reset = (section == "Codex Micro").then(|| self.reset_layout_button(&t, cx));
         let groups = groups.into_iter().map(|(title, rows)| {
             let last = rows.len() - 1;
             div()
@@ -1935,7 +1936,9 @@ impl Render for SettingsPane {
                         .pb(px(6.))
                         .flex()
                         .items_center()
-                        .child(text(title, 14., 21., 500., t.text)),
+                        .justify_between()
+                        .child(text(title, 14., 21., 500., t.text))
+                        .when_some(if title == "Layout" { reset.take() } else { None }, |d, b| d.child(b)),
                 )
                 .child(
                     div()

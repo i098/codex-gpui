@@ -8,6 +8,7 @@
 //! here, so the connection row reads "Not detected" and battery stays hidden. The analog stick,
 //! knob and custom agent-key editors, and the microphone-key mode are not built yet.
 use super::*;
+use crate::confirmation::{Confirmation, Outcome};
 use theme::Appearance;
 
 const LAYOUT: &str = "host.codex-micro-layout";
@@ -21,6 +22,10 @@ const TILE: f32 = 76.;
 /// `w-40` track and `size-5` thumb of the brightness slider.
 const TRACK: f32 = 160.;
 const THUMB: f32 = 20.;
+/// The Edit keycap dialog's scroller width: `w-[30rem]` less `p-5` and `px-1`.
+const DIALOG_INNER: f32 = 432.;
+/// A layout surface cell: `(15rem - 2 * p-2.5 - 3 * gap-1) / 4`.
+const SURFACE_CELL: f32 = 52.;
 
 /// `(id, action label, double)`: the original's keycap catalog (`codex-micro-layout-*.js`
 /// and the `keycaps.*` messages).
@@ -114,6 +119,8 @@ pub(super) struct State {
     /// The brightness while its slider is dragged; written on release.
     drag: Option<f32>,
     track: Rc<Cell<Bounds<Pixels>>>,
+    /// The open `Reset keyboard layout?` dialog.
+    confirm: Option<Entity<Confirmation>>,
 }
 
 fn keycap(id: &str) -> Option<&'static (&'static str, &'static str, bool)> {
@@ -352,42 +359,94 @@ impl SettingsPane {
         cx.notify();
     }
 
-    /// The keycap grid with `Reset layout`.
+    /// `bi`: the layout surface, `aspect-square max-w-[15rem] grid-cols-4 grid-rows-4 gap-1 p-2.5`.
+    /// Children flow in the original's order: knob, analog stick, ACT06-09, the indicator,
+    /// the wide microphone key (`col-span-2`), then ACT12.
     fn layout_row(&mut self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let layout = self.layout(cx);
-        let rows = GRID.iter().map(|row| {
-            let tiles: Vec<_> = row.iter().map(|&slot| {
-                let id = slot_keycap(&layout, slot);
-                let double = slot == "ACT10_ACT11";
-                let label = keycap(id).map_or("", |k| k.1);
-                let focus = focus::handle((gpui::ElementId::from("codex-micro-slot"), slot), 0, window, cx);
-                let tile = tile(id, label, double, false, t)
-                    .id(slot)
-                    .role(gpui::Role::Button)
-                    .aria_label(format!("Edit {slot}: {label}"));
-                focus::ring(tile, &focus, px(13.), px(2.), cx)
-                    .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_keycap_editor(slot, window, cx)
-                    }))
-            }).collect();
-            div().flex().gap(px(8.)).children(tiles)
-        }).collect::<Vec<_>>();
-        let reset = button("Reset layout", t.text.opacity(0.05), None, t)
-            .id("codex-micro-reset")
-            .role(gpui::Role::Button)
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.page
-                    .update(cx, |page, cx| page.set(LAYOUT, default_layout(), cx));
-            }));
-        div()
+        let dark = t.appearance == Appearance::Dark;
+        let mut key = |slot: &'static str, span: f32| {
+            let id = slot_keycap(&layout, slot);
+            let label = keycap(id).map_or("", |k| k.1);
+            let focus = focus::handle((gpui::ElementId::from("codex-micro-slot"), slot), 0, window, cx);
+            let tile = tile(id, (SURFACE_CELL * span + 4. * (span - 1.), SURFACE_CELL), 12., false, t)
+                .id(slot)
+                .role(gpui::Role::Button)
+                .aria_label(format!("Edit {slot}: {label}"));
+            focus::ring(tile, &focus, px(13.), px(2.), cx)
+                .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.open_keycap_editor(slot, window, cx)
+                }))
+                .into_any_element()
+        };
+        let blank = || div().w(px(SURFACE_CELL)).h(px(SURFACE_CELL)).flex_none().into_any_element();
+        let rows = vec![
+            vec![
+                round_cell(0x202127, 0.58, t).into_any_element(),
+                round_cell(0x111111, 0.72, t).into_any_element(),
+                key("ACT06", 1.),
+                key("ACT07", 1.),
+            ],
+            vec![
+                key("ACT08", 1.),
+                key("ACT09", 1.),
+                round_cell(0x202127, 0.58, t).into_any_element(),
+                blank(),
+            ],
+            vec![key("ACT10_ACT11", 2.), key("ACT12", 1.), blank()],
+        ];
+        let surface = div()
             .relative()
-            .p(px(16.))
             .flex()
             .flex_col()
-            .gap(px(8.))
-            .children(rows)
-            .child(div().absolute().top(px(16.)).right(px(16.)).child(reset))
+            .gap(px(4.))
+            .p(px(10.))
+            .w(px(240.))
+            .h(px(240.))
+            .child(on_card(
+                12.,
+                Squircle,
+                if dark { gpui::rgb(0x18191e).into() } else { gpui::rgb(0xebe8e2).into() },
+                Some(gpui::white().opacity(if dark { 0.1 } else { 0.82 })),
+            ))
+            .children(rows.into_iter().map(|row| div().flex().gap(px(4.)).children(row)));
+        div().flex().justify_center().px(px(16.)).py(px(20.)).child(surface)
+    }
+
+    /// `We`: the ghost `Reset layout` action in the section header; it asks first.
+    pub(super) fn reset_layout_button(&mut self, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        button("Reset layout", t.ghost_hover, None, t)
+            .id("codex-micro-reset")
+            .role(gpui::Role::Button)
+            .on_click(cx.listener(|this, _, window, cx| this.confirm_reset(window, cx)))
+            .into_any_element()
+    }
+
+    /// `kr`: Reset keyboard layout? Confirming restores the default layout.
+    fn confirm_reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let dialog = cx.new(|cx| {
+            Confirmation::new(
+                "Reset keyboard layout?",
+                "This restores the command keys and analog stick to their default assignments without changing your agent key mode or custom chat assignments",
+                "Reset layout",
+                window,
+                cx,
+            )
+            .settings_style()
+        });
+        cx.subscribe(&dialog, |this, _, outcome, cx| {
+            if *outcome == Outcome::Confirm {
+                this.page
+                    .update(cx, |page, cx| page.set(LAYOUT, default_layout(), cx));
+            }
+            this.codex_micro.confirm = None;
+            cx.notify();
+        })
+        .detach();
+        window.focus(&dialog.focus_handle(cx), cx);
+        self.codex_micro.confirm = Some(dialog);
+        cx.notify();
     }
 
     fn open_keycap_editor(&mut self, slot: &'static str, window: &mut Window, cx: &mut Context<Self>) {
@@ -423,6 +482,24 @@ impl SettingsPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if let Some(confirm) = self.codex_micro.confirm.clone() {
+            let viewport = window.viewport_size();
+            return Some(
+                gpui::deferred(
+                    gpui::anchored()
+                        .position(gpui::point(px(0.), px(0.)))
+                        .child(
+                            div()
+                                .relative()
+                                .w(viewport.width)
+                                .h(viewport.height)
+                                .child(confirm),
+                        ),
+                )
+                .with_priority(2)
+                .into_any_element(),
+            );
+        }
         let (slot, picked) = self.codex_micro.edit?;
         let layout = self.layout(cx);
         let current = picked.unwrap_or_else(|| slot_keycap(&layout, slot));
@@ -434,7 +511,7 @@ impl SettingsPane {
             .filter(|k| needle.is_empty() || k.0.to_lowercase().contains(&needle))
             .collect();
         let tiles = keycaps.iter().map(|&&(id, label, _)| {
-            tile(id, label, false, id == current, t)
+            tile(id, (TILE, TILE), 12.8, id == current, t)
                 .id(id)
                 .role(gpui::Role::Button)
                 .aria_label(format!("{id}: {label}"))
@@ -467,15 +544,48 @@ impl SettingsPane {
                 .justify_center()
                 .child(text("No matching keycaps", 13., 18., 430., t.text_secondary))
         } else {
+            // `grid-cols-[repeat(auto-fill,minmax(4.75rem,4.75rem))] justify-between gap-2`
+            // in a `px-1` scroller: the columns spread over the full width.
+            let columns = ((DIALOG_INNER + 8.) / (TILE + 8.)) as usize;
+            let mut tiles = tiles.peekable();
+            let mut lines = Vec::new();
+            while tiles.peek().is_some() {
+                let mut line: Vec<AnyElement> =
+                    tiles.by_ref().take(columns).map(IntoElement::into_any_element).collect();
+                while line.len() < columns {
+                    line.push(div().w(px(TILE)).h(px(TILE)).into_any_element());
+                }
+                lines.push(div().flex().justify_between().children(line));
+            }
+            let fade = gpui::linear_gradient(
+                180.,
+                gpui::linear_color_stop(t.menu_background.opacity(0.), 0.),
+                gpui::linear_color_stop(t.menu_background, 1.),
+            );
+            // `vertical-scroll-fade-mask [--edge-fade-distance:1rem]`
             div()
-                .id("codex-micro-keycaps")
-                .flex()
-                .flex_wrap()
-                .gap(px(8.))
-                .p(px(4.))
-                .max_h(px(320.))
-                .overflow_y_scroll()
-                .children(tiles)
+                .id("codex-micro-keycaps-fade")
+                .relative()
+                .child(
+                    div()
+                        .id("codex-micro-keycaps")
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .p(px(4.))
+                        .max_h(px(320.))
+                        .overflow_y_scroll()
+                        .children(lines),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .h(px(16.))
+                        .bg(fade),
+                )
         };
         let footer = div()
             .flex()
@@ -576,8 +686,9 @@ impl SettingsPane {
     }
 }
 
-/// A keycap: `rounded-[0.8rem]` tile, light `#f7f5f1` or dark `#202127`, the id in mono 11 px.
-fn tile(id: &str, _label: &str, double: bool, selected: bool, t: &Theme) -> Div {
+/// A keycap: a light `#f7f5f1` or dark `#202127` tile with the id in mono 11 px. The dialog's
+/// tiles are `w-[4.75rem]` `rounded-[0.8rem]`; the layout surface's are `rounded-xl` cells.
+fn tile(id: &str, size: (f32, f32), radius: f32, selected: bool, t: &Theme) -> Div {
     let dark = t.appearance == Appearance::Dark;
     let (fill, ink) = if dark {
         (gpui::rgb(0x202127), t.text)
@@ -593,15 +704,31 @@ fn tile(id: &str, _label: &str, double: bool, selected: bool, t: &Theme) -> Div 
     };
     div()
         .relative()
-        .w(px(if double { TILE * 2. + 8. } else { TILE }))
-        .h(px(TILE))
+        .flex_none()
+        .w(px(size.0))
+        .h(px(size.1))
         .flex()
         .items_center()
         .justify_center()
-        .child(on_card(12.8, Squircle, fill.into(), Some(edge)))
-        .child(
-            text(id.to_owned(), 11., 16., 400., ink).font_family(MONO),
-        )
+        .child(on_card(radius, Squircle, fill.into(), Some(edge)))
+        .child(text(id.to_owned(), 11., 16., 400., ink).font_family(MONO))
+}
+
+/// A round control on the surface: the analog stick (`#111111` cap) or the knob.
+fn round_cell(cap: u32, scale: f32, t: &Theme) -> Div {
+    let dark = t.appearance == Appearance::Dark;
+    let fill = if dark { gpui::rgb(0x23252c) } else { gpui::rgb(0xdad4ca) };
+    let edge = gpui::white().opacity(if dark { 0.12 } else { 0.84 });
+    div()
+        .relative()
+        .flex_none()
+        .w(px(SURFACE_CELL))
+        .h(px(SURFACE_CELL))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(on_card(12., Squircle, fill.into(), Some(edge)))
+        .child(div().size(px(SURFACE_CELL * scale)).rounded_full().bg(gpui::rgb(cap)))
 }
 
 #[cfg(test)]
