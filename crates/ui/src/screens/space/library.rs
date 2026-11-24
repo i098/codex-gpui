@@ -63,6 +63,49 @@ pub struct Library {
     /// The open folders, outermost first: `(id, name)`.
     pub path: Vec<(String, String)>,
     pub items: Items,
+    /// An opened `/library/share/*` link; replaces the list while it is `Some`.
+    pub share: Option<Share>,
+    pub target: Option<ShareTarget>,
+    /// The invitation the person just accepted; the next resolve skips it.
+    pub accepted: Option<String>,
+}
+
+/// What a `/library/share/*` link names (`share-link` `o(path, search)`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ShareTarget {
+    pub file_id: Option<String>,
+    pub folder_id: Option<String>,
+    pub invitation_id: Option<String>,
+}
+
+/// A Library invitation (`/sharing/invitations/{id}`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Invitation {
+    pub id: String,
+    pub status: String,
+    pub folder: bool,
+    pub name: Option<String>,
+    pub editor: bool,
+    /// Sender name and email.
+    pub inviter: Option<(String, String)>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Share {
+    Loading,
+    Invitation(Invitation),
+    Unavailable,
+}
+
+/// How a share link resolved.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Resolved {
+    Invitation(Invitation),
+    /// A folder the person can open.
+    Folder(String, String),
+    /// A file; the file preview is not built, so Library shows its root.
+    File,
+    Unavailable,
 }
 
 impl Library {
@@ -85,12 +128,18 @@ pub enum Action {
     Restore(Node),
     /// `library.emptyTrash.confirm`.
     EmptyTrash,
+    /// Resolve [`Library::target`] (a `/library/share/*` link).
+    ResolveShare,
+    /// `library.share.invitation.accept` or `.decline`.
+    Answer { invitation: String, accept: bool },
 }
 
 impl SpacePage {
     fn library_mut(&mut self, cx: &mut Context<Self>, change: impl FnOnce(&mut Library)) {
         let library = self.library.get_or_insert_default();
         change(library);
+        library.share = None;
+        library.target = None;
         library.items = Items::Loading;
         cx.emit(Action::Load);
         cx.notify();
@@ -106,6 +155,47 @@ impl SpacePage {
     /// `Files`: opens the Library on its `All` tab.
     pub fn open_library(&mut self, cx: &mut Context<Self>) {
         self.library_mut(cx, |library| *library = Library::default());
+    }
+
+    /// Opens a `/library/share/*` link in the Library.
+    pub fn open_share(&mut self, target: ShareTarget, cx: &mut Context<Self>) {
+        self.library = Some(Library {
+            share: Some(Share::Loading),
+            target: Some(target),
+            ..Library::default()
+        });
+        cx.emit(Action::ResolveShare);
+        cx.notify();
+    }
+
+    /// The invitation was accepted: resolve the link again, as the original does.
+    pub fn invitation_accepted(&mut self, id: String, cx: &mut Context<Self>) {
+        if let Some(library) = &mut self.library {
+            library.accepted = Some(id);
+            library.share = Some(Share::Loading);
+            cx.emit(Action::ResolveShare);
+            cx.notify();
+        }
+    }
+
+    /// Shows what the open share link resolved to.
+    pub fn set_share(&mut self, resolved: Resolved, cx: &mut Context<Self>) {
+        let Some(library) = &mut self.library else {
+            return;
+        };
+        match resolved {
+            Resolved::Invitation(invitation) => library.share = Some(Share::Invitation(invitation)),
+            Resolved::Unavailable => library.share = Some(Share::Unavailable),
+            Resolved::Folder(id, name) => {
+                self.library_mut(cx, |library| library.path = vec![(id, name)]);
+                return;
+            }
+            Resolved::File => {
+                self.open_library(cx);
+                return;
+            }
+        }
+        cx.notify();
     }
 
     /// Back to the Spaces list.
@@ -299,6 +389,9 @@ impl SpacePage {
     ) -> Div {
         let t = cx.theme().clone();
         let message = |s: &'static str| text(s, 14., 20., 400., t.text_secondary);
+        if let Some(share) = &library.share {
+            return self.share_body(share, window, cx);
+        }
         let nodes = match &library.items {
             Items::Loading => return div(),
             Items::Failed => {
@@ -410,5 +503,108 @@ impl SpacePage {
                 .aria_label("Library files")
                 .children(rows),
         )
+    }
+
+    /// The original's `/library/share/*` page: an invitation card or the unavailable state.
+    fn share_body(&self, share: &Share, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
+        let heading = |s: String| text(s, 20., 28., 500., t.text);
+        let note = |s: String| text(s, 14., 20., 400., t.text_secondary);
+        let back = |window: &mut Window, cx: &mut Context<Self>| {
+            button(
+                "library-share-back",
+                "Back to Library",
+                window,
+                cx,
+                |page, _, cx| page.open_library(cx),
+            )
+        };
+        let card = div()
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap(px(12.))
+            .py(px(24.));
+        match share {
+            Share::Loading => div(),
+            Share::Unavailable => card
+                .child(heading("Unable to open this shared item".into()))
+                .child(note(
+                    "Ask the owner to share it with you, or switch to an account with access"
+                        .into(),
+                ))
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(8.))
+                        .child(button(
+                            "library-share-retry",
+                            "Try again",
+                            window,
+                            cx,
+                            |_, _, cx| cx.emit(Action::ResolveShare),
+                        ))
+                        .child(back(window, cx)),
+                ),
+            Share::Invitation(i) if i.status == "accepted" => {
+                let id = i.id.clone();
+                card.child(heading("This invitation was already accepted".into()))
+                    .child(button(
+                        "library-share-open",
+                        "Open in ChatGPT",
+                        window,
+                        cx,
+                        move |page, _, cx| page.invitation_accepted(id.clone(), cx),
+                    ))
+            }
+            Share::Invitation(i) if i.status != "pending" => card
+                .child(heading("This invitation is no longer available".into()))
+                .child(back(window, cx)),
+            Share::Invitation(i) => {
+                let role = if i.editor { "edit" } else { "view" };
+                let what = match (&i.name, i.folder) {
+                    (Some(name), _) if !name.trim().is_empty() => name.clone(),
+                    (_, true) => "this folder".into(),
+                    _ => "this file".into(),
+                };
+                let mut card = card.child(heading(format!(
+                    "You\u{2019}ve been invited to {role} {what}"
+                )));
+                card = card.child(note("Only accept files from people you know".into()));
+                if let Some((name, email)) = &i.inviter {
+                    card = card.child(note(format!("{name} ({email})")));
+                }
+                let (accept, decline) = (i.id.clone(), i.id.clone());
+                card.child(
+                    div()
+                        .flex()
+                        .gap(px(8.))
+                        .child(button(
+                            "library-share-decline",
+                            "Decline",
+                            window,
+                            cx,
+                            move |_, _, cx| {
+                                cx.emit(Action::Answer {
+                                    invitation: decline.clone(),
+                                    accept: false,
+                                })
+                            },
+                        ))
+                        .child(button(
+                            "library-share-accept",
+                            "Accept invite",
+                            window,
+                            cx,
+                            move |_, _, cx| {
+                                cx.emit(Action::Answer {
+                                    invitation: accept.clone(),
+                                    accept: true,
+                                })
+                            },
+                        )),
+                )
+            }
+        }
     }
 }
