@@ -68,6 +68,10 @@ pub struct Library {
     pub target: Option<ShareTarget>,
     /// The invitation the person just accepted; the next resolve skips it.
     pub accepted: Option<String>,
+    /// The invitation dialog was answered and the request is in flight.
+    pub answering: bool,
+    /// The last answer failed; the dialog opens again with the error.
+    pub answer_failed: bool,
 }
 
 /// What a `/library/share/*` link names (`share-link` `o(path, search)`).
@@ -131,11 +135,19 @@ pub enum Action {
     /// Resolve [`Library::target`] (a `/library/share/*` link).
     ResolveShare,
     /// `library.share.invitation.accept` or `.decline`.
-    Answer { invitation: String, accept: bool },
+    Answer {
+        invitation: String,
+        accept: bool,
+        /// `always_accept_from_inviter`.
+        always: bool,
+    },
 }
 
 impl SpacePage {
     fn library_mut(&mut self, cx: &mut Context<Self>, change: impl FnOnce(&mut Library)) {
+        if self.library.as_ref().is_some_and(|l| l.share.is_some()) {
+            self.confirmation = None;
+        }
         let library = self.library.get_or_insert_default();
         change(library);
         library.share = None;
@@ -172,10 +184,93 @@ impl SpacePage {
     pub fn invitation_accepted(&mut self, id: String, cx: &mut Context<Self>) {
         if let Some(library) = &mut self.library {
             library.accepted = Some(id);
+            library.answering = false;
             library.share = Some(Share::Loading);
+            self.confirmation = None;
             cx.emit(Action::ResolveShare);
             cx.notify();
         }
+    }
+
+    /// The answer request failed: show the invitation dialog again with the error.
+    pub fn answer_failed(&mut self, cx: &mut Context<Self>) {
+        if let Some(library) = &mut self.library {
+            library.answering = false;
+            library.answer_failed = true;
+            cx.notify();
+        }
+    }
+
+    /// `library.share.invitation.*`: the original's compact dialog (`Confirmation` here), shown
+    /// while a pending invitation is open and unanswered.
+    pub(super) fn share_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(library) = &mut self.library else {
+            return;
+        };
+        let failed = std::mem::take(&mut library.answer_failed);
+        let pending = match &library.share {
+            Some(Share::Invitation(i)) if i.status == "pending" && !library.answering => i.clone(),
+            _ => return,
+        };
+        if self.confirmation.is_some() {
+            return;
+        }
+        let role = if pending.editor { "edit" } else { "view" };
+        let what = match &pending.name {
+            Some(name) if !name.trim().is_empty() => name.clone(),
+            _ if pending.folder => "this folder".into(),
+            _ => "this file".into(),
+        };
+        let mut note = String::from("Only accept files from people you know");
+        if let Some((name, email)) = &pending.inviter {
+            note.push_str(&format!("\n{name} ({email})"));
+        }
+        let trust = pending
+            .inviter
+            .as_ref()
+            .map(|(name, _)| format!("Always accept files and folders from {name}"));
+        let id = pending.id;
+        let dialog = cx.new(|cx| {
+            let mut dialog = Confirmation::new(
+                format!("You\u{2019}ve been invited to {role} {what}"),
+                note,
+                "Accept invite",
+                window,
+                cx,
+            )
+            .alternate("Decline", window, cx);
+            if let Some(trust) = trust {
+                dialog = dialog.with_opt_out(trust, cx);
+            }
+            if failed {
+                dialog.failed(
+                    "We couldn\u{2019}t update your invitation. Please try again",
+                    window,
+                    cx,
+                );
+            }
+            dialog
+        });
+        cx.subscribe(&dialog, move |this, dialog, outcome, cx| {
+            this.confirmation = None;
+            match outcome {
+                Outcome::Cancel => this.open_library(cx),
+                Outcome::Confirm | Outcome::Alternate => {
+                    let always = *outcome == Outcome::Confirm && dialog.read(cx).opt_out_checked();
+                    if let Some(library) = &mut this.library {
+                        library.answering = true;
+                    }
+                    cx.emit(Action::Answer {
+                        invitation: id.clone(),
+                        accept: *outcome == Outcome::Confirm,
+                        always,
+                    });
+                }
+            }
+            cx.notify();
+        })
+        .detach();
+        self.confirmation = Some(dialog);
     }
 
     /// Shows what the open share link resolved to.
@@ -560,51 +655,8 @@ impl SpacePage {
             Share::Invitation(i) if i.status != "pending" => card
                 .child(heading("This invitation is no longer available".into()))
                 .child(back(window, cx)),
-            Share::Invitation(i) => {
-                let role = if i.editor { "edit" } else { "view" };
-                let what = match (&i.name, i.folder) {
-                    (Some(name), _) if !name.trim().is_empty() => name.clone(),
-                    (_, true) => "this folder".into(),
-                    _ => "this file".into(),
-                };
-                let mut card = card.child(heading(format!(
-                    "You\u{2019}ve been invited to {role} {what}"
-                )));
-                card = card.child(note("Only accept files from people you know".into()));
-                if let Some((name, email)) = &i.inviter {
-                    card = card.child(note(format!("{name} ({email})")));
-                }
-                let (accept, decline) = (i.id.clone(), i.id.clone());
-                card.child(
-                    div()
-                        .flex()
-                        .gap(px(8.))
-                        .child(button(
-                            "library-share-decline",
-                            "Decline",
-                            window,
-                            cx,
-                            move |_, _, cx| {
-                                cx.emit(Action::Answer {
-                                    invitation: decline.clone(),
-                                    accept: false,
-                                })
-                            },
-                        ))
-                        .child(button(
-                            "library-share-accept",
-                            "Accept invite",
-                            window,
-                            cx,
-                            move |_, _, cx| {
-                                cx.emit(Action::Answer {
-                                    invitation: accept.clone(),
-                                    accept: true,
-                                })
-                            },
-                        )),
-                )
-            }
+            // The invitation itself is the dialog [`Self::share_dialog`] opens.
+            Share::Invitation(_) => div(),
         }
     }
 }

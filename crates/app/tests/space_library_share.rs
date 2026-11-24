@@ -8,6 +8,7 @@ use app::host::{Host, Request};
 use common::Fx;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
+use ui::confirmation::Outcome;
 use ui::screens::space::library::Share;
 
 /// An in-memory account with one pending folder invitation.
@@ -64,18 +65,19 @@ fn shown(fx: &Fx) -> Option<Share> {
     fx.read(|root, cx| root.space_page()?.read(cx).library.as_ref()?.share.clone())
 }
 
-fn press(fx: &mut Fx, id: &'static str) -> Result<()> {
-    let page = fx
-        .read(|root, _| root.space_page().cloned())
-        .context("page")?;
-    fx.cx.update(|cx| {
-        page.update(cx, |_, cx| {
-            cx.emit(ui::screens::space::library::Action::Answer {
-                invitation: "inv-1".into(),
-                accept: id == "accept",
-            })
+/// Answers the invitation dialog the page shows.
+fn press(fx: &mut Fx, outcome: Outcome) -> Result<()> {
+    fx.wait("the invitation dialog", |fx| {
+        fx.read(|root, cx| {
+            root.space_page()
+                .is_some_and(|p| p.read(cx).confirmation().is_some())
         })
-    });
+    })?;
+    let dialog = fx
+        .read(|root, cx| root.space_page()?.read(cx).confirmation().cloned())
+        .context("dialog")?;
+    fx.cx
+        .update(|cx| dialog.update(cx, |_, cx| cx.emit(outcome)));
     fx.cx.run_until_parked();
     Ok(())
 }
@@ -90,8 +92,14 @@ fn share_link_shows_invitation_then_accept_opens_the_folder() -> Result<()> {
     fx.wait("the invitation card", |fx| {
         matches!(shown(fx), Some(Share::Invitation(_)))
     })?;
-    fx.capture_evidence("CGX_LIBRARY_SHARE_EVIDENCE", "after-invitation")?;
-    press(&mut fx, "accept")?;
+    fx.wait("the dialog", |fx| {
+        fx.read(|root, cx| {
+            root.space_page()
+                .is_some_and(|p| p.read(cx).confirmation().is_some())
+        })
+    })?;
+    fx.capture_evidence("CGX_LIBRARY_SHARE_EVIDENCE", "after-invitation-v2")?;
+    press(&mut fx, Outcome::Confirm)?;
     fx.wait("the shared folder", |fx| {
         shown(fx).is_none()
             && fx.read(|root, cx| {
@@ -100,7 +108,7 @@ fn share_link_shows_invitation_then_accept_opens_the_folder() -> Result<()> {
                     == Some(vec![("dir-shared".into(), "Trip photos".into())])
             })
     })?;
-    fx.capture_evidence("CGX_LIBRARY_SHARE_EVIDENCE", "after-accept")?;
+    fx.capture_evidence("CGX_LIBRARY_SHARE_EVIDENCE", "after-accept-v2")?;
     let log = backend.log.lock().unwrap();
     ensure!(
         log.iter()
@@ -120,7 +128,7 @@ fn share_link_decline_returns_to_the_library() -> Result<()> {
     fx.wait("the invitation card", |fx| {
         matches!(shown(fx), Some(Share::Invitation(_)))
     })?;
-    press(&mut fx, "decline")?;
+    press(&mut fx, Outcome::Alternate)?;
     fx.wait("the Library", |fx| shown(fx).is_none())?;
     ensure!(
         backend

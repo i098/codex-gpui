@@ -81,13 +81,18 @@ pub(super) fn on_action(
         .detach();
         return;
     }
-    if let Action::Answer { invitation, accept } = action {
-        let (invitation, accept) = (invitation.clone(), *accept);
+    if let Action::Answer {
+        invitation,
+        accept,
+        always,
+    } = action
+    {
+        let (invitation, accept, always) = (invitation.clone(), *accept, *always);
         let page = page.downgrade();
         cx.spawn(async move |root, cx| {
             let id = invitation.clone();
             let result = cx
-                .background_spawn(async move { answer(&*host, &id, accept) })
+                .background_spawn(async move { answer(&*host, &id, accept, always) })
                 .await;
             root.update(cx, |root, cx| {
                 if result.is_err() {
@@ -151,13 +156,13 @@ pub(super) fn on_action(
 }
 
 /// `POST /sharing/invitations/{id}/accept` or `/decline`.
-fn answer(host: &dyn host::Host, id: &str, accept: bool) -> Result<()> {
+fn answer(host: &dyn host::Host, id: &str, accept: bool, always: bool) -> Result<()> {
     let verb = if accept { "accept" } else { "decline" };
     get(
         host,
         "POST",
         format!("/sharing/invitations/{}/{verb}", path(id)),
-        None,
+        (accept && always).then(|| json!({"always_accept_from_inviter": true})),
     )
     .map(drop)
 }
