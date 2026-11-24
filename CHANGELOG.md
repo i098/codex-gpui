@@ -8,8 +8,10 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Settings ▸ Browser: choose whether to include screenshots with all browser annotations or only with drag selections (#931).
+- Add the macOS onboarding switches for Computer use and Computer history. They install the bundled Computer use plugin, request macOS permissions, and turn on Computer history with Memories (#1560).
 - In the macOS in-app browser, allow or block sites that ask to start or toggle annotation mode (#837).
 - On macOS, render MCP App widgets from completed tool calls inside the thread (#909).
+- On macOS, open an inline MCP App in a named side tab. Close the tab to return the app to the thread (#953).
 - Mini shows task creation and progress from an active voice chat (#875).
 - Customize the Explore sidebar, pin or unpin native destinations and Security Cloud, and keep the rail order between sessions (#985).
 - In the macOS in-app browser, select an element, an area, or text and add a comment. Hold Space to use the page. When multi-select is enabled, hold Shift to add another selection (#836).
