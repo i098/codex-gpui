@@ -6,6 +6,7 @@
       "appgen-sites-query-8ee1359247fa.js /websites/shared (query O)",
       "app-initial-6350d04672d0.js /files/library/nodes (entry_surface=spaces)",
       "app-initial-6350d04672d0.js Mwr /pages/{page_id}",
+      "app-initial-6350d04672d0.js /pages?surface=private (items, next_cursor pages)",
       "app-initial-6350d04672d0.js QR /spaces/v2 (space-list-v2, next_cursor pages)"
     ],
     "schema": "Response fields follow the original zod schemas A and j (items, cursor).",
@@ -280,6 +281,74 @@
                 ]
               ],
               "body": "{\"items\":[{\"id\":\"space-0000000000000000000000002\",\"name\":\"Launch notes\",\"backing_type\":\"native\",\"root_page_id\":\"page-00000000000000000000000002\",\"updated_at\":\"2026-10-15T23:30:00Z\"}],\"next_cursor\":null}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/pages?surface=private&limit=50",
+          "method": "GET",
+          "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "originator": "Codex Desktop"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"items\":[{\"page_id\":\"page-00000000000000000000000003\",\"title\":\"Launch notes page\",\"last_used_at\":\"2026-10-15T23:00:00Z\"}],\"next_cursor\":\"cursor/2\"}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/pages?surface=private&cursor=cursor%2F2&limit=50",
+          "method": "GET",
+          "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "originator": "Codex Desktop"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"items\":[{\"page_id\":\"page-00000000000000000000000004\",\"title\":\"Older page\",\"last_used_at\":\"2026-10-15T21:00:00Z\"}],\"next_cursor\":null}"
             }
           }
         }
