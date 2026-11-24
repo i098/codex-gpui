@@ -679,6 +679,7 @@ pub struct Submission {
     /// Set only after the user confirms the shell command.
     pub shell_command: bool,
     pub attachments: Vec<PathBuf>,
+    pub comment_images: Vec<String>,
     /// File references added as context, not image uploads.
     pub context_files: Vec<PathBuf>,
     pub model: String,
@@ -1229,6 +1230,7 @@ pub struct Composer {
     on_submit: Option<SubmitHandler>,
     on_cancel_edit: Option<CancelEditHandler>,
     edit_pending: bool,
+    browser_annotation_capture_pending: bool,
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     /// Saves the Daybreak toggle for the bound thread.
@@ -1377,6 +1379,7 @@ impl Composer {
             on_submit: None,
             on_cancel_edit: None,
             edit_pending: false,
+            browser_annotation_capture_pending: false,
             on_approval: None,
             on_model: None,
             on_daybreak: None,
@@ -2555,9 +2558,13 @@ impl Composer {
         }
     }
 
+    fn draft_send_blocked(&self) -> bool {
+        self.blocked.is_some() || self.browser_annotation_capture_pending
+    }
+
     /// Sends the draft as Enter does; a draft that can't be sent yet stays in the composer.
     pub fn send_draft(&mut self, background: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.blocked.is_some() {
+        if self.draft_send_blocked() {
             return;
         }
         if self.slash.open {
@@ -2593,6 +2600,9 @@ impl Composer {
     }
 
     fn finish_send_draft(&mut self, background: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.browser_annotation_capture_pending {
+            return;
+        }
         self.cancel_dictation(cx);
         let submission = self.take_submission(background);
         if !submission.shell_command && self.on_cancel_edit.is_none() {
@@ -2705,6 +2715,7 @@ impl Composer {
                 self.prompt()
             },
             attachments,
+            comment_images: diff_comments::comment_images(&self.diff_comments),
             context_files,
             model,
             effort,
@@ -3994,9 +4005,12 @@ impl Render for Composer {
                                 || !self.attachments.is_empty()),
                         |d| d.child(self.attachments_row(&t, cx)),
                     )
-                    .when_some(self.upload_status(), |d, error| {
-                        d.child(label(error, t.text))
-                    })
+                    .when_some(
+                        self.browser_annotation_capture_pending
+                            .then_some("Capturing annotation screenshot…")
+                            .or_else(|| self.upload_status()),
+                        |d, status| d.child(label(status, t.text)),
+                    )
                     .when(!self.chat || editing, |d| {
                         d.child(self.card_editor(editing, window, cx))
                     })

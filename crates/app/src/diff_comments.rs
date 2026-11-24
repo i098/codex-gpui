@@ -23,6 +23,17 @@ fn stored_comments(cx: &App, key: &str, thread: &str) -> Vec<Comment> {
     }
 }
 
+/// The page screenshot stays in memory for the turn payload; it is not written to the settings file.
+fn comments_for_disk(comments: &[Comment]) -> serde_json::Result<Value> {
+    let mut value = serde_json::to_value(comments)?;
+    for comment in value.as_array_mut().into_iter().flatten() {
+        if let Some(comment) = comment.as_object_mut() {
+            comment.remove("localBrowserScreenshot");
+        }
+    }
+    Ok(value)
+}
+
 impl Root {
     pub(super) fn has_dialog(&self) -> bool {
         self.dialog.is_some()
@@ -105,6 +116,19 @@ impl Root {
         else {
             return;
         };
+        self.save_diff_comments(thread, comments, cx);
+        self.thread_composer.update(cx, |composer, cx| {
+            composer.set_diff_comments(comments.to_vec(), cx)
+        });
+        if let Some(panel) = &self.diff {
+            panel.update(cx, |panel, cx| {
+                panel.set_user_comments(comments.to_vec(), cx)
+            });
+        }
+        self.sync_browser_annotations(cx);
+    }
+
+    fn save_diff_comments(&mut self, thread: String, comments: &[Comment], cx: &mut Context<Self>) {
         let result = (|| -> anyhow::Result<()> {
             anyhow::ensure!(cx.has_global::<Settings>(), "host settings are unavailable");
             let settings = cx.global_mut::<Settings>();
@@ -116,7 +140,7 @@ impl Root {
             if comments.is_empty() {
                 threads.remove(&thread);
             } else {
-                threads.insert(thread, serde_json::to_value(comments)?);
+                threads.insert(thread, comments_for_disk(comments)?);
             }
             settings.write("diff_comments", Value::Object(threads))
         })();
@@ -124,15 +148,6 @@ impl Root {
             eprintln!("codex-gpui: cannot save diff comment: {error:#}");
             self.toast(Toast::danger("Could not save comment. Try again."), cx);
         }
-        self.thread_composer.update(cx, |composer, cx| {
-            composer.set_diff_comments(comments.to_vec(), cx)
-        });
-        if let Some(panel) = &self.diff {
-            panel.update(cx, |panel, cx| {
-                panel.set_user_comments(comments.to_vec(), cx)
-            });
-        }
-        self.sync_browser_annotations(cx);
     }
 
     pub(super) fn dismiss_diff_comment(&mut self, key: &str, cx: &mut Context<Self>) {
@@ -193,9 +208,105 @@ impl Root {
         }
     }
 
+    pub(super) fn add_browser_annotation(
+        &mut self,
+        _tab: &Entity<ui::browser::BrowserTab>,
+        comment: &Comment,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(_thread) = self.thread.as_ref() else {
+            return;
+        };
+        #[cfg(target_os = "macos")]
+        if let Some(capture) = _tab.update(cx, |tab, cx| {
+            let only_on_drag = cx.try_global::<Settings>().is_some_and(|store| {
+                store
+                    .read_all()
+                    .get("browser-annotation-screenshots-mode")
+                    .and_then(Value::as_str)
+                    == Some("necessary")
+            });
+            tab.annotation_screenshot(comment, only_on_drag, cx)
+        }) {
+            let thread = _thread.read(cx).id().to_owned();
+            self.capture_browser_annotation(thread, comment.clone(), capture, cx);
+            return;
+        }
+        self.append_browser_annotation(comment.clone(), cx);
+    }
+
+    fn append_browser_annotation(&mut self, comment: Comment, cx: &mut Context<Self>) {
+        let mut pending = self.thread_composer.read(cx).diff_comments().to_vec();
+        pending.push(comment);
+        self.change_diff_comments(&pending, cx);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn capture_browser_annotation(
+        &self,
+        thread: String,
+        mut comment: Comment,
+        capture: impl Future<Output = Option<Vec<u8>>> + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        self.set_browser_annotation_capture_pending(true, cx);
+        cx.spawn(async move |this, cx| {
+            let timeout = cx
+                .background_executor()
+                .timer(std::time::Duration::from_secs(5));
+            if let Some(png) = futures_lite::future::or(capture, async {
+                timeout.await;
+                None
+            })
+            .await
+            {
+                let mut url = "data:image/png;base64,".to_owned();
+                STANDARD.encode_string(&png, &mut url);
+                comment
+                    .extra
+                    .insert("localBrowserScreenshot".into(), json!({"dataUrl": url}));
+            }
+            let _ = this.update(cx, |this, cx| {
+                this.set_browser_annotation_capture_pending(false, cx);
+                if this
+                    .thread
+                    .as_ref()
+                    .is_some_and(|open| open.read(cx).id() == thread)
+                {
+                    this.append_browser_annotation(comment, cx);
+                } else {
+                    let mut pending = stored_comments(cx, "diff_comments", &thread);
+                    pending.push(comment);
+                    this.save_diff_comments(thread, &pending, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    #[cfg(target_os = "macos")]
+    fn set_browser_annotation_capture_pending(&self, pending: bool, cx: &mut App) {
+        self.thread_composer.update(cx, |composer, cx| {
+            composer.set_browser_annotation_capture_pending(pending, cx);
+        });
+        for (_, tab) in &self.browser_tabs {
+            tab.update(cx, |tab, cx| {
+                tab.set_annotation_capture_pending(pending, cx);
+            });
+        }
+    }
+
     /// The annotation toolbar's Send: the pending browser annotations go out as their own
     /// turn and leave the pending list; diff comments stay for the next message.
     pub(super) fn send_browser_annotations(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .thread_composer
+            .read(cx)
+            .browser_annotation_capture_pending()
+        {
+            return;
+        }
         let (browser, rest): (Vec<Comment>, Vec<Comment>) = self
             .thread_composer
             .read(cx)
@@ -260,5 +371,30 @@ impl Root {
         }
         self.diff_confirmation = Some(dialog);
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_comments_drop_the_page_screenshot() {
+        let mut comment: Comment = serde_json::from_value(json!({
+            "content": [{"content_type": "text", "text": "x"}],
+            "position": {"path": "browser:Save", "side": "right", "line": 1},
+        }))
+        .unwrap();
+        comment.extra.insert(
+            "localBrowserScreenshot".into(),
+            json!({"dataUrl": "data:image/png;base64,AA=="}),
+        );
+        let saved = comments_for_disk(&[comment.clone()]).unwrap();
+        assert!(saved[0].get("localBrowserScreenshot").is_none());
+        assert!(comment.extra.contains_key("localBrowserScreenshot"));
+        assert_eq!(
+            saved[0]["content"],
+            json!([{"content_type": "text", "text": "x"}])
+        );
     }
 }
