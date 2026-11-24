@@ -5,7 +5,7 @@ use crate::screens::diff::panel::comments::browser::{
 };
 use crate::screens::diff::panel::comments::{Comment, Position, Side};
 #[cfg(target_os = "macos")]
-use gpui::{AppContext as _, Window};
+use gpui::{AppContext as _, Bounds, Window, point, size};
 use gpui::{
     Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _, px,
@@ -23,6 +23,9 @@ pub(super) struct Pick {
     target_description: Option<String>,
     target_role: Option<String>,
     target_selector: Option<String>,
+    target_path: Option<String>,
+    target_immediate_text: Option<String>,
+    nearby_text: Option<String>,
     selected_text: Option<String>,
 }
 
@@ -40,7 +43,59 @@ struct Draft {
     _observe: gpui::Subscription,
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn screenshot_rect(
+    context: &browser::Context,
+    kind: SelectionKind,
+    only_on_drag: bool,
+) -> Option<browser::Rect> {
+    if !only_on_drag || kind == SelectionKind::Region {
+        context.target_rect
+    } else {
+        context.additional_selections.iter().find_map(|selection| {
+            if let Selection::Region { rect, .. } = selection {
+                Some(*rect)
+            } else {
+                None
+            }
+        })
+    }
+}
+
 impl BrowserTab {
+    /// Start the capture while the annotation's document is still current.
+    #[cfg(target_os = "macos")]
+    pub fn annotation_screenshot(
+        &self,
+        comment: &Comment,
+        only_on_drag: bool,
+        cx: &Context<Self>,
+    ) -> Option<impl Future<Output = Option<Vec<u8>>> + use<>> {
+        let context = comment.local_browser_context.as_ref()?;
+        let kind = comment.local_browser_comment_metadata.as_ref()?.kind;
+        let rect = screenshot_rect(context, kind, only_on_drag)?;
+        let page = self.page.state();
+        if self.hidden || page.loading || page.url.as_ref()?.as_str() != context.page_url {
+            return None;
+        }
+        let capture = self.snapshot(Bounds::new(
+            point(px(rect.x as f32), px(rect.y as f32)),
+            size(px(rect.width as f32), px(rect.height as f32)),
+        ));
+        let tab = cx.weak_entity();
+        let cx = cx.to_async();
+        let generation = self.annotation.generation;
+        Some(async move {
+            let png = capture.await.ok()?;
+            tab.read_with(&cx, |tab, _| {
+                (tab.annotation.generation == generation && !tab.page.state().loading)
+                    .then_some(png)
+            })
+            .ok()
+            .flatten()
+        })
+    }
+
     pub fn set_annotation_multi_select(&mut self, enabled: bool) {
         self.annotation.multi_select = enabled;
         self.sync_annotation();
@@ -117,9 +172,9 @@ impl BrowserTab {
                     target_name: None,
                     target_role: pick.target_role,
                     target_selector: pick.target_selector,
-                    target_path: None,
-                    target_immediate_text: None,
-                    nearby_text: None,
+                    target_path: pick.target_path,
+                    target_immediate_text: pick.target_immediate_text,
+                    nearby_text: pick.nearby_text,
                 },
                 SelectionKind::Region => Selection::Region {
                     page_url,
@@ -164,6 +219,8 @@ impl BrowserTab {
                 target_description: pick.target_description,
                 target_role: pick.target_role,
                 target_selector: pick.target_selector,
+                target_path: pick.target_path,
+                nearby_text: pick.nearby_text,
                 target_rect: Some(pick.target_rect),
                 ..Default::default()
             },
@@ -176,6 +233,9 @@ impl BrowserTab {
     }
 
     fn add_annotation(&mut self, cx: &mut Context<Self>) {
+        if self.annotation_capture_pending {
+            return;
+        }
         let Some(draft) = self
             .annotation
             .draft
@@ -211,7 +271,8 @@ impl BrowserTab {
 
     pub(super) fn annotation_card(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
         let draft = self.annotation.draft.as_ref()?;
-        let enabled = !draft.editor.read(cx).field_text().trim().is_empty();
+        let enabled = !self.annotation_capture_pending
+            && !draft.editor.read(cx).field_text().trim().is_empty();
         let t = cx.theme();
         let selection_label = |kind, index| {
             let label = match kind {
@@ -242,6 +303,7 @@ impl BrowserTab {
             .id("browser-comment-add")
             .role(gpui::Role::Button)
             .aria_label("Add comment")
+            .aria_disabled(!enabled)
             .w(px(28.))
             .h(px(28.))
             .rounded_full()
@@ -314,5 +376,56 @@ impl BrowserTab {
                         .child(add),
                 ),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drag_only_skips_non_region_comments() {
+        let rect = browser::Rect {
+            x: 1.,
+            y: 2.,
+            width: 10.,
+            height: 20.,
+        };
+        let context = browser::Context {
+            target_rect: Some(rect),
+            ..Default::default()
+        };
+        for kind in [SelectionKind::Element, SelectionKind::Text] {
+            assert_eq!(screenshot_rect(&context, kind, true), None);
+            assert_eq!(screenshot_rect(&context, kind, false), Some(rect));
+        }
+        assert_eq!(
+            screenshot_rect(&context, SelectionKind::Region, true),
+            Some(rect)
+        );
+    }
+
+    #[test]
+    fn drag_only_uses_a_region_added_to_an_element() {
+        let rect = browser::Rect {
+            x: 1.,
+            y: 2.,
+            width: 10.,
+            height: 20.,
+        };
+        let context = browser::Context {
+            additional_selections: vec![Selection::Region {
+                page_url: String::new(),
+                frame_path: vec![],
+                frame_url: None,
+                rect,
+                target_path: None,
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            screenshot_rect(&context, SelectionKind::Element, true),
+            Some(rect)
+        );
     }
 }

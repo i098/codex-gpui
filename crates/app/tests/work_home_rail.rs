@@ -301,6 +301,7 @@ fn plugins_picker_mentions_connected_plugins() -> Result<()> {
 fn run_location_menu_keeps_work_on_this_computer() -> Result<()> {
     let mut fx = Fx::new()?;
     fx.keys(mode_key(2))?;
+    banner_loaded(&mut fx)?;
     fx.capture_evidence("CGX_WORK_RAIL_SHOTS", "work-home")?;
     let open = |fx: &Fx| fx.read(|root, cx| root.home().read(cx).work.run_open);
     tap(&mut fx, RUN)?;

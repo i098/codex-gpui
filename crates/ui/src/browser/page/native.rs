@@ -1,25 +1,32 @@
 //! The page as a WKWebView child of the gpui window's AppKit view.
 
+use std::{cell::RefCell, collections::HashMap, path::PathBuf};
+
 use anyhow::{Context as _, Result, ensure};
-use block2::RcBlock;
+use block2::{DynBlock, RcBlock};
 use gpui::{Bounds, Pixels, Window};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject, Sel};
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImage};
 use objc2_foundation::{
-    MainThreadMarker, NSDictionary, NSError, NSPoint, NSRect, NSSize, NSString, ns_string,
+    MainThreadMarker, NSData, NSDictionary, NSError, NSFileManager, NSHTTPURLResponse, NSPoint,
+    NSRect, NSSearchPathDirectory, NSSearchPathDomainMask, NSSize, NSString, NSURL, NSURLResponse,
+    ns_string,
 };
 use objc2_web_kit::{
-    WKContentWorld, WKNavigation, WKNavigationDelegate, WKScriptMessage, WKScriptMessageHandler,
-    WKSnapshotConfiguration, WKUserContentController, WKUserScript, WKUserScriptInjectionTime,
-    WKWebView,
+    WKContentWorld, WKDownload, WKDownloadDelegate, WKNavigation, WKNavigationAction,
+    WKNavigationActionPolicy, WKNavigationDelegate, WKNavigationResponse,
+    WKNavigationResponsePolicy, WKScriptMessage, WKScriptMessageHandler, WKSnapshotConfiguration,
+    WKUserContentController, WKUserScript, WKUserScriptInjectionTime, WKWebView,
 };
 use url::Url;
 use wry::dpi::{LogicalPosition, LogicalSize};
 use wry::{NewWindowResponse, PageLoadEvent, Rect, WebView, WebViewBuilder, WebViewExtMacOS as _};
 
+use super::download::Destination;
 use super::{LoadError, PageChange, PageState};
+use crate::screens::settings::browser_settings::Download;
 
 pub(in crate::browser) struct WidgetPage {
     view: WebView,
@@ -528,14 +535,14 @@ fn chromium_error(code: isize) -> Option<&'static str> {
 }
 
 struct Failures {
-    /// wry's delegate: every method but the two failures forwards to it.
+    /// wry's delegate handles all navigation methods not overridden here.
     inner: Retained<ProtocolObject<dyn WKNavigationDelegate>>,
     changed: async_channel::Sender<PageChange>,
+    downloads: RefCell<HashMap<usize, (Destination, String)>>,
 }
 
 define_class!(
-    // wry's navigation delegate has no failure callbacks; this one reports them and
-    // forwards the rest.
+    // Report load failures and handle downloads that wry would otherwise cancel.
     #[unsafe(super = NSObject)]
     #[thread_kind = MainThreadOnly]
     #[ivars = Failures]
@@ -544,6 +551,61 @@ define_class!(
     unsafe impl NSObjectProtocol for FailureDelegate {}
 
     unsafe impl WKNavigationDelegate for FailureDelegate {
+        #[unsafe(method(webView:decidePolicyForNavigationAction:decisionHandler:))]
+        fn navigation_action(
+            &self,
+            view: &WKWebView,
+            action: &WKNavigationAction,
+            decide: &DynBlock<dyn Fn(WKNavigationActionPolicy)>,
+        ) {
+            // SAFETY: WebKit calls on the main thread and keeps the action and block alive.
+            unsafe {
+                if action.respondsToSelector(objc2::sel!(shouldPerformDownload))
+                    && action.shouldPerformDownload()
+                {
+                    decide.call((WKNavigationActionPolicy::Download,));
+                } else {
+                    self.ivars().inner.webView_decidePolicyForNavigationAction_decisionHandler(
+                        view, action, decide,
+                    );
+                }
+            }
+        }
+
+        #[unsafe(method(webView:decidePolicyForNavigationResponse:decisionHandler:))]
+        fn navigation_response(
+            &self,
+            _: &WKWebView,
+            navigation: &WKNavigationResponse,
+            decide: &DynBlock<dyn Fn(WKNavigationResponsePolicy)>,
+        ) {
+            // SAFETY: WebKit calls on the main thread and keeps the response and block alive.
+            let attachment = unsafe { navigation.response() }
+                .downcast::<NSHTTPURLResponse>()
+                .ok()
+                .and_then(|response| response.valueForHTTPHeaderField(ns_string!("Content-Disposition")))
+                .is_some_and(|header| {
+                    header.to_string().split(';').next().is_some_and(|value| {
+                        value.trim().eq_ignore_ascii_case("attachment")
+                    })
+                });
+            if attachment || !unsafe { navigation.canShowMIMEType() } {
+                decide.call((WKNavigationResponsePolicy::Download,));
+            } else {
+                decide.call((WKNavigationResponsePolicy::Allow,));
+            }
+        }
+
+        #[unsafe(method(webView:navigationAction:didBecomeDownload:))]
+        fn action_became_download(&self, _: &WKWebView, _: &WKNavigationAction, download: &WKDownload) {
+            self.begin_download(download);
+        }
+
+        #[unsafe(method(webView:navigationResponse:didBecomeDownload:))]
+        fn response_became_download(&self, _: &WKWebView, _: &WKNavigationResponse, download: &WKDownload) {
+            self.begin_download(download);
+        }
+
         #[unsafe(method(webView:didFailProvisionalNavigation:withError:))]
         fn did_fail_provisional(
             &self,
@@ -557,6 +619,72 @@ define_class!(
         #[unsafe(method(webView:didFailNavigation:withError:))]
         fn did_fail(&self, web_view: &WKWebView, _: Option<&WKNavigation>, error: &NSError) {
             self.failed(web_view, error);
+        }
+    }
+
+    unsafe impl WKDownloadDelegate for FailureDelegate {
+        #[unsafe(method(download:decideDestinationUsingResponse:suggestedFilename:completionHandler:))]
+        fn download_destination(
+            &self,
+            download: &WKDownload,
+            response: &NSURLResponse,
+            filename: &NSString,
+            decide: &DynBlock<dyn Fn(*mut NSURL)>,
+        ) {
+            let destination = NSFileManager::defaultManager()
+                .URLForDirectory_inDomain_appropriateForURL_create_error(
+                    NSSearchPathDirectory::DownloadsDirectory,
+                    NSSearchPathDomainMask::UserDomainMask,
+                    None,
+                    true,
+                )
+                .ok()
+                .and_then(|url| url.path())
+                .context("No Downloads folder")
+                .and_then(|directory| {
+                    Destination::new(&PathBuf::from(directory.to_string()), &filename.to_string())
+                        .context("Cannot prepare the Downloads folder")
+                });
+            let destination = match destination {
+                Ok(destination) => destination,
+                Err(error) => {
+                    eprintln!("codex-gpui: {error:#}");
+                    decide.call((std::ptr::null_mut(),));
+                    return;
+                }
+            };
+            let source = response.URL()
+                .filter(|url| url.scheme().is_some_and(|scheme| matches!(&*scheme.to_string(), "http" | "https")))
+                .and_then(|url| url.absoluteString())
+                .map(|url| url.to_string())
+                .unwrap_or_default();
+            let path = NSString::from_str(&destination.staging_path().to_string_lossy());
+            let url = NSURL::fileURLWithPath_isDirectory(&path, false);
+            self.ivars().downloads.borrow_mut().insert(download_id(download), (destination, source));
+            decide.call((Retained::as_ptr(&url).cast_mut(),));
+        }
+
+        #[unsafe(method(downloadDidFinish:))]
+        fn download_finished(&self, download: &WKDownload) {
+            let Some((destination, source)) = self.ivars().downloads.borrow_mut().remove(&download_id(download)) else {
+                return;
+            };
+            match destination.finish() {
+                Ok(path) => {
+                    let _ = self.ivars().changed.try_send(PageChange::Downloaded(Download {
+                        path,
+                        source,
+                        time: chrono::Utc::now().timestamp_millis(),
+                    }));
+                }
+                Err(error) => eprintln!("codex-gpui: cannot save download: {error}"),
+            }
+        }
+
+        #[unsafe(method(download:didFailWithError:resumeData:))]
+        fn download_failed(&self, download: &WKDownload, error: &NSError, _: Option<&NSData>) {
+            self.ivars().downloads.borrow_mut().remove(&download_id(download));
+            eprintln!("codex-gpui: download failed: {}", error.localizedDescription());
         }
     }
 
@@ -582,8 +710,18 @@ impl FailureDelegate {
         inner: Retained<ProtocolObject<dyn WKNavigationDelegate>>,
         changed: async_channel::Sender<PageChange>,
     ) -> Retained<Self> {
-        let object = Self::alloc(mtm).set_ivars(Failures { inner, changed });
+        let object = Self::alloc(mtm).set_ivars(Failures {
+            inner,
+            changed,
+            downloads: RefCell::default(),
+        });
         unsafe { msg_send![super(object), init] }
+    }
+
+    fn begin_download(&self, download: &WKDownload) {
+        // SAFETY: The tab retains this delegate for the lifetime of its WebKit view.
+        unsafe { download.setDelegate(Some(ProtocolObject::from_ref(self))) };
+        let _ = self.ivars().changed.try_send(PageChange::Finished);
     }
 
     fn failed(&self, web_view: &WKWebView, error: &NSError) {
@@ -608,4 +746,8 @@ impl FailureDelegate {
                 .try_send(PageChange::Failed(LoadError { url, code }));
         }
     }
+}
+
+fn download_id(download: &WKDownload) -> usize {
+    std::ptr::from_ref(download) as usize
 }

@@ -17,11 +17,16 @@ pub(super) fn page(root: &mut Root, cx: &mut Context<Root>) -> Entity<Shell> {
     let (shell, page) = space::shell(cx);
     cx.subscribe(&page, |root, page, _: &Retry, cx| load(root, page, cx))
         .detach();
+    cx.subscribe(&page, |root, page, _: &space::PageRetry, cx| {
+        load_pages(root, page, cx)
+    })
+    .detach();
     cx.subscribe(&page, |root, page, action: &Action, cx| {
         library::on_action(root, page, action, cx)
     })
     .detach();
     load(root, page.clone(), cx);
+    load_pages(root, page.clone(), cx);
     root.space_page = Some(page);
     shell
 }
@@ -42,6 +47,59 @@ fn load(root: &Root, page: Entity<SpacePage>, cx: &mut Context<Root>) {
         page.update(cx, |page, cx| page.set_spaces(spaces, cx)).ok();
     })
     .detach();
+}
+
+/// `GET /pages?surface=private&limit=50`, following `next_cursor`, newest `last_used_at` first.
+fn load_pages(root: &Root, page: Entity<SpacePage>, cx: &mut Context<Root>) {
+    page.update(cx, |page, cx| page.set_pages(space::Pages::Loading, cx));
+    let host = root.host.clone();
+    let page = page.downgrade();
+    cx.spawn(async move |_, cx| {
+        let pages = cx.background_spawn(async move { pages(&*host) }).await;
+        let pages = pages.map_or_else(
+            |error| {
+                eprintln!("codex-gpui: cannot load pages: {error:#}");
+                space::Pages::Failed
+            },
+            space::Pages::Ready,
+        );
+        page.update(cx, |page, cx| page.set_pages(pages, cx)).ok();
+    })
+    .detach();
+}
+
+fn pages(host: &dyn host::Host) -> Result<Vec<space::Page>> {
+    let mut items = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..MAX_PAGES {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        query.append_pair("surface", "private");
+        if let Some(cursor) = &cursor {
+            query.append_pair("cursor", cursor);
+        }
+        let url = format!("/pages?{}", query.append_pair("limit", "50").finish());
+        let body = host::json_body(&host.fetch(&request("GET", &url, None))?)?;
+        items.extend(body["items"].as_array().cloned().unwrap_or_default());
+        cursor = body["next_cursor"].as_str().map(str::to_owned);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    // shortcut: RFC 3339 strings in one format sort by time; a page with no `last_used_at` sorts last.
+    items.sort_by(|a, b| b["last_used_at"].as_str().cmp(&a["last_used_at"].as_str()));
+    Ok(items
+        .iter()
+        .filter_map(|item| {
+            Some(space::Page {
+                id: item["page_id"].as_str().or(item["id"].as_str())?.to_owned(),
+                title: item["title"]
+                    .as_str()
+                    .filter(|title| !title.is_empty())
+                    .unwrap_or("Untitled")
+                    .to_owned(),
+            })
+        })
+        .collect())
 }
 
 /// `GET /spaces/v2?limit=100`, following `next_cursor`, newest `updated_at` first.

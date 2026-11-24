@@ -774,11 +774,7 @@ impl Root {
             cx.set_global(ui::composer::PromptHistory(state.prompt_history.clone()));
         }
         if !cx.has_global::<ui::screens::settings::browser_settings::BrowsingHistory>() {
-            let path = state.path.as_ref();
-            browsing_history::install(
-                path.map(|path| path.with_file_name("browsing-history.json")),
-                cx,
-            );
+            browsing_history::install(state.path.as_deref(), cx);
         }
         cx.observe_global::<ui::composer::PromptHistory>(|this, cx| {
             this.state.prompt_history = cx.global::<ui::composer::PromptHistory>().0.clone();
@@ -4092,6 +4088,13 @@ impl Root {
         self.next_browser_tab += 1;
         let blank = url.is_none();
         let tab = cx.new(|cx| BrowserTab::new(url, window, cx));
+        if self
+            .thread_composer
+            .read(cx)
+            .browser_annotation_capture_pending()
+        {
+            tab.update(cx, |tab, cx| tab.set_annotation_capture_pending(true, cx));
+        }
         cx.subscribe_in(
             &tab,
             window,
@@ -4122,12 +4125,8 @@ impl Root {
             },
         )
         .detach();
-        cx.subscribe(&tab, |this, _, event: &BrowserAnnotationAdded, cx| {
-            if this.thread.is_some() {
-                let mut pending = this.thread_composer.read(cx).diff_comments().to_vec();
-                pending.push(event.0.clone());
-                this.change_diff_comments(&pending, cx);
-            }
+        cx.subscribe(&tab, |this, tab, event: &BrowserAnnotationAdded, cx| {
+            this.add_browser_annotation(&tab, &event.0, cx);
         })
         .detach();
         let host = self.host.clone();
@@ -9139,6 +9138,11 @@ fn user_input(s: &Submission) -> Vec<Value> {
         images
             .iter()
             .map(|p| json!({ "type": "localImage", "path": p })),
+    );
+    input.extend(
+        s.comment_images
+            .iter()
+            .map(|url| json!({ "type": "image", "url": url })),
     );
     input
 }

@@ -1181,8 +1181,8 @@ pub struct SettingsPane {
     codex_micro: codex_micro::State,
     /// `Available reasoning efforts` on the Configuration page.
     efforts: Option<(Vec<String>, Entity<crate::settings_kit::MultiSelect>)>,
-    /// Browser ▸ Browsing history, while open.
-    browsing_history: Option<Entity<browser_settings::HistoryPage>>,
+    /// The Browser history or download history page, while open.
+    browser_subpage: Option<AnyView>,
 }
 
 /// `Confirm before closing a window` options, default first.
@@ -1239,7 +1239,7 @@ impl SettingsPane {
     fn new(page: Entity<SettingsPage>, cx: &mut Context<Self>) -> Self {
         cx.observe(&page, |this: &mut Self, page, cx| {
             if page.read(cx).section != "Browser" {
-                this.browsing_history = None;
+                this.browser_subpage = None;
             }
             if page.read(cx).section != "Git" {
                 page.update(cx, |page, cx| {
@@ -1270,7 +1270,7 @@ impl SettingsPane {
             pets: Default::default(),
             codex_micro: Default::default(),
             efforts: None,
-            browsing_history: None,
+            browser_subpage: None,
         }
     }
 
@@ -1827,7 +1827,7 @@ impl Render for SettingsPane {
             return view.clone().into_any_element();
         }
         if section == "Browser"
-            && let Some(history) = &self.browsing_history
+            && let Some(history) = &self.browser_subpage
         {
             return history.clone().into_any_element();
         }

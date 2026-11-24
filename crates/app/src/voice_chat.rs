@@ -1,5 +1,6 @@
-//! Realtime text voice session: `thread/realtime/start|appendText|stop` and the transcript the
-//! server streams back in `thread/realtime/*` notifications.
+//! Thread-scoped realtime voice and transcript.
+
+mod media;
 
 use crate::*;
 use ui::screens::thread::view::{VoiceCard, VoiceLine};
@@ -24,6 +25,8 @@ pub(crate) struct VoiceChat {
     thread_id: String,
     status: Status,
     lines: Vec<Line>,
+    media: Option<media::Session>,
+    request_sent: bool,
 }
 
 impl VoiceChat {
@@ -32,6 +35,8 @@ impl VoiceChat {
             thread_id: thread_id.to_owned(),
             status: Status::Starting,
             lines: Vec::new(),
+            media: None,
+            request_sent: false,
         }
     }
 
@@ -43,7 +48,11 @@ impl VoiceChat {
     fn apply(&mut self, method: &str, params: &Value) {
         let role = params["role"].as_str().unwrap_or("assistant");
         match method {
-            "thread/realtime/started" => self.status = Status::Live,
+            "thread/realtime/sdp" => {
+                if let (Some(media), Some(sdp)) = (&self.media, params["sdp"].as_str()) {
+                    media.answer(sdp);
+                }
+            }
             "thread/realtime/transcript/delta" => {
                 let delta = params["delta"].as_str().unwrap_or_default();
                 match self.lines.last_mut() {
@@ -71,10 +80,12 @@ impl VoiceChat {
             }
             "thread/realtime/error" => {
                 let message = params["message"].as_str().unwrap_or("Voice chat failed");
+                self.media.take();
                 self.status = Status::Failed(message.to_owned());
             }
             // An error keeps its message; the close that follows it adds nothing.
             "thread/realtime/closed" if !matches!(self.status, Status::Failed(_)) => {
+                self.media.take();
                 self.status = Status::Closed(params["reason"].as_str().map(str::to_owned));
             }
             _ => {}
@@ -126,25 +137,89 @@ impl Root {
         if self.voice_chat.as_ref().is_some_and(VoiceChat::is_live) {
             return;
         }
-        self.voice_chat = Some(VoiceChat::new(&id));
+        let mut voice = VoiceChat::new(&id);
+        let (media, events) = match media::Session::start() {
+            Ok(session) => session,
+            Err(error) => {
+                voice.status = Status::Failed(error.to_string());
+                self.voice_chat = Some(voice);
+                self.sync_voice(cx);
+                return;
+            }
+        };
+        let token = media.token();
+        voice.media = Some(media);
+        self.voice_chat = Some(voice);
         self.sync_voice(cx);
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
-            let params = json!({
-                "threadId": id,
-                "outputModality": "text",
-                "flushTranscriptTailOnSessionEnd": true,
-            });
-            if let Err(error) = bridge
-                .request::<_, Value>("thread/realtime/start", params)
-                .await
-            {
-                this.update(cx, |this, cx| {
-                    if let Some(voice) = this.voice_chat.as_mut().filter(|v| v.thread_id == id) {
-                        voice.status = Status::Failed(format!("{error:#}"));
+            let failure = loop {
+                match events.recv().await {
+                    Ok(media::Update::Offer(sdp)) => {
+                        let active = this.update(cx, |this, _| {
+                            let Some(voice) = this.voice_chat.as_mut().filter(|voice| {
+                                voice
+                                    .media
+                                    .as_ref()
+                                    .is_some_and(|media| media.matches(&token))
+                            }) else {
+                                return false;
+                            };
+                            voice.request_sent = true;
+                            true
+                        })?;
+                        if !active {
+                            return Ok(());
+                        }
+                        let params = json!({
+                            "threadId": id,
+                            "outputModality": "audio",
+                            "transport": { "type": "webrtc", "sdp": sdp },
+                            "flushTranscriptTailOnSessionEnd": true,
+                        });
+                        if let Err(error) = bridge
+                            .request::<_, Value>("thread/realtime/start", params)
+                            .await
+                        {
+                            break (format!("{error:#}"), false);
+                        }
                     }
-                    this.sync_voice(cx);
-                })?;
+                    Ok(media::Update::Connected) => {
+                        this.update(cx, |this, cx| {
+                            if let Some(voice) = this.voice_chat.as_mut().filter(|voice| {
+                                voice
+                                    .media
+                                    .as_ref()
+                                    .is_some_and(|media| media.matches(&token))
+                            }) {
+                                voice.status = Status::Live;
+                                this.sync_voice(cx);
+                            }
+                        })?;
+                    }
+                    Ok(media::Update::Failed(error)) => break (error, true),
+                    Err(_) => return Ok(()),
+                }
+            };
+            let stop = this.update(cx, |this, cx| {
+                let Some(voice) = this.voice_chat.as_mut().filter(|voice| {
+                    voice
+                        .media
+                        .as_ref()
+                        .is_some_and(|media| media.matches(&token))
+                }) else {
+                    return false;
+                };
+                voice.media.take();
+                voice.status = Status::Failed(failure.0);
+                let stop = voice.request_sent && failure.1;
+                this.sync_voice(cx);
+                stop
+            })?;
+            if stop {
+                bridge
+                    .request::<_, Value>("thread/realtime/stop", json!({ "threadId": id }))
+                    .await?;
             }
             Ok(())
         });
@@ -157,7 +232,7 @@ impl Root {
         };
         tasks::VoiceTasks::stop(cx);
         self.sync_voice(cx);
-        if !voice.is_live() {
+        if !voice.is_live() || !voice.request_sent {
             return;
         }
         let bridge = self.bridge.clone();
