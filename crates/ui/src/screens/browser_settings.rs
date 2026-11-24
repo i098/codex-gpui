@@ -17,6 +17,20 @@ const ANNOTATION_SCREENSHOTS: &[(&str, &str)] = &[
     ("always", "Always include"),
     ("necessary", "Only on drag selection"),
 ];
+/// Host settings key for persistent browser-tool approvals.
+pub const BROWSER_TOOL_GRANTS: &str = "in-app-browser-allowed-origins";
+
+/// The user asked to revoke a browser-tool approval for this origin.
+pub struct RevokeBrowserToolGrant(pub String);
+
+impl EventEmitter<RevokeBrowserToolGrant> for SettingsPage {}
+
+impl SettingsPage {
+    pub fn refresh_browser_tool_grants(&mut self, grants: Value, cx: &mut Context<Self>) {
+        self.values["host"][BROWSER_TOOL_GRANTS] = grants;
+        cx.notify();
+    }
+}
 
 /// One page the built-in browser committed.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -444,7 +458,19 @@ impl SettingsPane {
                 self.toggle(FULL_CDP, false, t, window, cx),
             ),
         ];
-        let sites = site_rows(&self.page.read(cx).values["browser_use"]["origins"]);
+        let page = self.page.read(cx);
+        let mut sites: std::collections::BTreeMap<_, _> =
+            site_rows(&page.values["browser_use"]["origins"])
+                .into_iter()
+                .collect();
+        let grants = page.values["host"][BROWSER_TOOL_GRANTS].as_object();
+        for (origin, _) in grants
+            .into_iter()
+            .flatten()
+            .filter(|(_, value)| matches!(value, Value::Bool(true)))
+        {
+            sites.entry(origin.clone()).or_default();
+        }
         let sites = if sites.is_empty() {
             vec![row(
                 "No custom site permissions",
@@ -454,11 +480,38 @@ impl SettingsPane {
         } else {
             sites
                 .into_iter()
-                .map(|(origin, summary)| {
+                .map(|(origin, mut summary)| {
+                    let revoke = grants
+                        .is_some_and(|grants| grants.get(&origin) == Some(&Value::Bool(true)));
+                    let control = if revoke {
+                        if !summary.is_empty() {
+                            summary.push_str(" · ");
+                        }
+                        summary.push_str("Codex access: Always allow");
+                        let site = origin.clone();
+                        action(
+                            format!("revoke-browser-grant-{origin}"),
+                            "Revoke",
+                            Kind::Danger,
+                            false,
+                            t,
+                        )
+                        .tab_index(0)
+                        .focus_visible(crate::focus::trigger_focus)
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.page.update(cx, |_, cx| {
+                                cx.emit(RevokeBrowserToolGrant(site.clone()));
+                            });
+                        }))
+                        .into_any_element()
+                    } else {
+                        div().into_any_element()
+                    };
                     settings_row_content(
                         origin,
                         Some(text(summary, 12., 16., 430., t.text_secondary).into_any_element()),
-                        div().into_any_element(),
+                        control,
                         t,
                     )
                 })
