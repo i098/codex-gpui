@@ -501,6 +501,17 @@ impl BrowserTab {
         self.load_state
     }
 
+    /// Returns the loaded page's URL only while the native document still matches it.
+    pub fn browser_tool_url(&self) -> Option<&Url> {
+        if self.load_state != LoadState::Loaded || self.hidden {
+            return None;
+        }
+        self.state
+            .url
+            .as_ref()
+            .filter(|url| self.page.matches_document(url))
+    }
+
     /// An error page goes back to the page under it.
     pub fn can_go_back(&self) -> bool {
         self.state.can_go_back || (self.error.is_some() && self.state.url.is_some())
@@ -528,6 +539,15 @@ impl BrowserTab {
     /// Runs app-supplied JavaScript in the page's main frame.
     pub fn evaluate(&self, script: &str) -> anyhow::Result<()> {
         self.page.evaluate(script)
+    }
+
+    /// Runs app-supplied JavaScript in WebKit's isolated main frame and returns its string result.
+    pub fn evaluate_in_client_world(
+        &self,
+        script: &str,
+    ) -> impl Future<Output = anyhow::Result<String>> + use<> {
+        let pending = self.page.evaluate_in_client_world(script);
+        async move { pending?.recv().await? }
     }
 
     /// Registers app-supplied JavaScript for the start of future main-frame documents.

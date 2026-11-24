@@ -117,6 +117,27 @@ impl Page {
         anyhow::bail!("There is no native browser page")
     }
 
+    pub fn evaluate_in_client_world(
+        &self,
+        script: &str,
+    ) -> anyhow::Result<async_channel::Receiver<anyhow::Result<String>>> {
+        #[cfg(target_os = "macos")]
+        if let Self::Native(page) = self {
+            return page.evaluate_in_client_world(script);
+        }
+        let _ = script;
+        anyhow::bail!("There is no native browser page")
+    }
+
+    pub fn matches_document(&self, url: &Url) -> bool {
+        #[cfg(target_os = "macos")]
+        if let Self::Native(page) = self {
+            return page.matches_document(url);
+        }
+        let _ = url;
+        false
+    }
+
     pub fn add_user_script(&self, script: &str) -> anyhow::Result<()> {
         #[cfg(target_os = "macos")]
         if let Self::Native(page) = self {

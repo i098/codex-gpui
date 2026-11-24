@@ -254,6 +254,53 @@ impl WebPage {
             .map_err(|error| anyhow::anyhow!("{error}"))
     }
 
+    pub fn evaluate_in_client_world(
+        &self,
+        script: &str,
+    ) -> Result<async_channel::Receiver<Result<String>>> {
+        let mtm = MainThreadMarker::new().context("The browser page needs the main thread")?;
+        let (send, receive) = async_channel::bounded(1);
+        let callback = RcBlock::new(move |value: *mut AnyObject, error: *mut NSError| {
+            // SAFETY: WebKit keeps both nullable arguments alive for the completion call.
+            let result = unsafe {
+                if let Some(error) = error.as_ref() {
+                    Err(anyhow::anyhow!("{}", error.localizedDescription()))
+                } else {
+                    value
+                        .as_ref()
+                        .and_then(|value| value.downcast_ref::<NSString>())
+                        .map(ToString::to_string)
+                        .context("No browser tool result")
+                }
+            };
+            let _ = send.try_send(result);
+        });
+        // SAFETY: The view and isolated world belong to this thread. WebKit copies the block.
+        unsafe {
+            self.view
+                .webview()
+                .evaluateJavaScript_inFrame_inContentWorld_completionHandler(
+                    &NSString::from_str(script),
+                    None,
+                    &WKContentWorld::defaultClientWorld(mtm),
+                    Some(&callback),
+                );
+        }
+        Ok(receive)
+    }
+
+    pub fn matches_document(&self, expected: &Url) -> bool {
+        let view = self.view.webview();
+        // SAFETY: The view belongs to the main thread.
+        unsafe {
+            !view.isLoading()
+                && view
+                    .URL()
+                    .and_then(|url| url.absoluteString())
+                    .is_some_and(|url| *url == *NSString::from_str(expected.as_str()))
+        }
+    }
+
     pub fn add_user_script(&self, script: &str) -> Result<()> {
         let mtm = MainThreadMarker::new().context("The browser page needs the main thread")?;
         // SAFETY: WebKit owns the controller on the main thread and retains the user script.
