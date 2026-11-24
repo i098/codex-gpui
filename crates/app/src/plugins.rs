@@ -89,7 +89,9 @@ impl Root {
             this.plugin_action(page.clone(), action, window, cx);
         })
         .detach();
-        self.load_plugins(page.clone(), route, false, cx);
+        // The onboarding Manage link must see the installs made before this page opened.
+        let force = plugins::category_from_route(&route).is_some();
+        self.load_plugins(page.clone(), route, force, cx);
         self.plugins_page = Some(page.clone());
         let nav = cx.new(|cx| plugins::Nav::new(page.clone(), cx)).into();
         cx.new(|_| {

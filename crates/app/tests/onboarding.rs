@@ -172,7 +172,15 @@ fn role_plugins_install_before_setup_finishes_and_manage_opens_the_category() ->
     let catalog = json!({"marketplaces":[{"name":"openai-curated","plugins":[plugin, unrelated]}]});
     for (params, result) in [
         (json!({"cwds":[],"forceRefetch":false}), catalog.clone()),
-        (json!({"cwds":[common::CWD],"forceRefetch":false}), catalog),
+        (
+            json!({"cwds":[common::CWD],"forceRefetch":false}),
+            catalog.clone(),
+        ),
+        (json!({"cwds":[common::CWD],"forceRefetch":true}), {
+            let mut catalog = catalog;
+            catalog["marketplaces"][0]["plugins"][0]["installed"] = json!(true);
+            catalog
+        }),
     ] {
         let mut entry = exchange("plugin/list", result);
         entry[0]["msg"]["params"] = params;
@@ -250,7 +258,7 @@ fn role_plugins_install_before_setup_finishes_and_manage_opens_the_category() ->
     shot(&mut fx, "role-plugins-toast")?;
     fx.click((681., 69.))?;
     ensure!(fx.route() == app::Route::Plugins("/skills?category=scientific-research".into()));
-    fx.wait("category filtered to the matching plugin", |fx| {
+    fx.wait("category shows only the installed plugin", |fx| {
         fx.read(|root, cx| {
             let page = root.plugins_page().unwrap().read(cx);
             page.tab == Tab::Plugins
@@ -258,8 +266,8 @@ fn role_plugins_install_before_setup_finishes_and_manage_opens_the_category() ->
                     markets
                         .iter()
                         .flat_map(|market| &market.plugins)
-                        .map(|plugin| plugin.name())
-                        .eq(["example"])
+                        .map(|plugin| (plugin.name(), plugin.installed()))
+                        .eq([("example", true)])
                 })
         })
     })?;
