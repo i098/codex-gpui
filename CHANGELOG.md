@@ -6,8 +6,11 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-24
+
 ### Added
 - On macOS, the artifact tab updates spreadsheets and presentations during a turn when connected to a local Artifact Session host (#1567).
+- Settings ▸ Browser: choose whether to include screenshots with all browser annotations or only with drag selections (#931).
 - Save files from the macOS built-in browser to Downloads. Open Settings ▸ Browser ▸ Download history to view or clear the records without deleting the files (#1563).
 - Voice chat uses the microphone and speakers through WebRTC. Before, voice chat accepted and returned only text (#908).
 - Install configured plugins after the onboarding role step. After setup, select Manage on the Plugins installed notice to open the role's plugin category (#1559).
