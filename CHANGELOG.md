@@ -6,6 +6,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-24
+
 ### Added
 - Save files from the macOS built-in browser to Downloads. Open Settings ▸ Browser ▸ Download history to view or clear the records without deleting the files (#1563).
 - Voice chat uses the microphone and speakers through WebRTC. Before, voice chat accepted and returned only text (#908).
