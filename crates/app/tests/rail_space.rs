@@ -11,7 +11,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use ui::screens::space::{Retry, Spaces};
+use ui::screens::space::{PageRetry, Pages, Retry, Spaces};
 
 const RECORDING: &str = include_str!("../../../fixtures/space-sites.json");
 
@@ -30,6 +30,16 @@ fn names(fx: &Fx) -> Option<Vec<String>> {
     })
 }
 
+fn page_titles(fx: &Fx) -> Option<Vec<String>> {
+    fx.read(|root, cx| {
+        let page = root.space_page()?.read(cx);
+        let Pages::Ready(pages) = &page.pages else {
+            return None;
+        };
+        Some(pages.iter().map(|page| page.title.clone()).collect())
+    })
+}
+
 #[test]
 fn rail_space_lists_spaces_from_every_page() -> Result<()> {
     let mut fx = Fx::new()?;
@@ -43,6 +53,13 @@ fn rail_space_lists_spaces_from_every_page() -> Result<()> {
     fx.wait("the Spaces list", |fx| names(fx).is_some())?;
     // Newest `updated_at` first, across both `next_cursor` pages.
     ensure!(names(&fx) == Some(vec!["Launch notes".into(), "Demo space".into()]));
+    fx.wait("the Pages list", |fx| page_titles(fx).is_some())?;
+    // Newest `last_used_at` first: the second `next_cursor` page holds the older Page.
+    ensure!(
+        page_titles(&fx) == Some(vec!["Launch notes page".into(), "Older page".into()]),
+        "pages {:?}",
+        page_titles(&fx)
+    );
     fx.capture_evidence("CGX_SPACE_EVIDENCE", "after-rail-space")?;
 
     let query = fx.read(|root, cx| root.space_page().unwrap().read(cx).query.clone());
@@ -95,6 +112,51 @@ fn rail_space_load_error_retries_to_empty_state() -> Result<()> {
     fx.cx.update(|cx| page.update(cx, |_, cx| cx.emit(Retry)));
     fx.wait("the empty list", |fx| {
         spaces(fx) == Some(Spaces::Ready(Vec::new()))
+    })?;
+    Ok(())
+}
+
+/// Fails the first `/pages` read, then answers an empty page list.
+struct PagesFlakyHost(AtomicBool);
+
+impl Host for PagesFlakyHost {
+    fn fetch(&self, request: &Request) -> Result<Value> {
+        let Request::Http(http) = request else {
+            bail!("unexpected local request");
+        };
+        ensure!(
+            http["url"]
+                .as_str()
+                .is_some_and(|url| url.starts_with("/pages?")),
+            "unexpected {http}"
+        );
+        if !self.0.swap(true, Ordering::SeqCst) {
+            return Ok(
+                json!({"value": {"responseType": "error", "status": 500, "error": "Server Error"}}),
+            );
+        }
+        Ok(json!({"status": 200, "body": r#"{"items":[],"next_cursor":null}"#}))
+    }
+}
+
+#[test]
+fn rail_space_pages_error_retries_to_empty_state() -> Result<()> {
+    let mut fx = Fx::new()?;
+    let host = Arc::new(PagesFlakyHost(AtomicBool::new(false)));
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        window.dispatch_action(Box::new(ui::OpenSpace), cx);
+    })?;
+    let pages = |fx: &Fx| fx.read(|root, cx| root.space_page().map(|p| p.read(cx).pages.clone()));
+    fx.wait("the pages load error", |fx| {
+        pages(fx) == Some(Pages::Failed)
+    })?;
+    let page = fx.read(|root, _| root.space_page().cloned()).unwrap();
+    fx.cx
+        .update(|cx| page.update(cx, |_, cx| cx.emit(PageRetry)));
+    fx.wait("the empty page list", |fx| {
+        pages(fx) == Some(Pages::Ready(Vec::new()))
     })?;
     Ok(())
 }

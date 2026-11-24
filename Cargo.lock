@@ -269,7 +269,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "app"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -316,7 +316,7 @@ dependencies = [
  "textsys",
  "theme",
  "tokio",
- "toml 0.8.23",
+ "toml 1.1.8+spec-1.1.0",
  "uds_windows",
  "ui",
  "ureq",
@@ -912,7 +912,7 @@ dependencies = [
 
 [[package]]
 name = "bridge"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -1820,7 +1820,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 3.0.9",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -5251,7 +5251,7 @@ dependencies = [
 
 [[package]]
 name = "parity"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "gpui",
@@ -6905,7 +6905,7 @@ dependencies = [
 
 [[package]]
 name = "shapes"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -7532,7 +7532,7 @@ dependencies = [
 
 [[package]]
 name = "textsys"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "core-foundation 0.10.1",
@@ -7553,7 +7553,7 @@ dependencies = [
 
 [[package]]
 name = "theme"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "gpui",
@@ -7991,7 +7991,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "async-channel",

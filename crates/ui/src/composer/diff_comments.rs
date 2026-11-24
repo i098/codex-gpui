@@ -9,7 +9,32 @@ pub struct DiffCommentsChanged(pub Vec<Comment>);
 
 impl gpui::EventEmitter<DiffCommentsChanged> for Composer {}
 
+pub(super) fn comment_images(comments: &[Comment]) -> Vec<String> {
+    comments
+        .iter()
+        .filter(|comment| comment.is_browser())
+        .filter_map(|comment| {
+            let url = comment.extra.get("localBrowserScreenshot")?["dataUrl"].as_str()?;
+            let data = url.strip_prefix("data:image/png;base64,")?;
+            (!data.is_empty()).then(|| url.to_owned())
+        })
+        .collect()
+}
+
 impl Composer {
+    pub fn browser_annotation_capture_pending(&self) -> bool {
+        self.browser_annotation_capture_pending
+    }
+
+    pub fn set_browser_annotation_capture_pending(
+        &mut self,
+        pending: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.browser_annotation_capture_pending = pending;
+        cx.notify();
+    }
+
     pub fn set_diff_comments(&mut self, comments: Vec<Comment>, cx: &mut Context<Self>) {
         if self.diff_comments != comments {
             self.diff_comments = comments;
@@ -57,6 +82,7 @@ impl Composer {
             text: crate::screens::diff::panel::comments::with_comments(comments, String::new()),
             shell_command: false,
             attachments: Vec::new(),
+            comment_images: comment_images(comments),
             context_files: Vec::new(),
             model: self
                 .current_model()
