@@ -18,6 +18,7 @@ mod chatgpt_thread;
 mod chronicle;
 mod cloud_task;
 mod data_controls;
+mod teams;
 pub use cloud_task::parse_task_response;
 mod cloud;
 mod cloud_snapshot;
@@ -785,6 +786,7 @@ impl Root {
         let this = cx.weak_entity();
         usage::install(this.clone(), cx);
         data_controls::install(this.clone(), cx);
+        teams::install(this.clone(), cx);
         account::install(this.clone(), cx);
         account_backend::install(this.clone(), cx);
         chronicle::install(this.clone(), cx);
