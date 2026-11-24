@@ -419,7 +419,7 @@ impl Root {
                         .await
                 }
                 .await;
-                let _ = cx.update(|cx| {
+                cx.update(|cx| {
                     if connections::bridge(&id, cx)
                         .is_some_and(|current| Arc::ptr_eq(&current, &bridge))
                     {
