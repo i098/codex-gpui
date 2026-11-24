@@ -68,6 +68,8 @@ pub(super) fn start(automatic: bool) -> Result<Option<(Backend, Receiver<Event>)
         return Ok(None);
     };
     let root = std::env::temp_dir().join("windows-msix-updater");
+    // Staged packages outlive the updater thread (it never exits normally), so drop old ones here.
+    let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).context("cannot create the Windows update directory")?;
     let (events, receiver) = async_channel::unbounded();
     let (commands, inbox) = mpsc::channel();
@@ -322,7 +324,8 @@ fn stage(
     verify_msix_signature(&path)?;
     run_script(powershell(r#"
         $family = $env:CGX_APP_ID.Split('!')[0]
-        $current = Get-AppxPackage -Name CodexGPUI.App | Where-Object PackageFamilyName -CEQ $family
+        $current = Get-AppxPackage -Name CodexGPUI.App | Where-Object PackageFamilyName -CEQ $family |
+            Sort-Object Version -Descending | Select-Object -First 1
         if (!$current) { throw 'The current MSIX is not registered' }
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         $archive = [IO.Compression.ZipFile]::OpenRead($env:CGX_MSIX)
