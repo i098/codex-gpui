@@ -127,6 +127,12 @@ pub struct EndVoice;
 
 impl gpui::EventEmitter<EndVoice> for ThreadView {}
 
+#[cfg(target_os = "macos")]
+pub struct OpenMcpApp(pub gpui::EntityId);
+
+#[cfg(target_os = "macos")]
+impl gpui::EventEmitter<OpenMcpApp> for ThreadView {}
+
 /// The find query changed while older turns are unloaded: ask the server where it occurs.
 pub struct SearchHistory(pub String);
 
@@ -197,12 +203,21 @@ impl Clock {
     }
 }
 
+#[cfg(target_os = "macos")]
+struct ThreadWidget {
+    view: gpui::Entity<crate::browser::McpWidget>,
+    title: SharedString,
+    in_panel: Cell<bool>,
+}
+
 pub struct ThreadView {
     thread_id: String,
     #[cfg(target_os = "macos")]
     widget_bridge: Option<Arc<bridge::Bridge>>,
     #[cfg(target_os = "macos")]
-    widgets: RefCell<HashMap<String, gpui::Entity<crate::browser::McpWidget>>>,
+    widgets: RefCell<HashMap<String, ThreadWidget>>,
+    #[cfg(target_os = "macos")]
+    widget_tabs: bool,
     #[cfg(target_os = "macos")]
     widget_catalog: RefCell<WidgetCatalog>,
     /// Branch recorded by `thread/metadata/update`; the header shows it once known.
@@ -836,6 +851,8 @@ impl ThreadView {
             #[cfg(target_os = "macos")]
             widgets: RefCell::default(),
             #[cfg(target_os = "macos")]
+            widget_tabs: false,
+            #[cfg(target_os = "macos")]
             widget_catalog: RefCell::default(),
             branch: None,
             environment_connected: None,
@@ -912,17 +929,62 @@ impl ThreadView {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn hide_widgets(&self, cx: &App) {
-        for widget in self.widgets.borrow().values() {
-            widget.read(cx).hide();
+    pub fn enable_widget_tabs(&mut self) {
+        self.widget_tabs = true;
+    }
+
+    #[cfg(target_os = "macos")]
+    fn widget(&self, key: gpui::EntityId) -> Option<std::cell::Ref<'_, ThreadWidget>> {
+        std::cell::Ref::filter_map(self.widgets.borrow(), |widgets| {
+            widgets
+                .values()
+                .find(|widget| widget.view.entity_id() == key)
+        })
+        .ok()
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn mcp_app_title(&self, key: gpui::EntityId) -> Option<SharedString> {
+        self.widget(key).map(|widget| widget.title.clone())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn mcp_app_view(&self, key: gpui::EntityId) -> Option<AnyView> {
+        self.widget(key).map(|widget| widget.view.clone().into())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn set_widget_in_panel(
+        &mut self,
+        key: gpui::EntityId,
+        in_panel: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(widget) = self.widget(key)
+            && widget.in_panel.replace(in_panel) != in_panel
+        {
+            widget.view.read(cx).hide();
+            cx.notify();
         }
     }
 
-    fn mcp_widgets(&self, items: &[ThreadItem], cx: &mut Context<Self>) -> Div {
+    #[cfg(target_os = "macos")]
+    pub fn hide_widgets(&self, cx: &App) {
+        for widget in self.widgets.borrow().values() {
+            widget.view.read(cx).hide();
+        }
+    }
+
+    fn mcp_widgets(
+        &self,
+        items: &[ThreadItem],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let cards = div().flex().flex_col();
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (items, cx);
+            let _ = (items, window, cx);
             cards
         }
         #[cfg(target_os = "macos")]
@@ -950,7 +1012,7 @@ impl ThreadView {
                     return None;
                 }
                 if let Some(widget) = widgets.get(id) {
-                    return Some(widget.clone());
+                    return (!widget.in_panel.get()).then(|| self.widget_card(widget, window, cx));
                 }
                 let catalog = self.widget_catalog.borrow();
                 let context = metadata.get("appContext");
@@ -1003,7 +1065,7 @@ impl ThreadView {
                         "originCallId": origin,
                     });
                     let uri = uri.to_owned();
-                    cx.new(|cx| {
+                    let view = cx.new(|cx| {
                         crate::browser::McpWidget::new(host, arguments, result, cx, async move {
                             let reply: Value = bridge
                                 .request("mcpServer/resource/read", request)
@@ -1011,11 +1073,48 @@ impl ThreadView {
                                 .ok()?;
                             widget_html(&reply, &uri, origin.as_deref())
                         })
-                    })
+                    });
+                    let title = [
+                        context.and_then(|value| value["title"].as_str()),
+                        result["_meta"]["openai/widgetTitle"].as_str(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .map(str::trim)
+                    .find(|title| !title.is_empty())
+                    .unwrap_or(server)
+                    .into();
+                    ThreadWidget {
+                        view,
+                        title,
+                        in_panel: Cell::default(),
+                    }
                 });
-                Some(widget.clone())
+                Some(self.widget_card(widget, window, cx))
             }))
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn widget_card(
+        &self,
+        widget: &ThreadWidget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let key = widget.view.entity_id();
+        div()
+            .flex()
+            .flex_col()
+            .when(self.widget_tabs, |card| {
+                card.child(
+                    recovery::retry_button(("open-mcp-app", key), "Open in side panel", window, cx)
+                        .self_start()
+                        .mt(px(16.))
+                        .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenMcpApp(key)))),
+                )
+            })
+            .child(widget.view.clone())
     }
 
     pub fn embedded(thread: Thread, clock: Clock, cx: &mut Context<Self>) -> Self {
@@ -2704,7 +2803,7 @@ impl ThreadView {
                 });
             }
             col = col.child(self.automation_cards(&turn.items, window, t, cx));
-            col = col.child(self.mcp_widgets(&turn.items, cx));
+            col = col.child(self.mcp_widgets(&turn.items, window, cx));
             col = col.child(div().h(px(16.))).child(markdown::with_find(
                 answer,
                 window,
@@ -2811,7 +2910,7 @@ impl ThreadView {
                 },
             )
             .child(self.automation_cards(&turn.items, window, t, cx))
-            .child(self.mcp_widgets(&turn.items, cx))
+            .child(self.mcp_widgets(&turn.items, window, cx))
     }
 
     /// The still-fading streamed segments of agent message `item`.

@@ -282,6 +282,9 @@ pub enum SidePanel {
     /// `⌘T` and a link's `Open in` ▸ `New tab`: the browser tab with this key
     /// ([`Root::browser_tab`]).
     Browser(usize),
+    /// A thread's MCP App widget, identified by its live view.
+    #[cfg(target_os = "macos")]
+    McpApp(gpui::EntityId),
     /// A thread's task card (`automation_update` proposal or saved task): the task editor
     /// ([`Root::automation_tab`]).
     Automation,
@@ -3857,6 +3860,12 @@ impl Root {
                     detail: None,
                 })
             }
+            #[cfg(target_os = "macos")]
+            SidePanel::McpApp(key) => Some(Tab {
+                icon: "thread-mcp",
+                label: view.read(cx).mcp_app_title(key)?,
+                detail: None,
+            }),
             SidePanel::Automation => automation.map(|title| Tab {
                 icon: "automation-scheduled",
                 label: title.clone(),
@@ -3929,6 +3938,8 @@ impl Root {
             SidePanel::NewTab => self.new_tab.as_ref()?.clone().into(),
             SidePanel::Subagents => self.subagents.as_ref()?.clone().into(),
             SidePanel::Browser(key) => self.browser_tab(key)?.clone().into(),
+            #[cfg(target_os = "macos")]
+            SidePanel::McpApp(key) => view.read(cx).mcp_app_view(key)?,
             SidePanel::Automation => self.automation_tab.as_ref()?.1.clone().into(),
             SidePanel::PullRequest => self.pull_request_tab.as_ref()?.clone().into(),
         };
@@ -3942,6 +3953,12 @@ impl Root {
         }
         if self.side_visible(side) {
             return;
+        }
+        #[cfg(target_os = "macos")]
+        if let SidePanel::McpApp(key) = side
+            && let Some(thread) = &self.thread
+        {
+            thread.update(cx, |view, cx| view.set_widget_in_panel(key, true, cx));
         }
         if !self.tabs.contains(&side) {
             self.tabs.push(side);
@@ -3996,6 +4013,12 @@ impl Root {
             return;
         };
         self.tabs.remove(ix);
+        #[cfg(target_os = "macos")]
+        if let SidePanel::McpApp(key) = side
+            && let Some(thread) = &self.thread
+        {
+            thread.update(cx, |view, cx| view.set_widget_in_panel(key, false, cx));
+        }
         if let SidePanel::File(key) | SidePanel::Artifact(key) = side {
             self.files.retain(|(k, _)| *k != key);
         }
@@ -5548,6 +5571,13 @@ impl Root {
         .detach();
         self.diff = Some(diff);
         self.files.clear();
+        #[cfg(target_os = "macos")]
+        {
+            self.tabs
+                .retain(|side| !matches!(side, SidePanel::McpApp(_)));
+            self.closed_tabs
+                .retain(|(side, _)| !matches!(side, SidePanel::McpApp(_)));
+        }
         self.plan = None;
         self.new_tab = None;
         self.subagents = None;
@@ -5558,6 +5588,8 @@ impl Root {
             ThreadView::new(thread, clock, composer).bind_widget_connection(self.bridge.clone())
         });
         view.update(cx, |view, cx| {
+            #[cfg(target_os = "macos")]
+            view.enable_widget_tabs();
             view.set_git_phase(self.git_busy, cx);
             let status = self.worktree_statuses.get(view.id()).copied();
             view.set_worktree_status(status, cx);
@@ -5570,6 +5602,17 @@ impl Root {
                 }
             }
         });
+        #[cfg(target_os = "macos")]
+        cx.subscribe_in(
+            &view,
+            window,
+            |this, view, event: &ui::screens::thread::view::OpenMcpApp, window, cx| {
+                if this.thread.as_ref() == Some(view) {
+                    this.set_side(SidePanel::McpApp(event.0), window, cx);
+                }
+            },
+        )
+        .detach();
         cx.subscribe_in(
             &view,
             window,

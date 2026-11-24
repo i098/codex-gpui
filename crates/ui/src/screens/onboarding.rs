@@ -58,6 +58,13 @@ enum Status {
     Incomplete,
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug)]
+pub enum ComputerCapability {
+    Use,
+    History,
+}
+
 #[derive(Clone, Debug)]
 pub struct Project {
     pub root: String,
@@ -125,6 +132,8 @@ pub enum OnboardingEvent {
     FirstRunComplete,
     /// Ask the host for access to these `FOLDERS`, in order; answer with `set_local_files`.
     RequestLocalFiles(Vec<&'static str>),
+    #[cfg(target_os = "macos")]
+    EnableComputerCapability(ComputerCapability),
     /// Fetch the starter tasks for this role; answer with `set_tasks`.
     LoadTasks(String),
 }
@@ -146,6 +155,8 @@ enum Action {
     NotNow,
     Reload,
     LocalFiles,
+    #[cfg(target_os = "macos")]
+    ComputerCapability(ComputerCapability),
     Task(usize),
 }
 
@@ -197,6 +208,8 @@ pub struct Onboarding {
     folders: [bool; 3],
     local_files_pending: bool,
     local_files_failed: bool,
+    #[cfg(target_os = "macos")]
+    computer_capabilities: [Status; 2],
     /// `None` while the host fetches them.
     tasks: Option<Vec<StarterTask>>,
     task: Option<StarterTask>,
@@ -234,6 +247,8 @@ impl Onboarding {
             folders: [false; 3],
             local_files_pending: false,
             local_files_failed: false,
+            #[cfg(target_os = "macos")]
+            computer_capabilities: [Status::Available; 2],
             tasks: None,
             task: None,
         }
@@ -328,6 +343,31 @@ impl Onboarding {
         }
         self.local_files_pending = false;
         self.local_files_failed = !self.missing_folders().is_empty();
+        cx.notify();
+    }
+    #[cfg(target_os = "macos")]
+    pub fn set_computer_capability(
+        &mut self,
+        capability: ComputerCapability,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.computer_capabilities[capability as usize] = if enabled {
+            Status::Enabled
+        } else {
+            Status::Incomplete
+        };
+        cx.notify();
+    }
+
+    #[cfg(target_os = "macos")]
+    fn enable_computer_capability(
+        &mut self,
+        capability: ComputerCapability,
+        cx: &mut Context<Self>,
+    ) {
+        self.computer_capabilities[capability as usize] = Status::SettingUp;
+        cx.emit(OnboardingEvent::EnableComputerCapability(capability));
         cx.notify();
     }
     pub fn set_tasks(&mut self, tasks: Vec<StarterTask>, cx: &mut Context<Self>) {
@@ -524,6 +564,41 @@ impl Onboarding {
                     cx.emit(OnboardingEvent::RequestLocalFiles(self.missing_folders()));
                 }
             }
+            #[cfg(target_os = "macos")]
+            Action::ComputerCapability(capability) => {
+                if !matches!(self.state, State::Capabilities)
+                    || self.confirmation.is_some()
+                    || !matches!(
+                        self.computer_capabilities[capability as usize],
+                        Status::Available | Status::Incomplete
+                    )
+                {
+                    return;
+                }
+                match capability {
+                    ComputerCapability::Use => self.enable_computer_capability(capability, cx),
+                    ComputerCapability::History => {
+                        let dialog = cx.new(|cx| {
+                            Confirmation::new(
+                                "Turn on Computer history and Memories?",
+                                "Computer history records your app activity. Memories lets ChatGPT remember that activity and generate memories from your chats.",
+                                "Turn on",
+                                window,
+                                cx,
+                            )
+                        });
+                        cx.subscribe(&dialog, move |this, _, outcome: &Outcome, cx| {
+                            this.confirmation = None;
+                            if *outcome == Outcome::Confirm {
+                                this.enable_computer_capability(capability, cx);
+                            }
+                            cx.notify();
+                        })
+                        .detach();
+                        self.confirmation = Some(dialog);
+                    }
+                }
+            }
         }
         cx.notify();
     }
@@ -599,6 +674,7 @@ impl Onboarding {
         let handle = focus::handle(id.clone(), 0, window, cx);
         let hover_id = id.clone();
         let control = div()
+            .debug_selector(|| id.to_string())
             .id(id)
             .relative()
             .role(gpui::Role::Button)
@@ -809,6 +885,7 @@ impl Onboarding {
                 let hover_id = id.clone();
                 let handle = focus::handle(id.clone(), 0, window, cx);
                 let card = div()
+                    .debug_selector(move || format!("onboarding-task-{index}"))
                     .id(id)
                     .role(gpui::Role::Button)
                     .aria_label(SharedString::from(task.label.clone()))
@@ -894,34 +971,34 @@ impl Onboarding {
                 ),
             )
     }
-    /// `_d` and `vd` in the original: the introduction, then a card of capability rows.
-    fn capabilities_view(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn capability_row(
+        &self,
+        (id, label): (&'static str, &'static str),
+        row_icon: impl IntoElement,
+        (status, detail, action): (Status, String, Action),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let t = cx.theme().clone();
-        let status = self.local_files_status();
-        let detail = match status {
-            Status::SettingUp => "Setting up…".into(),
-            _ => folder_description(&self.missing_folders()),
-        };
         let on = status == Status::Enabled;
         let disabled = matches!(status, Status::SettingUp | Status::Enabled);
-        let handle = focus::handle("onboarding-local-files", 0, window, cx);
+        let handle = focus::handle(id, 0, window, cx);
         let toggle = focus::ring(
-            crate::screens::settings::switch("onboarding-local-files", on, disabled, &t)
+            crate::screens::settings::switch(id, on, disabled, &t)
+                .debug_selector(|| id.into())
                 .relative()
                 .role(gpui::Role::Switch)
-                .aria_label("Local files")
+                .aria_label(label)
                 .aria_toggled(if on {
                     gpui::Toggled::True
                 } else {
                     gpui::Toggled::False
                 })
                 .aria_disabled(disabled)
-                .on_click(
-                    cx.listener(|this, _, window, cx| this.action(Action::LocalFiles, window, cx)),
-                )
-                .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                .on_click(cx.listener(move |this, _, window, cx| this.action(action, window, cx)))
+                .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                     if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                        this.action(Action::LocalFiles, window, cx);
+                        this.action(action, window, cx);
                         cx.stop_propagation();
                     }
                 })),
@@ -930,7 +1007,7 @@ impl Onboarding {
             px(2.),
             cx,
         );
-        let row = div()
+        div()
             .min_w_0()
             .px(px(16.))
             .py(px(6.))
@@ -944,16 +1021,16 @@ impl Onboarding {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(icon("folder", 24., t.text)),
+                    .child(row_icon),
             )
             .child(
                 div()
                     .min_w_0()
                     .flex_1()
-                    .child(text("Local files", 18., 24., 400., t.text))
+                    .child(text(label, 18., 24., 400., t.text))
                     .child(
                         div()
-                            .id("onboarding-local-files-status")
+                            .id((gpui::ElementId::from(id), "status"))
                             .role(gpui::Role::Status)
                             .child(
                                 text(detail, 16., 20., 400., t.text_tertiary).whitespace_normal(),
@@ -971,9 +1048,9 @@ impl Onboarding {
                     .when(status == Status::Incomplete, |column| {
                         column.child(
                             self.button(
-                                "onboarding-local-files-retry",
+                                (gpui::ElementId::from(id), "retry"),
                                 "Retry",
-                                Action::LocalFiles,
+                                action,
                                 false,
                                 window,
                                 cx,
@@ -982,7 +1059,60 @@ impl Onboarding {
                             .px(px(10.)),
                         )
                     }),
-            );
+            )
+    }
+
+    fn capabilities_view(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
+        let mut rows = div().py(px(10.)).flex().flex_col();
+        #[cfg(target_os = "macos")]
+        for (capability, row, row_icon, description) in [
+            (
+                ComputerCapability::Use,
+                ("onboarding-computer-use", "Computer use"),
+                gpui::img("ui/computer-use.png")
+                    .size(px(44.))
+                    .rounded(px(8.))
+                    .into_any_element(),
+                "Control apps to complete tasks",
+            ),
+            (
+                ComputerCapability::History,
+                ("onboarding-computer-history", "Computer history"),
+                icon("settings-computer-history", 24., t.text).into_any_element(),
+                "Find past work and pick up where you left off",
+            ),
+        ] {
+            let status = self.computer_capabilities[capability as usize];
+            let detail = match status {
+                Status::SettingUp => "Setting up…",
+                Status::Incomplete => "Setup incomplete",
+                _ => description,
+            };
+            rows = rows.child(self.capability_row(
+                row,
+                row_icon,
+                (
+                    status,
+                    detail.into(),
+                    Action::ComputerCapability(capability),
+                ),
+                window,
+                cx,
+            ));
+        }
+        let status = self.local_files_status();
+        let detail = match status {
+            Status::SettingUp => "Setting up…".into(),
+            _ => folder_description(&self.missing_folders()),
+        };
+        rows = rows.child(self.capability_row(
+            ("onboarding-local-files", "Local files"),
+            icon("folder", 24., t.text),
+            (status, detail, Action::LocalFiles),
+            window,
+            cx,
+        ));
         let card = div()
             .w_full()
             .overflow_hidden()
@@ -1004,7 +1134,7 @@ impl Onboarding {
                         t.text,
                     )),
             )
-            .child(div().py(px(10.)).flex().flex_col().child(row));
+            .child(rows);
         div()
             .w(px(616.))
             .max_w_full()
