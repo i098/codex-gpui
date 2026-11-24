@@ -1,24 +1,33 @@
-//! The built-in browser's history ([`BrowsingHistory`]) for Settings ▸ Browser ▸ Browsing
-//! history: loaded from `browsing-history.json` beside `state.json` and saved on every change.
+//! Persistent visit and download records for Settings ▸ Browser.
 use gpui::{App, BorrowAppContext as _, Entity};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use ui::browser::BrowserTab;
-use ui::screens::settings::browser_settings::{BrowsingHistory, Visit};
+use ui::screens::settings::browser_settings::{BrowsingHistory, DownloadHistory};
 
-/// Sets the global from `path` (empty when unset or unreadable) and saves each change there.
-pub(crate) fn install(path: Option<PathBuf>, cx: &mut App) {
-    let visits = path.as_deref().map(load).unwrap_or_default();
-    cx.set_global(BrowsingHistory(visits));
-    let Some(path) = path else { return };
-    cx.observe_global::<BrowsingHistory>(move |cx| {
-        if let Err(error) = save(&path, &cx.global::<BrowsingHistory>().0) {
-            eprintln!("codex-gpui: cannot save {}: {error:#}", path.display());
-        }
-    })
-    .detach();
+pub(crate) fn install(state: Option<&Path>, cx: &mut App) {
+    let visits = state.map(|path| path.with_file_name("browsing-history.json"));
+    let downloads = state.map(|path| path.with_file_name("download-history.json"));
+    cx.set_global(BrowsingHistory(
+        visits.as_deref().map(load).unwrap_or_default(),
+    ));
+    cx.set_global(DownloadHistory(
+        downloads.as_deref().map(load).unwrap_or_default(),
+    ));
+    if let Some(path) = visits {
+        cx.observe_global::<BrowsingHistory>(move |cx| {
+            save_history(&path, &cx.global::<BrowsingHistory>().0);
+        })
+        .detach();
+    }
+    if let Some(path) = downloads {
+        cx.observe_global::<DownloadHistory>(move |cx| {
+            save_history(&path, &cx.global::<DownloadHistory>().0);
+        })
+        .detach();
+    }
 }
 
-fn load(path: &Path) -> Vec<Visit> {
+fn load<T: serde::de::DeserializeOwned>(path: &Path) -> Vec<T> {
     match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|error| {
             eprintln!("codex-gpui: cannot read {}: {error}", path.display());
@@ -28,11 +37,17 @@ fn load(path: &Path) -> Vec<Visit> {
     }
 }
 
-fn save(path: &Path, visits: &[Visit]) -> anyhow::Result<()> {
+fn save_history<T: serde::Serialize>(path: &Path, entries: &[T]) {
+    if let Err(error) = save(path, entries) {
+        eprintln!("codex-gpui: cannot save {}: {error:#}", path.display());
+    }
+}
+
+fn save<T: serde::Serialize>(path: &Path, entries: &[T]) -> anyhow::Result<()> {
     let directory = path.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(directory)?;
     let file = tempfile::NamedTempFile::new_in(directory)?;
-    serde_json::to_writer(&file, visits)?;
+    serde_json::to_writer(&file, entries)?;
     file.persist(path)?;
     Ok(())
 }
@@ -68,19 +83,20 @@ pub(crate) fn retitle(tab: &Entity<BrowserTab>, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ui::screens::settings::browser_settings::Visit;
 
     #[test]
     fn history_survives_a_save_and_load() -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("nested/browsing-history.json");
-        assert_eq!(load(&path), []);
+        assert!(load::<Visit>(&path).is_empty());
         let mut history = BrowsingHistory::default();
         history.record("https://example.com/", "Example", 1);
         history.set_title("https://example.com/", "Example Domain");
         save(&path, &history.0)?;
-        assert_eq!(load(&path), history.0);
+        assert_eq!(load::<Visit>(&path), history.0);
         std::fs::write(&path, "not json")?;
-        assert_eq!(load(&path), []);
+        assert!(load::<Visit>(&path).is_empty());
         Ok(())
     }
 }

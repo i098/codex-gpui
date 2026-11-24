@@ -35,7 +35,7 @@ http_client = { git = "https://github.com/zed-industries/zed", rev = "3e145061d8
 iana-time-zone = "0.1"
 if-addrs = "0.15"
 image.workspace = true
-notify = "8"
+notify = "9"
 opus = "0.4"
 pollster = "1.0"
 portable-pty = "0.9"
