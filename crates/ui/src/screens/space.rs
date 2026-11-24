@@ -271,7 +271,8 @@ impl SpacePage {
                 )),
             Pages::Ready(pages) if pages.is_empty() => message("No pages yet"),
             // `ContentRow` in a `sidebar-navigation` list: `py-row-y` 5px, `px-row-x` 8px,
-            // `text-base` 14/21 `text-default`, 16px page icon, `gap-2`, `rounded-xl`,
+            // `text-base` 14/21 `text-default`, 16px `text-page-light-16` icon in
+            // `text-file-document` (`--blue-400`), `gap-2`, `rounded-xl`,
             // `hover:bg-primary-ghost-hover`, and a `border-subtle` divider inset 12px.
             Pages::Ready(pages) => div().flex().flex_col().children(pages.iter().map(|page| {
                 let group = SharedString::from(format!("page-{}", page.id));
@@ -286,7 +287,7 @@ impl SpacePage {
                     .py(px(5.))
                     .rounded(theme::Theme::RADIUS_XL)
                     .hover(|s| s.bg(t.ghost_hover))
-                    .child(icon("diff-file-default", 16., t.text_secondary))
+                    .child(icon("text-page-light-16", 16., gpui::rgb(0x0285ff).into()))
                     .child(div().min_w_0().truncate().child(text(
                         page.title.clone(),
                         14.,
