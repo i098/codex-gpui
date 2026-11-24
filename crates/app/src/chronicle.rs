@@ -289,6 +289,31 @@ fn reconcile_plugin(bridge: &Bridge, installed: bool) -> Result<()> {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn enable_from_onboarding(bridge: &Bridge, host: &dyn Host) -> Result<bool> {
+    ensure_allowed(bridge)?;
+    let memory = read_memory(bridge)?.settings;
+    anyhow::ensure!(memory.available, "Computer history requires Memories");
+    if !(memory.feature_enabled && memory.generate && memory.use_memories) {
+        let write = write_memory(bridge, &memory, MemoryChange::Enabled(true));
+        if let Some(error) = write.error {
+            bail!("{error}");
+        }
+        let memory = write.read?.settings;
+        anyhow::ensure!(
+            memory.feature_enabled && memory.generate && memory.use_memories,
+            "Memories settings did not take effect"
+        );
+    }
+    let state = if configured(bridge)? {
+        derive(true, &reconcile(bridge, host)?)?
+    } else {
+        enable(bridge, host)?
+    };
+    Ok(state["enabled"] == true
+        && matches!(state["recorderState"].as_str(), Some("running" | "paused")))
+}
+
 /// `setEnabled(true)`: start the recorder, then save `features.chronicle`. A pending permission
 /// keeps it on and waiting; a denied one, or any later failure, stops it and turns it off.
 fn enable(bridge: &Bridge, host: &dyn Host) -> Result<Value> {
@@ -715,6 +740,37 @@ mod tests {
             .unwrap()
             .iter()
             .any(|r| r == "ComputerUseIPCSkysightStopRequest")
+    }
+
+    #[test]
+    fn onboarding_enables_memories_before_starting_history() {
+        let memory = |enabled| json!({"data": [{"name": "memories", "enabled": enabled}], "nextCursor": null});
+        let allowed = ("configRequirements/read", Ok(json!({"requirements": null})));
+        let bridge = server(&[
+            allowed.clone(),
+            ("config/read", Ok(json!({"config": {"memories": {}}}))),
+            ("experimentalFeature/list", Ok(memory(false))),
+            ("config/batchWrite", Ok(json!({"status": "ok"}))),
+            ("config/batchWrite", Ok(json!({"status": "ok"}))),
+            ("config/read", Ok(json!({"config": {"memories": {}}}))),
+            ("experimentalFeature/list", Ok(memory(true))),
+            (
+                "config/read",
+                Ok(json!({"config": {"features": {"memories": true}}})),
+            ),
+            allowed,
+            ("plugin/list", Ok(json!({"marketplaces": []}))),
+            ("config/value/write", Ok(json!({"status": "ok"}))),
+        ]);
+        let recorder = Recorder {
+            start_error: None,
+            log: Mutex::default(),
+        };
+        assert!(enable_from_onboarding(&bridge, &recorder).unwrap());
+        assert_eq!(
+            *recorder.log.lock().unwrap(),
+            ["ComputerUseIPCSkysightStartRequest"]
+        );
     }
 
     #[test]
