@@ -275,6 +275,8 @@ pub mod workspace {
 
 #[path = "settings/appshots.rs"]
 mod appshots;
+#[path = "codex_micro.rs"]
+mod codex_micro;
 #[path = "settings/debug.rs"]
 pub mod debug;
 #[path = "settings/file_type_handlers.rs"]
@@ -398,6 +400,7 @@ pub fn slug_section(slug: &str) -> &'static str {
         "personalization" => "Personalization",
         "pets" => "Mini & Pets",
         "keyboard-shortcuts" => "Keyboard shortcuts",
+        "codex-micro" => "Codex Micro",
         "usage" | "billing" | "analytics" | "consumer-view" | "usage-code-review" => {
             "Usage & billing"
         }
@@ -470,6 +473,7 @@ const NAV: &[(&str, &[(&str, &str)])] = &[
             ("Personalization", "settings-personalization"),
             ("Mini & Pets", "settings-mini-pets"),
             ("Keyboard shortcuts", "settings-keyboard-shortcuts"),
+            ("Codex Micro", "settings-keyboard-shortcuts"),
             ("Usage & billing", "settings-usage"),
             ("Data controls", "settings-data-controls"),
             ("Ads controls", "settings-data-controls"),
@@ -1174,6 +1178,7 @@ pub struct SettingsPane {
     git_saved_until: std::collections::HashMap<&'static str, std::time::Instant>,
     appearance: appearance_settings::State,
     pets: pets::State,
+    codex_micro: codex_micro::State,
     /// `Available reasoning efforts` on the Configuration page.
     efforts: Option<(Vec<String>, Entity<crate::settings_kit::MultiSelect>)>,
     /// Browser ▸ Browsing history, while open.
@@ -1263,6 +1268,7 @@ impl SettingsPane {
             git_saved_until: Default::default(),
             appearance: Default::default(),
             pets: Default::default(),
+            codex_micro: Default::default(),
             efforts: None,
             browsing_history: None,
         }
@@ -1911,8 +1917,12 @@ impl Render for SettingsPane {
             "Debug" => self.debug_page(&t, window, cx),
             "File type handlers" => self.file_type_handlers_page(&t, window, cx),
             "Appshots" => self.appshots_page(&t, window, cx),
+            "Codex Micro" => self.codex_micro_page(&t, window, cx),
             _ => Vec::new(),
         };
+        let dialog = (section == "Codex Micro")
+            .then(|| self.keycap_dialog(&t, window, cx))
+            .flatten();
         let card_border = over(t.border, t.background_panel);
         let groups = groups.into_iter().map(|(title, rows)| {
             let last = rows.len() - 1;
@@ -2008,6 +2018,7 @@ impl Render for SettingsPane {
                         ),
                     ),
             )
+            .children(dialog)
             .into_any_element()
     }
 }
