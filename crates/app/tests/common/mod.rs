@@ -430,6 +430,14 @@ impl Fx {
         }
     }
 
+    /// Runs the app until Home's account banner loaded: it shifts the layout, so a click aimed
+    /// before it arrives lands on the wrong element.
+    pub fn banner_loaded(&mut self) -> Result<()> {
+        self.wait("home banner", |fx| {
+            fx.read(|root, cx| root.home().read(cx).banner.is_some())
+        })
+    }
+
     /// The route shows thread `id`, read with `thread/read`.
     pub fn wait_thread(&mut self, id: &str) -> Result<()> {
         self.wait(&format!("thread {id}"), |fx| {
