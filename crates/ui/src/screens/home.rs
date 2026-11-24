@@ -1085,7 +1085,11 @@ fn location_menu(
                     .flex_1()
                     .child(text(label, 13., 18.5714, 430., t.text)),
             )
-            .when(checked, |d| {
+            .when(i == 2, |d| {
+                // The original's `FlyoutSubmenuItem` ends in a right chevron (`icon-xs`, tertiary).
+                d.child(icon("chevron-right", 12., t.text_tertiary))
+            })
+            .when(checked && i != 2, |d| {
                 d.child(icon("archive-check", 16., t.text).opacity(0.75))
             })
             .when(enabled, |d| {
@@ -1167,11 +1171,20 @@ fn location_menu(
                             .snap_to_window_with_margin(px(8.))
                             .child(
                                 div()
-                                    .flex()
-                                    .items_end()
+                                    .relative()
                                     .child(popup)
-                                    // The popovers' shadow insets plus this margin leave a 4 px visual gap.
-                                    .children(flyout.map(|f| div().ml(px(4.)).child(f))),
+                                    // `FlyoutSubmenuItem` opens beside the parent with its first
+                                    // row level with the `Remote` row (`alignOffset` = row top
+                                    // minus content top); 88 px is the row's offset in the popup,
+                                    // plus one row when `New worktree` is listed.
+                                    .children(flyout.map(|f| {
+                                        let rows_above = if has_project { 28.57 } else { 0. };
+                                        div()
+                                            .absolute()
+                                            .left(px(284.))
+                                            .top(px(88. + rows_above))
+                                            .child(f)
+                                    })),
                             ),
                     ),
             ),
