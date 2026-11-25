@@ -1989,6 +1989,7 @@ impl ThreadView {
                             )
                             .relative()
                             .group("background-process")
+                            .debug_selector(move || format!("background-process-{ix}"))
                             .tab_index(0)
                             .on_click(move |_, window, cx| {
                                 window.dispatch_action(

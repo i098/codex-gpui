@@ -47,7 +47,8 @@ fn tab_menu_moves_panes_and_reopens_closed_tab() -> Result<()> {
     );
 
     let proof = Path::new(env!("CARGO_TARGET_TMPDIR"));
-    // The strip starts 8 px into the panel, 1280 - 4 - 664 px from the left.
+    // The strip starts 8 px into the panel, which a 1280 px window clamps to 615.5 px wide
+    // (1280 - 340 - 4.5 - 320): 668.5 px from the left.
     fx.right_click((680., 22.))?;
     fx.shot()?.save(proof.join("tab-menu.png"))?;
     fx.keys("down")?;
@@ -68,8 +69,8 @@ fn tab_menu_moves_panes_and_reopens_closed_tab() -> Result<()> {
     Ok(())
 }
 
-/// The strip's slots start 8 px into the panel (1280 - 4 - 664 px wide): 620 px, then 860 px
-/// for two 240 px slots.
+/// The strip's slots start 8 px into the 615.5 px panel: 668.5 px, then 908.5 px for two
+/// 240 px slots.
 const TABS: [&str; 3] = ["math.py", "other.py", "third.py"];
 
 fn open_files(fx: &mut Fx, names: &[&str]) -> Result<()> {
@@ -81,6 +82,8 @@ fn open_files(fx: &mut Fx, names: &[&str]) -> Result<()> {
             path: format!("src/{name}"),
             line: None,
         }))?;
+        // A click in the file keeps its tab; else the next file replaces the preview tab.
+        fx.click((950., 400.))?;
     }
     fx.wait("file tabs", |fx| fx.read(|r, _| !r.side_tabs().is_empty()))
 }
@@ -101,7 +104,7 @@ fn tab_menu_closes_tabs_to_the_right_and_the_others() -> Result<()> {
         fx.read(|r, _| r.side_tabs().len() == 2)
     })?;
     let first = fx.read(|r, _| r.side_tabs()[0]);
-    fx.right_click((650., 22.))?;
+    fx.right_click((680., 22.))?;
     fx.keys("down")?;
     fx.keys("enter")?;
     ensure!(

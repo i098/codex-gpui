@@ -362,13 +362,17 @@ impl Root {
         });
         self.sync_browser_pages(cx);
         window.focus(&self.route_focus(cx), cx);
-        if let Some(id) = thread_id
-            && self
-                .thread
+        // Navigation loads the thread's queue; a side panel change re-syncs without one (s028).
+        let listed = thread_id.filter(|id| {
+            self.thread
                 .as_ref()
-                .is_some_and(|view| view.read(cx).id() == id)
-        {
-            self.list_queue(id, cx);
+                .is_some_and(|view| view.read(cx).id() == *id)
+        });
+        if listed != self.queue_listed {
+            self.queue_listed = listed.clone();
+            if let Some(id) = listed {
+                self.list_queue(id, cx);
+            }
         }
         self.sync_terminal(cx);
         self.save(window, cx);

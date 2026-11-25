@@ -12,6 +12,9 @@ fn proxy() {
     common::proxy_child();
 }
 
+/// The recorded background command: its summary row and its terminal tab label.
+const TERMINAL: &str = "python3 -c 'from src.math import subtract; print(subtract(5, 3))'";
+
 fn center(bbox: &Value) -> Result<(f32, f32)> {
     let x = bbox["x"].as_f64().context("x")? + bbox["w"].as_f64().context("w")? / 2.;
     let y = bbox["y"].as_f64().context("y")? + bbox["h"].as_f64().context("h")? / 2.;
@@ -40,9 +43,7 @@ fn port_tabs(fx: &Fx) -> Vec<(String, bool)> {
             .map(|side| {
                 let label = match side {
                     SidePanel::Changes => "Changes",
-                    SidePanel::Terminal => {
-                        "python3 -c 'from src.math import subtract; print(subtract(5, 3))'"
-                    }
+                    SidePanel::Terminal => TERMINAL,
                     SidePanel::Console => "Terminal",
                     SidePanel::File(_) => "math.py",
                     SidePanel::Artifact(_) => unreachable!("s029 opens no artifact"),
@@ -135,6 +136,14 @@ fn panel_tabs_replay() -> Result<()> {
                     )?
                 } else if step["at"].is_object() {
                     point(&step["at"])?
+                } else if step["target"]["text"] == TERMINAL {
+                    // The original ran in a Git checkout; a non-Git one adds the summary's
+                    // `Outputs` section above the row, so the click goes where the port draws it.
+                    let row = fx
+                        .cx
+                        .debug_bounds(fx.window, "background-process-0")?
+                        .context("no background process row")?;
+                    (f32::from(row.center().x), f32::from(row.center().y))
                 } else {
                     center(&step["target"]["bbox"])?
                 };

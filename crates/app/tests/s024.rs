@@ -102,25 +102,6 @@ fn recorded_escape_permissions_and_tab_order() -> Result<()> {
     for (index, step) in rec["steps"].as_array().unwrap().iter().enumerate() {
         match step["type"].as_str().unwrap() {
             "click" if step["waitThread"].is_string() => open_thread(&mut fx, &rec)?,
-            // Keep the existing 320 px menu geometry, as in f2a.rs.
-            "click"
-                if step["target"]["text"] == "Ask for approval"
-                    && step["target"]["selector"].is_null() =>
-            {
-                fx.click((600., 580.))?
-            }
-            "click"
-                if step["target"]["text"] == "Approve for me"
-                    && step["target"]["selector"].is_null() =>
-            {
-                fx.click((600., 628.))?
-            }
-            "click"
-                if step["target"]["text"] == "Full access"
-                    && step["target"]["selector"].is_null() =>
-            {
-                fx.click((600., 684.))?
-            }
             "click" => fx.click(center(&step["target"]["bbox"]))?,
             "type" => fx.type_text(step["text"].as_str().unwrap())?,
             "key" => fx.keys(step["portKey"].as_str().unwrap())?,
