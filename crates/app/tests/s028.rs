@@ -106,16 +106,23 @@ fn streamed_diff_and_find_replay() -> Result<()> {
     }
     let recording: Value =
         serde_json::from_str(include_str!("../../../refs/interactions/s028.json"))?;
+    // The original ran in a Git checkout whose agent wrote src/live.py: `View changes` reads
+    // the untracked file through `git-cat-file`'s disk fallback. Without both, the panel shows
+    // `Full file content failed to load` above the marks.
+    let _seed = Seed::new()?;
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
     let mut before_find = 0;
     for step in recording["steps"].as_array().context("steps")? {
         match step["type"].as_str() {
             Some("click") => {
-                let at = if let Some(reference) = step["portReference"].as_object() {
-                    fx.at(
-                        reference["screen"].as_str().context("reference screen")?,
-                        reference["text"].as_str().context("reference text")?,
-                    )?
+                let at = if step["portReference"].is_object() {
+                    // The Git checkout's branch card sits above the turn card, so the click
+                    // goes where the port draws the button rather than the static reference.
+                    let button = fx
+                        .cx
+                        .debug_bounds(fx.window, "view-changes")?
+                        .context("no View changes button")?;
+                    (f32::from(button.center().x), f32::from(button.center().y))
                 } else {
                     center(&step["target"]["bbox"])?
                 };
@@ -213,4 +220,40 @@ fn streamed_diff_and_find_replay() -> Result<()> {
         "native diff find must not send app-server requests"
     );
     Ok(())
+}
+
+/// The original's workspace state for this replay, removed again on drop.
+struct Seed {
+    live: std::path::PathBuf,
+    git: Option<std::path::PathBuf>,
+}
+
+impl Seed {
+    fn new() -> Result<Self> {
+        let root = std::path::Path::new(common::CWD);
+        let live = root.join("src/live.py");
+        std::fs::create_dir_all(live.parent().context("src dir")?)?;
+        std::fs::write(&live, "def live():\n    return 1\n")?;
+        let git = root.join(".git");
+        let git = if git.exists() {
+            None
+        } else {
+            let status = std::process::Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(root)
+                .status()?;
+            ensure!(status.success(), "git init {}", common::CWD);
+            Some(git)
+        };
+        Ok(Self { live, git })
+    }
+}
+
+impl Drop for Seed {
+    fn drop(&mut self) {
+        std::fs::remove_file(&self.live).ok();
+        if let Some(git) = &self.git {
+            std::fs::remove_dir_all(git).ok();
+        }
+    }
 }

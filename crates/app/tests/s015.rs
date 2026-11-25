@@ -217,10 +217,17 @@ fn command_row_expands_the_shell_card() -> Result<()> {
 /// the replay's answers to the sends their keys cause.
 fn inject_approvals(recording: &Value) -> Result<Vec<Value>> {
     let mut lines = common::script(None, |_| {})?;
-    let read = lines
+    // The app opens the chat with a header read and a turns page: emit after the reply of the
+    // first newest-first page `script` crafts (the one the app's exact params match).
+    let at = 2 + lines
         .iter()
-        .position(|v| v["dir"] == "recv" && v["msg"]["result"]["thread"]["id"] == SUBTRACT)
-        .context("no thread/read reply")?;
+        .position(|v| {
+            v["dir"] == "send"
+                && v["msg"]["method"] == "thread/turns/list"
+                && v["msg"]["params"]["threadId"] == SUBTRACT
+                && v["msg"]["params"]["sortDirection"] == "desc"
+        })
+        .context("no thread/turns/list request")?;
     let requests = recording["steps"]
         .as_array()
         .unwrap()
@@ -234,7 +241,7 @@ fn inject_approvals(recording: &Value) -> Result<Vec<Value>> {
         inserted.push(json!({ "dir": "recv", "msg": request }));
         inserted.push(json!({ "dir": "send", "msg": reply }));
     }
-    lines.splice(read + 1..read + 1, inserted);
+    lines.splice(at..at, inserted);
     lines.extend(common::exchange("thread/resume", json!({})));
     lines.extend(common::exchange("turn/start", json!({})));
     Ok(lines)
