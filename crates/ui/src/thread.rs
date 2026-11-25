@@ -3206,6 +3206,10 @@ impl Render for ThreadView {
         let key = (window.viewport_size(), self.clip_right);
         let (view, offset) = (self.scroll.bounds().size.height, self.scroll.offset().y);
         let following_bottom = offset <= -self.scroll.max_offset().y + px(1.);
+        // A new chat's running first turn is laid out at the top: it only looks like it follows
+        // the bottom because it did not overflow yet, and the jump would hide the first message.
+        let new_chat_top = offset == px(0.)
+            && matches!(&*self.turns, [turn] if turn.status == TurnStatus::InProgress);
         let laid_out = self.laid_out.borrow();
         markdown::set_line_width(laid_out.width);
         let separators = separators(&self.turns, self.clock.now());
@@ -3306,7 +3310,7 @@ impl Render for ThreadView {
             if l.height != height || l.width != width {
                 l.height = height;
                 let mut offset = scroll.offset();
-                if following_bottom && offset.y != -scroll.max_offset().y {
+                if following_bottom && !new_chat_top && offset.y != -scroll.max_offset().y {
                     offset.y = -scroll.max_offset().y;
                     scroll.set_offset(offset);
                     window.defer(cx, move |_, cx| cx.notify(view_id));
@@ -4883,6 +4887,44 @@ mod tests {
         let plain = heights(cx, false);
         assert!(plain[1] > plain[0], "{plain:?}");
         assert_eq!(heights(cx, true), plain);
+    }
+
+    /// A new chat opened while its first turn runs (the first message and the reply rows are
+    /// already there) starts at the top, so the first message stays in view (issue #1642).
+    #[gpui::test]
+    fn first_message_of_a_new_chat_stays_in_view(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| cx.set_global(theme::Theme::dark()));
+        let mut items = vec![serde_json::json!({"type": "userMessage", "id": "hi",
+            "content": [{"type": "text", "text": "hi"}]})];
+        items.extend((0..13).map(|i| {
+            serde_json::json!({"type": "agentMessage", "id": format!("m{i}"),
+                "text": "A line of the reply.\n\nAnother paragraph.\n\nAnd one more."})
+        }));
+        let thread: Thread = serde_json::from_value(serde_json::json!({
+            "id": "new", "preview": "", "modelProvider": "test", "cwd": "/tmp",
+            "createdAt": 0, "updatedAt": 0, "status": {"type": "idle"},
+            "turns": [{"id": "turn", "status": "inProgress", "items": items}]
+        }))
+        .unwrap();
+        let composer = cx.new(|_| gpui::EmptyView).into();
+        let window = cx.add_window(|_, _| {
+            let clock = Clock {
+                utc_offset: 0,
+                pinned_now: Some(0),
+                elapsed_since: None,
+            };
+            ThreadView::new(thread, clock, composer)
+        });
+        for _ in 0..2 {
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+        }
+        window
+            .read_with(cx, |view, _| {
+                assert!(view.scroll.max_offset().y > px(0.), "content must overflow");
+                assert_eq!(view.scroll.offset().y, px(0.), "first message scrolled away");
+            })
+            .unwrap();
     }
 
     /// refs/thread/dark@1280x832.png, top fade at device x 1792.., rows 88..: the pixels
