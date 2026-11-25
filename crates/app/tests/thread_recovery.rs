@@ -72,10 +72,12 @@ fn history_failure_retries_and_navigation_ignores_the_old_request() -> Result<()
         return Ok(());
     }
     let mut lines = script(None, |_| {})?;
+    // The app opens a chat with a header read, then pages its turns (`script`).
     let request = lines
         .iter()
         .position(|line| {
-            line["msg"]["method"] == "thread/read" && line["msg"]["params"]["threadId"] == SUBTRACT
+            line["msg"]["method"] == "thread/read"
+                && line["msg"]["params"] == json!({"threadId": SUBTRACT, "includeTurns": false})
         })
         .unwrap();
     let id = lines[request]["msg"]["id"].clone();
@@ -153,7 +155,7 @@ fn history_failure_retries_and_navigation_ignores_the_old_request() -> Result<()
     assert!(
         reads
             .iter()
-            .all(|r| r["params"]["threadId"] == SUBTRACT && r["params"]["includeTurns"] == true)
+            .all(|r| r["params"]["threadId"] == SUBTRACT && r["params"]["includeTurns"] == false)
     );
     shot(&mut fx, "history-retried")?;
 
@@ -177,6 +179,8 @@ fn stream_errors_stay_with_their_thread_and_turn_after_progress() -> Result<()> 
     fx.wait_thread(SUBTRACT)?;
     let mut turn = recorded_thread(SUBTRACT)?["turns"][0].clone();
     turn["id"] = "recovery-turn".into();
+    // The recorded `rootTurnId` would fold this turn into the recorded one.
+    turn.as_object_mut().unwrap().remove("rootTurnId");
     turn["status"] = "inProgress".into();
     turn["items"] = json!([{"type":"agentMessage","id":"recovery-message","text":"Still working"}]);
     event(

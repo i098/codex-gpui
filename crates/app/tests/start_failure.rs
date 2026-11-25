@@ -36,6 +36,9 @@ fn refused_thread_start_keeps_the_draft_attachment_and_project() -> Result<()> {
     fs::write(&notes, "attached\n")?;
 
     let mut lines = script(None, |_| {})?;
+    // A dropped file is copied into the host's attachments root (`fs/copy`).
+    lines.extend(exchange("fs/createDirectory", json!({})));
+    lines.extend(exchange("fs/copy", json!({})));
     let mut refused = exchange("thread/start", json!({}));
     refused[1]["msg"].as_object_mut().unwrap().remove("result");
     refused[1]["msg"]["error"] = json!({"code": -32000, "message": "route1: thread/start refused"});
@@ -58,7 +61,8 @@ fn refused_thread_start_keeps_the_draft_attachment_and_project() -> Result<()> {
         .update(&mut fx.cx, |root: &mut Root, cx| root.set_host(host, cx));
     fx.cx.run_until_parked();
 
-    fx.click((515., 695.))?;
+    // `Choose project` opens the original's project menu (#965); Open Folder picks a root.
+    fx.keys("cmd-o")?;
     fx.cx
         .simulate_path_prompt_response(|_| Some(vec![alpha.clone()]));
     fx.wait("project selected", |fx| {
@@ -69,6 +73,9 @@ fn refused_thread_start_keeps_the_draft_attachment_and_project() -> Result<()> {
     composer.update(&mut fx.cx, |c, cx| {
         c.drop_files(std::slice::from_ref(&notes), cx)
     });
+    fx.wait("attachment copied", |fx| {
+        composer.read_with(&fx.cx, |composer, _| composer.upload_status().is_none())
+    })?;
     fx.type_text("Start this chat in alpha.")?;
     fx.keys("enter")?;
 
@@ -93,9 +100,14 @@ fn refused_thread_start_keeps_the_draft_attachment_and_project() -> Result<()> {
         assert_eq!(start["params"]["cwd"], json!(alpha));
     }
     assert_eq!(requests(&mut fx, "thread/start").len(), 2);
+    let copy = requests(&mut fx, "fs/copy")[0]["params"].clone();
+    assert_eq!(copy["sourcePath"], json!(notes));
     assert_eq!(
         turns[0]["params"]["input"][0]["text"],
-        format!("Start this chat in alpha.\n{}", notes.display())
+        format!(
+            "Start this chat in alpha.\n{}",
+            copy["destinationPath"].as_str().unwrap()
+        )
     );
     Ok(())
 }

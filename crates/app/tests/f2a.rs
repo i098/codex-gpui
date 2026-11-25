@@ -195,7 +195,8 @@ fn keyboard_model_selection_and_reset_preserve_the_draft() -> Result<()> {
     );
 
     fx.keys("up enter")?;
-    fx.keys("down enter")?;
+    // The model list starts with its `Default` row; the first model follows it.
+    fx.keys("down down enter")?;
     fx.wait("keyboard model selection", |fx| {
         fx.read(|root, _| root.config()["model"] == first_model)
     })?;
