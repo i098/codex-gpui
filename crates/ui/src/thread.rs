@@ -3204,8 +3204,12 @@ impl Render for ThreadView {
         // long selected threads lag.
         let selecting = self.carets.range().is_some();
         let key = (window.viewport_size(), self.clip_right);
-        let (view, offset) = (self.scroll.bounds().size.height, self.scroll.offset().y);
-        let following_bottom = offset <= -self.scroll.max_offset().y + px(1.);
+        // A wheel event stores its delta unclamped until the next layout: a fling past the top
+        // would otherwise leave the turns above as blank stand-ins.
+        let max = self.scroll.max_offset().y;
+        let view = self.scroll.bounds().size.height;
+        let offset = self.scroll.offset().y.min(px(0.)).max(-max);
+        let following_bottom = offset <= -max + px(1.);
         let laid_out = self.laid_out.borrow();
         markdown::set_line_width(laid_out.width);
         let separators = separators(&self.turns, self.clock.now());

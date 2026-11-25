@@ -178,9 +178,10 @@ pub struct Fx {
 /// descriptors (macOS allows 256).
 impl Drop for Fx {
     fn drop(&mut self) {
-        let server = self
-            .cx
-            .update(|cx| cx.try_global::<ui::screens::settings::AppServer>().map(|s| s.0.clone()));
+        let server = self.cx.update(|cx| {
+            cx.try_global::<ui::screens::settings::AppServer>()
+                .map(|s| s.0.clone())
+        });
         if let Some(server) = server {
             server.close();
         }
@@ -711,10 +712,13 @@ impl Fx {
             .into_iter()
             .flatten()
             .any(|n| n["cls"] == "absolute -end-0.5 -top-0.5");
-        let shell = self.read(|root, _| root.shell().clone());
-        shell.update(&mut self.cx, |shell, cx| {
-            shell.unread_destinations = dot.then(|| ["unseen".into()].into());
-            cx.notify();
+        // Set it on Root after the recorded catalog's load: the load and a page route's render
+        // otherwise put the app's own state back over a value set on the shell.
+        self.wait("navigation destinations", |fx| {
+            !fx.read(|root, _| root.destinations_loading())
+        })?;
+        self.root.update(&mut self.cx, |root, cx| {
+            root.set_unread_destinations(dot.then(|| ["unseen".into()].into()), cx)
         });
         let dark = self.theme != "light";
         if dark {
@@ -903,11 +907,20 @@ pub fn parity_flow(screen: &str, reach: fn(&mut Fx) -> Result<()>) -> Result<Str
                     // as Settings shows it (with `Reset`); readback's `config/read` has none.
                     for line in &mut lines {
                         if let Some(desktop) = line.pointer_mut("/msg/result/config/desktop") {
-                            desktop["projectlessWorkspaceRoot"] = json!("/Users/user/Documents/Codex");
+                            desktop["projectlessWorkspaceRoot"] =
+                                json!("/Users/user/Documents/Codex");
                         }
                     }
                 }
-                let mut fx = Fx::open(theme, size, lines)?;
+                // refs/automations draws Back disabled: the original opened Scheduled first.
+                let start = if screen == "automations" {
+                    route.clone()
+                } else {
+                    Route::Home
+                };
+                let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
+                let settings = recorded_host_settings()?;
+                let mut fx = Fx::boot(theme, size, bridge, events, settings, start, true)?;
                 reach(&mut fx)?;
                 fx.cx.run_until_parked();
                 ensure!(

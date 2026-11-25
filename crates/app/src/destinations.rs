@@ -444,7 +444,13 @@ fn security_cloud_id() -> SharedString {
 }
 
 impl Root {
-    pub(crate) fn set_unread_destinations(
+    /// Whether a navigation destinations read is in flight; `pub` for the parity tests.
+    pub fn destinations_loading(&self) -> bool {
+        self.destination_load.is_some()
+    }
+
+    /// Sets the Explore dot's unseen destinations; `pub` for the parity tests.
+    pub fn set_unread_destinations(
         &mut self,
         unread: Option<Arc<[SharedString]>>,
         cx: &mut Context<Self>,
@@ -577,13 +583,16 @@ impl Root {
                 Ok((unread, security_cloud))
             }
             .await;
-            this.update(cx, |this, cx| match result {
-                Ok((unread, security_cloud)) => {
-                    this.set_unread_destinations(unread, cx);
-                    this.set_security_cloud(security_cloud, cx);
-                }
-                Err(error) => {
-                    eprintln!("codex-gpui: cannot read navigation destinations: {error:#}")
+            this.update(cx, |this, cx| {
+                this.destination_load = None;
+                match result {
+                    Ok((unread, security_cloud)) => {
+                        this.set_unread_destinations(unread, cx);
+                        this.set_security_cloud(security_cloud, cx);
+                    }
+                    Err(error) => {
+                        eprintln!("codex-gpui: cannot read navigation destinations: {error:#}")
+                    }
                 }
             })
             .ok();
