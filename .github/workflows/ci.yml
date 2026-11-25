@@ -153,14 +153,18 @@ jobs:
       # shortcut: the full workspace (cmake/opusic-sys) is not built on macOS here; widen when it is fixed.
       - run: cargo check --locked -p textsys -p gpui_macos -p ui
       # Run only the app test targets whose tests return early off macOS (Metal replay), so each really executes here.
+      # One target at a time, deleting its binary after the run: ~150 linked test binaries fill the runner disk.
       - name: macOS-guarded app tests
         shell: bash
         run: |
-          set -euo pipefail
-          args=""
+          set -uo pipefail
+          log=$(mktemp /tmp/macos-guarded.XXXXXX)
+          failed=""
           for f in $(grep -lE 'target_os = "macos"|skip_unless_macos!' crates/app/tests/*.rs); do
-            args="$args --test $(basename "$f" .rs)"
+            t=$(basename "$f" .rs)
+            cargo test --locked -p app --test "$t" -- --test-threads=1 2>&1 | tee -a "$log" || failed="$failed $t"
+            rm -f target/debug/deps/"$t"-*
           done
-          cargo test --locked -p app $args -- --test-threads=1 2>&1 | tee /tmp/macos-guarded.log
-          grep -E '^test result' /tmp/macos-guarded.log | awk '{p+=$4; f+=$6} END {print "guarded tests passed=" p " failed=" f}'
-          rm -f /tmp/macos-guarded.log
+          awk '/^test result/ {p+=$4; f+=$6} END {print "guarded tests passed=" p " failed=" f}' "$log"
+          rm -f "$log"
+          if [ -n "$failed" ]; then echo "failed targets:$failed"; exit 1; fi
