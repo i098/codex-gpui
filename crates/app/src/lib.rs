@@ -5744,9 +5744,8 @@ impl Root {
         self.diff = Some(diff);
         self.files.clear();
         // Closed file tabs belong to the previous thread's files.
-        self.closed_tabs.retain(|(side, ..)| {
-            !matches!(side, SidePanel::File(_) | SidePanel::Artifact(_))
-        });
+        self.closed_tabs
+            .retain(|(side, ..)| !matches!(side, SidePanel::File(_) | SidePanel::Artifact(_)));
         #[cfg(target_os = "macos")]
         {
             self.artifact_sessions.clear();
@@ -10403,8 +10402,16 @@ mod commit_repository_tests {
     #[test]
     fn branch_row_needs_a_remote() {
         let mut status = json!({"staged": {}, "remote": null});
-        assert!(!commit_repository(&status, true, String::new()).unwrap().has_remote);
+        assert!(
+            !commit_repository(&status, true, String::new())
+                .unwrap()
+                .has_remote
+        );
         status["remote"] = "origin".into();
-        assert!(commit_repository(&status, true, String::new()).unwrap().has_remote);
+        assert!(
+            commit_repository(&status, true, String::new())
+                .unwrap()
+                .has_remote
+        );
     }
 }

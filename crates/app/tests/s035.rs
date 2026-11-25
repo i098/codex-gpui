@@ -11,9 +11,10 @@ fn suggestion_hover_matches_original() -> Result<()> {
     }
     let recording: Value =
         serde_json::from_str(include_str!("../../../refs/interactions/s035.json"))?;
-    let reference =
-        image::load_from_memory(include_bytes!("../../../refs/automations/dark@1280x832.png"))?
-            .into_rgba8();
+    let reference = image::load_from_memory(include_bytes!(
+        "../../../refs/automations/dark@1280x832.png"
+    ))?
+    .into_rgba8();
     let mut cx = HeadlessAppContext::with_platform(
         textsys::text_system(),
         Arc::new(theme::Assets),

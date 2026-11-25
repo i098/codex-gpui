@@ -427,7 +427,11 @@ fn bubble(
                 .anchor(anchor)
                 .offset(offset)
                 .snap_to_window()
-                .child(div().p(pad).child(crate::composited_bounds(pill.top_layer()))),
+                .child(
+                    div()
+                        .p(pad)
+                        .child(crate::composited_bounds(pill.top_layer())),
+                ),
         ),
     )
     .with_priority(2)
