@@ -7,6 +7,10 @@ mod account;
 mod account_backend;
 mod activity_access;
 mod archived_chats;
+#[cfg(target_os = "macos")]
+mod artifact_sessions;
+#[cfg(target_os = "macos")]
+pub use artifact_sessions::ArtifactSessionHost;
 mod browser;
 mod browser_site_annotation;
 mod browsing_history;
@@ -210,6 +214,10 @@ const SIDEBAR_BREAKPOINT: Pixels = px(720.);
 
 /// Fixed platform bindings and app-level commands; configurable bindings are installed by the keymap module.
 pub fn init(cx: &mut App) {
+    #[cfg(target_os = "macos")]
+    if let Some(host) = ArtifactSessionHost::from_env() {
+        cx.set_global(host);
+    }
     logging::write("codex-gpui session started");
     cx.set_app_identity(
         if qa::ENABLED {
@@ -269,6 +277,9 @@ pub enum SidePanel {
     /// A file link to an artifact ([`FileView::artifact_type`]): its preview, an artifact PDF
     /// with annotations, in the file viewer with this key in [`Root::files`].
     Artifact(usize),
+    /// A read-only live artifact session, separate from a file preview.
+    #[cfg(target_os = "macos")]
+    ArtifactSession(usize),
     /// A generated image: the image view ([`Root::image`]).
     Image,
     /// `Open in side chat`: the side chat with this [`SideChat::key`].
@@ -533,6 +544,8 @@ pub struct Root {
     /// cleared with the thread.
     /// At most one is a preview tab, which the next opened file replaces.
     files: Vec<(usize, Entity<FileView>)>,
+    #[cfg(target_os = "macos")]
+    artifact_sessions: Vec<(usize, Entity<artifact_sessions::View>)>,
     next_file: usize,
     /// The plan of [`SidePanel::Plan`]; cleared with the thread.
     plan: Option<Entity<ui::screens::plan::PlanView>>,
@@ -1117,6 +1130,8 @@ impl Root {
             diff: None,
             diff_watch: None,
             files: Vec::new(),
+            #[cfg(target_os = "macos")]
+            artifact_sessions: Vec::new(),
             next_file: 1,
             plan: None,
             new_tab: None,
@@ -3873,6 +3888,8 @@ impl Root {
                     detail: Some(file.path.clone().into()),
                 })
             }
+            #[cfg(target_os = "macos")]
+            SidePanel::ArtifactSession(_) => None,
             SidePanel::Image => image.then(|| Tab {
                 icon: "diff-file-image",
                 label: "Image view".into(),
@@ -3958,7 +3975,22 @@ impl Root {
             .pull_request_tab
             .as_ref()
             .and_then(|page| Some(page.read(cx).selected.as_ref()?.number));
+        #[cfg(target_os = "macos")]
+        let artifact_sessions = &self.artifact_sessions;
         let tab = |side: &SidePanel| {
+            #[cfg(target_os = "macos")]
+            if let SidePanel::ArtifactSession(key) = *side {
+                let view = artifact_sessions
+                    .iter()
+                    .find(|(id, _)| *id == key)?
+                    .1
+                    .read(cx);
+                return Some(Tab {
+                    icon: view.icon(),
+                    label: view.title(),
+                    detail: None,
+                });
+            }
             Self::side_tab(
                 *side,
                 view,
@@ -3988,6 +4020,8 @@ impl Root {
             SidePanel::Terminal => cx.new(|cx| Xterm::new(view.clone(), cx)).into(),
             SidePanel::Console => self.terminal_panel()?.clone().into(),
             SidePanel::File(key) | SidePanel::Artifact(key) => self.file(key)?.clone().into(),
+            #[cfg(target_os = "macos")]
+            SidePanel::ArtifactSession(key) => self.artifact_session(key)?.clone().into(),
             SidePanel::Image => self.image.as_ref()?.clone().into(),
             SidePanel::SideChat(key) => self.chat(key)?.view.clone().into(),
             SidePanel::Sources => cx
@@ -4012,6 +4046,16 @@ impl Root {
         }
         if self.side_visible(side) {
             return;
+        }
+        #[cfg(target_os = "macos")]
+        if let SidePanel::ArtifactSession(key) = side
+            && let (Some(view), Some(host), Route::Thread(thread)) = (
+                self.artifact_session(key),
+                cx.try_global::<ArtifactSessionHost>().cloned(),
+                &self.state.route,
+            )
+        {
+            view.update(cx, |view, cx| view.start(host, thread.clone(), cx));
         }
         #[cfg(target_os = "macos")]
         if let SidePanel::McpApp(key) = side
@@ -4080,6 +4124,17 @@ impl Root {
         }
         if let SidePanel::File(key) | SidePanel::Artifact(key) = side {
             self.files.retain(|(k, _)| *k != key);
+        }
+        #[cfg(target_os = "macos")]
+        if let SidePanel::ArtifactSession(key) = side
+            && let Some(view) = self.artifact_session(key)
+        {
+            view.update(cx, |view, _| view.stop());
+        }
+        // A closed session leaves the list so a later result for it reopens the tab.
+        #[cfg(target_os = "macos")]
+        if let SidePanel::ArtifactSession(key) = side {
+            self.artifact_sessions.retain(|(k, _)| *k != key);
         }
         if self.side == Some(side) {
             self.side = self.tabs.get(ix).or(self.tabs.last()).copied();
@@ -5484,11 +5539,50 @@ impl Root {
         self.state.save();
     }
 
+    #[cfg(target_os = "macos")]
+    fn artifact_session(&self, key: usize) -> Option<&Entity<artifact_sessions::View>> {
+        self.artifact_sessions
+            .iter()
+            .find_map(|(id, view)| (*id == key).then_some(view))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn open_artifact_session(
+        &mut self,
+        artifact: artifact_sessions::Artifact,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = artifact_sessions::View::new(artifact);
+        if self
+            .artifact_sessions
+            .iter()
+            .any(|(_, existing)| existing.read(cx).reference() == view.reference())
+        {
+            return;
+        }
+        let key = self.next_file;
+        self.next_file += 1;
+        self.artifact_sessions.push((key, cx.new(|_| view)));
+        self.set_side(SidePanel::ArtifactSession(key), window, cx);
+    }
+
     fn show_thread(&mut self, thread: Thread, window: &mut Window, cx: &mut Context<Self>) {
         if self.signed_out() {
             return;
         }
         self.history = None;
+        #[cfg(target_os = "macos")]
+        let latest_artifact = (self.host_id == "local" && cx.has_global::<ArtifactSessionHost>())
+            .then(|| {
+                thread
+                    .turns
+                    .iter()
+                    .rev()
+                    .flat_map(|turn| turn.items.iter().rev())
+                    .find_map(artifact_sessions::Artifact::from_item)
+            })
+            .flatten();
         let running = thread
             .turns
             .iter()
@@ -5635,10 +5729,10 @@ impl Root {
         self.files.clear();
         #[cfg(target_os = "macos")]
         {
-            self.tabs
-                .retain(|side| !matches!(side, SidePanel::McpApp(_)));
-            self.closed_tabs
-                .retain(|(side, _)| !matches!(side, SidePanel::McpApp(_)));
+            self.artifact_sessions.clear();
+            let keep = |side| !matches!(side, SidePanel::McpApp(_) | SidePanel::ArtifactSession(_));
+            self.tabs.retain(|side| keep(*side));
+            self.closed_tabs.retain(|(side, _)| keep(*side));
         }
         self.plan = None;
         self.new_tab = None;
@@ -5732,6 +5826,10 @@ impl Root {
             self.sync(window, cx);
         } else {
             self.navigate(route, window, cx);
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(artifact) = latest_artifact {
+            self.open_artifact_session(artifact, window, cx);
         }
         self.thread_composer
             .update(cx, |composer, cx| composer.set_goal(None, cx));
@@ -8277,6 +8375,32 @@ impl Root {
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             return;
+        }
+        #[cfg(target_os = "macos")]
+        if self.host_id == "local"
+            && cx.has_global::<ArtifactSessionHost>()
+            && let Event::Notification { method, params } = &event
+            && method == "item/completed"
+            && let Some((thread, artifact)) = artifact_sessions::Artifact::from_notification(params)
+            && matches!(&self.state.route, Route::Thread(id) if id == thread)
+        {
+            let thread = thread.to_owned();
+            let window = self.context_window;
+            cx.spawn(async move |this, cx| {
+                let _ = cx.update_window(window, |_, window, cx| {
+                    this.update(cx, |this, cx| {
+                        if matches!(&this.state.route, Route::Thread(id) if *id == thread)
+                            && this
+                                .thread
+                                .as_ref()
+                                .is_some_and(|view| view.read(cx).id() == thread)
+                        {
+                            this.open_artifact_session(artifact, window, cx);
+                        }
+                    })
+                });
+            })
+            .detach();
         }
         if let Event::Notification { method, params } = &event
             && let Some(generation) = &mut self.generation

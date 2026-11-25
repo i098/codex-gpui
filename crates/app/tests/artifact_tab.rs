@@ -123,3 +123,88 @@ fn artifact_links_open_an_artifact_tab_that_sends_annotations() -> Result<()> {
     fx.wait("sent batch cleared", |fx| pending(fx) == 0)?;
     Ok(())
 }
+
+#[cfg(target_os = "macos")]
+#[path = "artifact_tab/live_host.rs"]
+mod live_host;
+
+#[cfg(target_os = "macos")]
+#[test]
+fn artifact_tab_streams_model_commits_during_the_turn() -> Result<()> {
+    use serde_json::json;
+
+    let host = live_host::Host::start(SUBTRACT)?;
+    let mut lines = script(None, |_| {})?;
+    let turn = json!({"id":"artifact-turn","status":"inProgress","items":[],"error":null});
+    lines.extend(exchange("turn/start", json!({"turn":turn})));
+    for (method, params) in [
+        ("turn/started", json!({"threadId":SUBTRACT,"turn":turn})),
+        (
+            "item/completed",
+            json!({"threadId":SUBTRACT,"turnId":"artifact-turn","item":{
+                "type":"mcpToolCall","id":"create-artifact","server":"artifact_session","tool":"js","status":"completed",
+                "result":{"content":[],"_meta":{"codex/artifactSession":{
+                    "schema":"openai.artifact-session.result/v1","ok":true,
+                    "artifact":{"ref":live_host::ARTIFACT,"kind":"spreadsheet","stateVersion":1,"title":"Quarterly Sales"}
+                }}}
+            }}),
+        ),
+    ] {
+        lines.push(json!({"dir":"recv","msg":{"method":method,"params":params}}));
+    }
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.cx.update(|cx| {
+        cx.set_global(app::ArtifactSessionHost::new(
+            host.root().join("host.sock"),
+            live_host::TOKEN.into(),
+            host.root().into(),
+        ));
+    });
+    fx.click(fx.at("home", "Add a subtract")?)?;
+    fx.wait_thread(SUBTRACT)?;
+    fx.focus_composer()?;
+    fx.type_text("Create a quarterly sales workbook.")?;
+    fx.keys("enter")?;
+    fx.wait("artifact session tab", |fx| {
+        matches!(
+            fx.read(|root, _| root.side_panel()),
+            Some(SidePanel::ArtifactSession(_))
+        )
+    })?;
+    let side = fx.read(|root, _| root.side_panel());
+    let panel = |shot: &image::RgbaImage| {
+        let (w, h) = shot.dimensions();
+        image::imageops::crop_imm(shot, w * 3 / 4, h / 4, w / 4, h / 2).to_image()
+    };
+    fx.wait("initial rendered workbook", |fx| {
+        fx.shot().is_ok_and(|shot| {
+            panel(&shot)
+                .pixels()
+                .filter(|p| p[0] > 220 && p[1] > 220 && p[2] > 220)
+                .count()
+                > 10_000
+        })
+    })?;
+    let initial = panel(&fx.shot()?);
+    fx.capture_evidence("CGX_ARTIFACT_TAB_EVIDENCE", "artifact-live-initial")?;
+
+    host.commit()?;
+    fx.wait("rendered workbook after a host commit", |fx| {
+        fx.shot().is_ok_and(|shot| {
+            panel(&shot)
+                .pixels()
+                .zip(initial.pixels())
+                .filter(|(a, b)| a != b)
+                .count()
+                > 100
+        })
+    })?;
+    ensure!(
+        fx.read(|root, cx| {
+            root.side_panel() == side && root.thread().is_some_and(|t| t.read(cx).is_running())
+        }),
+        "the same artifact tab must update before the turn ends"
+    );
+    fx.capture_evidence("CGX_ARTIFACT_TAB_EVIDENCE", "artifact-live-updated")?;
+    Ok(())
+}

@@ -40,6 +40,14 @@ jobs:
           libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
           libvulkan-dev xvfb
       - uses: mozilla-actions/sccache-action@v0.0.11
+      # A slow or unreachable GitHub cache service makes the sccache server miss its startup timeout
+      # (#1623). A cache problem must never fail the job: build without the wrapper instead.
+      - name: Start sccache or fall back to no wrapper
+        run: |
+          if ! SCCACHE_STARTUP_TIMEOUT=60 sccache --start-server; then
+            echo "::warning::sccache server did not start; building without RUSTC_WRAPPER"
+            echo "RUSTC_WRAPPER=" >>"$GITHUB_ENV"
+          fi
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -70,6 +78,14 @@ jobs:
           libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
           libvulkan-dev xvfb
       - uses: mozilla-actions/sccache-action@v0.0.11
+      # A slow or unreachable GitHub cache service makes the sccache server miss its startup timeout
+      # (#1623). A cache problem must never fail the job: build without the wrapper instead.
+      - name: Start sccache or fall back to no wrapper
+        run: |
+          if ! SCCACHE_STARTUP_TIMEOUT=60 sccache --start-server; then
+            echo "::warning::sccache server did not start; building without RUSTC_WRAPPER"
+            echo "RUSTC_WRAPPER=" >>"$GITHUB_ENV"
+          fi
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:

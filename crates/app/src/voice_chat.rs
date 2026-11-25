@@ -174,6 +174,8 @@ impl Root {
                         let params = json!({
                             "threadId": id,
                             "outputModality": "audio",
+                            // App-server maps v3 to the AVAS quicksilver=v2 header.
+                            "version": "v3",
                             "transport": { "type": "webrtc", "sdp": sdp },
                             "flushTranscriptTailOnSessionEnd": true,
                         });
