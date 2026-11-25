@@ -53,6 +53,7 @@ fn focus_on_pointer(
 mod account_page;
 mod ads_controls;
 pub mod backend;
+mod cloud_computer;
 mod code_review;
 pub mod computer_history;
 mod languages;
@@ -1882,6 +1883,9 @@ impl Render for SettingsPane {
         }
         if section == "Ads controls" {
             return ads_controls::render(window, cx);
+        }
+        if section == "Cloud computer" {
+            return cloud_computer::render(window, cx);
         }
         if section == "Passwords" {
             return passwords::render(window, cx);

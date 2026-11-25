@@ -6,6 +6,9 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+### Added
+- Settings ▸ Cloud computer: view and delete the cloud browser's saved cookies by site or host, clear all of them, and delete its passkeys. Open it with `codex://settings/cloud-computer`; the settings list still hides it, as in the original (#1053).
+
 ### Fixed
 - Start WebRTC voice chat with the realtime protocol that AVAS requires (#875, #908).
 - The macOS browser's link context menu no longer lists Back, Forward and Reload, as in the original. Those items show only off a link (#833).
