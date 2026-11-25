@@ -688,12 +688,28 @@ fn reset_pane(fx: &mut Fx) -> Result<()> {
     }))
 }
 
+/// A reference shot under the original's dark neutrals: the original captures hold them, and
+/// the app ships darker ones on purpose (`parity::reference_dark`).
+#[cfg(target_os = "macos")]
+fn original_shot(fx: &mut Fx) -> Result<image::RgbaImage> {
+    fx.cx.update(|cx| {
+        cx.set_global(parity::reference_dark());
+        cx.refresh_windows();
+    });
+    let shot = fx.reference_shot();
+    fx.cx.update(|cx| {
+        cx.set_global(theme::Theme::dark());
+        cx.refresh_windows();
+    });
+    shot
+}
+
 /// The merged first page's tabs, toolbar icons and the row icons on the list layer's tile seams
 /// match crops of the original capture (`fixtures/pull-requests-icons/<x>_<y>.png`, device px)
 /// exactly, as the pixel gate requires.
 #[cfg(target_os = "macos")]
 fn assert_original_icons(fx: &mut Fx) -> Result<()> {
-    let shot = fx.reference_shot()?;
+    let shot = original_shot(fx)?;
     for entry in std::fs::read_dir(format!("{}/fixtures/pull-requests-icons", common::ROOT))? {
         let path = entry?.path();
         let name = path
@@ -762,7 +778,7 @@ fn corners_match_the_original(fx: &mut Fx, state: &str) -> Result<()> {
         common::ROOT
     );
     let reference = image::open(&path).context(path)?.into_rgba8();
-    let port = fx.reference_shot()?;
+    let port = original_shot(fx)?;
     // Each arc square's origin and its arc's center.
     for (x0, y0, cx, cy) in [
         (104, 88, 128., 112.),

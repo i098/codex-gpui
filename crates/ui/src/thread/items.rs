@@ -479,6 +479,7 @@ pub(super) fn diff_card(
         crate::focus::shadow_ring(
             div()
                 .id(id)
+                .debug_selector(move || id.to_owned())
                 .relative()
                 .h(px(28.))
                 .flex()

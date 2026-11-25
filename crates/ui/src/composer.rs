@@ -1089,6 +1089,8 @@ pub struct Draft {
     mentions: Vec<mention::Mention>,
     attachments: Vec<attach::Attachment>,
     diff_comments: Vec<crate::screens::diff::panel::comments::Comment>,
+    /// The editor's undo and redo stacks, so ⌘Z still works after the chat comes back.
+    history: editor::History,
 }
 
 impl Draft {
@@ -2381,6 +2383,7 @@ impl Composer {
             mentions: std::mem::take(&mut self.mentions),
             attachments: std::mem::take(&mut self.attachments),
             diff_comments: std::mem::take(&mut self.diff_comments),
+            ..Draft::default()
         }
     }
 
@@ -2423,18 +2426,21 @@ impl Composer {
         true
     }
 
-    /// Replaces the unsent text, chips and attachments with `next`, a thread's kept draft, and
-    /// returns the ones replaced. Diff comments stay: the app keeps them per thread.
+    /// Replaces the unsent text, chips, attachments and undo history with `next`, a thread's
+    /// kept draft, and returns the ones replaced. Diff comments stay: the app keeps them per
+    /// thread.
     pub fn swap_draft(&mut self, next: Draft, cx: &mut Context<Self>) -> Draft {
         let left = Draft {
             content: std::mem::take(&mut self.content),
             mentions: std::mem::take(&mut self.mentions),
             attachments: std::mem::take(&mut self.attachments),
             diff_comments: Vec::new(),
+            history: std::mem::take(&mut self.history),
         };
         self.set_text(&next.content, cx);
         self.mentions = next.mentions;
         self.attachments = next.attachments;
+        self.history = next.history;
         left
     }
 
@@ -2464,7 +2470,7 @@ impl Composer {
     /// focus ring shows, as Chromium's `:focus-visible` keeps it after keyboard input.
     pub fn open_model_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.toggle_menu(Menu::Effort, window, cx);
-        self.slider_focus.read(cx).show_ring();
+        self.slider_focus.read(cx).set_ring(true);
     }
 
     fn current_model(&self) -> Option<&ModelOption> {
@@ -2798,9 +2804,13 @@ impl Composer {
                 Menu::Comments => self.comments_focus.clone(),
                 _ => self.model_focus.clone(),
             };
-            // The model picker focuses its slider on open (`[data-reasoning-slider]`).
+            // The model picker focuses its slider on open (`[data-reasoning-slider]`). The
+            // trigger does not take focus on a pointer open, so the slider inherits the
+            // editor's `:focus-visible` (a focused text field always has it): refs/composer.
             if menu == Menu::Effort {
-                let slider = self.slider_focus.read(cx).handle.clone();
+                let slider = self.slider_focus.read(cx);
+                slider.set_ring(self.focus_handle.is_focused(window));
+                let slider = slider.handle.clone();
                 slider.focus(window, cx);
             } else {
                 self.menu_focus.content.focus(window, cx);

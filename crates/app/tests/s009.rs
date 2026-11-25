@@ -44,6 +44,10 @@ fn file_link_opens_the_file_viewer_tab() -> Result<()> {
     );
     let before = fx.shot()?;
 
+    let math = std::path::Path::new(CWD).join("src/math.py");
+    std::fs::create_dir_all(math.parent().context("src dir")?)?;
+    std::fs::write(&math, MATH_PY)?;
+
     // Steps 1 and 2: hover, then click the link (at the thread reference's position: the
     // recording's Changes tab was open, which narrows its chat column).
     let link = fx.at("thread", "src/math.py")?;

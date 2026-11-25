@@ -130,10 +130,26 @@ fn header_interactions_match_the_original() -> Result<()> {
     fx.click(row)?;
     fx.wait_thread(common::SUBTRACT)?;
     fx.shot()?;
+    // This recording's original cut the title to 80 characters; 26.1029 cuts an opened chat's
+    // title to 60, as its titlebar in refs/diff shows.
+    let spec: Value = serde_json::from_slice(&fs::read(format!(
+        "{ROOT}/refs/diff/dark@1280x832.spec.json"
+    ))?)?;
+    let title = spec["texts"]
+        .as_array()
+        .context("texts")?
+        .iter()
+        .find(|text| {
+            text["rect"][1].as_f64().is_some_and(|y| y < 44.)
+                && text["text"]
+                    .as_str()
+                    .is_some_and(|text| text.starts_with("Add a subtract"))
+        })
+        .context("titlebar title")?;
     assert_eq!(
         fx.read(|r, cx| r.thread().unwrap().read(cx).header_title())
             .as_ref(),
-        recording["result"]["longTitle"]["text"].as_str().unwrap()
+        title["text"].as_str().unwrap()
     );
     Ok(())
 }

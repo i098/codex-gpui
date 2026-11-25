@@ -1382,6 +1382,7 @@ impl Composer {
         };
         div()
             .id(id)
+            .debug_selector(|| id.into())
             .relative()
             .h(px(if mcp && !primary { 24.570_313 } else { 28. }))
             .px(px(9.))

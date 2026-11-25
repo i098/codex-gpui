@@ -209,8 +209,8 @@ pub struct GoToChat(pub usize);
 #[action(namespace = app, no_json)]
 pub struct GoToRecentChat(pub usize);
 
-/// The original collapses the sidebar at widths of 720 px or less.
-const SIDEBAR_BREAKPOINT: Pixels = px(720.);
+/// `(min-width: 768px)` (`KRt`, docs/inventory.md): below it the original hides the sidebar.
+const SIDEBAR_BREAKPOINT: Pixels = px(768.);
 
 /// Fixed platform bindings and app-level commands; configurable bindings are installed by the keymap module.
 pub fn init(cx: &mut App) {
@@ -566,8 +566,8 @@ pub struct Root {
     /// `tabs`); kept across threads like the original's panel.
     tabs: Vec<SidePanel>,
     /// Closed side tabs, the last closed last, for `Reopen closed tab` (`⌘⇧T`); a browser
-    /// tab keeps its page's address.
-    closed_tabs: Vec<(SidePanel, Option<url::Url>)>,
+    /// tab keeps its page's address, a file tab its viewer.
+    closed_tabs: Vec<(SidePanel, Option<url::Url>, Option<Entity<FileView>>)>,
     side: Option<SidePanel>,
     workspace_layout: WorkspaceLayout,
     /// The route's own shell.
@@ -683,6 +683,8 @@ pub struct Root {
     automation_threads: HashSet<String>,
     automation_card_results: HashMap<(String, String), Value>,
     queue_load: Option<Task<()>>,
+    /// The routed thread whose queue the route last listed: a side panel change keeps it.
+    queue_listed: Option<String>,
     queue_pending: bool,
     fork_pending: bool,
     deleted_queued: Vec<DeletedQueuedMessage>,
@@ -864,8 +866,14 @@ impl Root {
             cx.subscribe_in(composer, window, |this, composer, command: &ui::composer::SlashCommand, window, cx| {
                 match command {
                     ui::composer::SlashCommand::Fast => {
-                        // `/fast` toggles, as the CLI's; off removes `service_tier`.
-                        let tier = json!(composer.read(cx).service_tier());
+                        // `/fast` toggles the saved tier, as the CLI's; off removes `service_tier`.
+                        // A refused write saves nothing, so the next asks for priority again (s021).
+                        let tier = if this.config["service_tier"] == "priority" {
+                            Value::Null
+                        } else {
+                            json!("priority")
+                        };
+                        composer.update(cx, |c, cx| c.set_speed(usize::from(!tier.is_null()), cx));
                         this.write_config("config/batchWrite", json!({
                             "edits": [{"keyPath": "service_tier", "value": tier.clone(), "mergeStrategy": "upsert"}],
                             "filePath": null, "expectedVersion": null, "reloadUserConfig": true,
@@ -1240,6 +1248,7 @@ impl Root {
             automation_threads: HashSet::new(),
             automation_card_results: HashMap::new(),
             queue_load: None,
+            queue_listed: None,
             queue_pending: false,
             fork_pending: false,
             deleted_queued: Vec::new(),
@@ -4107,12 +4116,16 @@ impl Root {
                     .browser_tab(key)
                     .and_then(|tab| tab.read(cx).url().cloned());
                 if open {
-                    self.closed_tabs.push((side, url));
+                    self.closed_tabs.push((side, url, None));
                 }
                 // Dropping the tab removes its page from the window.
                 self.browser_tabs.retain(|(k, _)| *k != key);
             }
-            _ if open => self.closed_tabs.push((side, None)),
+            SidePanel::File(key) | SidePanel::Artifact(key) if open => {
+                let file = self.file(key).cloned();
+                self.closed_tabs.push((side, None, file));
+            }
+            _ if open => self.closed_tabs.push((side, None, None)),
             _ => {}
         }
         let Some(ix) = self.tabs.iter().position(|t| *t == side) else {
@@ -4175,13 +4188,16 @@ impl Root {
     /// `Reopen closed tab` (`⌘⇧T`): the last closed tab whose content the thread still has
     /// (a browser tab reloads its address), selected.
     fn reopen_closed_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        while let Some((side, url)) = self.closed_tabs.pop() {
+        while let Some((side, url, file)) = self.closed_tabs.pop() {
             if self.tabs.contains(&side) {
                 continue;
             }
             if let SidePanel::Browser(_) = side {
                 self.open_browser_tab(url, window, cx);
                 return;
+            }
+            if let (SidePanel::File(key) | SidePanel::Artifact(key), Some(file)) = (side, file) {
+                self.files.push((key, file));
             }
             self.set_side(side, window, cx);
             if self.tabs.contains(&side) {
@@ -5730,12 +5746,15 @@ impl Root {
         .detach();
         self.diff = Some(diff);
         self.files.clear();
+        // Closed file tabs belong to the previous thread's files.
+        self.closed_tabs
+            .retain(|(side, ..)| !matches!(side, SidePanel::File(_) | SidePanel::Artifact(_)));
         #[cfg(target_os = "macos")]
         {
             self.artifact_sessions.clear();
             let keep = |side| !matches!(side, SidePanel::McpApp(_) | SidePanel::ArtifactSession(_));
             self.tabs.retain(|side| keep(*side));
-            self.closed_tabs.retain(|(side, _)| keep(*side));
+            self.closed_tabs.retain(|(side, ..)| keep(*side));
         }
         self.plan = None;
         self.new_tab = None;
@@ -9591,6 +9610,7 @@ fn commit_repository(
             .collect(),
         has_commits: status["hasCommits"].as_bool().unwrap_or(false),
         ahead: status["commitsAhead"].as_u64().unwrap_or_default() as usize,
+        has_remote: status["remote"].is_string(),
         staged: selection("staged"),
         all: selection("all"),
         include_unstaged,
@@ -10374,6 +10394,27 @@ mod computer_use_tests {
         assert_eq!(
             computer_use_overrides(&json!({"mcp_servers": {"lcu": {"enabled": true}}})),
             None
+        );
+    }
+}
+
+#[cfg(test)]
+mod commit_repository_tests {
+    use super::*;
+
+    #[test]
+    fn branch_row_needs_a_remote() {
+        let mut status = json!({"staged": {}, "remote": null});
+        assert!(
+            !commit_repository(&status, true, String::new())
+                .unwrap()
+                .has_remote
+        );
+        status["remote"] = "origin".into();
+        assert!(
+            commit_repository(&status, true, String::new())
+                .unwrap()
+                .has_remote
         );
     }
 }

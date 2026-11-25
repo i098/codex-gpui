@@ -399,22 +399,26 @@ fn bubble(
             .absolute()
             .inset_0(),
         );
-    // A zero-size point on the trigger's edge, centred along it; the pill hangs off it.
+    // A zero-size point on the trigger's edge, centred along it; the pill hangs off it. Radix's
+    // `collisionPadding` (8 px) shifts the pill once it comes within 8 px of a window edge,
+    // where gpui's snap only moves it after it crosses the edge: the snapped box carries the
+    // 8 px as padding, and the offset takes it back off along the side.
+    let pad = px(8.);
     let (point_on_edge, anchor, offset) = match side {
         Side::Top => (
             div().absolute().left(relative(0.5)).top_0(),
             Anchor::BottomCenter,
-            point(px(0.), -side_offset),
+            point(px(0.), pad - side_offset),
         ),
         Side::Bottom => (
             div().absolute().left(relative(0.5)).top(relative(1.)),
             Anchor::TopCenter,
-            point(px(0.), side_offset),
+            point(px(0.), side_offset - pad),
         ),
         Side::Right => (
             div().absolute().left(relative(1.)).top(relative(0.5)),
             Anchor::LeftCenter,
-            point(side_offset, px(0.)),
+            point(side_offset - pad, px(0.)),
         ),
     };
     deferred(
@@ -422,8 +426,12 @@ fn bubble(
             anchored()
                 .anchor(anchor)
                 .offset(offset)
-                .snap_to_window_with_margin(gpui::Edges::all(px(8.)))
-                .child(crate::composited_bounds(pill.top_layer())),
+                .snap_to_window()
+                .child(
+                    div()
+                        .p(pad)
+                        .child(crate::composited_bounds(pill.top_layer())),
+                ),
         ),
     )
     .with_priority(2)

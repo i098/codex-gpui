@@ -137,7 +137,7 @@ jobs:
       - run: cargo test --locked --workspace --features app/test-support --all-targets --no-run --target x86_64-pc-windows-msvc
       - run: cargo test --locked --no-fail-fast --workspace --features app/test-support --lib --bins --target x86_64-pc-windows-msvc
   macos:
-    # Self-hosted Mac (mac-codex-gpui); compile-only, so a Mac-only break fails the PR.
+    # Self-hosted Mac (mac-codex-gpui); compile check plus the macOS-guarded app tests (#1510).
     if: ${{ github.event_name == 'workflow_dispatch' || !github.event.pull_request.draft }}
     runs-on: [self-hosted, macOS, mac-codex-gpui]
     timeout-minutes: 60
@@ -152,3 +152,15 @@ jobs:
       - run: echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
       # shortcut: the full workspace (cmake/opusic-sys) is not built on macOS here; widen when it is fixed.
       - run: cargo check --locked -p textsys -p gpui_macos -p ui
+      # Run only the app test targets whose tests return early off macOS (Metal replay), so each really executes here.
+      # `replay::recordings` re-runs every recorded-interaction adapter through a nested `cargo test` (48 min, 28 targets
+      # fail today); it is split out and tracked in #1644, which brings those adapters back as a required check.
+      - name: macOS-guarded app tests
+        shell: bash
+        env:
+          # Strict whole-window pixel parity flows that fail today, by exact name (no wildcard), each tracked by an issue:
+          # parity_screenshot #1637, parity_settings #1638, parity_diff #1639, parity_terminal #1640, parity_sidebar #1641.
+          FLOWS_EXCLUDE: parity_screenshot,parity_settings,parity_diff,parity_terminal,parity_sidebar
+        run: |
+          grep -lF 'cfg!(target_os = "macos")' crates/app/tests/*.rs | xargs -n1 basename | sed 's/\.rs$//' | grep -vx replay | .github/scripts/macos-app-tests.sh
+          cargo test --locked -p app --test replay -- --test-threads=1 --skip recordings

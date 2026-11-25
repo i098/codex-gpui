@@ -53,12 +53,11 @@ fn slash_menu_keyboard_replay() -> Result<()> {
             .iter()
             .map(|command| command["text"].as_str().unwrap())
             .collect();
+        // The original (26.1007) added commands later (Personality, Worktree, ...): every
+        // recorded row must show, in the recorded order, among the port's.
+        let mut rows = items.iter();
         ensure!(
-            items
-                .iter()
-                .take(titles.len())
-                .map(String::as_str)
-                .eq(titles),
+            titles.iter().all(|&title| rows.any(|row| row == title)),
             "step {index}: command list differs: {items:?}"
         );
         if expected["menu"]["skills"] == false {

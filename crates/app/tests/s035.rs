@@ -11,6 +11,10 @@ fn suggestion_hover_matches_original() -> Result<()> {
     }
     let recording: Value =
         serde_json::from_str(include_str!("../../../refs/interactions/s035.json"))?;
+    let reference = image::load_from_memory(include_bytes!(
+        "../../../refs/automations/dark@1280x832.png"
+    ))?
+    .into_rgba8();
     let mut cx = HeadlessAppContext::with_platform(
         textsys::text_system(),
         Arc::new(theme::Assets),
@@ -18,7 +22,8 @@ fn suggestion_hover_matches_original() -> Result<()> {
     );
     cx.update(|cx| {
         theme::load_fonts(cx);
-        cx.set_global(theme::Theme::dark());
+        // The recording holds the original's dark neutrals; the shipped theme is darker on purpose.
+        cx.set_global(parity::reference_dark());
         app::init(cx);
     });
     let window = cx.open_window(size(px(1280.), px(832.)), |window, cx| {
@@ -68,18 +73,27 @@ fn suggestion_hover_matches_original() -> Result<()> {
         let icon = &recording["result"]["dom"][index]["icon"];
         let [x, y, w, h] =
             ["x", "y", "w", "h"].map(|key| icon["bbox"][key].as_f64().expect("icon bounds") as f32);
-        for color in icon["colors"].as_array().context("icon colors")? {
-            let expected: [u8; 3] = serde_json::from_value(color.clone())?;
-            let found = ((y * scale) as u32..((y + h) * scale) as u32).any(|py| {
-                ((x * scale) as u32..((x + w) * scale) as u32).any(|px| {
-                    let actual = image.get_pixel(px, py).0;
-                    (0..3).all(|channel| actual[channel].abs_diff(expected[channel]) <= 1)
-                })
+        let bounds = |image: &image::RgbaImage| {
+            let scale = image.width() as f32 / 1280.;
+            ((y * scale) as u32..((y + h) * scale) as u32).flat_map(move |py| {
+                ((x * scale) as u32..((x + w) * scale) as u32).map(move |px| (px, py))
+            })
+        };
+        // 26.1029 (26177af43) shows emoji cards: the recording's colors are the older icon's, so
+        // the icon keeps the three commonest colors of refs/automations besides the card fill.
+        let mut counts = std::collections::HashMap::<[u8; 3], usize>::new();
+        for (px, py) in bounds(&reference) {
+            let [r, g, b, _] = reference.get_pixel(px, py).0;
+            *counts.entry([r, g, b]).or_default() += 1;
+        }
+        let mut colors: Vec<_> = counts.into_iter().collect();
+        colors.sort_by_key(|&(color, n)| (std::cmp::Reverse(n), color));
+        for &(expected, _) in &colors[1..4] {
+            let found = bounds(&image).any(|(px, py)| {
+                let actual = image.get_pixel(px, py).0;
+                (0..3).all(|channel| actual[channel].abs_diff(expected[channel]) <= 1)
             });
-            ensure!(
-                found,
-                "step {index}: icon lost its recorded color {expected:?}"
-            );
+            ensure!(found, "step {index}: icon lost its color {expected:?}");
         }
     }
     println!("s035: hover entry and exit match the card fill, adjacent card, and unchanged icon");

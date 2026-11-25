@@ -36,8 +36,8 @@ impl ControlFocus {
     }
 
     /// Shows the ring while focused, as a programmatic focus after keyboard input does.
-    pub fn show_ring(&self) {
-        self.keyboard.set(true);
+    pub fn set_ring(&self, on: bool) {
+        self.keyboard.set(on);
     }
 
     pub(crate) fn visible(&self, window: &Window) -> bool {

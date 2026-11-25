@@ -111,6 +111,12 @@ fn file_drag_over_the_composer_matches_the_original() -> Result<()> {
         "fs/readFile",
         json!({ "dataBase64": base64::engine::general_purpose::STANDARD.encode(&png) }),
     ));
+    // PROTO-16: a dropped non-image file is copied into the host's attachments root, once per
+    // drop (home, then thread). The 26.1007 recording ("no app-server request") predates it.
+    for _ in 0..2 {
+        lines.extend(exchange("fs/createDirectory", json!({})));
+        lines.extend(exchange("fs/copy", json!({})));
+    }
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     let composer = fx.composer();
     fx.cx.update_window(fx.window, |_, window, cx| {
@@ -118,7 +124,11 @@ fn file_drag_over_the_composer_matches_the_original() -> Result<()> {
     })?;
     let rest = fx.shot()?;
     let overlay = bbox(&home["overlay"]["bbox"]);
-    let pill = bbox(&home["overlay"]["pill"]["bbox"]);
+    // The overlay centres the pill in the page column. 26.1007 (this recording) had the 46 px
+    // `home-mode-toggle` row above that column; 26.1029 has none (refs/home: the page column
+    // starts at y 44), so the column grows up by 46 px and its centred pill rises 23 px.
+    let [x, y, w, h] = bbox(&home["overlay"]["pill"]["bbox"]);
+    let pill = [x, y - 23., w, h];
     let card = bbox(&home["cardDrag"]["bbox"]);
     let page_rest = dominant(&rest, overlay);
     let card_rest = dominant(&rest, card);
@@ -245,7 +255,12 @@ fn file_drag_over_the_composer_matches_the_original() -> Result<()> {
     fx.keys("enter")?;
     let submission = submitted.borrow_mut().take().context("submission")?;
     assert_eq!(submission.text, "");
-    assert_eq!(submission.attachments, vec![notes.clone(), dot.clone()]);
+    let copied = copies(&mut fx)?;
+    assert_eq!(copied.len(), 1);
+    assert_eq!(copied[0]["sourcePath"], json!(notes));
+    let copy = PathBuf::from(copied[0]["destinationPath"].as_str().context("copy path")?);
+    assert_eq!(copy.file_name(), notes.file_name());
+    assert_eq!(submission.attachments, vec![copy, dot.clone()]);
     ensure!(
         notes.exists() && dot.exists(),
         "dropped files stay where they are"
@@ -291,8 +306,24 @@ fn file_drag_over_the_composer_matches_the_original() -> Result<()> {
     fx.cx.update_window(fx.window, |_, window, cx| {
         window.focus(&composer.focus_handle(cx), cx)
     })?;
+    fx.wait("thread drop copied on the host", |fx| {
+        copies(fx).is_ok_and(|copies| copies.len() == 2)
+    })?;
+    fx.cx.run_until_parked();
     fx.keys("enter")?;
     let submission = submitted.borrow_mut().take().context("thread submission")?;
-    assert_eq!(submission.attachments, vec![notes]);
+    let copied = copies(&mut fx)?;
+    let copy = copied[1]["destinationPath"].as_str().context("copy path")?;
+    assert_eq!(submission.attachments, vec![PathBuf::from(copy)]);
     Ok(())
+}
+
+/// The params of every `fs/copy` the app sent.
+fn copies(fx: &mut Fx) -> Result<Vec<Value>> {
+    Ok(fx
+        .sent()?
+        .into_iter()
+        .filter(|request| request["method"] == "fs/copy")
+        .map(|request| request["params"].clone())
+        .collect())
 }

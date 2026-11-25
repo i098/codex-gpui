@@ -66,6 +66,8 @@ pub fn replay_adapter(recording: &Path) -> Result<Vec<Value>> {
         .context("recording name")?;
     let target = match stem {
         "ms4" => "stream_fade",
+        "logout" => "account_logout",
+        "mobile-mfa" => "host",
         name => name,
     };
     ensure!(
@@ -124,6 +126,11 @@ pub const SIDEBAR_PANEL: [f32; 4] = [52., 44., 288., 784.];
 
 // --- Harness ---
 
+/// Set by targets that compare screens with the original's recording: its account got
+/// `beacon_ui_response: null` (refs/interactions/host.json), so it showed no Fast mode banner.
+pub static FAST_BANNER_SEEN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Returns in-memory host settings with the original baseline's recorded announcement history.
 /// Fails if the oracle has no history array. Fresh recordings must supply their own initial history.
 pub fn recorded_host_settings() -> Result<app::host_settings::Settings> {
@@ -134,6 +141,9 @@ pub fn recorded_host_settings() -> Result<app::host_settings::Settings> {
     let mut settings = app::host_settings::Settings::default();
     settings.write("seen-model-upgrade-list", history)?;
     settings.write("primary-number-shortcut-target", json!("sidebar"))?;
+    if FAST_BANNER_SEEN.load(Ordering::Relaxed) {
+        settings.write("has-seen-fast-mode-home-banner", json!(true))?;
+    }
     Ok(settings)
 }
 
@@ -161,6 +171,21 @@ pub struct Fx {
     log: Option<PathBuf>,
     /// The per-run desktop host storage, removed with the run.
     _host_home: tempfile::TempDir,
+}
+
+/// gpui keeps the app's tasks, and with them the app-server connection, past the context's
+/// drop: close it, or each replay keeps two pipes open and a long target runs out of file
+/// descriptors (macOS allows 256).
+impl Drop for Fx {
+    fn drop(&mut self) {
+        let server = self.cx.update(|cx| {
+            cx.try_global::<ui::screens::settings::AppServer>()
+                .map(|s| s.0.clone())
+        });
+        if let Some(server) = server {
+            server.close();
+        }
+    }
 }
 
 /// Keystroke for the default `switchToMode<n>` shortcut on this platform.
@@ -672,10 +697,38 @@ impl Fx {
         Ok((r[0] + r[2] / 2., r[1] + r[3] / 2.))
     }
 
-    /// Diffs the window against `refs/<screen>/<theme>@<W>x<H>.png`.
+    /// Diffs the window against `refs/<screen>/<theme>@<W>x<H>.png`. Dark compares in the
+    /// original's neutrals ([`parity::reference_dark`]), then restores the shipped theme.
     pub fn parity(&mut self, screen: &str) -> Result<String> {
-        let port = self.reference_shot()?;
-        parity_image(screen, self.theme, &port)
+        // The Explore dot follows the original's seen-destination state, which no recording
+        // holds: draw it when the reference has the dot (`absolute -end-0.5 -top-0.5`).
+        let path = format!(
+            "{ROOT}/refs/{screen}/{}@{}x{}.spec.json",
+            self.theme, self.size.0, self.size.1
+        );
+        let spec: Value = serde_json::from_slice(&fs::read(&path).context(path.clone())?)?;
+        let dot = spec["nodes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|n| n["cls"] == "absolute -end-0.5 -top-0.5");
+        // Set it on Root after the recorded catalog's load: the load and a page route's render
+        // otherwise put the app's own state back over a value set on the shell.
+        self.wait("navigation destinations", |fx| {
+            !fx.read(|root, _| root.destinations_loading())
+        })?;
+        self.root.update(&mut self.cx, |root, cx| {
+            root.set_unread_destinations(dot.then(|| ["unseen".into()].into()), cx)
+        });
+        let dark = self.theme != "light";
+        if dark {
+            self.cx.update(|cx| cx.set_global(parity::reference_dark()));
+        }
+        let port = self.reference_shot();
+        if dark {
+            self.cx.update(|cx| cx.set_global(theme::Theme::dark()));
+        }
+        parity_image(screen, self.theme, &port?)
     }
 }
 
@@ -849,7 +902,25 @@ pub fn parity_flow(screen: &str, reach: fn(&mut Fx) -> Result<()>) -> Result<Str
                     lines.extend(exchange("fs/createDirectory", json!({})));
                     lines.extend(exchange("fs/writeFile", json!({})));
                 }
-                let mut fx = Fx::open(theme, size, lines)?;
+                if screen == "settings" {
+                    // The reference's mock app-server sets the scrubbed projectless chat folder,
+                    // as Settings shows it (with `Reset`); readback's `config/read` has none.
+                    for line in &mut lines {
+                        if let Some(desktop) = line.pointer_mut("/msg/result/config/desktop") {
+                            desktop["projectlessWorkspaceRoot"] =
+                                json!("/Users/user/Documents/Codex");
+                        }
+                    }
+                }
+                // refs/automations draws Back disabled: the original opened Scheduled first.
+                let start = if screen == "automations" {
+                    route.clone()
+                } else {
+                    Route::Home
+                };
+                let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
+                let settings = recorded_host_settings()?;
+                let mut fx = Fx::boot(theme, size, bridge, events, settings, start, true)?;
                 reach(&mut fx)?;
                 fx.cx.run_until_parked();
                 ensure!(

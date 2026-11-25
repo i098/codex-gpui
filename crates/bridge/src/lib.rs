@@ -341,6 +341,11 @@ impl Bridge {
         self.pending.lock().is_none()
     }
 
+    /// Ends the client's side of the connection: the app-server reads end of input.
+    pub fn close(&self) {
+        *self.backend.lock() = Box::new(Lines(Box::new(std::io::sink())));
+    }
+
     /// Whether this connection runs an ACP agent ([`Bridge::spawn_acp`]).
     pub fn is_acp(&self) -> bool {
         self.acp

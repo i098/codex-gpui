@@ -522,9 +522,13 @@ impl Composer {
                     "new" => self.docked && !self.slash.hotkey_window,
                     "hotkey-window-new" => self.docked && self.slash.hotkey_window,
                     "hotkey-window-resume" => self.slash.hotkey_window,
+                    // Goal and Status show on home too (s021, 26.1007; still so in 26.1117).
+                    // Approve and IDE context act on the open chat only.
                     "archive" | "review-mode" | "compact" | "fork" | "init" | "pin" | "rename"
-                    | "share" | "side" | "status" | "goal" | "memory" => self.docked,
-                    "project" | "chat" | "worktree" => !self.docked,
+                    | "share" | "side" | "memory" | "approve" | "ide-context" => self.docked,
+                    // The original's `Don't work in a project` needs a project to leave.
+                    "chat" => !self.docked && !self.search_roots().is_empty(),
+                    "project" | "worktree" => !self.docked,
                     "plan-mode" => self.current_model().is_some() && self.plan_supported(),
                     // `Ekt`: the ChatGPT command waits for the model list and no reply streaming.
                     "model" if self.chat => self.chatgpt_models.is_some() && !self.running,
@@ -733,9 +737,6 @@ impl Composer {
             _ => return,
         };
         self.finish_command(window, cx);
-        if matches!(action, SlashCommand::Fast) {
-            self.speed = usize::from(self.speed == 0);
-        }
         cx.emit(action);
         cx.notify();
     }

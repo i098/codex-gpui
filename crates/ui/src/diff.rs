@@ -449,17 +449,7 @@ impl DiffPanel {
             })
             .flatten();
         for change in changes {
-            let path = std::path::Path::new(&change.path);
-            let path = if path.starts_with(cwd) {
-                change.path.clone()
-            } else if let Ok(relative) = path.strip_prefix(workspace_root) {
-                std::path::Path::new(cwd)
-                    .join(relative)
-                    .to_string_lossy()
-                    .into_owned()
-            } else {
-                change.path.clone()
-            };
+            let path = under_cwd(workspace_root, cwd, &change.path);
             let shown = relative(workspace_root, &path);
             let split = shown.rfind('/').map_or(0, |i| i + 1);
             let (dir, name) = shown.split_at(split);
@@ -611,7 +601,8 @@ impl DiffPanel {
         self.select_source(DiffSource::LastTurn, cx);
         self.search_changed();
         self.set_all_files_open(false);
-        self.file_expansion.insert(path.to_owned(), true);
+        let path = under_cwd(&self.workspace, &self.cwd, path);
+        self.file_expansion.insert(path.clone(), true);
         if let Some(index) = self.files.iter().position(|file| file.path_key == path) {
             self.files[index].open = true;
             self.active_file = index;
@@ -904,7 +895,9 @@ impl DiffPanel {
                     && self.aggregated_turn.as_deref() != Some(&turn.id) =>
             {
                 self.aggregated_turn = None;
-                Self::last_turn(&self.workspace, cwd, turns).files
+                // A streamed item shows its written path (s028: `src/live.py`, not a loaded
+                // turn's `../../../private/...`); its key moves under the cwd below.
+                Self::last_turn(&self.workspace, &self.workspace, turns).files
             }
             _ => return,
         };
@@ -918,6 +911,8 @@ impl DiffPanel {
         for file in &mut files {
             if !file.path_key.starts_with('/') {
                 file.path_key = menu::absolute_path(cwd, &file.path_key);
+            } else {
+                file.path_key = under_cwd(&self.workspace, cwd, &file.path_key);
             }
         }
         if self.source == DiffSource::LastTurn {
@@ -4682,6 +4677,19 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
         }
     }
     Ok(hunks)
+}
+
+/// `path` under the thread's `cwd`: a server that reports the cwd canonicalized
+/// (`/private/tmp/...`) still writes paths under the `/tmp` workspace root.
+fn under_cwd(workspace_root: &str, cwd: &str, path: &str) -> String {
+    let written = std::path::Path::new(path);
+    match written.strip_prefix(workspace_root) {
+        Ok(relative) if !written.starts_with(cwd) => std::path::Path::new(cwd)
+            .join(relative)
+            .to_string_lossy()
+            .into_owned(),
+        _ => path.to_owned(),
+    }
 }
 
 /// `path` relative to directory `base`, both absolute (`path.relative` of the original).
