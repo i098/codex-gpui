@@ -3205,8 +3205,12 @@ impl Render for ThreadView {
         // long selected threads lag.
         let selecting = self.carets.range().is_some();
         let key = (window.viewport_size(), self.clip_right);
-        let (view, offset) = (self.scroll.bounds().size.height, self.scroll.offset().y);
-        let following_bottom = offset <= -self.scroll.max_offset().y + px(1.);
+        // A wheel event stores its delta unclamped until the next layout: a fling past the top
+        // would otherwise leave the turns above as blank stand-ins.
+        let max = self.scroll.max_offset().y;
+        let view = self.scroll.bounds().size.height;
+        let offset = self.scroll.offset().y.min(px(0.)).max(-max);
+        let following_bottom = offset <= -max + px(1.);
         let laid_out = self.laid_out.borrow();
         markdown::set_line_width(laid_out.width);
         let separators = separators(&self.turns, self.clock.now());
@@ -3602,7 +3606,8 @@ impl Render for ThreadView {
                             })
                             .when_some(self.git_phase, |d, phase| d.child(text(phase, 14., 20., 400., t.text_secondary)))
                             .when_some(self.worktree_status, |d, status| d.child(text(status, 14., 20., 400., t.text)))
-                            .when_some(self.git_repository.as_ref().and_then(|result| result.as_ref().ok()), |d, repo| {
+                            // The original draws no branch row in a checkout without a remote (refs/thread).
+                            .when_some(self.git_repository.as_ref().and_then(|result| result.as_ref().ok()).filter(|repo| repo.has_remote), |d, repo| {
                                 let label = if self.pull_request.is_some() { "View PR" } else { self.create_request_label() };
                                 d.child(div().id("thread-git-summary").role(gpui::Role::Button)
                                     .aria_label(if self.gitlab { "Branch changes and merge request actions" } else { "Branch changes and pull request actions" })

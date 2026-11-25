@@ -209,8 +209,8 @@ pub struct GoToChat(pub usize);
 #[action(namespace = app, no_json)]
 pub struct GoToRecentChat(pub usize);
 
-/// The original collapses the sidebar at widths of 720 px or less.
-const SIDEBAR_BREAKPOINT: Pixels = px(720.);
+/// `(min-width: 768px)` (`KRt`, docs/inventory.md): below it the original hides the sidebar.
+const SIDEBAR_BREAKPOINT: Pixels = px(768.);
 
 /// Fixed platform bindings and app-level commands; configurable bindings are installed by the keymap module.
 pub fn init(cx: &mut App) {
@@ -9608,6 +9608,7 @@ fn commit_repository(
             .collect(),
         has_commits: status["hasCommits"].as_bool().unwrap_or(false),
         ahead: status["commitsAhead"].as_u64().unwrap_or_default() as usize,
+        has_remote: status["remote"].is_string(),
         staged: selection("staged"),
         all: selection("all"),
         include_unstaged,
@@ -10392,5 +10393,18 @@ mod computer_use_tests {
             computer_use_overrides(&json!({"mcp_servers": {"lcu": {"enabled": true}}})),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod commit_repository_tests {
+    use super::*;
+
+    #[test]
+    fn branch_row_needs_a_remote() {
+        let mut status = json!({"staged": {}, "remote": null});
+        assert!(!commit_repository(&status, true, String::new()).unwrap().has_remote);
+        status["remote"] = "origin".into();
+        assert!(commit_repository(&status, true, String::new()).unwrap().has_remote);
     }
 }

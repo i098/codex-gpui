@@ -132,7 +132,9 @@ const FLOWS: &[(&str, Flow)] = &[
         parity_flow("diff", |fx| {
             fx.click(fx.at("home", "Add a subtract")?)?;
             fx.wait_thread(SUBTRACT)?;
-            fx.click(fx.at("thread", "View changes")?)
+            // The thread column centers in the window; `at` reads the 1280 px reference.
+            let (x, y) = fx.at("thread", "View changes")?;
+            fx.click((x + (fx.size.0 - 1280.) / 2., y))
         })
     }),
     ("background_terminal_tab", background_terminal_tab),
@@ -143,6 +145,10 @@ const FLOWS: &[(&str, Flow)] = &[
     ("parity_sidebar", || {
         parity_flow("sidebar", |fx| {
             open_recorded_sidebar_search(fx)?;
+            // refs/sidebar shows the failed cloud search: wait out its retries (1, 2, 4 s).
+            for seconds in [1, 2, 4] {
+                fx.advance(std::time::Duration::from_secs(seconds))?;
+            }
             Ok(())
         })
     }),
@@ -175,10 +181,31 @@ fn main() {
         }
         return;
     }
+    common::FAST_BANNER_SEEN.store(true, std::sync::atomic::Ordering::Relaxed);
+    // Exact flow names not to run; a name that matches no flow is a stale list.
+    let exclude = std::env::var("FLOWS_EXCLUDE").unwrap_or_default();
+    let exclude: Vec<&str> = exclude
+        .split(',')
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .collect();
+    let stale: Vec<_> = exclude
+        .iter()
+        .filter(|n| !FLOWS.iter().any(|(name, _)| name == *n))
+        .collect();
+    assert!(stale.is_empty(), "FLOWS_EXCLUDE names no flow: {stale:?}");
+    let made = checkout().expect("seed the recorded Git checkout");
     let filter = std::env::args().skip(1).find(|a| !a.starts_with('-'));
     let flows: Vec<_> = FLOWS
         .iter()
         .filter(|(name, _)| filter.as_deref().is_none_or(|f| name.contains(f)))
+        .filter(|(name, _)| {
+            let excluded = exclude.contains(name);
+            if excluded {
+                println!("EXCLUDED {name}");
+            }
+            !excluded
+        })
         .collect();
     let mut failed = 0;
     for (name, flow) in &flows {
@@ -194,6 +221,9 @@ fn main() {
             }
         }
     }
+    if let Some(git) = made {
+        std::fs::remove_dir_all(git).ok();
+    }
     println!(
         "{} flows, {} passed, {failed} failed",
         flows.len(),
@@ -202,6 +232,23 @@ fn main() {
     if failed > 0 {
         std::process::exit(1);
     }
+}
+
+/// The original ran in a Git checkout of `CWD` (refs/interactions/host.json `git-origins`);
+/// a non-Git workspace adds the summary's `Outputs` section above `Background processes`.
+/// Returns the `.git` this run made, to remove after the flows.
+fn checkout() -> Result<Option<std::path::PathBuf>> {
+    let git = std::path::Path::new(CWD).join(".git");
+    if git.exists() {
+        return Ok(None);
+    }
+    std::fs::create_dir_all(CWD)?;
+    let status = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(CWD)
+        .status()?;
+    ensure!(status.success(), "git init {CWD}");
+    Ok(Some(git))
 }
 
 // --- Shell, rail ---
@@ -257,6 +304,13 @@ fn rail_thread_family() -> Result<String> {
                     size.0, size.1
                 ))?
                 .into_rgba8();
+                // Dark references hold the original's neutrals, as in `Fx::parity`.
+                if theme == "dark" {
+                    fx.cx.update(|cx| {
+                        cx.set_global(parity::reference_dark());
+                        cx.refresh_windows();
+                    });
+                }
                 let port = fx.shot()?;
                 port.save(format!(
                     "{}/rail-{screen}-{theme}@{}x{}.png",
@@ -857,6 +911,7 @@ fn theme_switch() -> Result<String> {
 
 // --- Rail Scheduled, profile menu, Mobile ---
 
+/// The recorded host's automations on the Scheduled route `parity_flow` opens.
 fn open_recorded_automations(fx: &mut Fx) -> Result<()> {
     let host = app::host::ReplayHost::from_recording(include_str!(
         "../../../refs/interactions/host.json"
@@ -864,7 +919,7 @@ fn open_recorded_automations(fx: &mut Fx) -> Result<()> {
     fx.root.update(&mut fx.cx, |root, cx| {
         root.set_host(std::sync::Arc::new(host), cx)
     });
-    fx.click(RAIL_SCHEDULED)
+    Ok(())
 }
 
 fn rail_scheduled() -> Result<String> {
@@ -1682,14 +1737,17 @@ fn earlier_turn_actions_hover() -> Result<String> {
         if let Some(thread) = v.pointer_mut("/msg/result/thread")
             && thread["id"] == SUBTRACT
             && let Some(turns) = thread["turns"].as_array_mut()
+            // sessions/thread-settings.jsonl resumes the thread without its turns.
+            && let Some(mut later) = turns.first().cloned()
         {
-            let mut later = turns[0].clone();
             later["id"] = "later-turn".into();
             turns.push(later);
         }
     })?;
     open_subtract(&mut fx)?;
-    // The first turn sits where refs/thread shows the only one.
+    // Two turns overflow the window and the thread opens at its end: from the top, the first
+    // turn sits where refs/thread shows the only one.
+    fx.scroll((640., 300.), 100_000.)?;
     let actions = fx.at("thread", "Copy")?;
     let row = [actions.0 - 16., actions.1 - 16., 120., 32.];
     let at = fx.at("thread", "Worked for")?;
@@ -1732,18 +1790,22 @@ fn undo_reverts_turn() -> Result<String> {
     let index = fs::read(root.join(".git/index"))?;
     let mut lines = script(None, |_| {})?;
     for line in &mut lines {
-        let Some(thread) = line.pointer_mut("/msg/result/thread") else {
+        if let Some(thread) = line.pointer_mut("/msg/result/thread")
+            && thread["id"] == SUBTRACT
+        {
+            thread["cwd"] = json!(root);
+        }
+        // `script` serves each thread's turns as a `thread/turns/list` page.
+        let Some(turns) = line
+            .pointer_mut("/msg/result/data")
+            .and_then(Value::as_array_mut)
+        else {
             continue;
         };
-        if thread["id"] != SUBTRACT {
-            continue;
-        }
-        thread["cwd"] = json!(root);
-        for item in thread["turns"]
-            .as_array_mut()
-            .unwrap()
+        for item in turns
             .iter_mut()
-            .flat_map(|turn| turn["items"].as_array_mut().unwrap())
+            .filter_map(|turn| turn["items"].as_array_mut())
+            .flatten()
         {
             if let Some(changes) = item["changes"].as_array_mut() {
                 for change in changes {
@@ -1800,31 +1862,6 @@ fn undo_reverts_turn() -> Result<String> {
     Ok(String::new())
 }
 
-/// Center of the approval card's `Allow once` pill (`button_primary_solid`, white in dark):
-/// the first run of its color, from the top, on a vertical line 6 px inside the pill's right
-/// end (the card ends 12 px inside the 736 px content column's right edge, x 1176). Runs of
-/// at least 18 CSS px skip glyph stems; the composer's send button is lower.
-fn allow_once(shot: &RgbaImage) -> Result<(f32, f32)> {
-    let x = 1158.;
-    let c = gpui::Rgba::from(theme::Theme::dark().button_primary_solid);
-    let want = [c.r, c.g, c.b].map(|v| (v * 255.).round() as i32);
-    let hit = |y: u32| {
-        let p = shot.get_pixel((x * 2.) as u32, y);
-        (0..3).all(|i| (p[i] as i32 - want[i]).abs() <= 2)
-    };
-    let mut run = 0;
-    for y in 0..shot.height() {
-        if hit(y) {
-            run += 1;
-        } else if run >= 36 {
-            return Ok((x - 4., (y as f32 - run as f32 / 2.) / 2.));
-        } else {
-            run = 0;
-        }
-    }
-    anyhow::bail!("no Allow once pill at x {x}")
-}
-
 /// A command approval request (crafted from `CommandApprovalRequest`: the sessions ran with
 /// `approvalPolicy: never`) arrives with the greeting turn; `Allow once` answers it, and the
 /// replay's reply to that answer (matched by request id) reaches the thread. The turn ends
@@ -1865,8 +1902,8 @@ fn approval_round_trip() -> Result<String> {
         !has_item(&fx, "approval-ack"),
         "acknowledged before the answer"
     );
-    fx.hover((640., 22.))?;
-    let at = allow_once(&fx.shot()?)?;
+    // `request-allow`: the card's `Allow once` button.
+    let at = profile_row(&mut fx, "request-allow")?;
     fx.click(at)?;
     ensure!(!pending(&fx), "the card stayed after Allow once at {at:?}");
     fx.wait("the answer's ack", |fx| has_item(fx, "approval-ack"))?;
@@ -2084,7 +2121,9 @@ fn scroll_thread() -> Result<String> {
         fx.click(fx.at("home", "Add a subtract")?)?;
         fx.wait_thread(SUBTRACT)
     })?;
-    // Above the docked composer.
+    // A resize keeps the thread at its end (it follows the bottom); the wheel checks start
+    // from the top, above the docked composer.
+    fx.scroll((640., 120.), 100_000.)?;
     assert_scrolls(&mut fx, (640., 120.), [340., 44., 936., 150.])
 }
 

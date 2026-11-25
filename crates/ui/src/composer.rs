@@ -2470,7 +2470,7 @@ impl Composer {
     /// focus ring shows, as Chromium's `:focus-visible` keeps it after keyboard input.
     pub fn open_model_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.toggle_menu(Menu::Effort, window, cx);
-        self.slider_focus.read(cx).show_ring();
+        self.slider_focus.read(cx).set_ring(true);
     }
 
     fn current_model(&self) -> Option<&ModelOption> {
@@ -2804,9 +2804,13 @@ impl Composer {
                 Menu::Comments => self.comments_focus.clone(),
                 _ => self.model_focus.clone(),
             };
-            // The model picker focuses its slider on open (`[data-reasoning-slider]`).
+            // The model picker focuses its slider on open (`[data-reasoning-slider]`). The
+            // trigger does not take focus on a pointer open, so the slider inherits the
+            // editor's `:focus-visible` (a focused text field always has it): refs/composer.
             if menu == Menu::Effort {
-                let slider = self.slider_focus.read(cx).handle.clone();
+                let slider = self.slider_focus.read(cx);
+                slider.set_ring(self.focus_handle.is_focused(window));
+                let slider = slider.handle.clone();
                 slider.focus(window, cx);
             } else {
                 self.menu_focus.content.focus(window, cx);
