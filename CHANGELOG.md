@@ -8,13 +8,16 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Settings ▸ Agreements for ChatGPT for Healthcare workspaces: view the OpenAI Services Agreement, and agree to the Business Associate Agreement in a HIPAA-eligible workspace. Settings ▸ Account shows the Medical credentials form (NPI, degree, license state and number, CME eligibility) when the account has a CME profile (#1056).
+- Settings ▸ Cloud computer: view and delete the cloud browser's saved cookies by site or host, clear all of them, and delete its passkeys. Open it with `codex://settings/cloud-computer`; the settings list still hides it, as in the original (#1053).
 
 ### Fixed
+- Start WebRTC voice chat with the realtime protocol that AVAS requires (#875, #908).
 - The macOS browser's link context menu no longer lists Back, Forward and Reload, as in the original. Those items show only off a link (#833).
 
 ## [0.1.5] - 2026-11-24
 
 ### Added
+- On macOS, the artifact tab updates spreadsheets and presentations during a turn when connected to a local Artifact Session host (#1567).
 - Create regular and draft merge requests from a GitLab.com repository with `glab` (#961).
 - Windows MSIX builds with a configured update feed can check for updates, download a verified package, and install it on restart (#852).
 - Settings ▸ Browser: choose whether to include screenshots with all browser annotations or only with drag selections (#931).

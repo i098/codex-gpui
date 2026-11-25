@@ -54,6 +54,10 @@ fn port_tabs(fx: &Fx) -> Vec<(String, bool)> {
                     SidePanel::Browser(_) | SidePanel::NewTab => "New tab",
                     SidePanel::Automation => "Scheduled task",
                     SidePanel::PullRequest => "PR",
+                    #[cfg(target_os = "macos")]
+                    SidePanel::ArtifactSession(_) | SidePanel::McpApp(_) => {
+                        unreachable!("s029 opens neither a live artifact session nor a widget")
+                    }
                 };
                 (label.to_owned(), root.side_panel() == Some(*side))
             })
