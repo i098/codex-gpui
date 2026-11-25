@@ -254,6 +254,7 @@ version = "0.1.5"
 dependencies = [
  "anyhow",
  "async-channel",
+ "async-io",
  "base64 0.23.1",
  "block2 0.6.2",
  "bridge",
