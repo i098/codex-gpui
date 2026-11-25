@@ -23,6 +23,20 @@ CI skips draft pull requests by default. Marking a pull request ready for review
 cargo run -p app --release
 ```
 
+The macOS Artifact Session viewer connects to an existing local host.
+Set `ARTIFACT_SESSION_HOST_SOCKET` to its absolute socket path.
+Set `ARTIFACT_SESSION_HOST_VIEWER_TOKEN_FILE` to a private file that contains its viewer credential.
+Set `ARTIFACT_SESSION_HOST_EXPORT_ROOT` to the absolute directory where the host publishes Office snapshots.
+
+Configure the local app server's `mcp_servers.artifact_session` entry to use the same host with its separate MCP credential.
+The original app registers this entry on thread start, resume, and fork.
+It uses the sandboxed Node REPL and registers the `artifact_session` trusted service from the primary runtime.
+This app does not start or configure that runtime.
+
+The viewer opens spreadsheets and presentations from successful `artifact_session/js` results.
+It uses Quick Look to update the read-only Office preview after each committed state change.
+Ordinary file artifact previews do not need a session host.
+
 The app keeps its window state in `~/Library/Application Support/codex-gpui/state.json`.
 Host settings use the local `settings.write(key, value)` service and persist beside that file in `host-settings.json`.
 Theme and window-close preferences remain in `state.json`.
