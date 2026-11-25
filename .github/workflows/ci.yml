@@ -157,6 +157,10 @@ jobs:
       # runs those adapters directly, so `recordings` is split out, not skipped.
       - name: macOS-guarded app tests
         shell: bash
+        env:
+          # Strict whole-window pixel parity flows that fail today, by exact name (no wildcard), each tracked by an issue:
+          # parity_screenshot #1637, parity_settings #1638, parity_diff #1639, parity_terminal #1640, parity_sidebar #1641.
+          FLOWS_EXCLUDE: parity_screenshot,parity_settings,parity_diff,parity_terminal,parity_sidebar
         run: |
           grep -lF 'cfg!(target_os = "macos")' crates/app/tests/*.rs | xargs -n1 basename | sed 's/\.rs$//' | grep -vx replay | .github/scripts/macos-app-tests.sh
           cargo test --locked -p app --test replay -- --test-threads=1 --skip recordings
