@@ -372,7 +372,8 @@ mod tests {
 
     #[test]
     fn each_check_fails_on_its_own() {
-        let cases: [(fn(&mut Credentials), usize); 6] = [
+        type Edit = fn(&mut Credentials);
+        let cases: [(Edit, usize); 6] = [
             (|c| c.npi = "123456789".into(), 0),
             (|c| c.degree = "  ".into(), 1),
             (|c| c.state = "D".into(), 2),
