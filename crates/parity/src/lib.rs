@@ -81,7 +81,7 @@ fn headless(assets: Arc<dyn AssetSource>) -> HeadlessAppContext {
 /// The original app's dark neutrals, before the intentionally darker app theme (PR 1481). The
 /// dark references come from the original, so the gate compares with these values; the shipped
 /// theme keeps the darker ones.
-fn reference_dark() -> theme::Theme {
+pub fn reference_dark() -> theme::Theme {
     let rgba = |c| gpui::rgba(c).into();
     theme::Theme {
         background_surface_under: rgba(0x141414ff),

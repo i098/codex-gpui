@@ -3601,7 +3601,8 @@ impl Render for ThreadView {
                             })
                             .when_some(self.git_phase, |d, phase| d.child(text(phase, 14., 20., 400., t.text_secondary)))
                             .when_some(self.worktree_status, |d, status| d.child(text(status, 14., 20., 400., t.text)))
-                            .when_some(self.git_repository.as_ref().and_then(|result| result.as_ref().ok()), |d, repo| {
+                            // The original draws no branch row in a checkout without a remote (refs/thread).
+                            .when_some(self.git_repository.as_ref().and_then(|result| result.as_ref().ok()).filter(|repo| repo.has_remote), |d, repo| {
                                 let label = if self.pull_request.is_some() { "View PR" } else { self.create_request_label() };
                                 d.child(div().id("thread-git-summary").role(gpui::Role::Button)
                                     .aria_label(if self.gitlab { "Branch changes and merge request actions" } else { "Branch changes and pull request actions" })

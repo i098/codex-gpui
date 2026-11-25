@@ -175,6 +175,8 @@ fn main() {
         }
         return;
     }
+    common::FAST_BANNER_SEEN.store(true, std::sync::atomic::Ordering::Relaxed);
+    let made = checkout().expect("seed the recorded Git checkout");
     let filter = std::env::args().skip(1).find(|a| !a.starts_with('-'));
     let flows: Vec<_> = FLOWS
         .iter()
@@ -194,6 +196,9 @@ fn main() {
             }
         }
     }
+    if let Some(git) = made {
+        std::fs::remove_dir_all(git).ok();
+    }
     println!(
         "{} flows, {} passed, {failed} failed",
         flows.len(),
@@ -202,6 +207,23 @@ fn main() {
     if failed > 0 {
         std::process::exit(1);
     }
+}
+
+/// The original ran in a Git checkout of `CWD` (refs/interactions/host.json `git-origins`);
+/// a non-Git workspace adds the summary's `Outputs` section above `Background processes`.
+/// Returns the `.git` this run made, to remove after the flows.
+fn checkout() -> Result<Option<std::path::PathBuf>> {
+    let git = std::path::Path::new(CWD).join(".git");
+    if git.exists() {
+        return Ok(None);
+    }
+    std::fs::create_dir_all(CWD)?;
+    let status = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(CWD)
+        .status()?;
+    ensure!(status.success(), "git init {CWD}");
+    Ok(Some(git))
 }
 
 // --- Shell, rail ---
@@ -1682,8 +1704,9 @@ fn earlier_turn_actions_hover() -> Result<String> {
         if let Some(thread) = v.pointer_mut("/msg/result/thread")
             && thread["id"] == SUBTRACT
             && let Some(turns) = thread["turns"].as_array_mut()
+            // sessions/thread-settings.jsonl resumes the thread without its turns.
+            && let Some(mut later) = turns.first().cloned()
         {
-            let mut later = turns[0].clone();
             later["id"] = "later-turn".into();
             turns.push(later);
         }
@@ -1732,18 +1755,22 @@ fn undo_reverts_turn() -> Result<String> {
     let index = fs::read(root.join(".git/index"))?;
     let mut lines = script(None, |_| {})?;
     for line in &mut lines {
-        let Some(thread) = line.pointer_mut("/msg/result/thread") else {
+        if let Some(thread) = line.pointer_mut("/msg/result/thread")
+            && thread["id"] == SUBTRACT
+        {
+            thread["cwd"] = json!(root);
+        }
+        // `script` serves each thread's turns as a `thread/turns/list` page.
+        let Some(turns) = line
+            .pointer_mut("/msg/result/data")
+            .and_then(Value::as_array_mut)
+        else {
             continue;
         };
-        if thread["id"] != SUBTRACT {
-            continue;
-        }
-        thread["cwd"] = json!(root);
-        for item in thread["turns"]
-            .as_array_mut()
-            .unwrap()
+        for item in turns
             .iter_mut()
-            .flat_map(|turn| turn["items"].as_array_mut().unwrap())
+            .filter_map(|turn| turn["items"].as_array_mut())
+            .flatten()
         {
             if let Some(changes) = item["changes"].as_array_mut() {
                 for change in changes {

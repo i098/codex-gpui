@@ -278,6 +278,8 @@ pub struct CommitRepository {
     pub branches: Vec<String>,
     pub has_commits: bool,
     pub ahead: usize,
+    /// The checkout has a Git remote: the thread's branch row offers pull requests only then.
+    pub has_remote: bool,
     pub staged: Selection,
     pub all: Selection,
     pub include_unstaged: bool,

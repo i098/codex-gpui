@@ -497,6 +497,9 @@ impl Composer {
                         d.on_key_down(cx.listener(|this, event, window, cx| {
                             this.trigger_key(Menu::Effort, event, window, cx)
                         }))
+                        // As Radix's trigger, a press keeps focus where it is (the slider then
+                        // inherits the editor's `:focus-visible` on open).
+                        .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.toggle_menu(Menu::Effort, window, cx)
                         }))
