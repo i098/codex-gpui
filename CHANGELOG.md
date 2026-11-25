@@ -6,6 +6,9 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+### Fixed
+- The macOS browser's link context menu no longer lists Back, Forward and Reload, as in the original. Those items show only off a link (#833).
+
 ## [0.1.5] - 2026-11-24
 
 ### Added
