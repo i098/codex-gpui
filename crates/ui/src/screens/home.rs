@@ -1676,6 +1676,7 @@ fn project_chip(
     )
     // Ghost `[data-state=open]` fill.
     .when(open, |d| d.bg(t.ghost_hover).rounded_full())
+    .debug_selector(|| "work-home-project-control".into())
     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
     .on_click(move |_, window, cx| toggle(window, cx))
     .on_key_down(move |event, window, cx| {
