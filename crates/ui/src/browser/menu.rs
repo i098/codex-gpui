@@ -19,21 +19,27 @@ const fn item(id: &'static str, label: &'static str) -> Item {
     }
 }
 
-/// The original's order; a click off a link shows the items after [`LINK_ITEMS`].
-static ITEMS: [Item; 11] = [
+const INSPECT: Item = item("inspect", "Inspect");
+
+/// The original's `Lke` template: a link gets the link items, then `Inspect`.
+static LINK_ITEMS: [Item; 7] = [
     item("open-link-in-new-tab", "Open in new tab"),
     item("open-link-in-new-window", "Open in new window"),
     item("open-link-in-external-browser", "Open in external browser"),
     item("link-separator", ""),
     item("copy-link", "Copy link address"),
     item("copy-separator", ""),
+    INSPECT,
+];
+
+/// Off a link the original shows the history items, then `Inspect`.
+static PAGE_ITEMS: [Item; 5] = [
     item("back", "Back"),
     item("forward", "Forward"),
     item("reload", "Reload"),
     item("history-separator", ""),
-    item("inspect", "Inspect"),
+    INSPECT,
 ];
-const LINK_ITEMS: usize = 6;
 
 impl BrowserTab {
     /// Shows the menu for a right-click at `(x, y)` in the page, over `link` when set.
@@ -46,9 +52,9 @@ impl BrowserTab {
         cx: &mut Context<Self>,
     ) {
         let items = if link.is_some() {
-            &ITEMS[..]
+            &LINK_ITEMS[..]
         } else {
-            &ITEMS[LINK_ITEMS..]
+            &PAGE_ITEMS[..]
         };
         let enabled: Vec<bool> = items
             .iter()

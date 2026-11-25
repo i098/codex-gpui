@@ -97,6 +97,7 @@ fn pages(host: &dyn host::Host) -> Result<Vec<space::Page>> {
                     .filter(|title| !title.is_empty())
                     .unwrap_or("Untitled")
                     .to_owned(),
+                document_type: item["document_type"].as_str().map(str::to_owned),
             })
         })
         .collect())

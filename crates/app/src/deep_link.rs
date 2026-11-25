@@ -49,6 +49,8 @@ pub enum Link {
     Path(String),
     Browser(Url),
     Space,
+    /// `https://chatgpt.com/library/share/*`, opened in the Library.
+    LibraryShare(ui::screens::space::library::ShareTarget),
     CloudEnvironmentCreate,
     Onboarding,
 }
@@ -196,6 +198,7 @@ fn https_link(url: &Url) -> Option<Link> {
         .collect();
     match sub.as_slice() {
         ["share", _] | ["share", "e", _] => chatgpt_link(url, &sub),
+        ["library", "share", ..] => library_share(url),
         ["cloud-environments", "new"] if url.query().is_none() && url.fragment().is_none() => {
             Some(Link::CloudEnvironmentCreate)
         }
@@ -229,6 +232,59 @@ fn https_link(url: &Url) -> Option<Link> {
         }
         _ => None,
     }
+}
+
+/// The original's `/library/share/<dir>[/<folder>][/<file>]` grammar (`share-link` `o`).
+fn library_share(url: &Url) -> Option<Link> {
+    let id = |s: &str| {
+        !s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    };
+    let file = |s: &str| {
+        s.strip_prefix("libfile_")
+            .or(s.strip_prefix("libfile-"))
+            .is_some_and(id)
+    };
+    let rest = url.path().strip_prefix("/library/share/")?;
+    let mut ids: Vec<String> = rest
+        .strip_suffix('/')
+        .unwrap_or(rest)
+        .split('/')
+        .map(str::to_owned)
+        .collect();
+    let query = |key: &str| {
+        url.query_pairs()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.trim().to_owned())
+            .filter(|v| !v.is_empty())
+    };
+    let last = ids.last()?.clone();
+    if ids.len() > 3
+        || !ids.iter().all(|part| id(part))
+        || ids[..ids.len() - 1].iter().any(|part| file(part))
+        || (ids.len() == 3 && !file(&last))
+    {
+        return None;
+    }
+    let file_id = if file(&last) {
+        Some(last)
+    } else {
+        query("file_id")
+    };
+    if file_id.as_deref().is_some_and(|f| !id(f)) {
+        return None;
+    }
+    if file(ids.last()?) {
+        ids.pop();
+    }
+    Some(Link::LibraryShare(
+        ui::screens::space::library::ShareTarget {
+            file_id,
+            folder_id: ids.get(1).or(ids.first()).cloned(),
+            invitation_id: query("invitation_id"),
+        },
+    ))
 }
 
 fn thread(id: &str, params: &Params<'_>) -> Option<Link> {
@@ -523,6 +579,13 @@ impl Root {
                 self.navigate(Route::Space, window, cx);
                 return;
             }
+            Link::LibraryShare(target) => {
+                self.navigate(Route::Space, window, cx);
+                if let Some(page) = self.space_page().cloned() {
+                    page.update(cx, |page, cx| page.open_share(target.clone(), cx));
+                }
+                return;
+            }
             Link::CloudEnvironmentCreate => {
                 self.navigate(
                     Route::CloudEnvironments("/cloud-environments/new".into()),
@@ -635,6 +698,34 @@ mod tests {
     use super::*;
 
     const ID: &str = "00000000-0000-4000-8000-000000000001";
+
+    #[test]
+    fn library_share_links_name_the_item() {
+        use ui::screens::space::library::ShareTarget;
+        let target = |url: &str| match parse(url) {
+            Some(Link::LibraryShare(target)) => Some(target),
+            _ => None,
+        };
+        assert_eq!(
+            target("https://chatgpt.com/library/share/dir1/dir2/libfile_a?invitation_id=inv"),
+            Some(ShareTarget {
+                file_id: Some("libfile_a".into()),
+                folder_id: Some("dir2".into()),
+                invitation_id: Some("inv".into()),
+            })
+        );
+        assert_eq!(
+            target("https://chatgpt.com/library/share/dir1"),
+            Some(ShareTarget {
+                file_id: None,
+                folder_id: Some("dir1".into()),
+                invitation_id: None,
+            })
+        );
+        assert!(target("https://chatgpt.com/library/share/a/b/c").is_none());
+        assert!(target("https://chatgpt.com/library/share/").is_none());
+        assert!(target("https://example.com/library/share/a").is_none());
+    }
 
     #[cfg(unix)] // POSIX path fixtures
     #[test]
@@ -954,6 +1045,7 @@ mod tests {
                     | Link::PetInstall
                     | Link::Browser(_)
                     | Link::Space
+                    | Link::LibraryShare(_)
                     | Link::CloudEnvironmentCreate
                     | Link::Onboarding,
                 ) => assert!(!expected.is_null(), "{value}"),
