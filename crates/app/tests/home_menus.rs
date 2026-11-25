@@ -75,6 +75,7 @@ fn location_menu(app: &Fx) -> bool {
 #[test]
 fn work_in_menu_toggles_and_dismisses() -> Result<()> {
     let mut app = Fx::new()?;
+    app.banner_loaded()?;
     let chip = app.at("home", "This computer")?;
 
     app.click(chip)?;
@@ -103,6 +104,7 @@ fn project(app: &Fx) -> Option<String> {
 #[test]
 fn choose_project_menu_searches_picks_and_clears() -> Result<()> {
     let mut app = Fx::new()?;
+    app.banner_loaded()?;
     let composer = app.read(|root, cx| root.home().read(cx).composer.clone());
     app.cx.update(|cx| {
         composer.update(cx, |composer, _| {
@@ -146,6 +148,7 @@ fn choose_project_menu_searches_picks_and_clears() -> Result<()> {
 #[test]
 fn work_home_choose_project_opens_the_project_menu() -> Result<()> {
     let mut app = Fx::new()?;
+    app.banner_loaded()?;
     let composer = app.read(|root, cx| root.home().read(cx).composer.clone());
     app.cx.update(|cx| {
         composer.update(cx, |composer, _| {
@@ -154,9 +157,9 @@ fn work_home_choose_project_opens_the_project_menu() -> Result<()> {
     });
     app.keys(mode_key(2))?;
     app.capture_evidence("CGX_WORK_HOME_SHOTS", "work-home")?;
-    // The original's `Choose project` pill: the rail under the card starts at
-    // (501.25, 489.44), its first 28 px pill 6 px in.
-    app.click((560., 511.))?;
+    // The rail's `Choose project` pill; the account banner moves it, so it is found by selector.
+    let chip = common::profile_row(&mut app, "work-home-project-control")?;
+    app.click(chip)?;
     assert!(project_menu(&app));
     app.type_text("bet")?;
     app.keys("enter")?;

@@ -202,7 +202,9 @@ pub fn banner<T: 'static>(window: &mut Window, cx: &mut Context<T>) -> Option<gp
     };
     let action = match status {
         Status::Available => Some("Update"),
-        Status::Ready if cfg!(target_os = "macos") => Some("Restart now"),
+        Status::Ready if cfg!(any(target_os = "macos", target_os = "windows")) => {
+            Some("Restart now")
+        }
         Status::Ready => Some("Restart to update"),
         _ => None,
     };
