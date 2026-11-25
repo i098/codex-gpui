@@ -314,10 +314,18 @@ enum ThreadGroup {
     Custom(usize),
 }
 
+enum RemoteProjects {
+    Loading,
+    Ready(Vec<Project>),
+    Failed,
+}
+
 pub struct HomeSidebar {
     /// `(thread id, row label, updated timestamp)` in `thread/list` order.
     threads: Vec<(String, SharedString, i64)>,
     projects: Vec<Project>,
+    // Host-bound windows show their own projects in the standard Projects section.
+    remote_projects: Option<HashMap<String, RemoteProjects>>,
     pub threads_state: ListState,
     pub projects_state: ListState,
     pub activity_clock: Option<crate::screens::thread::view::Clock>,
@@ -402,6 +410,10 @@ pub struct SelectProject(pub String);
 
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = sidebar, no_json)]
+pub struct OpenRemoteProject(pub String, pub String);
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = sidebar, no_json)]
 pub struct ProjectAction {
     pub id: String,
     pub command: String,
@@ -482,6 +494,7 @@ impl HomeSidebar {
                 })
                 .collect(),
             projects: Vec::new(),
+            remote_projects: None,
             threads_state: ListState::Ready,
             projects_state: ListState::Ready,
             activity_clock: None,
@@ -547,6 +560,140 @@ impl HomeSidebar {
         self.worktree_tip = false;
         self.worktree_tip_epoch += 1;
         cx.notify();
+    }
+
+    pub fn track_remote_projects(
+        &mut self,
+        connected: &[String],
+        cx: &mut Context<Self>,
+    ) -> Vec<String> {
+        let projects = self.remote_projects.get_or_insert_with(HashMap::new);
+        projects.retain(|id, _| connected.contains(id));
+        let mut missing = Vec::new();
+        for id in connected {
+            if projects
+                .get(id)
+                .is_none_or(|load| matches!(load, RemoteProjects::Failed))
+            {
+                projects.insert(id.clone(), RemoteProjects::Loading);
+                missing.push(id.clone());
+            }
+        }
+        cx.notify();
+        missing
+    }
+
+    pub fn set_remote_projects(
+        &mut self,
+        host: &str,
+        projects: Result<Vec<Project>, ()>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(entry) = self
+            .remote_projects
+            .as_mut()
+            .and_then(|all| all.get_mut(host))
+        {
+            *entry = match projects {
+                Ok(projects) => RemoteProjects::Ready(projects),
+                Err(()) => RemoteProjects::Failed,
+            };
+            cx.notify();
+        }
+    }
+
+    fn remote_groups(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
+        let projects = self.remote_projects.as_ref()?;
+        let theme = cx.theme();
+        let (heading_color, row_color, hover) = (
+            theme.text_tertiary,
+            theme.text_default_nav,
+            theme.ghost_hover,
+        );
+        let connections = cx
+            .try_global::<super::connections::ConnectionsState>()?
+            .connections
+            .as_deref()?;
+        if connections.is_empty() {
+            return None;
+        }
+        let groups: Vec<_> = connections
+            .iter()
+            .map(|host| {
+                let status = match host.state.as_str() {
+                    "connected" => "Connected",
+                    "connecting" => "Connecting",
+                    _ => "Offline",
+                };
+                (
+                    host.host_id.clone(),
+                    format!("{} · {status}", host.display_name),
+                )
+            })
+            .collect();
+        Some(div().children(groups.into_iter().map(|(host, heading)| {
+            let load = projects.get(&host);
+            let rows = match load {
+                Some(RemoteProjects::Ready(rows)) => rows.as_slice(),
+                _ => &[],
+            };
+            div()
+                .flex()
+                .flex_col()
+                .child(div().px(px(8.)).py(px(5.)).child(text(
+                    heading,
+                    14.,
+                    21.,
+                    500.,
+                    heading_color,
+                )))
+                .when(matches!(load, Some(RemoteProjects::Failed)), |group| {
+                    group.child(sidebar_empty("Remote projects could not be loaded", cx))
+                })
+                .children(rows.iter().filter_map(|project| {
+                    let root = project.root.as_ref()?.to_string();
+                    let action = OpenRemoteProject(host.clone(), root);
+                    let id: SharedString = format!("remote-project:{host}:{}", project.id).into();
+                    let focus = focus::handle(id.clone(), 0, window, cx);
+                    Some(
+                        focus::ring(
+                            div()
+                                .id(id)
+                                .role(gpui::Role::Button)
+                                .debug_selector(|| "remote-project".into())
+                                .aria_label(project.label.clone())
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .px(px(8.))
+                                .h(px(30.))
+                                .rounded(px(10.))
+                                .cursor_pointer()
+                                .hover(move |d| d.bg(hover))
+                                .child(icon("thread-project", 16., row_color))
+                                .child(text(project.label.clone(), 14., 21., 430., row_color)),
+                            &focus,
+                            px(10.),
+                            px(2.),
+                            cx,
+                        )
+                        .on_click({
+                            let action = action.clone();
+                            move |event, window, cx| {
+                                if event.click_count() == 1 {
+                                    window.dispatch_action(Box::new(action.clone()), cx);
+                                }
+                            }
+                        })
+                        .on_key_down(move |event, window, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                window.dispatch_action(Box::new(action.clone()), cx);
+                                cx.stop_propagation();
+                            }
+                        }),
+                    )
+                }))
+        })))
     }
 
     pub fn projects(&self) -> &[Project] {
@@ -1576,7 +1723,7 @@ impl Render for HomeSidebar {
                 .px(px(8.))
                 .children(pinned)
                 .when(self.chat_options.organize == Organize::Project, |d| {
-                    d.child(projects)
+                    d.child(projects).children(self.remote_groups(window, cx))
                 })
                 .children((0..self.sections.len()).map(|index| {
                     let body = self.custom_body(index, window, cx);

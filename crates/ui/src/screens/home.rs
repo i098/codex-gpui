@@ -124,6 +124,9 @@ pub struct LocationMenu {
     pub environment: Option<String>,
     /// Cloud environments `(label, id)`; while empty, `Cloud` stays disabled.
     pub cloud_environments: Vec<(String, String)>,
+    pub remote_host: Option<String>,
+    choosing_remote: bool,
+    remote_scroll: ScrollHandle,
     pub cloud_environment: Option<String>,
     selected: usize,
     bounds: Bounds<Pixels>,
@@ -864,10 +867,15 @@ fn set_location(owner: &Entity<HomeMain>, open: Option<bool>, cx: &mut App) {
     owner.update(cx, |main, cx| {
         main.location.open = open.unwrap_or(!main.location.open);
         main.picker = None;
-        main.location.selected = LOCATION_MODES
-            .iter()
-            .position(|mode| *mode == Some(main.location.mode))
-            .unwrap_or(0);
+        main.location.choosing_remote = false;
+        main.location.selected = if main.location.remote_host.is_some() {
+            2
+        } else {
+            LOCATION_MODES
+                .iter()
+                .position(|mode| *mode == Some(main.location.mode))
+                .unwrap_or(0)
+        };
         cx.notify();
     });
 }
@@ -875,6 +883,14 @@ fn set_location(owner: &Entity<HomeMain>, open: Option<bool>, cx: &mut App) {
 fn pick_location(owner: &Entity<HomeMain>, index: usize, cx: &mut App) {
     owner.update(cx, |main, cx| {
         let location = &mut main.location;
+        if index == 2 {
+            location.choosing_remote = true;
+            location.selected = usize::MAX;
+            location.remote_scroll.set_offset(point(px(0.), px(0.)));
+            cx.notify();
+            return;
+        }
+        location.remote_host = None;
         location.mode = LOCATION_MODES[index].unwrap_or_default();
         if location.mode == super::hotkey::Mode::Cloud && location.cloud_environment.is_none() {
             location.cloud_environment = location.cloud_environments.first().map(|e| e.1.clone());
@@ -884,23 +900,49 @@ fn pick_location(owner: &Entity<HomeMain>, index: usize, cx: &mut App) {
     });
 }
 
-/// Which `Work in` rows can be picked: worktree and cloud starts need a Git project, cloud
-/// also a loaded cloud environment. `Remote` has no native remote hosts yet.
-fn location_enabled(location: &LocationMenu, has_project: bool) -> [bool; 4] {
+fn remote_computers(cx: &App) -> &[super::connections::Connection] {
+    cx.try_global::<super::connections::ConnectionsState>()
+        .and_then(|state| state.connections.as_deref())
+        .unwrap_or_default()
+}
+
+fn pick_remote(owner: &Entity<HomeMain>, host_id: &str, cx: &mut App) {
+    if !remote_computers(cx)
+        .iter()
+        .any(|row| row.host_id == host_id && row.state == "connected")
+    {
+        return;
+    }
+    owner.update(cx, |main, cx| {
+        main.location.remote_host = Some(host_id.to_owned());
+        main.location.mode = super::hotkey::Mode::Local;
+        main.location.open = false;
+        main.location.choosing_remote = false;
+        cx.notify();
+    });
+}
+
+fn location_enabled(location: &LocationMenu, has_project: bool, cx: &App) -> [bool; 4] {
     [
         true,
         has_project,
-        false,
+        !remote_computers(cx).is_empty(),
         has_project && !location.cloud_environments.is_empty(),
     ]
 }
 
-/// The next enabled row after (`step` 1) or before (`step` -1) `from`, wrapping.
-fn step_enabled(enabled: [bool; 4], from: usize, step: isize) -> usize {
-    (1..=4)
-        .map(|offset| (from as isize + step * offset).rem_euclid(4) as usize)
-        .find(|&index| enabled[index])
-        .unwrap_or(from)
+fn step_enabled(len: usize, from: usize, step: isize, enabled: impl Fn(usize) -> bool) -> usize {
+    let from = if from < len {
+        from as isize
+    } else if step > 0 {
+        -1
+    } else {
+        0
+    };
+    (1..=len)
+        .map(|offset| (from + step * offset as isize).rem_euclid(len as isize) as usize)
+        .find(|&index| enabled(index))
+        .unwrap_or(usize::MAX)
 }
 
 /// What a menu row's click does (`None`: disabled).
@@ -985,13 +1027,15 @@ fn location_menu(
     location: &LocationMenu,
     has_project: bool,
     t: &Theme,
+    cx: &App,
     window: &Window,
 ) -> Option<gpui::AnyElement> {
     if !location.open {
         return None;
     }
     let trigger = location.bounds;
-    let enabled = location_enabled(location, has_project);
+    let enabled = location_enabled(location, has_project, cx);
+    let choosing_remote = location.choosing_remote;
     // The original's rows: `Work in` label, This computer, New worktree (the port's managed
     // worktree start, only with a project), Cloud, Remote. The index is the row's place in
     // `LOCATION_MODES`, which `pick_location` and the keyboard walk use.
@@ -1007,7 +1051,11 @@ fn location_menu(
     .map(|(i, label, glyph)| {
         let owner = owner.clone();
         let enabled = enabled[i];
-        let checked = LOCATION_MODES[i] == Some(location.mode);
+        let checked = if location.remote_host.is_some() {
+            i == 2
+        } else {
+            LOCATION_MODES[i] == Some(location.mode)
+        };
         div()
             .id(("work-in-option", i))
             .role(gpui::Role::MenuItemRadio)
@@ -1019,7 +1067,14 @@ fn location_menu(
             .items_center()
             .gap(px(6.))
             .rounded(px(15.))
-            .when(i == location.selected, |d| d.bg(t.menu_item_hover))
+            .when(
+                if choosing_remote {
+                    i == 2
+                } else {
+                    i == location.selected
+                },
+                |d| d.bg(t.menu_item_hover),
+            )
             .when(enabled, |d| {
                 let hover = t.menu_item_hover;
                 d.hover(move |s| s.bg(hover))
@@ -1030,7 +1085,11 @@ fn location_menu(
                     .flex_1()
                     .child(text(label, 13., 18.5714, 430., t.text)),
             )
-            .when(checked, |d| {
+            .when(i == 2, |d| {
+                // The original's `FlyoutSubmenuItem` ends in a right chevron (`icon-xs`, tertiary).
+                d.child(icon("chevron-right", 12., t.text_tertiary))
+            })
+            .when(checked && i != 2, |d| {
                 d.child(icon("archive-check", 16., t.text).opacity(0.75))
             })
             .when(enabled, |d| {
@@ -1052,6 +1111,45 @@ fn location_menu(
     .role(gpui::Role::Menu)
     .aria_label("Work in")
     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+    // The original's `Remote` row opens a flyout submenu beside the menu, not a replacement.
+    let flyout = choosing_remote.then(|| {
+        crate::composer::popover(t, 200., |d| {
+            d.child(
+                div()
+                    .id("remote-computers")
+                    .max_h(px(300.))
+                    .overflow_y_scroll()
+                    .track_scroll(&location.remote_scroll)
+                    .children(remote_computers(cx).iter().enumerate().map(|(index, row)| {
+                        let connected = row.state == "connected";
+                        let label: SharedString = if connected {
+                            row.display_name.clone().into()
+                        } else {
+                            format!("{} (offline)", row.display_name).into()
+                        };
+                        let selected =
+                            location.remote_host.as_deref() == Some(row.host_id.as_str());
+                        let action: RowAction = connected.then(|| {
+                            let owner = owner.clone();
+                            let id = row.host_id.clone();
+                            std::rc::Rc::new(move |_: &mut Window, cx: &mut App| {
+                                pick_remote(&owner, &id, cx)
+                            }) as _
+                        });
+                        menu_row(
+                            ("remote-computer", index),
+                            (label, Some("laptop"), selected, action),
+                            index == location.selected,
+                            t,
+                        )
+                    })),
+            )
+        })
+        .id("remote-computers-menu")
+        .role(gpui::Role::Menu)
+        .aria_label("Remote")
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    });
     // Opens upward from the chip: the bar sits at the bottom of the window. A full-window
     // backdrop under the popup closes it on a click anywhere else, the chip included.
     Some(
@@ -1071,7 +1169,24 @@ fn location_menu(
                             .position(point(trigger.left() + px(1.), trigger.top() - px(18.5)))
                             .anchor(gpui::Anchor::BottomLeft)
                             .snap_to_window_with_margin(px(8.))
-                            .child(popup),
+                            .child(
+                                div()
+                                    .relative()
+                                    .child(popup)
+                                    // `FlyoutSubmenuItem`: `alignOffset` = -(padding-top + margin-top)
+                                    // of the flyout, so its first row sits level with the `Remote`
+                                    // row; `sideOffset` = 4 + the row's inset from the menu edge.
+                                    // 82 px is the row's offset in the popup, plus one row when
+                                    // `New worktree` is listed.
+                                    .children(flyout.map(|f| {
+                                        let rows_above = if has_project { 28.57 } else { 0. };
+                                        div()
+                                            .absolute()
+                                            .left(px(289.))
+                                            .top(px(82. + rows_above))
+                                            .child(f)
+                                    })),
+                            ),
                     ),
             ),
         )
@@ -1245,8 +1360,13 @@ fn utility_bar(
         .read(cx)
         .clone();
     let has_project = project.is_some() && location.worktree_available == Some(true);
-    let enabled = location_enabled(location, has_project);
-    let location_menu = location_menu(owner, location, has_project, t, window);
+    let location_menu = location_menu(owner, location, has_project, t, cx, window);
+    let remote_label = location.remote_host.as_ref().map(|id| {
+        remote_computers(cx)
+            .iter()
+            .find(|row| &row.host_id == id)
+            .map_or_else(|| id.clone(), |row| row.display_name.clone())
+    });
     let mode = location.mode;
     let extra_chip =
         |picker: Picker, glyph: &'static str, label: String, window: &mut Window, cx: &mut App| {
@@ -1371,18 +1491,20 @@ fn utility_bar(
                                 .gap(px(8.))
                                 .overflow_x_scroll()
                                 .track_scroll(&scroll)
-                                .child(project_chip(
-                                    owner,
-                                    project,
-                                    project_menu,
-                                    compact,
-                                    t.text_tertiary,
-                                    "Select a project to run your chat in",
-                                    Some("⌥⇧⌘O"),
-                                    t,
-                                    &project_focus,
-                                    cx,
-                                ))
+                                .when(location.remote_host.is_none(), |d| {
+                                    d.child(project_chip(
+                                        owner,
+                                        project,
+                                        project_menu,
+                                        compact,
+                                        t.text_tertiary,
+                                        "Select a project to run your chat in",
+                                        Some("⌥⇧⌘O"),
+                                        t,
+                                        &project_focus,
+                                        cx,
+                                    ))
+                                })
                                 .child({
                                     let toggle = {
                                         let owner = owner.clone();
@@ -1396,12 +1518,17 @@ fn utility_bar(
                                             super::hotkey::Mode::Cloud => "settings-codex-cloud",
                                             super::hotkey::Mode::Local => "laptop",
                                         },
-                                        match mode {
-                                            super::hotkey::Mode::Worktree => "New worktree",
-                                            super::hotkey::Mode::Cloud => "Cloud",
-                                            super::hotkey::Mode::Local => "This computer",
-                                        }
-                                        .into(),
+                                        remote_label
+                                            .clone()
+                                            .unwrap_or_else(|| {
+                                                match mode {
+                                                    super::hotkey::Mode::Worktree => "New worktree",
+                                                    super::hotkey::Mode::Cloud => "Cloud",
+                                                    super::hotkey::Mode::Local => "This computer",
+                                                }
+                                                .into()
+                                            })
+                                            .into(),
                                         t.text,
                                         compact,
                                         t,
@@ -1434,7 +1561,18 @@ fn utility_bar(
                                         let menu = &key_owner.read(cx).location;
                                         match key {
                                             "enter" | "space" if menu.open => {
-                                                if menu.selected != usize::MAX {
+                                                if menu.choosing_remote {
+                                                    if let Some(row) =
+                                                        remote_computers(cx).get(menu.selected)
+                                                    {
+                                                        let id = row.host_id.clone();
+                                                        pick_remote(&key_owner, &id, cx);
+                                                    }
+                                                } else if location_enabled(menu, has_project, cx)
+                                                    .get(menu.selected)
+                                                    .copied()
+                                                    .unwrap_or(false)
+                                                {
                                                     pick_location(&key_owner, menu.selected, cx);
                                                 }
                                             }
@@ -1442,12 +1580,33 @@ fn utility_bar(
                                             "escape" => set_location(&key_owner, Some(false), cx),
                                             "up" | "down" if menu.open => {
                                                 let step = if key == "up" { -1 } else { 1 };
-                                                key_owner.update(cx, |main, cx| {
-                                                    main.location.selected = step_enabled(
-                                                        enabled,
-                                                        main.location.selected,
+                                                let computers = remote_computers(cx);
+                                                let selected = if menu.choosing_remote {
+                                                    step_enabled(
+                                                        computers.len(),
+                                                        menu.selected,
                                                         step,
-                                                    );
+                                                        |i| computers[i].state == "connected",
+                                                    )
+                                                } else {
+                                                    let enabled =
+                                                        location_enabled(menu, has_project, cx);
+                                                    step_enabled(
+                                                        enabled.len(),
+                                                        menu.selected,
+                                                        step,
+                                                        |i| enabled[i],
+                                                    )
+                                                };
+                                                key_owner.update(cx, |main, cx| {
+                                                    main.location.selected = selected;
+                                                    if main.location.choosing_remote
+                                                        && selected != usize::MAX
+                                                    {
+                                                        main.location
+                                                            .remote_scroll
+                                                            .scroll_to_item(selected);
+                                                    }
                                                     cx.notify();
                                                 });
                                             }
@@ -1902,4 +2061,27 @@ fn account_error(t: &Theme, window: &mut Window, cx: &mut App) -> Div {
                     cx,
                 )),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::step_enabled;
+
+    #[test]
+    fn remote_menu_navigation_wraps_and_skips_disabled_rows() {
+        let enabled = [false, true, false, true];
+        for (from, step, next) in [
+            (usize::MAX, 1, 1),
+            (usize::MAX, -1, 3),
+            (3, 1, 1),
+            (1, -1, 3),
+        ] {
+            assert_eq!(
+                step_enabled(enabled.len(), from, step, |i| enabled[i]),
+                next
+            );
+        }
+        assert_eq!(step_enabled(5, 1, 1, |_| false), usize::MAX);
+        assert_eq!(step_enabled(0, 1, 1, |_| unreachable!()), usize::MAX);
+    }
 }

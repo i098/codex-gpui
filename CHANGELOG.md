@@ -16,6 +16,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [0.1.5] - 2026-11-24
 
 ### Added
+- Start a chat on a connected computer from `Work in` → `Remote`. The sidebar shows remote projects by computer and connection status (#971).
 - On macOS, the artifact tab updates spreadsheets and presentations during a turn when connected to a local Artifact Session host (#1567).
 - Create regular and draft merge requests from a GitLab.com repository with `glab` (#961).
 - Windows MSIX builds with a configured update feed can check for updates, download a verified package, and install it on restart (#852).
