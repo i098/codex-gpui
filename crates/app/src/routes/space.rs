@@ -122,7 +122,9 @@ fn create_page(host: &dyn host::Host, idempotency_key: &str) -> Result<space::Pa
     Ok(space::Page {
         id: id.to_owned(),
         title: "Untitled".to_owned(),
-        document_type: created["metadata"]["document_type"].as_str().map(str::to_owned),
+        document_type: created["metadata"]["document_type"]
+            .as_str()
+            .map(str::to_owned),
     })
 }
 
