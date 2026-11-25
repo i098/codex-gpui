@@ -6,6 +6,9 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+### Fixed
+- Start WebRTC voice chat with the realtime protocol that AVAS requires (#875, #908).
+
 ## [0.1.5] - 2026-11-24
 
 ### Added
