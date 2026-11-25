@@ -1089,6 +1089,8 @@ pub struct Draft {
     mentions: Vec<mention::Mention>,
     attachments: Vec<attach::Attachment>,
     diff_comments: Vec<crate::screens::diff::panel::comments::Comment>,
+    /// The editor's undo and redo stacks, so ⌘Z still works after the chat comes back.
+    history: editor::History,
 }
 
 impl Draft {
@@ -2381,6 +2383,7 @@ impl Composer {
             mentions: std::mem::take(&mut self.mentions),
             attachments: std::mem::take(&mut self.attachments),
             diff_comments: std::mem::take(&mut self.diff_comments),
+            ..Draft::default()
         }
     }
 
@@ -2423,18 +2426,21 @@ impl Composer {
         true
     }
 
-    /// Replaces the unsent text, chips and attachments with `next`, a thread's kept draft, and
-    /// returns the ones replaced. Diff comments stay: the app keeps them per thread.
+    /// Replaces the unsent text, chips, attachments and undo history with `next`, a thread's
+    /// kept draft, and returns the ones replaced. Diff comments stay: the app keeps them per
+    /// thread.
     pub fn swap_draft(&mut self, next: Draft, cx: &mut Context<Self>) -> Draft {
         let left = Draft {
             content: std::mem::take(&mut self.content),
             mentions: std::mem::take(&mut self.mentions),
             attachments: std::mem::take(&mut self.attachments),
             diff_comments: Vec::new(),
+            history: std::mem::take(&mut self.history),
         };
         self.set_text(&next.content, cx);
         self.mentions = next.mentions;
         self.attachments = next.attachments;
+        self.history = next.history;
         left
     }
 
