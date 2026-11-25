@@ -66,6 +66,8 @@ pub fn replay_adapter(recording: &Path) -> Result<Vec<Value>> {
         .context("recording name")?;
     let target = match stem {
         "ms4" => "stream_fade",
+        "logout" => "account_logout",
+        "mobile-mfa" => "host",
         name => name,
     };
     ensure!(

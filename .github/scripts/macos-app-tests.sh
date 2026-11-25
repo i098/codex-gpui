@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Runs `cargo test -p app --test <t>` for each target name on stdin, one at a time, and deletes each
+# test binary afterwards (~150 linked test binaries fill the runner disk). Prints the totals; fails if any target fails.
+set -uo pipefail
+log=$(mktemp /tmp/macos-app-tests.XXXXXX)
+failed=""
+while read -r t; do
+  [ -n "$t" ] || continue
+  cargo test --locked -p app --test "$t" -- --test-threads=1 2>&1 | tee -a "$log" || failed="$failed $t"
+  rm -f target/debug/deps/"$t"-*
+done
+awk '/^test result/ {p+=$4; f+=$6} END {print "macOS app tests passed=" p " failed=" f}' "$log"
+rm -f "$log"
+if [ -n "$failed" ]; then echo "failed targets:$failed"; exit 1; fi
