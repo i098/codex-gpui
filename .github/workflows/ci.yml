@@ -120,3 +120,19 @@ jobs:
       # crates/app/tests still use POSIX path and shell-script fixtures, so they stay Unix-only.
       - run: cargo test --locked --workspace --features app/test-support --all-targets --no-run --target x86_64-pc-windows-msvc
       - run: cargo test --locked --no-fail-fast --workspace --features app/test-support --lib --bins --target x86_64-pc-windows-msvc
+  macos:
+    # Self-hosted Mac (mac-codex-gpui); compile-only, so a Mac-only break fails the PR.
+    if: ${{ github.event_name == 'workflow_dispatch' || !github.event.pull_request.draft }}
+    runs-on: [self-hosted, macOS, mac-codex-gpui]
+    timeout-minutes: 60
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The runner PATH lacks Homebrew; opusic-sys needs cmake from there.
+      - run: echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+      # shortcut: the full workspace (cmake/opusic-sys) is not built on macOS here; widen when it is fixed.
+      - run: cargo check --locked -p textsys -p gpui_macos -p ui
