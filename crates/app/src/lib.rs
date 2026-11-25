@@ -18,6 +18,7 @@ mod chatgpt_thread;
 mod chronicle;
 mod cloud_task;
 mod data_controls;
+mod teams;
 pub use cloud_task::parse_task_response;
 mod cloud;
 mod cloud_snapshot;
@@ -785,6 +786,7 @@ impl Root {
         let this = cx.weak_entity();
         usage::install(this.clone(), cx);
         data_controls::install(this.clone(), cx);
+        teams::install(this.clone(), cx);
         account::install(this.clone(), cx);
         account_backend::install(this.clone(), cx);
         chronicle::install(this.clone(), cx);
@@ -2410,9 +2412,7 @@ impl Root {
         let pr_host = host.clone();
         let pr_cwd = cwd.clone();
         let pr_read = cx.background_spawn(async move {
-            git_call(&*pr_host, "gh-thread-pr", json!({"cwd": pr_cwd}))
-                .ok()
-                .filter(|pr| !pr.is_null())
+            git_call(&*pr_host, "gh-thread-pr", json!({"cwd": pr_cwd})).ok()
         });
         let info_cwd = cwd.clone();
         let read = cx.background_spawn(async move {
@@ -2451,7 +2451,13 @@ impl Root {
             let pr = pr_read.await;
             this.update(cx, |this, cx| {
                 if this.thread.as_ref() == Some(&thread) && Arc::ptr_eq(&host, &this.host) {
-                    thread.update(cx, |view, cx| view.set_pull_request(pr, cx));
+                    thread.update(cx, |view, cx| {
+                        view.set_gitlab(pr.as_ref().is_some_and(|pr| pr["gitLab"] == true), cx);
+                        view.set_pull_request(
+                            pr.filter(|pr| !pr.is_null() && pr["gitLab"] != true),
+                            cx,
+                        );
+                    });
                 }
             })
             .ok();
@@ -2531,9 +2537,44 @@ impl Root {
         let title = view.header_title().to_string();
         let cwd = view.cwd().to_owned();
         let branch = view.git_branch().unwrap_or("Detached HEAD").to_owned();
-        let dialog = cx.new(|cx| Dialog::create_pr(title, branch, cx));
-        self.commit_cwd = Some(cwd);
-        self.show_dialog(dialog, window, cx);
+        let thread = thread.clone();
+        let host = self.host.clone();
+        let params = json!({"cwd": cwd, "creationProvider": true});
+        let lookup = host.clone();
+        let read = cx.background_spawn(async move { git_call(&*lookup, "gh-thread-pr", params) });
+        self.set_git_phase(Some("Loading repository…"), cx);
+        cx.spawn_in(window, async move |this, cx| {
+            let provider = read.await;
+            this.update_in(cx, |this, window, cx| {
+                this.set_git_phase(None, cx);
+                if this.thread.as_ref() != Some(&thread)
+                    || !Arc::ptr_eq(&this.host, &host)
+                    || this.has_dialog()
+                {
+                    return;
+                }
+                let provider = match provider {
+                    Ok(provider) => provider,
+                    Err(error) => {
+                        this.toast(
+                            Toast::danger(format!("Cannot read the Git remote: {error}")),
+                            cx,
+                        );
+                        return;
+                    }
+                };
+                let gitlab = provider["gitLab"] == true;
+                let base = provider["baseBranch"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                let dialog = cx.new(|cx| Dialog::create_pr(title, branch, gitlab, base, cx));
+                this.commit_cwd = Some(cwd);
+                this.show_dialog(dialog, window, cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn create_pr(
@@ -2548,7 +2589,15 @@ impl Root {
             return;
         };
         params["cwd"] = json!(cwd);
-        self.set_git_phase(Some("Creating pull request…"), cx);
+        let gitlab = params["gitLab"] == true;
+        self.set_git_phase(
+            Some(if gitlab {
+                "Creating merge request…"
+            } else {
+                "Creating pull request…"
+            }),
+            cx,
+        );
         let host = self.host.clone();
         let read = cx.background_spawn(async move { git_call(&*host, "gh-create-pr", params) });
         cx.spawn_in(window, async move |this, cx| {
@@ -2565,7 +2614,14 @@ impl Root {
                             this.commit_cwd = None;
                             window.focus(&this.composer(cx).focus_handle(cx), cx);
                         }
-                        this.toast(Toast::info("Pull request created"), cx);
+                        this.toast(
+                            Toast::info(if gitlab {
+                                "Merge request created"
+                            } else {
+                                "Pull request created"
+                            }),
+                            cx,
+                        );
                         this.refresh_git_actions(cx);
                     }
                     Err(error) => dialog.update(cx, |dialog, cx| {
@@ -4711,8 +4767,8 @@ impl Root {
                 this.create_task(prompt.clone(), rrule.clone(), window, cx);
                 return;
             }
-            if let DialogOutcome::CreatePr { title, body, base, draft, commit_changes, open_browser } = outcome {
-                this.create_pr(dialog.clone(), json!({"title": title, "body": body, "base": base, "draft": draft, "commitChanges": commit_changes}), *open_browser, window, cx);
+            if let DialogOutcome::CreatePr { title, body, base, draft, commit_changes, open_browser, gitlab } = outcome {
+                this.create_pr(dialog.clone(), json!({"title": title, "body": body, "base": base, "draft": draft, "commitChanges": commit_changes, "gitLab": gitlab}), *open_browser, window, cx);
                 return;
             }
             if let DialogOutcome::Handoff { workspace, branch, bring_changes } = outcome {

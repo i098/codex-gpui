@@ -1,0 +1,5 @@
+# The loopback WebRTC handshake in this test runs on real timers, so a loaded host can
+# take any time. The test waits on events; this override is only the hang guard.
+[[profile.default.overrides]]
+filter = 'test(negotiated_audio_track_carries_speech_samples)'
+slow-timeout = { period = "30s", terminate-after = 4 }

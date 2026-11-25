@@ -92,22 +92,186 @@ pub(super) fn repository_command(
     let bridge = host
         .bridge
         .as_ref()
-        .context("GitHub requires an app-server connection")?;
+        .context("Repository commands require an app-server connection")?;
     let output = execute(bridge, cwd, args, 120_000)?;
     ensure!(
         !output.stdout_cap_reached && !output.stderr_cap_reached,
-        "GitHub output is incomplete"
+        "Repository command output is incomplete"
     );
     ensure!(output.exit_code == 0, "{}", output.stderr.trim());
     Ok(output.stdout.trim().to_owned())
 }
 
+fn gitlab_project(remote: &str) -> Option<String> {
+    let url = if remote.contains("://") {
+        url::Url::parse(remote).ok()?
+    } else {
+        let (host, path) = remote.split_once(':')?;
+        url::Url::parse(&format!("ssh://{host}/{path}")).ok()?
+    };
+    if !matches!(url.scheme(), "http" | "https" | "ssh")
+        || !url.host_str()?.eq_ignore_ascii_case("gitlab.com")
+    {
+        return None;
+    }
+    let path = url.path().trim_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    if !path.contains('/')
+        || !path.split('/').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
+        })
+    {
+        return None;
+    }
+    Some(format!("https://gitlab.com/{path}"))
+}
+
+fn gitlab_repository(cwd: &Path, status: &Value) -> Option<String> {
+    let remote = status["remote"].as_str()?;
+    let output = super::git::command(cwd, &["remote", "get-url", "--", remote])
+        .output()
+        .ok()?;
+    output.status.success().then_some(())?;
+    gitlab_project(str::from_utf8(&output.stdout).ok()?.trim())
+}
+
+fn gitlab_create_args(
+    cwd: &Path,
+    repository: &str,
+    branch: &str,
+    params: &Value,
+) -> Result<Vec<String>> {
+    let nonempty = |field: &str| {
+        params[field]
+            .as_str()
+            .filter(|value| !value.trim().is_empty())
+    };
+    let (title, body) = (nonempty("title"), nonempty("body"));
+    let commit = if title.is_none() || body.is_none() {
+        let output = super::git::command(cwd, &["log", "-1", "--format=%s%x00%b"])
+            .output()
+            .context("Read the latest Git commit")?;
+        ensure!(output.status.success(), "Cannot read the latest Git commit");
+        String::from_utf8(output.stdout).context("Git commit text is not UTF-8")?
+    } else {
+        String::new()
+    };
+    let (subject, message) = commit.split_once('\0').unwrap_or_default();
+    let description = body.unwrap_or(message.trim_end());
+    // A bare dash tells glab to open an editor.
+    let description = if description == "-" {
+        "-\n"
+    } else {
+        description
+    };
+    let mut args = vec![
+        "glab".into(),
+        "mr".into(),
+        "create".into(),
+        "--yes".into(),
+        "--push=false".into(),
+        format!("--repo={repository}"),
+        format!("--source-branch={branch}"),
+        format!("--title={}", title.unwrap_or(subject)),
+        format!("--description={description}"),
+    ];
+    if let Some(base) = nonempty("base") {
+        args.push(format!("--target-branch={base}"));
+    }
+    if params["draft"] == true {
+        args.push("--draft".into());
+    }
+    Ok(args)
+}
+
+fn gitlab_merge_request_url(output: &str) -> Result<Value> {
+    // A renamed project or a remote with other letter case returns a different path.
+    let iid = url::Url::parse(output)
+        .ok()
+        .filter(|url| {
+            url.scheme() == "https"
+                && url
+                    .host_str()
+                    .is_some_and(|host| host.eq_ignore_ascii_case("gitlab.com"))
+        })
+        .and_then(|url| {
+            url.path()
+                .rsplit_once("/-/merge_requests/")?
+                .1
+                .parse::<u64>()
+                .ok()
+        })
+        .filter(|iid| *iid > 0);
+    ensure!(iid.is_some(), "GitLab did not return a merge request URL");
+    Ok(json!({"url": output}))
+}
+
+fn existing_merge_request(
+    host: &super::LocalHost,
+    cwd: &Path,
+    repository: &str,
+    branch: &str,
+) -> Result<Value> {
+    let output = repository_command(
+        host,
+        cwd,
+        &[
+            "glab".into(),
+            "mr".into(),
+            "list".into(),
+            format!("--repo={repository}"),
+            format!("--source-branch={branch}"),
+            "--output=json".into(),
+        ],
+    )?;
+    let rows: Vec<Value> = serde_json::from_str(&output)?;
+    let Some(row) = rows.into_iter().find(|row| {
+        row["source_project_id"].as_u64().is_some()
+            && row["source_project_id"] == row["target_project_id"]
+    }) else {
+        return Ok(Value::Null);
+    };
+    gitlab_merge_request_url(row["web_url"].as_str().unwrap_or_default())
+}
+
 pub(super) fn summary(host: &super::LocalHost, params: &Value) -> Result<Value> {
     let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
-    let branch = super::git::fetch("git-commit-status", params)?["branch"]
+    let status = super::git::fetch("git-commit-status", params)?;
+    if let Some(repository) = gitlab_repository(cwd, &status) {
+        if params["creationProvider"] == true {
+            let project = repository.trim_start_matches("https://gitlab.com/");
+            let info = repository_command(
+                host,
+                cwd,
+                &[
+                    "glab".into(),
+                    "api".into(),
+                    "--hostname=gitlab.com".into(),
+                    format!("projects/{}", project.replace('/', "%2F")),
+                ],
+            )
+            .ok()
+            .and_then(|output| serde_json::from_str::<Value>(&output).ok());
+            let base = info
+                .as_ref()
+                .and_then(|info| info["default_branch"].as_str());
+            return Ok(json!({"gitLab": true, "baseBranch": base}));
+        }
+        return Ok(json!({"gitLab": true}));
+    }
+    if params["creationProvider"] == true {
+        return Ok(Value::Null);
+    }
+    github_summary(host, cwd, &status)
+}
+
+fn github_summary(host: &super::LocalHost, cwd: &Path, status: &Value) -> Result<Value> {
+    let branch = status["branch"]
         .as_str()
-        .context("Create a branch before opening a pull request")?
-        .to_owned();
+        .context("Create a branch before opening a pull request")?;
     let output = repository_command(
         host,
         cwd,
@@ -116,7 +280,7 @@ pub(super) fn summary(host: &super::LocalHost, params: &Value) -> Result<Value> 
             "pr".into(),
             "list".into(),
             "--head".into(),
-            branch,
+            branch.into(),
             "--state".into(),
             "open".into(),
             "--json".into(),
@@ -128,12 +292,24 @@ pub(super) fn summary(host: &super::LocalHost, params: &Value) -> Result<Value> 
 }
 
 pub(super) fn create(host: &super::LocalHost, params: &Value) -> Result<Value> {
-    let existing = summary(host, params)?;
+    let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
+    let status = super::git::fetch("git-commit-status", params)?;
+    let branch = status["branch"]
+        .as_str()
+        .context("Create a branch before opening a pull request")?;
+    let gitlab = gitlab_repository(cwd, &status);
+    ensure!(
+        gitlab.is_some() == (params["gitLab"] == true),
+        "The Git remote changed. Close and reopen the form."
+    );
+    let existing = if let Some(repository) = &gitlab {
+        existing_merge_request(host, cwd, repository, branch)?
+    } else {
+        github_summary(host, cwd, &status)?
+    };
     if !existing.is_null() && params["commitChanges"] != true {
         return Ok(existing);
     }
-    let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
-    let status = super::git::fetch("git-commit-status", params)?;
     if status["all"]["files"].as_u64().unwrap_or_default() > 0 {
         ensure!(
             params["commitChanges"] == true,
@@ -152,6 +328,11 @@ pub(super) fn create(host: &super::LocalHost, params: &Value) -> Result<Value> {
     ensure!(pushed["status"] == "success", "{}", pushed["error"]);
     if !existing.is_null() {
         return Ok(existing);
+    }
+    if let Some(repository) = &gitlab {
+        let args = gitlab_create_args(cwd, repository, branch, params)?;
+        let output = repository_command(host, cwd, &args)?;
+        return gitlab_merge_request_url(&output);
     }
     let mut args = vec!["gh".into(), "pr".into(), "create".into(), "--fill".into()];
     for (field, flag) in [("title", "--title"), ("body", "--body"), ("base", "--base")] {
@@ -258,6 +439,75 @@ mod tests {
     use super::*;
     use std::process::Command;
 
+    #[test]
+    fn gitlab_project_uses_the_remote_host_and_excludes_credentials() {
+        for remote in [
+            "https://user:secret@gitlab.com/team/subgroup/project.git",
+            "git@gitlab.com:team/subgroup/project.git",
+            "ssh://git@gitlab.com/team/subgroup/project.git",
+        ] {
+            assert_eq!(
+                gitlab_project(remote).as_deref(),
+                Some("https://gitlab.com/team/subgroup/project")
+            );
+        }
+        for remote in [
+            "https://gitlab.com.example.org/team/project",
+            "https://gitlab.com@example.org/team/project",
+            "file:///gitlab.com/team/project",
+            "git@gitlab.com:project",
+        ] {
+            assert!(gitlab_project(remote).is_none(), "{remote}");
+        }
+    }
+
+    #[test]
+    fn merge_request_url_accepts_renamed_project() {
+        assert!(
+            gitlab_merge_request_url("https://gitlab.com/Team/New-Name/-/merge_requests/7").is_ok()
+        );
+        for bad in [
+            "https://example.com/team/project/-/merge_requests/7",
+            "https://gitlab.com/team/project/-/merge_requests/x",
+            "created",
+        ] {
+            assert!(gitlab_merge_request_url(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn merge_request_form_values_do_not_override_cli_flags() -> Result<()> {
+        let args = gitlab_create_args(
+            Path::new("."),
+            "https://gitlab.com/team/project",
+            "feature",
+            &json!({"title": "--draft", "body": "line one\nline two", "base": "main"}),
+        )?;
+        assert!(args.iter().any(|arg| arg == "--title=--draft"));
+        assert!(
+            args.iter()
+                .any(|arg| arg == "--description=line one\nline two")
+        );
+        assert!(args.iter().any(|arg| arg == "--target-branch=main"));
+        assert!(!args.iter().any(|arg| arg == "--fill" || arg == "--draft"));
+        let (temp, _host) = pr_fixture("[]")?;
+        let draft = gitlab_create_args(
+            temp.path(),
+            "https://gitlab.com/team/project",
+            "feature",
+            &json!({"draft": true}),
+        )?;
+        for flag in [
+            "--draft",
+            "--title=Initial",
+            "--description=",
+            "--push=false",
+        ] {
+            assert!(draft.iter().any(|arg| arg == flag));
+        }
+        Ok(())
+    }
+
     fn pr_fixture(existing: &str) -> Result<(tempfile::TempDir, super::super::LocalHost)> {
         let temp = tempfile::tempdir()?;
         for args in [
@@ -294,8 +544,19 @@ for line in sys.stdin:
     if message.get("method") == "initialize":
         print(json.dumps({"id": message["id"], "result": {"userAgent":"pr-fixture","codexHome":"/tmp","platformOs":"linux"}}), flush=True)
     elif message.get("method") == "process/spawn":
+        params = message["params"]
+        command = params["command"]
+        stdout = sys.argv[1]
+        if command[:2] == ["glab", "api"]:
+            assert command[2:] == ["--hostname=gitlab.com", "projects/team%2Fproject"], command
+            stdout = json.dumps({"default_branch": "release/main"})
+        elif command[:3] == ["glab", "mr", "list"]:
+            stdout = "[]"
+        elif command[:3] == ["glab", "mr", "create"]:
+            assert "--draft" in command, command
+            assert "--target-branch=release/main" in command, command
         print(json.dumps({"id": message["id"], "result": {}}), flush=True)
-        print(json.dumps({"method":"process/exited","params":{"processHandle":message["params"]["processHandle"],"exitCode":0,"stdout":sys.argv[1],"stderr":"","stdoutCapReached":False,"stderrCapReached":False}}), flush=True)
+        print(json.dumps({"method":"process/exited","params":{"processHandle":params["processHandle"],"exitCode":0,"stdout":stdout,"stderr":"","stdoutCapReached":False,"stderrCapReached":False}}), flush=True)
 "#;
         let mut command = Command::new("python3");
         command.args(["-u", "-c", SERVER, existing]);
@@ -304,6 +565,45 @@ for line in sys.stdin:
         pollster::block_on(bridge.initialize("codex_gpui", "0.1.0"))?;
         let host = super::super::LocalHost::new(temp.path()).with_bridge(bridge);
         Ok((temp, host))
+    }
+
+    #[test]
+    fn creating_draft_merge_request_passes_draft_to_glab() -> Result<()> {
+        let url = "https://gitlab.com/team/project/-/merge_requests/1";
+        let (temp, host) = pr_fixture(url)?;
+        let remote = tempfile::tempdir()?;
+        let remote_path = remote.path().to_str().context("Invalid remote path")?;
+        for args in [
+            &["init", "--bare", remote_path][..],
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://gitlab.com/team/project.git",
+            ],
+            &["remote", "set-url", "--push", "origin", remote_path],
+        ] {
+            let output = Command::new("git")
+                .current_dir(temp.path())
+                .args(args)
+                .output()?;
+            ensure!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let target = summary(
+            &host,
+            &json!({"cwd": temp.path(), "creationProvider": true}),
+        )?;
+        assert_eq!(target["baseBranch"], "release/main");
+        let result = create(
+            &host,
+            &json!({"cwd": temp.path(), "gitLab": true, "draft": true, "base": target["baseBranch"]}),
+        )?;
+        assert_eq!(result["url"], url);
+        Ok(())
     }
 
     #[test]

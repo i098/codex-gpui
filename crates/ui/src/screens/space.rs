@@ -10,7 +10,7 @@ use crate::{
 use gpui::{
     App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
 use theme::ActiveTheme as _;
 
@@ -35,6 +35,75 @@ pub enum Spaces {
 pub struct Page {
     pub id: String,
     pub title: String,
+    /// The item's `document_type`, which picks the row icon's `text-file-*` tint.
+    pub document_type: Option<String>,
+}
+
+/// One landing tab: the bundle's `space.list.*Tab` keys, in its order.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum View {
+    #[default]
+    Suggested,
+    All,
+    Pages,
+    Pinned,
+    Files,
+    Sites,
+}
+
+impl View {
+    const TABS: [View; 6] = [
+        View::Suggested,
+        View::All,
+        View::Pages,
+        View::Pinned,
+        View::Files,
+        View::Sites,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            View::Suggested => "Suggested",
+            View::All => "All",
+            View::Pages => "Pages",
+            View::Pinned => "Pinned",
+            View::Files => "Files",
+            View::Sites => "Sites",
+        }
+    }
+
+    /// Only a tab whose source the app loads is live. `All` (pages, files and Sites), `Pinned`,
+    /// `Files` and `Sites` await their own requests, so they stay disabled rather than show the
+    /// page list under a name that promises other items.
+    fn ready(self) -> bool {
+        matches!(self, View::Suggested | View::Pages)
+    }
+}
+
+/// `space.list.suggestedTab` shows the recent window: `slice(0, 12)` in the bundle.
+const RECENT_PAGES: usize = 12;
+
+/// Icon tint by `document_type`, the bundle's `yKr` map onto the `--color-file-*` tokens.
+fn page_icon_color(document_type: Option<&str>) -> gpui::Hsla {
+    let rgb = match document_type {
+        // `--color-file-canvas: var(--yellow-500)`
+        Some("granola_whiteboard") => 0xe0ac00,
+        // `--color-file-spreadsheet: var(--green-400)`
+        Some("granola_workbook") => 0x04b84c,
+        // `--color-file-presentation: var(--red-400)`
+        Some("granola_presentation") => 0xfa423e,
+        // `--color-file-document: var(--blue-400)` for a Page and an unknown type.
+        _ => 0x0285ff,
+    };
+    gpui::rgb(rgb).into()
+}
+
+/// The divider's `bottom` when the row paints it: `._divider:after` sits at `0`, and
+/// `._divider:has(+ ._row):after` moves it 1px into the next row. A hovered row, and the row
+/// above it, paint none (`_sm7xw` stylesheet).
+fn divider_bottom(index: usize, len: usize, hovered: Option<usize>) -> Option<f32> {
+    (hovered != Some(index) && hovered != Some(index + 1))
+        .then(|| if index + 1 < len { -1. } else { 0. })
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -56,6 +125,10 @@ pub struct PageRetry;
 pub struct SpacePage {
     pub spaces: Spaces,
     pub pages: Pages,
+    /// The landing's selected tab.
+    pub view: View,
+    /// The hovered page row, which also hides the divider of the row above it.
+    pub hovered: Option<usize>,
     pub query: Entity<Composer>,
     /// `Files`: the Library replaces the Spaces list while it is `Some`.
     pub library: Option<library::Library>,
@@ -78,8 +151,18 @@ impl SpacePage {
         cx.notify();
     }
 
+    /// Change the landing tab, when that tab has a source.
+    fn select(&mut self, view: View, cx: &mut Context<Self>) {
+        if view.ready() && self.view != view {
+            self.view = view;
+            self.hovered = None;
+            cx.notify();
+        }
+    }
+
     pub fn set_pages(&mut self, pages: Pages, cx: &mut Context<Self>) {
         self.pages = pages;
+        self.hovered = None;
         cx.notify();
     }
 
@@ -154,6 +237,8 @@ pub fn shell(cx: &mut App) -> (Entity<Shell>, Entity<SpacePage>) {
         SpacePage {
             spaces: Spaces::Loading,
             pages: Pages::Loading,
+            view: View::Suggested,
+            hovered: None,
             query,
             library: None,
             confirmation: None,
@@ -174,6 +259,7 @@ pub fn shell(cx: &mut App) -> (Entity<Shell>, Entity<SpacePage>) {
 impl Render for SpacePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        self.share_dialog(window, cx);
         let (header, body) = match self.library.clone() {
             Some(library) => (
                 self.library_header(&library, window, cx),
@@ -241,15 +327,79 @@ impl SpacePage {
             )
     }
 
-    /// The Spaces, then the account's Pages. The original's `space.gettingStarted.*` heading
-    /// sits above template tiles; it stays hidden until the tiles land (#1595).
+    /// The Spaces, then the account's Pages under the landing's tab bar. The original's
+    /// `space.gettingStarted.*` heading sits above template tiles; it stays hidden until the
+    /// tiles land (#1595).
     fn landing(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         div()
             .flex()
             .flex_col()
             .child(self.spaces_body(window, cx))
-            // Legacy page `mt-8` section around recent-pages `pt-4`.
-            .child(div().pt(px(48.)).child(self.pages_body(window, cx)))
+            // Legacy page `mt-8` section: `pt-4` above the tab bar, `gap-2` before the list.
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .pt(px(48.))
+                    .child(self.page_tabs(window, cx))
+                    .child(self.pages_body(window, cx)),
+            )
+    }
+
+    /// The tab bar between the Space cards and the page list: `variant: browse`
+    /// (`gap-1`, `pb-2`), 36px `rounded-full` pills at `px-4`, 13px/18.571 `font-medium`,
+    /// selected `bg-primary-ghost-hover text-default`, unselected `text-secondary` with a
+    /// half-strength ghost hover.
+    fn page_tabs(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
+        div()
+            .id("space-tabs")
+            .role(gpui::Role::TabList)
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .pb(px(8.))
+            .children(View::TABS.into_iter().map(|view| {
+                let id = SharedString::from(format!("space-tab-{}", view.label().to_lowercase()));
+                let selected = self.view == view;
+                let ready = view.ready();
+                let color = if selected { t.text } else { t.text_secondary };
+                // Only the selected pill is a tab stop, as the bundle's `tabIndex` has it.
+                let focus = focus::handle(id.clone(), if selected { 0 } else { -1 }, window, cx);
+                focus::ring(
+                    div()
+                        .id(id)
+                        .role(gpui::Role::Tab)
+                        .aria_label(view.label())
+                        .aria_selected(selected)
+                        .aria_disabled(!ready)
+                        .h(px(36.))
+                        .px(px(16.))
+                        .flex()
+                        .items_center()
+                        .rounded_full()
+                        .when(selected, |d| d.bg(t.ghost_hover))
+                        .when(!selected && ready, |d| {
+                            d.hover(|s| s.bg(t.ghost_hover.opacity(0.5)))
+                        })
+                        .when(!ready, |d| d.opacity(0.5))
+                        .child(text(view.label(), 13., 18.571_428, 500., color)),
+                    &focus,
+                    px(18.),
+                    px(2.),
+                    cx,
+                )
+                .when(ready, |d| {
+                    d.on_click(cx.listener(move |page, _, _, cx| page.select(view, cx)))
+                        .on_key_down(cx.listener(move |page, event: &KeyDownEvent, _, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                page.select(view, cx);
+                                cx.stop_propagation();
+                            }
+                        }))
+                })
+            }))
     }
 
     fn pages_body(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -271,41 +421,68 @@ impl SpacePage {
                 )),
             Pages::Ready(pages) if pages.is_empty() => message("No pages yet"),
             // `ContentRow` in a `sidebar-navigation` list: `py-row-y` 5px, `px-row-x` 8px,
-            // `text-base` 14/21 `text-default`, 16px `text-page-light-16` icon in
-            // `text-file-document` (`--blue-400`), `gap-2`, `rounded-xl`,
-            // `hover:bg-primary-ghost-hover`, and a `border-subtle` divider inset 12px.
-            Pages::Ready(pages) => div().flex().flex_col().children(pages.iter().map(|page| {
-                let group = SharedString::from(format!("page-{}", page.id));
+            // `text-base` 14/21 `text-default`, 16px `text-page-light-16` icon tinted by
+            // `document_type`, `gap-2`, `rounded-xl`, `hover:bg-primary-ghost-hover`, and a
+            // `border-subtle` divider inset 12px that a hovered row hides above and below it.
+            Pages::Ready(pages) => {
+                let shown = match self.view {
+                    View::Suggested => &pages[..pages.len().min(RECENT_PAGES)],
+                    _ => &pages[..],
+                };
+                let hovered = self.hovered;
                 div()
-                    .id(group.clone())
-                    .group(group.clone())
-                    .relative()
                     .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .px(px(8.))
-                    .py(px(5.))
-                    .rounded(theme::Theme::RADIUS_XL)
-                    .hover(|s| s.bg(t.ghost_hover))
-                    .child(icon("text-page-light-16", 16., gpui::rgb(0x0285ff).into()))
-                    .child(div().min_w_0().truncate().child(text(
-                        page.title.clone(),
-                        14.,
-                        21.,
-                        theme::Theme::FONT_WEIGHT_UI.0,
-                        t.text,
-                    )))
-                    .child(
+                    .flex_col()
+                    .children(shown.iter().enumerate().map(|(index, page)| {
+                        let group = SharedString::from(format!("page-{}", page.id));
                         div()
-                            .absolute()
-                            .bottom_0()
-                            .left(px(12.))
-                            .right(px(12.))
-                            .h(px(1.))
-                            .bg(t.border_subtle)
-                            .group_hover(group, |s| s.invisible()),
-                    )
-            })),
+                            .id(group.clone())
+                            .relative()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .px(px(8.))
+                            .py(px(5.))
+                            .rounded(theme::Theme::RADIUS_XL)
+                            .hover(|s| s.bg(t.ghost_hover))
+                            .child(icon(
+                                "text-page-light-16",
+                                16.,
+                                page_icon_color(page.document_type.as_deref()),
+                            ))
+                            .child(div().min_w_0().truncate().child(text(
+                                page.title.clone(),
+                                14.,
+                                21.,
+                                theme::Theme::FONT_WEIGHT_UI.0,
+                                t.text,
+                            )))
+                            .when_some(divider_bottom(index, shown.len(), hovered), |d, bottom| {
+                                d.child(
+                                    div()
+                                        .absolute()
+                                        .bottom(px(bottom))
+                                        .left(px(12.))
+                                        .right(px(12.))
+                                        .h(px(1.))
+                                        .bg(t.border_subtle),
+                                )
+                            })
+                            .on_hover(cx.listener(move |page, &is_hovered, _, cx| {
+                                let next = if is_hovered {
+                                    Some(index)
+                                } else if page.hovered == Some(index) {
+                                    None
+                                } else {
+                                    page.hovered
+                                };
+                                if page.hovered != next {
+                                    page.hovered = next;
+                                    cx.notify();
+                                }
+                            }))
+                    }))
+            }
         }
     }
 
@@ -364,5 +541,55 @@ impl SpacePage {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tabs_keep_the_bundle_order_and_only_loaded_sources_are_live() {
+        assert_eq!(
+            View::TABS.map(View::label),
+            ["Suggested", "All", "Pages", "Pinned", "Files", "Sites"]
+        );
+        assert_eq!(View::default(), View::Suggested);
+        assert!(View::Suggested.ready() && View::Pages.ready());
+        for view in [View::All, View::Pinned, View::Files, View::Sites] {
+            assert!(!view.ready(), "{view:?}");
+        }
+    }
+
+    #[test]
+    fn row_icon_keeps_the_document_tint_unless_a_file_type_says_otherwise() {
+        // `Hsla` has no `PartialEq`; both sides run the same `rgb` conversion.
+        let same = |a: gpui::Hsla, b: gpui::Rgba| {
+            let b: gpui::Hsla = b.into();
+            (a.h, a.s, a.l, a.a) == (b.h, b.s, b.l, b.a)
+        };
+        for (document_type, hex) in [
+            (None, 0x0285ff),
+            (Some("page"), 0x0285ff),
+            (Some("granola_whiteboard"), 0xe0ac00),
+            (Some("granola_workbook"), 0x04b84c),
+            (Some("granola_presentation"), 0xfa423e),
+        ] {
+            assert!(
+                same(page_icon_color(document_type), gpui::rgb(hex)),
+                "{document_type:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn hover_clears_the_row_divider_and_the_divider_above_it() {
+        // The last row's divider sits at its bottom; the others 1px into the next row.
+        assert_eq!(divider_bottom(0, 3, None), Some(-1.));
+        assert_eq!(divider_bottom(2, 3, None), Some(0.));
+        // Hovering row 1 clears its own divider and row 0's.
+        assert_eq!(divider_bottom(1, 3, Some(1)), None);
+        assert_eq!(divider_bottom(0, 3, Some(1)), None);
+        assert_eq!(divider_bottom(2, 3, Some(0)), Some(0.));
     }
 }
