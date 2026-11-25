@@ -349,7 +349,10 @@ mod tests {
 
     #[test]
     fn shifted_punctuation_gets_the_character_macos_reports() {
-        assert_eq!(with_shifted_alias("cmd-shift-.".into()), ["cmd-shift-.", "cmd->"]);
+        assert_eq!(
+            with_shifted_alias("cmd-shift-.".into()),
+            ["cmd-shift-.", "cmd->"]
+        );
         assert_eq!(with_shifted_alias("cmd-shift-r".into()), ["cmd-shift-r"]);
         assert_eq!(with_shifted_alias("cmd-.".into()), ["cmd-."]);
     }
