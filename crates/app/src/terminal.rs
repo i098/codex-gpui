@@ -489,12 +489,23 @@ async fn run_cloud_shell(
     let process = params["processId"].clone();
     let mut ready = Some(ready);
     let mut exec = std::pin::pin!(bridge.request::<_, Value>("command/exec", params));
+    // An answer that arrived while its last output was still queued; the output is handled first.
+    let mut answered = None;
     let error = loop {
         // Events first: the server sends a process's last output before its answer.
-        let next = futures_lite::future::or(async { Ok(events.recv().await) }, async {
-            Err(exec.as_mut().await)
-        })
-        .await;
+        let next = match (events.try_recv(), answered.take()) {
+            (Ok(event), held) => {
+                answered = held;
+                Ok(Ok(event))
+            }
+            (Err(_), Some(answer)) => Err(answer),
+            (Err(_), None) => {
+                futures_lite::future::or(async { Ok(events.recv().await) }, async {
+                    Err(exec.as_mut().await)
+                })
+                .await
+            }
+        };
         let answer = match next {
             Ok(Ok(bridge::Event::Notification { method, params }))
                 if method == "command/exec/outputDelta" && params["processId"] == process =>
@@ -514,7 +525,15 @@ async fn run_cloud_shell(
             }
             Ok(Ok(bridge::Event::Notification { .. } | bridge::Event::Request { .. })) => continue,
             // A closed connection fails its unanswered requests, so the answer is ready.
-            Ok(Ok(bridge::Event::Closed) | Err(_)) => exec.as_mut().await,
+            Ok(Ok(bridge::Event::Closed) | Err(_)) => match answered.take() {
+                Some(answer) => answer,
+                None => exec.as_mut().await,
+            },
+            // `or` polls the answer after the events, so output may have landed in between.
+            Err(answer) if !events.is_empty() => {
+                answered = Some(answer);
+                continue;
+            }
             Err(answer) => answer,
         };
         done.store(true, Ordering::Release);
