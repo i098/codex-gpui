@@ -103,6 +103,29 @@ fn pages(host: &dyn host::Host) -> Result<Vec<space::Page>> {
         .collect())
 }
 
+/// `POST /pages` as the original's create flow sends it (`app-initial-6350d04672d0.js`, the
+/// `idempotency_key:S,initial_blocks:[]` literal): a private, untitled, empty Page. The server
+/// answers `metadata.page_id`; `idempotency_key` is the client's local page id.
+// shortcut: no parent Page and no realtime edge headers; landing wiring and sub-pages come with #1598.
+#[allow(dead_code)]
+fn create_page(host: &dyn host::Host, idempotency_key: &str) -> Result<space::Page> {
+    let body = json!({
+        "destination": "personal_file_drive",
+        "idempotency_key": idempotency_key,
+        "initial_blocks": [],
+        "title": "",
+    });
+    let created = host::json_body(&host.fetch(&request("POST", "/pages", Some(body)))?)?;
+    let id = created["metadata"]["page_id"]
+        .as_str()
+        .context("POST /pages answered no metadata.page_id")?;
+    Ok(space::Page {
+        id: id.to_owned(),
+        title: "Untitled".to_owned(),
+        document_type: created["metadata"]["document_type"].as_str().map(str::to_owned),
+    })
+}
+
 /// `GET /spaces/v2?limit=100`, following `next_cursor`, newest `updated_at` first.
 fn list(host: &dyn host::Host) -> Result<Vec<Space>> {
     let mut items = Vec::new();
@@ -155,4 +178,43 @@ fn request(method: &str, url: &str, body: Option<Value>) -> host::Request {
         request["headers"]["Content-Type"] = "application/json".into();
     }
     host::Request::Http(request)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct Recorder(Mutex<Vec<Value>>);
+
+    impl host::Host for Recorder {
+        fn fetch(&self, request: &host::Request) -> Result<Value> {
+            let host::Request::Http(http) = request else {
+                panic!("unexpected local request");
+            };
+            self.0.lock().unwrap().push(http.clone());
+            Ok(json!({"status": 200, "body": r#"{"metadata":{"page_id":"p1"}}"#}))
+        }
+    }
+
+    #[test]
+    fn create_page_posts_the_original_body() -> Result<()> {
+        let host = Recorder(Mutex::default());
+        let page = create_page(&host, "local-1")?;
+        let sent = host.0.lock().unwrap();
+        assert_eq!(sent[0]["method"], "POST");
+        assert_eq!(sent[0]["url"], "/pages");
+        let body: Value = serde_json::from_str(sent[0]["body"].as_str().unwrap())?;
+        assert_eq!(
+            body,
+            json!({
+                "destination": "personal_file_drive",
+                "idempotency_key": "local-1",
+                "initial_blocks": [],
+                "title": "",
+            })
+        );
+        assert_eq!(page.id, "p1");
+        Ok(())
+    }
 }
