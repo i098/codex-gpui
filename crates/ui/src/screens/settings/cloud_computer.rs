@@ -250,6 +250,7 @@ impl CloudComputer {
     }
 
     /// Asks, then sends `DELETE`; the dialog stays open with `error` when the call fails.
+    #[allow(clippy::too_many_arguments)]
     fn confirm(
         &mut self,
         title: String,
