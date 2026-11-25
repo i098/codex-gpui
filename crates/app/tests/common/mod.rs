@@ -51,7 +51,10 @@ macro_rules! skip_unless_macos {
 #[allow(unused_imports)]
 pub(crate) use skip_unless_macos;
 
-pub const TIMEOUT: Duration = Duration::from_secs(30);
+/// Hang guard for [`Fx::wait`], not a speed bound: the replay child and the test share the CPU
+/// with the whole nextest run, and CI hosts at load 200+ stalled startup and thread opens past
+/// the old 30 s (#1635, #1646). A real hang still fails here, long before the job limit.
+pub const TIMEOUT: Duration = Duration::from_secs(600);
 /// The original capture clock's base, not its unrecorded historical screenshot instant.
 pub const CAPTURE_CLOCK: ui::screens::thread::view::Clock = ui::screens::thread::view::Clock {
     utc_offset: -7 * 3600,

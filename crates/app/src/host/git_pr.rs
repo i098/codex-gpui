@@ -712,10 +712,10 @@ for line in sys.stdin:
         result = {"userAgent":"deadline-fixture","codexHome":"/tmp","platformOs":"linux"}
     elif method == "process/spawn":
         if mode == "spawn":
-            time.sleep(6)
+            time.sleep(300)
         result = {}
     elif method == "process/kill":
-        time.sleep(6)
+        time.sleep(300)
         result = {}
     else:
         continue
@@ -734,8 +734,10 @@ for line in sys.stdin:
                 error.to_string().to_lowercase().contains("timed out"),
                 "{error:#}"
             );
+            // The server stalls for 300 s and `Bridge` drop kills it, so any wait on the server
+            // takes minutes; the bound only has to stay far below that on a loaded host (#1645).
             assert!(
-                start.elapsed() < Duration::from_secs(3),
+                start.elapsed() < Duration::from_secs(120),
                 "{mode} exceeded the deadline"
             );
         }
