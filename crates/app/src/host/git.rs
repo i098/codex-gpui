@@ -2291,7 +2291,7 @@ fn exported(
     })
 }
 
-/// The user's login-shell environment over this process's (`bxe`), which a launch from the
+/// The login-shell environment over this process's (`bxe`), which a launch from the
 /// Dock lacks; this process's alone when no shell answers.
 fn login_env(dir: &Path) -> HashMap<String, String> {
     let mut env: HashMap<String, String> = std::env::vars().collect();
@@ -2302,19 +2302,8 @@ fn login_env(dir: &Path) -> HashMap<String, String> {
     let mut shells = vec![user.as_str()];
     shells.extend(["/bin/zsh", "/bin/bash"].into_iter().filter(|s| *s != user));
     for shell in shells {
-        let mut probe = Command::new(shell);
-        probe.args(["-ilc", LOGIN_ENV]).current_dir(dir).envs([
-            ("CODEX_SHELL", "1"),
-            ("DISABLE_AUTO_UPDATE", "true"),
-            ("ZSH_TMUX_AUTOSTARTED", "true"),
-            ("ZSH_TMUX_AUTOSTART", "false"),
-        ]);
-        let Ok(Some(output)) = bounded(&mut probe) else {
-            continue;
-        };
-        let mut parts = output.split("\0_SHELL_ENV_DELIMITER_\0");
-        if let (Some(_), Some(vars), Some(_)) = (parts.next(), parts.next(), parts.next()) {
-            env.extend(parse_env(vars.split('\0')));
+        if let Some(vars) = probe_shell(shell, dir) {
+            env.extend(vars);
             env.remove("CODEX_SHELL");
             return env;
         }
@@ -2322,9 +2311,66 @@ fn login_env(dir: &Path) -> HashMap<String, String> {
     env
 }
 
+/// What `shell -ilc env` prints between the delimiters, `None` when it fails or times out.
+fn probe_shell(shell: &str, dir: &Path) -> Option<HashMap<String, String>> {
+    let mut probe = Command::new(shell);
+    probe.args(["-ilc", LOGIN_ENV]).current_dir(dir).envs([
+        ("CODEX_SHELL", "1"),
+        ("DISABLE_AUTO_UPDATE", "true"),
+        ("ZSH_TMUX_AUTOSTARTED", "true"),
+        ("ZSH_TMUX_AUTOSTART", "false"),
+    ]);
+    let output = bounded(&mut probe).ok()??;
+    let mut parts = output.split("\0_SHELL_ENV_DELIMITER_\0");
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(_), Some(vars), Some(_)) => Some(parse_env(vars.split('\0'))),
+        _ => None,
+    }
+}
+
+/// `codex app-server` with the user's login-shell environment. The stock app merges an `-ilc`
+/// probe into its own environment before it starts the app-server; a Dock or Finder launch
+/// has only `/usr/bin:/bin:/usr/sbin:/sbin`, so hooks that run `node` or `gh-axi` exit 127.
+/// The probe runs once per process, and `CODEX_HOME` stays as this process has it.
+pub fn app_server_command() -> Command {
+    static ENV: std::sync::LazyLock<HashMap<String, String>> = std::sync::LazyLock::new(|| {
+        let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from);
+        let mut env = login_env(&home);
+        if let Some(codex_home) = std::env::var_os("CODEX_HOME") {
+            env.insert(
+                "CODEX_HOME".into(),
+                codex_home.to_string_lossy().into_owned(),
+            );
+        }
+        env
+    });
+    let mut command = bridge::default_command();
+    command.envs(&*ENV);
+    command
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn login_probe_reads_the_shell_environment_between_the_delimiters() {
+        let vars = probe_shell("/bin/sh", Path::new("/")).expect("sh answers the probe");
+        assert_eq!(vars.get("CODEX_SHELL").map(String::as_str), Some("1"));
+        assert!(vars.get("PATH").is_some_and(|path| !path.is_empty()));
+        assert!(probe_shell("/nonexistent/shell", Path::new("/")).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn app_server_starts_with_the_login_path_and_without_the_probe_marker() {
+        let command = app_server_command();
+        let envs: HashMap<_, _> = command.get_envs().collect();
+        let path = envs.get(std::ffi::OsStr::new("PATH")).copied().flatten();
+        assert!(path.is_some_and(|path| !path.is_empty()));
+        assert!(!envs.contains_key(std::ffi::OsStr::new("CODEX_SHELL")));
+    }
 
     #[test]
     fn generated_paths_keep_set_and_true_values() {

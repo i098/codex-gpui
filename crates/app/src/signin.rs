@@ -545,7 +545,7 @@ impl Root {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    let mut command = bridge::default_command();
+                    let mut command = crate::host::app_server_command();
                     command.current_dir(cwd);
                     let (bridge, events) = bridge::Bridge::spawn(command)?;
                     pollster::block_on(bridge.initialize("codex-gpui", env!("CARGO_PKG_VERSION")))?;
