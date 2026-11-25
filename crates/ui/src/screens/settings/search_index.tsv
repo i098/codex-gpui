@@ -643,3 +643,6 @@ Worktrees	Starts a fresh chat using the same files and branch
 Worktrees	Worktree
 Worktrees	Codex normally picks up branch updates during regular Git activity. This also fetches before each new worktree.
 Worktrees	Always fetch upstream before creating worktrees
+Agreements	OpenAI Services Agreement
+Agreements	Business Associate Agreement (BAA)
+Agreements	BAA was agreed on

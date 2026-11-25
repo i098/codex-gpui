@@ -52,10 +52,12 @@ fn focus_on_pointer(
 
 mod account_page;
 mod ads_controls;
+mod agreements;
 pub mod backend;
 mod code_review;
 pub mod computer_history;
 mod languages;
+mod medical_credentials;
 pub mod parental_controls;
 mod passwords;
 pub mod personalization;
@@ -391,6 +393,7 @@ pub fn slug_section(slug: &str) -> &'static str {
         "notifications" => "Notifications",
         "import" => "Import",
         "account" => "Account",
+        "agreements" => "Agreements",
         "appearance" => "Appearance",
         "archived-chats" => "Archived chats",
         "parental-controls" => "Parental controls",
@@ -478,6 +481,7 @@ const NAV: &[(&str, &[(&str, &str)])] = &[
             ("Codex Micro", "settings-keyboard-shortcuts"),
             ("Usage & billing", "settings-usage"),
             ("Data controls", "settings-data-controls"),
+            ("Agreements", "context-file-document"),
             ("Ads controls", "settings-data-controls"),
             ("Debug", "settings-configuration"),
         ],
@@ -783,11 +787,13 @@ pub struct SettingsNav {
 impl SettingsNav {
     fn new(page: Entity<SettingsPage>, cx: &mut Context<Self>) -> Self {
         cx.observe(&page, |_, _, cx| cx.notify()).detach();
-        cx.observe_global::<imports::ImportState>(|_, cx| cx.notify())
-            .detach();
         cx.observe_global::<teams::State>(|_, cx| cx.notify())
             .detach();
+        cx.observe_global::<account::State>(|_, cx| cx.notify())
+            .detach();
         teams::dispatch(teams::Action::Refresh, cx);
+        // Deferred like the teams refresh: the nav is built inside the root's own update.
+        cx.defer(|cx| account::dispatch(account::Action::Refresh, cx));
         Self {
             page,
             focus: cx.focus_handle(),
@@ -1072,6 +1078,9 @@ impl Render for SettingsNav {
             || matches!(&integrations.servers, computer_use::Load::Ready(servers)
                 if !file_type_handlers::viewers(servers).is_empty());
         let teams_visible = teams::available(cx) || section == "Teams";
+        let agreements_visible = section == "Agreements"
+            || matches!(&cx.try_global::<account::State>().map(|s| &s.profile),
+                Some(computer_use::Load::Ready(p)) if p.agreements());
         let visible = |label: &str| match label {
             "Import" => import_visible,
             "Cloud computer" => false,
@@ -1083,6 +1092,7 @@ impl Render for SettingsNav {
             "Debug" => debug_visible,
             "Ads controls" => ads_visible,
             "Teams" => teams_visible,
+            "Agreements" => agreements_visible,
             "File type handlers" => handlers_visible,
             _ => true,
         };
@@ -1894,6 +1904,9 @@ impl Render for SettingsPane {
         }
         if section == "Account" {
             return account::render(window, cx);
+        }
+        if section == "Agreements" {
+            return agreements::render(window, cx);
         }
         if section == "Trusted contact" {
             return trusted_contact::render(window, cx);

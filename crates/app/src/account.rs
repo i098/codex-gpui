@@ -77,6 +77,8 @@ fn profile(host: &dyn Host) -> Result<Profile> {
         email: text(&me["email"]),
         phone: text(&me["phone_number"]),
         personal: account["structure"] == "personal",
+        hipaa: account["is_hipaa_compliant_workspace"] == true,
+        account_id: identity.account_id,
     })
 }
 

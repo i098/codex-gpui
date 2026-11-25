@@ -17,14 +17,23 @@ use theme::{ActiveTheme as _, Theme};
 /// `GET /me` and the account's `structure` from `/accounts/check`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Profile {
+    /// The signed-in workspace (`ChatGPT-Account-Id`).
+    pub account_id: String,
     pub plan: String,
     pub name: String,
     pub email: Option<String>,
     pub phone: Option<String>,
     pub personal: bool,
+    /// `is_hipaa_compliant_workspace`: the Agreements page offers the BAA.
+    pub hipaa: bool,
 }
 
 impl Profile {
+    /// The original's agreements access (`agreements-access`): a `quorum` plan workspace.
+    pub fn agreements(&self) -> bool {
+        self.plan == "quorum"
+    }
+
     /// What the user types to confirm: the email, else the phone number.
     pub fn contact_point(&self) -> Option<&str> {
         self.email.as_deref().or(self.phone.as_deref())
@@ -61,7 +70,7 @@ pub struct State {
 }
 impl Global for State {}
 
-fn dispatch(action: Action, cx: &mut App) {
+pub(super) fn dispatch(action: Action, cx: &mut App) {
     if let Some(dispatch) = cx.try_global::<State>().and_then(|s| s.dispatch.clone()) {
         dispatch(action, cx);
     }
@@ -416,6 +425,9 @@ impl Render for Account {
             .gap(px(16.));
         if !rows.is_empty() {
             body = body.child(self.card(rows, &t));
+        }
+        if profile.is_some() {
+            body = body.child(super::medical_credentials::render(window, cx));
         }
         if let Some(profile) = profile.as_ref().filter(|profile| profile.personal) {
             let delete = self.button(

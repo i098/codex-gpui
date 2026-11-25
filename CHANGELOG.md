@@ -6,6 +6,9 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
+### Added
+- Settings ▸ Agreements for ChatGPT for Healthcare workspaces: view the OpenAI Services Agreement, and agree to the Business Associate Agreement in a HIPAA-eligible workspace. Settings ▸ Account shows the Medical credentials form (NPI, degree, license state and number, CME eligibility) when the account has a CME profile (#1056).
+
 ### Fixed
 - The macOS browser's link context menu no longer lists Back, Forward and Reload, as in the original. Those items show only off a link (#833).
 

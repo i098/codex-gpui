@@ -804,13 +804,29 @@ fn e164(s: &str) -> Option<String> {
 }
 
 /// A wrapping paragraph whose `<a>…</a>` span opens `url`.
-fn linked(
+pub(super) fn linked(
     id: &'static str,
     s: impl Into<String>,
     url: SharedString,
     size: f32,
     color: gpui::Hsla,
     t: &Theme,
+) -> gpui::Div {
+    let link = HighlightStyle {
+        color: Some(t.text_accent),
+        ..Default::default()
+    };
+    linked_styled(id, s, url, size, color, link)
+}
+
+/// [`linked`] with the link span drawn in `link_style`.
+pub(super) fn linked_styled(
+    id: &'static str,
+    s: impl Into<String>,
+    url: SharedString,
+    size: f32,
+    color: gpui::Hsla,
+    link_style: HighlightStyle,
 ) -> gpui::Div {
     let s = s.into();
     let (plain, link) = match s.split_once("<a>") {
@@ -824,15 +840,7 @@ fn linked(
         }
         None => (s.clone(), None),
     };
-    let styled = StyledText::new(plain).with_highlights(link.clone().map(|r| {
-        (
-            r,
-            HighlightStyle {
-                color: Some(t.text_accent),
-                ..Default::default()
-            },
-        )
-    }));
+    let styled = StyledText::new(plain).with_highlights(link.clone().map(|r| (r, link_style)));
     div()
         .text_size(px(size))
         .line_height(px(size * 1.5))
