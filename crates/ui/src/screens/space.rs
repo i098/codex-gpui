@@ -259,6 +259,7 @@ pub fn shell(cx: &mut App) -> (Entity<Shell>, Entity<SpacePage>) {
 impl Render for SpacePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        self.share_dialog(window, cx);
         let (header, body) = match self.library.clone() {
             Some(library) => (
                 self.library_header(&library, window, cx),
