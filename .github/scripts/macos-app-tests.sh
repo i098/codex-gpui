@@ -2,6 +2,7 @@
 # Runs `cargo test -p app --test <t>` for each target name on stdin, one at a time, and deletes each
 # test binary afterwards (~150 linked test binaries fill the runner disk). Prints the totals; fails if any target fails.
 set -uo pipefail
+echo "runner: $(hostname) $RUNNER_NAME"; df -h . /tmp
 log=$(mktemp /tmp/macos-app-tests.XXXXXX)
 failed=""
 while read -r t; do
