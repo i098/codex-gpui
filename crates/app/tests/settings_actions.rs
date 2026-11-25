@@ -487,6 +487,8 @@ fn configuration_efforts_and_open_config_follow_the_host() -> Result<()> {
     })?;
     let published = fx.read(|_, cx| cx.global::<ui::composer::EnabledEfforts>().setting.clone());
     ensure!(published == Some(vec!["max".to_owned()]), "{published:?}");
+    // The composer takes typing only where it shows: leave Settings for Home.
+    fx.keys("cmd-n")?;
     if let Some(rows) = reasoning_rows(&mut fx)? {
         ensure!(
             rows == ["Light", "Medium", "High", "Extra High", "Max"],
@@ -1204,10 +1206,15 @@ fn enabling_memory_updates_the_persisted_state_and_the_switch() -> Result<()> {
             .then(|| line["msg"]["result"].clone())
         })
         .context("initial memory features")?;
-    // Opening Settings reads the configuration once before the Memory read.
+    // Opening Settings reads the configuration twice before the Memory read.
+    lines.extend(exchange("config/read", initial.clone()));
     lines.extend(exchange("config/read", initial.clone()));
     lines.extend(exchange("config/read", initial));
     lines.extend(exchange("config/read", enabled));
+    // Home's usage banner reads the features at startup too (`usage.rs`).
+    let [mut banner, banner_reply] = exchange("experimentalFeature/list", features.clone());
+    banner["msg"]["params"] = json!({"limit": 100});
+    lines.extend([banner, banner_reply]);
     lines.extend(exchange("experimentalFeature/list", features));
     lines.extend(exchange(
         "experimentalFeature/list",
