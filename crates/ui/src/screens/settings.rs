@@ -298,6 +298,7 @@ pub mod account;
 #[path = "archived_chats.rs"]
 pub mod archived_chats;
 pub mod data_controls;
+pub mod teams;
 
 #[path = "git_settings.rs"]
 mod git_settings;
@@ -405,6 +406,7 @@ pub fn slug_section(slug: &str) -> &'static str {
             "Usage & billing"
         }
         "data-controls" => "Data controls",
+        "teams" => "Teams",
         "plugins-settings" | "skills-settings" => "Plugins",
         "mcp-settings" => "MCP servers",
         "passwords" => "Passwords",
@@ -480,6 +482,9 @@ const NAV: &[(&str, &[(&str, &str)])] = &[
             ("Debug", "settings-configuration"),
         ],
     ),
+    // The original's own group, between Personal and Integrations (`key:"teams",heading:null`);
+    // its item uses the `home-light` icon.
+    ("", &[("Teams", "home")]),
     (
         "Integrations",
         &[
@@ -780,6 +785,9 @@ impl SettingsNav {
         cx.observe(&page, |_, _, cx| cx.notify()).detach();
         cx.observe_global::<imports::ImportState>(|_, cx| cx.notify())
             .detach();
+        cx.observe_global::<teams::State>(|_, cx| cx.notify())
+            .detach();
+        teams::dispatch(teams::Action::Refresh, cx);
         Self {
             page,
             focus: cx.focus_handle(),
@@ -1063,6 +1071,7 @@ impl Render for SettingsNav {
         let handlers_visible = section == "File type handlers"
             || matches!(&integrations.servers, computer_use::Load::Ready(servers)
                 if !file_type_handlers::viewers(servers).is_empty());
+        let teams_visible = teams::available(cx) || section == "Teams";
         let visible = |label: &str| match label {
             "Import" => import_visible,
             "Cloud computer" => false,
@@ -1073,6 +1082,7 @@ impl Render for SettingsNav {
             "Code Review" => cloud_access.legacy,
             "Debug" => debug_visible,
             "Ads controls" => ads_visible,
+            "Teams" => teams_visible,
             "File type handlers" => handlers_visible,
             _ => true,
         };
@@ -1867,6 +1877,9 @@ impl Render for SettingsPane {
         if section == "Security" {
             return security_settings::render(window, cx);
         }
+        if section == "Teams" {
+            return teams::render(window, cx);
+        }
         if section == "Ads controls" {
             return ads_controls::render(window, cx);
         }
@@ -2108,7 +2121,7 @@ pub(crate) fn settings_row_content(
         )
 }
 
-fn description(s: &'static str, t: &Theme) -> Div {
+pub(crate) fn description(s: &str, t: &Theme) -> Div {
     let (plain, link) = match s.split_once("<a>") {
         Some((before, rest)) => {
             let (label, after) = rest.split_once("</a>").unwrap_or((rest, ""));
