@@ -1,5 +1,6 @@
 //! Drives `Settings → Teams` over the ChatGPT backend like the original's workspace team
-//! queries: `GET|POST /accounts/{account_id}/teams` and `PATCH …/teams/{team_id}`.
+//! queries: `GET|POST /accounts/{account_id}/teams`, `PATCH …/teams/{team_id}`, and a team's
+//! `GET …/members` and `GET …/activities`.
 
 use crate::{
     Root,
@@ -12,8 +13,11 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use ui::screens::{
     computer_use::Load,
-    settings::teams::{Action, State, Team},
+    settings::teams::{Action, Activity, Detail, Member, State, Team},
 };
+
+/// The original's activity page size (`W8`).
+const ACTIVITY_PAGE: usize = 20;
 
 /// The original's page size (`Zgi`).
 const PAGE: usize = 100;
@@ -51,24 +55,58 @@ fn available(host: &dyn Host, identity: &Identity) -> Result<bool> {
     Ok(workspace && usage::statsig(host, identity)["feature_gates"][TEAMS_GATE]["value"] == true)
 }
 
-/// Every page of the team list, as the original's `Jgi` reads it.
-fn list(host: &dyn Host, identity: &Identity) -> Result<Vec<Team>> {
-    let mut teams = Vec::new();
+/// Every page of an offset-paged team list, as the original's `Jgi` reads it.
+fn pages<T>(
+    host: &dyn Host,
+    identity: &Identity,
+    rest: &[&str],
+    item: fn(&Value) -> Option<T>,
+) -> Result<Vec<T>> {
+    let mut items = Vec::new();
     for offset in (0..).step_by(PAGE) {
-        let url = format!("{}?offset={offset}&limit={PAGE}", path(identity, &[]));
+        let url = format!("{}?offset={offset}&limit={PAGE}", path(identity, rest));
         let page = usage::http(host, identity, "GET", &url, None)?;
-        teams.extend(
+        items.extend(
             page["items"]
                 .as_array()
                 .context("teams page has no items")?
                 .iter()
-                .filter_map(Team::from_value),
+                .filter_map(item),
         );
         if page["has_more"] != true {
-            return Ok(teams);
+            return Ok(items);
         }
     }
     unreachable!("the offset range is unbounded")
+}
+
+fn list(host: &dyn Host, identity: &Identity) -> Result<Vec<Team>> {
+    pages(host, identity, &[], Team::from_value)
+}
+
+/// One activity page after `cursor`, and the next page's cursor.
+fn activities(
+    host: &dyn Host,
+    identity: &Identity,
+    team: &str,
+    cursor: Option<&str>,
+) -> Result<(Vec<Activity>, Option<String>)> {
+    let mut url = format!(
+        "{}?limit={ACTIVITY_PAGE}",
+        path(identity, &[team, "activities"])
+    );
+    if let Some(cursor) = cursor {
+        url.push_str("&cursor=");
+        url.extend(url::form_urlencoded::byte_serialize(cursor.as_bytes()));
+    }
+    let page = usage::http(host, identity, "GET", &url, None)?;
+    let items = page["items"]
+        .as_array()
+        .context("activity page has no items")?
+        .iter()
+        .filter_map(Activity::from_value)
+        .collect();
+    Ok((items, page["cursor"].as_str().map(str::to_owned)))
 }
 
 /// The original's save error text by HTTP status (`edit.nameConflict`, `forbidden`, `error`).
@@ -152,7 +190,94 @@ impl Root {
                 let body = fields(&name, &description, true);
                 self.save_team(Some(id), body, cx);
             }
+            Action::Open { id } => {
+                cx.update_global::<State, _>(|state, _| {
+                    state.detail = Some(Detail {
+                        team_id: id.clone(),
+                        ..Default::default()
+                    })
+                });
+                let team = id.clone();
+                let members = cx.background_spawn(async move {
+                    let identity = host.identity().context("Teams require a ChatGPT account")?;
+                    pages(
+                        host.as_ref(),
+                        &identity,
+                        &[team.as_str(), "members"],
+                        Member::from_value,
+                    )
+                });
+                cx.spawn({
+                    let id = id.clone();
+                    async move |_, cx| {
+                        let result = members.await;
+                        cx.update(|cx| {
+                            update_detail(&id, cx, |detail| {
+                                detail.members = match result {
+                                    Ok(members) => Load::Ready(members),
+                                    Err(error) => {
+                                        eprintln!("team members: {error:#}");
+                                        Load::Failed(error.to_string())
+                                    }
+                                }
+                            })
+                        });
+                    }
+                })
+                .detach();
+                self.team_activities(id, None, cx);
+            }
+            Action::MoreActivity => {
+                let Some((id, Some(cursor))) = cx
+                    .global::<State>()
+                    .detail
+                    .as_ref()
+                    .filter(|d| !d.loading_more)
+                    .map(|d| (d.team_id.clone(), d.cursor.clone()))
+                else {
+                    return;
+                };
+                update_detail(&id, cx, |detail| detail.loading_more = true);
+                self.team_activities(id, Some(cursor), cx);
+            }
         }
+    }
+
+    /// Reads an activity page and appends it to the open team's log.
+    fn team_activities(&mut self, id: String, cursor: Option<String>, cx: &mut Context<Self>) {
+        let host = self.host.clone();
+        let task = cx.background_spawn({
+            let id = id.clone();
+            async move {
+                let identity = host.identity().context("Teams require a ChatGPT account")?;
+                activities(host.as_ref(), &identity, &id, cursor.as_deref())
+            }
+        });
+        cx.spawn(async move |_, cx| {
+            let result = task.await;
+            cx.update(|cx| {
+                update_detail(&id, cx, |detail| {
+                    detail.loading_more = false;
+                    match result {
+                        Ok((items, cursor)) => {
+                            detail.cursor = cursor;
+                            match &mut detail.activity {
+                                Load::Ready(log) => log.extend(items),
+                                activity => *activity = Load::Ready(items),
+                            }
+                        }
+                        Err(error) => {
+                            eprintln!("team activity: {error:#}");
+                            // A failed Load more keeps the loaded log, as the query keeps its pages.
+                            if !matches!(detail.activity, Load::Ready(_)) {
+                                detail.activity = Load::Failed(error.to_string());
+                            }
+                        }
+                    }
+                })
+            });
+        })
+        .detach();
     }
 
     fn save_team(&mut self, id: Option<String>, body: Value, cx: &mut Context<Self>) {
@@ -198,6 +323,15 @@ impl Root {
     }
 }
 
+/// Applies `f` to the detail when team `id` is still the open one.
+fn update_detail(id: &str, cx: &mut App, f: impl FnOnce(&mut Detail)) {
+    cx.update_global::<State, _>(|state, _| {
+        if let Some(detail) = state.detail.as_mut().filter(|d| d.team_id == id) {
+            f(detail);
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,6 +348,55 @@ mod tests {
             path(&identity, &["t 1"]),
             "/accounts/ws%20a%2Fb/teams/t%201"
         );
+    }
+
+    /// Answers each request with the next recorded body and keeps the requests.
+    struct Pages(std::sync::Mutex<(Vec<Value>, Vec<String>)>);
+
+    impl Host for Pages {
+        fn identity(&self) -> Option<Identity> {
+            None
+        }
+
+        fn fetch(&self, request: &crate::host::Request) -> Result<Value> {
+            let mut pages = self.0.lock().expect("test lock");
+            pages.1.push(format!("{request:?}"));
+            let body = pages.0.remove(0);
+            Ok(json!({"status": 200, "bodyJsonString": body.to_string()}))
+        }
+    }
+
+    #[test]
+    fn activity_pages_follow_the_cursor_and_members_follow_has_more() -> Result<()> {
+        let identity = Identity {
+            account_id: "ws".into(),
+            user_id: "u".into(),
+            device_id: "d".into(),
+        };
+        let event = |id: &str| {
+            json!({"id": id, "created_at": "2026-11-25T09:00:00Z", "actor": {"id": "u1"},
+                "activity_data": {"type": "TEAM_CREATE"}})
+        };
+        let host = Pages(std::sync::Mutex::new((
+            vec![
+                json!({"items": [event("a1"), {"id": "x", "activity_data": {"type": "NEW"}}], "cursor": "c/2"}),
+                json!({"items": [event("a2")], "cursor": null}),
+                json!({"items": [{"principal_id": "u1", "role": "owner"}], "has_more": true}),
+                json!({"items": [{"principal_id": "u2"}], "has_more": false}),
+            ],
+            Vec::new(),
+        )));
+        let (first, cursor) = activities(&host, &identity, "t1", None)?;
+        ensure!(first.len() == 1 && cursor.as_deref() == Some("c/2"));
+        let (second, cursor) = activities(&host, &identity, "t1", cursor.as_deref())?;
+        ensure!(second[0].id == "a2" && cursor.is_none());
+        let members = pages(&host, &identity, &["t1", "members"], Member::from_value)?;
+        ensure!(members.len() == 2 && members[0].owner);
+        let requests = &host.0.lock().expect("test lock").1;
+        ensure!(requests[0].contains("/accounts/ws/teams/t1/activities?limit=20"));
+        ensure!(requests[1].contains("activities?limit=20&cursor=c%2F2"));
+        ensure!(requests[3].contains("/teams/t1/members?offset=100&limit=100"));
+        Ok(())
     }
 
     #[test]
