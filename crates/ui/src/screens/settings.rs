@@ -787,13 +787,21 @@ pub struct SettingsNav {
 impl SettingsNav {
     fn new(page: Entity<SettingsPage>, cx: &mut Context<Self>) -> Self {
         cx.observe(&page, |_, _, cx| cx.notify()).detach();
+        cx.observe_global::<imports::ImportState>(|_, cx| cx.notify())
+            .detach();
         cx.observe_global::<teams::State>(|_, cx| cx.notify())
             .detach();
         cx.observe_global::<account::State>(|_, cx| cx.notify())
             .detach();
         teams::dispatch(teams::Action::Refresh, cx);
         // Deferred like the teams refresh: the nav is built inside the root's own update.
-        cx.defer(|cx| account::dispatch(account::Action::Refresh, cx));
+        let loaded = matches!(
+            cx.try_global::<account::State>().map(|s| &s.profile),
+            Some(computer_use::Load::Ready(_))
+        );
+        if !loaded {
+            cx.defer(|cx| account::dispatch(account::Action::Refresh, cx));
+        }
         Self {
             page,
             focus: cx.focus_handle(),

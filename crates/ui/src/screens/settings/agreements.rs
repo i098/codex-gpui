@@ -186,7 +186,7 @@ impl Agreements {
     }
 
     fn retry(&mut self, cx: &mut Context<Self>) {
-        if self.account.is_some() {
+        if allowed(cx).is_some() {
             self.reload(cx);
         } else {
             account::dispatch(account::Action::Refresh, cx);
