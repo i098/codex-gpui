@@ -4922,7 +4922,11 @@ mod tests {
         window
             .read_with(cx, |view, _| {
                 assert!(view.scroll.max_offset().y > px(0.), "content must overflow");
-                assert_eq!(view.scroll.offset().y, px(0.), "first message scrolled away");
+                assert_eq!(
+                    view.scroll.offset().y,
+                    px(0.),
+                    "first message scrolled away"
+                );
             })
             .unwrap();
     }
