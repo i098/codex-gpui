@@ -1041,6 +1041,17 @@ mod tests {
         });
     }
 
+    /// Pump the executor until `finished` holds. It has no wall-clock deadline: how long
+    /// the host work takes depends on runner load, so a deadline made these tests flaky.
+    /// A real hang is bounded by the test runner's own timeout.
+    #[cfg(unix)]
+    fn run_until(cx: &gpui::HeadlessAppContext, finished: impl Fn() -> bool) {
+        while !finished() {
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
     #[cfg(unix)] // POSIX path fixtures
     #[test]
     fn pasted_text_keeps_its_host_after_another_window_becomes_active() {
@@ -1077,15 +1088,9 @@ mod tests {
         composer.update(&mut cx, |composer, cx| {
             composer.save_paste(Content::Text("remote paste".into()), cx);
         });
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        loop {
-            cx.run_until_parked();
-            if composer.read_with(&cx, |composer, _| composer.pending_attachments == 0) {
-                break;
-            }
-            assert!(std::time::Instant::now() < deadline, "paste did not finish");
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+        run_until(&cx, || {
+            composer.read_with(&cx, |composer, _| composer.pending_attachments == 0)
+        });
         composer.read_with(&cx, |composer, _| {
             assert!(composer.attachment_error.is_none(), "{:?}", composer.attachment_error);
             assert!(matches!(&composer.attachments[0].content, Content::Text(text) if text == "remote paste"));
@@ -1142,12 +1147,7 @@ mod tests {
         let task = cx.foreground_executor().spawn(async move {
             *slot.lock() = Some(copy_file(Arc::new(bridge), "/work/notes.txt".into()).await);
         });
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while done.lock().is_none() {
-            cx.run_until_parked();
-            assert!(std::time::Instant::now() < deadline, "copy did not finish");
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+        run_until(&cx, || done.lock().is_some());
         drop(task);
         let attachment = done.lock().take().unwrap().unwrap();
         assert!(attachment.persisted);

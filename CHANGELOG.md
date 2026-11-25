@@ -10,6 +10,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - On macOS, the artifact tab updates spreadsheets and presentations during a turn when connected to a local Artifact Session host (#1567).
+- Windows MSIX builds with a configured update feed can check for updates, download a verified package, and install it on restart (#852).
 - Settings ▸ Browser: choose whether to include screenshots with all browser annotations or only with drag selections (#931).
 - Save files from the macOS built-in browser to Downloads. Open Settings ▸ Browser ▸ Download history to view or clear the records without deleting the files (#1563).
 - Voice chat uses the microphone and speakers through WebRTC. Before, voice chat accepted and returned only text (#908).

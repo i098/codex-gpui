@@ -3281,6 +3281,7 @@ impl CommandMenu {
             ("settings-profile", "Work preferences", false),
             ("settings-personalization", "Personalization", false),
             ("settings-keyboard-shortcuts", "Keyboard shortcuts", false),
+            ("settings-keyboard-shortcuts", "Codex Micro", false),
             ("settings-usage", "Usage & billing", false),
             ("sidebar-cmd-analytics", "Analytics", false),
             ("sidebar-cmd-browser", "Browser", false),
