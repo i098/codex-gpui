@@ -797,23 +797,36 @@ async fn execute_server_action(
 /// `trust_hooks`'s error when another config layer keeps a trusted hook untrusted.
 pub(crate) const HOOKS_OVERRIDDEN: &str = "Another config layer overrides these hook settings and must be changed before approval can take effect";
 
+/// The config edits that trust `hooks` (key, `currentHash`). A plugin hook's `currentHash` is
+/// `<hook hash>/<plugin content hash>`: the core reads the two halves from `trusted_hash` and
+/// `trusted_content_hash`, so the whole string in `trusted_hash` never matches.
+fn trust_edits(hooks: &[(String, String)]) -> Result<Vec<Value>> {
+    let mut edits = Vec::new();
+    for (key, hash) in hooks {
+        let state = format!("hooks.state.{}", quote(key)?);
+        let (hook, content) = match hash.split_once('/') {
+            Some((hook, content)) => (hook, Some(content)),
+            None => (hash.as_str(), None),
+        };
+        edits.push(edit(format!("{state}.trusted_hash"), json!(hook), "upsert"));
+        if let Some(content) = content {
+            edits.push(edit(
+                format!("{state}.trusted_content_hash"),
+                json!(content),
+                "upsert",
+            ));
+        }
+    }
+    Ok(edits)
+}
+
 pub(crate) async fn trust_hooks(
     bridge: &Bridge,
     hooks: &[(String, String)],
     roots: &[String],
 ) -> Result<()> {
     ensure!(!hooks.is_empty(), "No hooks selected for trust");
-    let edits = hooks
-        .iter()
-        .map(|(key, hash)| {
-            Ok(edit(
-                format!("hooks.state.{}.trusted_hash", quote(key)?),
-                json!(hash),
-                "upsert",
-            ))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    write(bridge, None, edits).await?;
+    write(bridge, None, trust_edits(hooks)?).await?;
     let loaded: Value = bridge.request("hooks/list", json!({"cwds":roots})).await?;
     for (key, hash) in hooks {
         let trusted = loaded["data"]

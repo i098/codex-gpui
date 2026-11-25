@@ -544,7 +544,7 @@ pub(crate) fn connect(cwd: &Path) -> Result<(Bridge, Receiver<Event>)> {
         command.current_dir(cwd);
         Bridge::spawn_acp(command)
     } else {
-        let mut command = bridge::default_command();
+        let mut command = crate::host::app_server_command();
         qa::configure_command(&mut command)?;
         command.current_dir(cwd);
         Bridge::spawn(command)

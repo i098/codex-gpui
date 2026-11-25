@@ -57,6 +57,7 @@ mod diff_repositories;
 mod directories;
 mod environments;
 mod git;
+pub(crate) use git::app_server_command;
 pub mod git_pr;
 mod native_apps;
 mod open_in;
