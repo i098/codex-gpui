@@ -160,7 +160,7 @@ jobs:
           set -uo pipefail
           log=$(mktemp /tmp/macos-guarded.XXXXXX)
           failed=""
-          for f in $(grep -lE 'target_os = "macos"|skip_unless_macos!' crates/app/tests/*.rs); do
+          for f in $(grep -lF 'cfg!(target_os = "macos")' crates/app/tests/*.rs); do
             t=$(basename "$f" .rs)
             cargo test --locked -p app --test "$t" -- --test-threads=1 2>&1 | tee -a "$log" || failed="$failed $t"
             rm -f target/debug/deps/"$t"-*
