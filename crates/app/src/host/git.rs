@@ -2311,6 +2311,44 @@ fn login_env(dir: &Path) -> HashMap<String, String> {
     env
 }
 
+/// What `shell -ilc env` prints between the delimiters, `None` when it fails or times out.
+fn probe_shell(shell: &str, dir: &Path) -> Option<HashMap<String, String>> {
+    let mut probe = Command::new(shell);
+    probe.args(["-ilc", LOGIN_ENV]).current_dir(dir).envs([
+        ("CODEX_SHELL", "1"),
+        ("DISABLE_AUTO_UPDATE", "true"),
+        ("ZSH_TMUX_AUTOSTARTED", "true"),
+        ("ZSH_TMUX_AUTOSTART", "false"),
+    ]);
+    let output = bounded(&mut probe).ok()??;
+    let mut parts = output.split("\0_SHELL_ENV_DELIMITER_\0");
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(_), Some(vars), Some(_)) => Some(parse_env(vars.split('\0'))),
+        _ => None,
+    }
+}
+
+/// `codex app-server` with the user's login-shell environment. The stock app merges an `-ilc`
+/// probe into its own environment before it starts the app-server; a Dock or Finder launch
+/// has only `/usr/bin:/bin:/usr/sbin:/sbin`, so hooks that run `node` or `gh-axi` exit 127.
+/// The probe runs once per process, and `CODEX_HOME` stays as this process has it.
+pub fn app_server_command() -> Command {
+    static ENV: std::sync::LazyLock<HashMap<String, String>> = std::sync::LazyLock::new(|| {
+        let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from);
+        let mut env = login_env(&home);
+        if let Some(codex_home) = std::env::var_os("CODEX_HOME") {
+            env.insert(
+                "CODEX_HOME".into(),
+                codex_home.to_string_lossy().into_owned(),
+            );
+        }
+        env
+    });
+    let mut command = bridge::default_command();
+    command.envs(&*ENV);
+    command
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

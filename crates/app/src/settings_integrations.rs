@@ -1015,6 +1015,40 @@ mod tests {
     }
 
     #[test]
+    fn plugin_hook_trust_writes_both_halves_of_the_composite_hash() -> Result<()> {
+        let hooks = [
+            (
+                "a@p:h.json:stop:0:0".to_owned(),
+                "sha256:aa/sha256:cc".to_owned(),
+            ),
+            ("/u/hooks.json:stop:0:0".to_owned(), "sha256:bb".to_owned()),
+        ];
+        let edits = trust_edits(&hooks)?;
+        let pairs: Vec<_> = edits
+            .iter()
+            .map(|e| (e["keyPath"].as_str().unwrap(), e["value"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                (
+                    r#"hooks.state."a@p:h.json:stop:0:0".trusted_hash"#,
+                    "sha256:aa"
+                ),
+                (
+                    r#"hooks.state."a@p:h.json:stop:0:0".trusted_content_hash"#,
+                    "sha256:cc"
+                ),
+                (
+                    r#"hooks.state."/u/hooks.json:stop:0:0".trusted_hash"#,
+                    "sha256:bb"
+                ),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn oauth_completion_during_a_refresh_runs_a_fresh_read_afterward() {
         panic_hook();
         let mut state = State {
