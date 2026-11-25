@@ -135,9 +135,11 @@ fn rebind(previous: Option<&Preferences>, next: &Preferences, cx: &mut App) {
             if key.starts_with("mouse") {
                 continue;
             }
-            let unbind = Box::new(gpui::Unbind(action.name().into()));
-            if let Ok(binding) = KeyBinding::load(&key, unbind, None, false, None, &mapper) {
-                bindings.push(binding);
+            for key in with_shifted_alias(key) {
+                let unbind = Box::new(gpui::Unbind(action.name().into()));
+                if let Ok(binding) = KeyBinding::load(&key, unbind, None, false, None, &mapper) {
+                    bindings.push(binding);
+                }
             }
         }
         for accelerator in next.keys(command) {
@@ -163,21 +165,47 @@ fn rebind(previous: Option<&Preferences>, next: &Preferences, cx: &mut App) {
             } else {
                 None
             };
-            let predicate = context.map(|context| {
-                std::rc::Rc::new(
-                    gpui::KeyBindingContextPredicate::parse(context).expect("literal key context"),
-                )
-            });
-            if let Ok(binding) =
-                KeyBinding::load(&key, action.boxed_clone(), predicate, false, None, &mapper)
-            {
-                enabled.push(binding);
+            for key in with_shifted_alias(key) {
+                let predicate = context.map(|context| {
+                    std::rc::Rc::new(
+                        gpui::KeyBindingContextPredicate::parse(context)
+                            .expect("literal key context"),
+                    )
+                });
+                if let Ok(binding) =
+                    KeyBinding::load(&key, action.boxed_clone(), predicate, false, None, &mapper)
+                {
+                    enabled.push(binding);
+                }
             }
         }
     }
     bindings.extend(enabled);
     cx.bind_keys(bindings);
     crate::native_menus::refresh_menus(cx);
+}
+
+/// macOS reports `⌘⇧.` as the key `>` with no shift modifier (gpui_macos `parse_keystroke`),
+/// so a `shift-<punctuation>` binding also needs its shifted character (US layout).
+fn with_shifted_alias(key: String) -> Vec<String> {
+    const SHIFTED: &[(char, char)] = &[
+        ('.', '>'),
+        (',', '<'),
+        ('/', '?'),
+        (';', ':'),
+        ('\'', '"'),
+        ('[', '{'),
+        (']', '}'),
+        ('\\', '|'),
+        ('-', '_'),
+        ('=', '+'),
+        ('`', '~'),
+    ];
+    let alias = SHIFTED.iter().find_map(|&(plain, shifted)| {
+        let head = key.strip_suffix(plain)?.strip_suffix("shift-")?;
+        Some(format!("{head}{shifted}"))
+    });
+    std::iter::once(key).chain(alias).collect()
 }
 
 fn action(id: &str) -> Option<Box<dyn Action>> {
@@ -312,5 +340,17 @@ pub(super) fn dispatch_mouse(key: &str, window: &mut Window, cx: &mut Context<Ro
     });
     if let Some(action) = command.and_then(|command| action(command.id)) {
         window.dispatch_action(action, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::with_shifted_alias;
+
+    #[test]
+    fn shifted_punctuation_gets_the_character_macos_reports() {
+        assert_eq!(with_shifted_alias("cmd-shift-.".into()), ["cmd-shift-.", "cmd->"]);
+        assert_eq!(with_shifted_alias("cmd-shift-r".into()), ["cmd-shift-r"]);
+        assert_eq!(with_shifted_alias("cmd-.".into()), ["cmd-."]);
     }
 }
