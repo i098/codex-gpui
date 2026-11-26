@@ -14,6 +14,9 @@ use std::{
 };
 use ui::composer::dictation::Dispatcher;
 
+/// Hang guard for fixture handshakes, not a speed bound: CI hosts at load 200+ stalled them past 20 s (#1635, #1651).
+const HANG_GUARD: Duration = Duration::from_secs(300);
+
 fn audio() -> Vec<u8> {
     let samples = 16000_u32;
     let mut wav = Vec::with_capacity(44 + samples as usize * 2);
@@ -53,7 +56,7 @@ impl Backend {
         let worker = std::thread::spawn(move || {
             for _ in 0..requests {
                 let (mut stream, _) = listener.accept()?;
-                stream.set_read_timeout(Some(Duration::from_secs(20)))?;
+                stream.set_read_timeout(Some(HANG_GUARD))?;
                 let mut reader = BufReader::new(stream.try_clone()?);
                 let mut line = String::new();
                 reader.read_line(&mut line)?;
@@ -96,7 +99,7 @@ impl Backend {
                     "audio payload changed"
                 );
                 send_request.send(body)?;
-                let (status, body) = replies.recv_timeout(Duration::from_secs(20))?;
+                let (status, body) = replies.recv_timeout(HANG_GUARD)?;
                 write!(
                     stream,
                     "HTTP/1.1 {status} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -136,7 +139,7 @@ impl Backend {
     }
 
     fn respond(&self, status: u16, body: &'static str) -> Result<()> {
-        self.received.recv_timeout(Duration::from_secs(20))?;
+        self.received.recv_timeout(HANG_GUARD)?;
         self.reply.send((status, body))?;
         Ok(())
     }
@@ -205,7 +208,7 @@ fn controlled_audio_reaches_only_the_live_editor() -> Result<()> {
         fx.read(|_, cx| composer.read(cx).dictation_label() == "Stop dictation")
     })?;
     fx.click(at)?;
-    backend.received.recv_timeout(Duration::from_secs(20))?;
+    backend.received.recv_timeout(HANG_GUARD)?;
     fx.keys("escape")?;
     fx.focus_composer()?;
     fx.type_text(" safe")?;
@@ -377,7 +380,7 @@ fn each_window_uses_its_own_host_without_cancelling_another_window() -> Result<(
 fn a_stalled_transcription_finishes_with_an_error() -> Result<()> {
     let backend = Backend::new(1)?;
     let mut fx = Fx::new()?;
-    backend.install(&mut fx, Duration::from_secs(2));
+    backend.install(&mut fx, Duration::from_secs(15));
     let editor = fx.composer();
     fx.cx.update_window(fx.window, |_, window, cx| {
         editor.update(cx, |editor, cx| {
@@ -386,7 +389,7 @@ fn a_stalled_transcription_finishes_with_an_error() -> Result<()> {
             editor.finish_dictation(window, cx);
         })
     })?;
-    backend.received.recv_timeout(Duration::from_secs(20))?;
+    backend.received.recv_timeout(HANG_GUARD)?;
     fx.wait("stalled transcription deadline", |fx| {
         fx.read(|_, cx| editor.read(cx).dictation_error().is_some())
     })?;
