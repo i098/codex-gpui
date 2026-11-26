@@ -91,7 +91,61 @@ pub(crate) fn sync_blocked(tab: &Entity<BrowserTab>, cx: &mut App) {
     tab.update(cx, |tab, _| tab.set_site_annotation_blocked(blocked));
 }
 
+/// Pushes the account's annotation gates into an open tab.
+pub(crate) fn apply_gates(
+    tab: &Entity<BrowserTab>,
+    multi_select: bool,
+    permission: Option<bool>,
+    cx: &mut App,
+) {
+    sync_blocked(tab, cx);
+    tab.update(cx, |tab, _| {
+        tab.set_annotation_multi_select(multi_select);
+        tab.set_site_annotation_api(permission);
+    });
+}
+
+/// Applies the blocked-site lists and the gates to every tab that is already open.
+pub(crate) fn sync_open_tabs(root: &mut Root, cx: &mut Context<Root>) {
+    for (_, tab) in &root.browser_tabs {
+        sync_blocked(tab, cx);
+        root.refresh_annotation_gates(tab, cx);
+    }
+}
+
 impl Root {
+    /// Re-reads the gates in the background so a tab that is already open follows changes;
+    /// runs when the tab opens and on each navigation.
+    pub(crate) fn refresh_annotation_gates(
+        &self,
+        tab: &Entity<BrowserTab>,
+        cx: &mut Context<Self>,
+    ) {
+        let host = self.host.clone();
+        #[cfg(target_os = "macos")]
+        let bridge = self.bridge.clone();
+        let gate = cx.background_spawn(async move {
+            let Some(identity) = host.identity() else {
+                return (false, None);
+            };
+            let gates = crate::usage::statsig(host.as_ref(), &identity);
+            let multi_select = crate::chatgpt::Gate::BrowserAnnotationMultiSelect.enabled(&gates);
+            #[cfg(target_os = "macos")]
+            let permission = availability(&bridge, &gates).await;
+            #[cfg(not(target_os = "macos"))]
+            let permission = None;
+            (multi_select, permission)
+        });
+        let weak = tab.downgrade();
+        cx.spawn(async move |_, cx| {
+            let (multi_select, permission) = gate.await;
+            if let Some(tab) = weak.upgrade() {
+                cx.update(|cx| apply_gates(&tab, multi_select, permission, cx));
+            }
+        })
+        .detach();
+    }
+
     pub(crate) fn request_site_annotation(
         &mut self,
         key: usize,
@@ -217,5 +271,23 @@ mod tests {
             permission("new.test", Some(&allowed), Some(&blocked), true),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+
+    #[gpui::test]
+    fn open_tab_follows_a_changed_gate(cx: &mut gpui::TestAppContext) {
+        let window = cx.add_empty_window();
+        let tab = window.update(|window, cx| cx.new(|cx| BrowserTab::new(None, window, cx)));
+        window.update(|_, cx| {
+            assert!(tab.read(cx).site_annotation_permission_required());
+            apply_gates(&tab, true, Some(false), cx);
+            assert!(!tab.read(cx).site_annotation_permission_required());
+            apply_gates(&tab, true, Some(true), cx);
+            assert!(tab.read(cx).site_annotation_permission_required());
+        });
     }
 }

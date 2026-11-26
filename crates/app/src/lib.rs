@@ -795,6 +795,10 @@ impl Root {
             this.state.save();
         })
         .detach();
+        cx.observe_global::<host_settings::Settings>(|this, cx| {
+            browser_site_annotation::sync_open_tabs(this, cx);
+        })
+        .detach();
         features::install_shortcuts(cx);
         let this = cx.weak_entity();
         usage::install(this.clone(), cx);
@@ -4217,6 +4221,7 @@ impl Root {
                     if matches!(event, BrowserEvent::Navigated { .. }) {
                         browsing_history::record(tab, cx);
                         browser_site_annotation::sync_blocked(tab, cx);
+                        this.refresh_annotation_gates(tab, cx);
                     } else {
                         browsing_history::retitle(tab, cx);
                     }
@@ -4243,33 +4248,7 @@ impl Root {
             this.add_browser_annotation(&tab, &event.0, cx);
         })
         .detach();
-        let host = self.host.clone();
-        #[cfg(target_os = "macos")]
-        let bridge = self.bridge.clone();
-        let gate = cx.background_spawn(async move {
-            let Some(identity) = host.identity() else {
-                return (false, None);
-            };
-            let gates = usage::statsig(host.as_ref(), &identity);
-            let multi_select = chatgpt::Gate::BrowserAnnotationMultiSelect.enabled(&gates);
-            #[cfg(target_os = "macos")]
-            let permission = browser_site_annotation::availability(&bridge, &gates).await;
-            #[cfg(not(target_os = "macos"))]
-            let permission = None;
-            (multi_select, permission)
-        });
-        let weak = tab.downgrade();
-        cx.spawn(async move |_, cx| {
-            let (multi_select, permission) = gate.await;
-            if let Some(tab) = weak.upgrade() {
-                cx.update(|cx| browser_site_annotation::sync_blocked(&tab, cx));
-                tab.update(cx, |tab, _| {
-                    tab.set_annotation_multi_select(multi_select);
-                    tab.set_site_annotation_api(permission);
-                });
-            }
-        })
-        .detach();
+        self.refresh_annotation_gates(&tab, cx);
         let pending = self.pending_browser_annotations(cx);
         tab.update(cx, |tab, cx| tab.set_pending_annotations(pending, cx));
         self.browser_tabs.push((key, tab.clone()));
