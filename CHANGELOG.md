@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Settings ▸ Agreements for ChatGPT for Healthcare workspaces: view the OpenAI Services Agreement, and agree to the Business Associate Agreement in a HIPAA-eligible workspace. Settings ▸ Account shows the Medical credentials form (NPI, degree, license state and number, CME eligibility) when the account has a CME profile (#1056).
 - Settings ▸ Cloud computer: view and delete the cloud browser's saved cookies by site or host, clear all of them, and delete its passkeys. Open it with `codex://settings/cloud-computer`; the settings list still hides it, as in the original (#1053).
 
 ### Fixed
