@@ -160,6 +160,53 @@ fn annotation_mode_toolbar_sends_discards_and_exits() -> Result<()> {
     Ok(())
 }
 
+/// The user's next prompt sent with Enter carries the pending browser annotations after
+/// the diff comments, with the typed request under `## My request:`, and clears both.
+#[test]
+fn annotations_ride_with_the_next_typed_turn() -> Result<()> {
+    let mut fx = Fx::captured("dark", (1280., 832.), common::script(None, |_| {})?)?;
+    fx.keys("cmd-2")?;
+    fx.wait_thread(SUBTRACT)?;
+    fx.keys("cmd-t")?;
+    fx.type_text("example.com/docs")?;
+    fx.keys("enter")?;
+    fx.keys("cmd-shift-.")?;
+    let diff = comment(json!({
+        "content": [{"content_type": "text", "text": "Keep this check"}],
+        "position": {"path": "src/a.rs", "side": "right", "line": 3}
+    }));
+    set_comments(&mut fx, vec![browser_comment("Make Save bold"), diff]);
+    ensure!(mode(&fx) == (true, 1), "{:?}", mode(&fx));
+
+    fx.focus_composer()?;
+    fx.type_text("Apply these")?;
+    fx.keys("enter")?;
+    fx.wait("typed annotation turn", |fx| {
+        fx.sent()
+            .is_ok_and(|sent| sent.iter().any(|request| request["method"] == "turn/start"))
+    })?;
+    let requests = fx.sent()?;
+    let text = requests
+        .iter()
+        .find(|request| request["method"] == "turn/start")
+        .and_then(|request| request["params"]["input"].as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|input| input["text"].as_str())
+        .collect::<String>();
+    let browser = text.find("# Browser comments:\n");
+    ensure!(
+        text.starts_with("# Diff comments:\n")
+            && text.contains("Keep this check")
+            && browser.is_some_and(|at| text[at..].contains("Make Save bold"))
+            && text.ends_with("\n## My request:\nApply these"),
+        "The typed turn lost its annotations: {text}"
+    );
+    ensure!(mode(&fx).1 == 0, "{:?}", mode(&fx));
+    ensure!(pending_texts(&fx).is_empty());
+    Ok(())
+}
+
 #[test]
 fn annotation_send_waits_for_the_screenshot() -> Result<()> {
     for use_toolbar in [true, false] {
